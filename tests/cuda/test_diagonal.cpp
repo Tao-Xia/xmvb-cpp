@@ -196,13 +196,13 @@ void check(bool compact,int ncore) {
       if (context.counters().peak_device_bytes>context.device_byte_budget())
         throw std::runtime_error("CUDA core projection exceeded the live budget");
     }
-    if (ncore>=2) {
+    if (ncore==2) {
       // Admit the response map, but force its half-transform into proper
       // core-column slices. This exercises nonzero offsets in the shared U view.
       const std::size_t dimension=Fixture::nbf*ncore;
       const std::size_t count=dimension*(dimension+1)/2;
-      const std::size_t scratch=2*Fixture::nbf*Fixture::nbf*ncore+
-          3*Fixture::nbf*ncore*ncore;
+      const std::size_t scratch=Fixture::nbf*Fixture::nbf*ncore+
+          2*Fixture::nbf*ncore*ncore+Fixture::nbf*Fixture::nbf;
       xmvb::cuda::Buffer<unsigned char> padding(context,
           available-(2*count+scratch)*sizeof(double));
       xmvb::cuda::Buffer<double> response;

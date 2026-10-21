@@ -3,6 +3,8 @@ add_library(xmvb_cuda
   linalg/cholesky.cu
   ci/sigma.cu
   integrals/exact.cu
+  integrals/packed.cu
+  integrals/packed_response.cu
   integrals/exchange.cu
   integrals/core.cu
   integrals/one_electron.cu

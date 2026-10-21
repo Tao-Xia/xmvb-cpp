@@ -2,30 +2,24 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 
 #include <cusparse.h>
 
 #include "cuda/memory/buffer.hpp"
+#include "cuda/integrals/panel.hpp"
 #include "integrals/ao/input.hpp"
 #include "linalg/views.hpp"
 
 namespace xmvb::cuda {
 
-/** A borrowed row-major AO-pair panel. The leading dimension is in doubles. */
-template <class T>
-struct BasicPairPanel {
-  T* data = nullptr;
-  std::int64_t rows = 0;
-  std::int64_t cols = 0;
-  std::int64_t ld = 0;
-};
-using PairPanel = BasicPairPanel<double>;
-using ConstPairPanel = BasicPairPanel<const double>;
+class PackedAoPairMatrix;
 
 /** Device-resident exact AO-pair ERI graph and its matrix-free orbital response.
  * All matrix arguments and packed outputs refer to device memory. The graph is
  * uploaded once; CPU work in the constructor only validates and packs metadata.
- * No complete AO four-index tensor is retained. Point-owned half transforms
+ * Only one symmetry-aware pair representation is retained, never an expanded
+ * AO four-index tensor or a duplicate layout. Point-owned half transforms
  * may be borrowed by consumers; otherwise work uses bounded device row tiles.
  */
 class ExactAoPairOperator {
@@ -167,6 +161,8 @@ class ExactAoPairOperator {
       int first_column = 0) const;
   Matrix<double> reserve_density_projection(linalg::ConstMatrixView coefficients,
       linalg::ConstMatrixView targets) const;
+  void packed_exchange(linalg::ConstMatrixView densities,
+      linalg::MatrixView outputs,double weight,int channels) const;
   void validate_coefficients(linalg::ConstMatrixView coefficients) const;
   void validate_panel(ConstPairPanel panel) const;
   void validate_panel(PairPanel panel) const;
@@ -182,6 +178,7 @@ class ExactAoPairOperator {
   std::int64_t n_integrals_ = 0;
   int exchange_shared_values_ = 0;
   bool compact_ = false;
+  std::unique_ptr<PackedAoPairMatrix> packed_;
   Buffer<int> pair_first_;
   Buffer<int> pair_second_;
   Buffer<int> row_offsets_;

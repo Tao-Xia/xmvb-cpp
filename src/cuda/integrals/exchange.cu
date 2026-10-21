@@ -7,6 +7,7 @@
 #include <nvtx3/nvtx3.hpp>
 
 #include "cuda/linalg/blas.hpp"
+#include "cuda/integrals/packed.hpp"
 
 namespace xmvb::cuda {
 namespace {
@@ -154,7 +155,9 @@ Buffer<double> ExactAoPairOperator::prepare_exchange(View c,Matrix<double>* proj
   // scratch. This is admission of an exact representation, never truncation.
   if (static_cast<std::size_t>(n2)>free/(2*sizeof(double))/n_pairs_) return {};
   const auto count=n_pairs_*n2;
-  const auto workspace=std::max(half_count+static_cast<std::int64_t>(n_bf_)*n2,action_count);
+  const auto plane_min=packed_ ? static_cast<std::int64_t>(n_bf_)*n_bf_:0;
+  const auto workspace=std::max(half_count+static_cast<std::int64_t>(n_bf_)*n2+
+      plane_min,action_count);
   if (static_cast<std::size_t>(workspace)>free/sizeof(double)-2*count) return {};
   Buffer<double> exchange(*context_,count);
   const PairPanel image{exchange.data(),n_pairs_,n2,n2};
@@ -185,13 +188,33 @@ void ExactAoPairOperator::build_exchange_image(View c,PairPanel image,bool diago
       check_cuda(cudaMemsetAsync(response.data,0,response.rows*response.cols*sizeof(double),
           context_->stream()),"zero CUDA projected density response");
   }
+  Matrix<double> plane;
+  int nu_width=0;
+  if (packed_) {
+    const auto slice_bytes=static_cast<std::size_t>(n_bf_)*n_bf_*sizeof(double);
+    nu_width=static_cast<int>(std::min<std::size_t>(n_bf_,response_capacity()/slice_bytes));
+    if (nu_width<1)
+      throw std::runtime_error("CUDA exchange budget cannot hold one packed AO slice");
+    plane=Matrix<double>(*context_,n_bf_,static_cast<std::int64_t>(n_bf_)*nu_width);
+  }
   for (int mu=0;mu<n_bf_;++mu) {
-    check_cuda(cudaMemsetAsync(half.data(),0,half_count*sizeof(double),context_->stream()),
-        "clear CUDA exchange half image");
-    exchange_half<<<dim3(16,n_bf_),256,0,context_->stream()>>>(
-        c,row_offsets_.data(),columns_.data(),values_.data(),pair_first_.data(),
-        pair_second_.data(),mu,half.data());
-    check_cuda(cudaGetLastError(),"CUDA one-active-index exchange transform");
+    if (packed_) {
+      for (int first=0;first<n_bf_;first+=nu_width) {
+        const int count=std::min(nu_width,n_bf_-first);
+        const auto tile=plane.view().columns(0,static_cast<std::int64_t>(n_bf_)*count);
+        packed_->ao_plane(mu,tile,first);
+        gemm(*context_,{half.data()+static_cast<std::int64_t>(first)*n_bf_*n,
+            n,static_cast<std::int64_t>(n_bf_)*count,n},c,tile,
+            1.0,0.0,Operation::transpose);
+      }
+    } else {
+      check_cuda(cudaMemsetAsync(half.data(),0,half_count*sizeof(double),context_->stream()),
+          "clear CUDA exchange half image");
+      exchange_half<<<dim3(16,n_bf_),256,0,context_->stream()>>>(
+          c,row_offsets_.data(),columns_.data(),values_.data(),pair_first_.data(),
+          pair_second_.data(),mu,half.data());
+      check_cuda(cudaGetLastError(),"CUDA one-active-index exchange transform");
+    }
     if (response.data) {
       gemm(*context_,u.view(),{half.data(),static_cast<std::int64_t>(n_bf_)*n,
           n_bf_,static_cast<std::int64_t>(n_bf_)*n},targets);
@@ -228,7 +251,8 @@ Matrix<double> ExactAoPairOperator::reserve_density_projection(View c,View targe
   const auto count=static_cast<std::int64_t>(n_bf_)*n_bf_*c.cols*targets.cols;
   const auto scratch=2*static_cast<std::int64_t>(n_bf_)*n_bf_*c.cols+
       2*static_cast<std::int64_t>(n_bf_)*c.cols*targets.cols+
-      static_cast<std::int64_t>(n_bf_)*c.cols*c.cols;
+      static_cast<std::int64_t>(n_bf_)*c.cols*c.cols+
+      (packed_ ? static_cast<std::int64_t>(n_bf_)*n_bf_:0);
   if (static_cast<std::size_t>(2*count+scratch)>response_capacity()/sizeof(double)) return {};
   return Matrix<double>(*context_,static_cast<std::int64_t>(n_bf_)*targets.cols,
       static_cast<std::int64_t>(n_bf_)*c.cols);

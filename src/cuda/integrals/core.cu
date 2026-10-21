@@ -6,6 +6,7 @@
 #include <nvtx3/nvtx3.hpp>
 
 #include "cuda/linalg/blas.hpp"
+#include "cuda/integrals/packed.hpp"
 
 namespace xmvb::cuda {
 namespace {
@@ -66,8 +67,9 @@ bool ExactAoPairOperator::core_diagonal(linalg::ConstMatrixView mo,int ncore,
   if (projection) {
     const auto dimension=static_cast<std::int64_t>(n_bf_)*ncore;
     const auto count=dimension*(dimension+1)/2;
-    const auto scratch=2*static_cast<std::int64_t>(n_bf_)*n_bf_*ncore+
-        3*static_cast<std::int64_t>(n_bf_)*ncore*ncore;
+    const auto scratch=static_cast<std::int64_t>(n_bf_)*n_bf_*ncore+
+        2*static_cast<std::int64_t>(n_bf_)*ncore*ncore+
+        (packed_ ? static_cast<std::int64_t>(n_bf_)*n_bf_:0);
     if (static_cast<std::size_t>(2*count+scratch)<=response_capacity()/sizeof(double)) {
       *projection=Buffer<double>(*context_,count);
       check_cuda(cudaMemsetAsync(projection->data(),0,count*sizeof(double),context_->stream()),
@@ -76,15 +78,19 @@ bool ExactAoPairOperator::core_diagonal(linalg::ConstMatrixView mo,int ncore,
   }
   const auto free=response_capacity()/sizeof(double);
   int width=ncore;
-  // Both pair panels and one shared half-transform scratch are bounded. A
-  // second working set remains free for SpMM and subsequent response work.
+  // J and the half projection consume the same two pair panels sequentially.
+  // Budget their peak workspaces, not their sum; no second half image exists.
   for (;width>0;width/=2) {
     const bool projected=projection && projection->data();
-    const auto half=(projected ? 2:1)*static_cast<std::int64_t>(n_bf_)*n_bf_*width;
-    const auto transformed=static_cast<std::int64_t>(n_bf_)*width*width+
+    const auto half=static_cast<std::int64_t>(n_bf_)*n_bf_*width;
+    const auto transformed=(projected ? 0:static_cast<std::int64_t>(n_bf_)*width*width)+
         (projected ? 2*static_cast<std::int64_t>(n_bf_)*width*targets.cols:0);
     const auto images=2*n_pairs_*width;
-    if (static_cast<std::size_t>(images+half+transformed)<=free/2) break;
+    const auto plane_min=packed_ ? static_cast<std::int64_t>(n_bf_)*n_bf_:0;
+    const auto apply_scratch=packed_ ? packed_->workspace_bytes(width,0,n_pairs_)/sizeof(double):0;
+    if (static_cast<std::size_t>(images)+std::max<std::size_t>(apply_scratch,
+            half+transformed+plane_min)<=
+        (packed_ ? free:free/2)) break;
   }
   if (width==0) {
     if (projection) *projection={};

@@ -11,6 +11,7 @@
 #include <nvtx3/nvtx3.hpp>
 
 #include "cuda/linalg/blas.hpp"
+#include "cuda/integrals/packed.hpp"
 
 namespace xmvb::cuda {
 namespace {
@@ -152,6 +153,27 @@ __global__ void generated_csr(linalg::ConstMatrixView c,
   }
 }
 
+template<class PairMatrix>
+__global__ void generated_packed(PairMatrix matrix,linalg::ConstMatrixView c,
+    linalg::ConstMatrixView d,const int* first,const int* second,
+    std::int64_t begin,PairPanel output,PairPanel directional,std::int64_t work,
+    std::int64_t sources,bool direction_only) {
+  for (std::int64_t k=blockIdx.x*static_cast<std::int64_t>(blockDim.x)+threadIdx.x;
+       k<work;k+=gridDim.x*static_cast<std::int64_t>(blockDim.x)) {
+    const auto row=k/output.cols,channel=k%output.cols;
+    int a,b;decode_pair(channel,a,b);
+    double value=0.0,delta=0.0;
+    for (std::int64_t q=0;q<sources;++q) {
+      const double integral=matrix.value(begin+row,q);
+      if (integral==0.0) continue;
+      if (!direction_only) value+=integral*feature(c,first,second,q,a,b);
+      if (d.data) delta+=integral*mixed_feature(c,d,first,second,q,a,b);
+    }
+    output.data[row*output.ld+channel]=direction_only ? delta:value;
+    if (directional.data) directional.data[row*directional.ld+channel]=delta;
+  }
+}
+
 __global__ void generated_compact(linalg::ConstMatrixView c,
                                   linalg::ConstMatrixView d,
                                   const int* first, const int* second,
@@ -260,10 +282,11 @@ __global__ void exchange_unique(const int* rows,const int* columns,
 // A CSR row (i,j) contributes only to output rows i and j. Merge those
 // contributions in block-local panels before the global accumulation. CSR
 // already contains the reverse pair orientation; do not emit it again.
+template<bool Packed=false>
 __global__ void exchange_rows(const int* offsets,const int* columns,const double* values,
     const int* first,const int* second,linalg::ConstMatrixView density,
     linalg::MatrixView output,double weight,int channels,int column_width,
-    int channel_width) {
+    int channel_width,PackedAoPairMatrix::DeviceView packed={}) {
   extern __shared__ double sums[];
   const int row=blockIdx.x,ui=first[row],uj=second[row];
   const int column_begin=blockIdx.y*column_width;
@@ -273,9 +296,12 @@ __global__ void exchange_rows(const int* offsets,const int* columns,const double
   const int panel=count*channel_count,cells=2*panel;
   for (int k=threadIdx.x;k<cells;k+=blockDim.x) sums[k]=0.0;
   __syncthreads();
-  for (int edge=offsets[row]+threadIdx.x;edge<offsets[row+1];edge+=blockDim.x) {
-    const int v=columns[edge],vi=first[v],vj=second[v];
-    const double value=weight*values[edge];
+  const int begin=Packed ? 0:offsets[row];
+  const int end=Packed ? packed.pairs:offsets[row+1];
+  for (int edge=begin+threadIdx.x;edge<end;edge+=blockDim.x) {
+    const int v=Packed ? edge:columns[edge],vi=first[v],vj=second[v];
+    const double value=weight*(Packed ? packed.value(row,v):values[edge]);
+    if (value==0.0) continue;
     for (int c=0;c<channel_count;++c) {
       const auto shift=static_cast<std::int64_t>(channel_begin+c)*density.rows;
       const int base=c*count;
@@ -306,7 +332,8 @@ __global__ void exchange_rows(const int* offsets,const int* columns,const double
 void launch_exchange_rows(Context& context,const int* offsets,const int* columns,
     const double* values,const int* first,const int* second,
     linalg::ConstMatrixView density,linalg::MatrixView output,double weight,
-    int channels,int shared_values,std::int64_t pairs) {
+    int channels,int shared_values,std::int64_t pairs,
+    PackedAoPairMatrix::DeviceView packed={}) {
   // Capacity comes from the device, not an independent numerical/cache knob.
   // Only very wide AO rows or channel blocks require another source-row visit.
   const int column_width=std::min(blas_int(output.rows),shared_values/2);
@@ -314,8 +341,12 @@ void launch_exchange_rows(Context& context,const int* offsets,const int* columns
   const dim3 grid(blas_int(pairs),(blas_int(output.rows)+column_width-1)/column_width,
       (channels+channel_width-1)/channel_width);
   const auto bytes=2*static_cast<std::size_t>(column_width)*channel_width*sizeof(double);
-  exchange_rows<<<grid,256,bytes,context.stream()>>>(offsets,columns,values,first,second,
-      density,output,weight,channels,column_width,channel_width);
+  if (packed.values)
+    exchange_rows<true><<<grid,256,bytes,context.stream()>>>(offsets,columns,values,first,second,
+        density,output,weight,channels,column_width,channel_width,packed);
+  else
+    exchange_rows<false><<<grid,256,bytes,context.stream()>>>(offsets,columns,values,first,second,
+        density,output,weight,channels,column_width,channel_width);
 }
 
 __global__ void finish_jk_batch(const double* image,linalg::MatrixView output,
@@ -558,6 +589,22 @@ ExactAoPairOperator::ExactAoPairOperator(
     context.copy_to_device(integral_values_.data(), graph.integral_values.data(),
                            n_integrals_ * sizeof(double));
   } else {
+    const auto csr_bytes=graph.columns.size()*(sizeof(int)+sizeof(double))+
+        graph.row_offsets.size()*sizeof(int);
+    const auto packed_bytes=PackedAoPairMatrix::storage_bytes(n_pairs_);
+    std::size_t largest_row=0;
+    for (std::int64_t row=0;row<n_pairs_;++row)
+      largest_row=std::max(largest_row,static_cast<std::size_t>(
+          graph.row_offsets[row+1]-graph.row_offsets[row]));
+    const auto staging=largest_row*(sizeof(int)+sizeof(double))+2*sizeof(int);
+    const auto available=response_capacity();
+    // Select by actual storage, never by VB-space size or numerical screening.
+    // Packed construction streams source rows; two complete layouts never coexist.
+    if (packed_bytes<=csr_bytes && packed_bytes<=available &&
+        staging<=available-packed_bytes) {
+      packed_=std::make_unique<PackedAoPairMatrix>(context,graph,n_bf_);
+      return;
+    }
     row_offsets_ = Buffer<int>(context, n_pairs_ + 1);
     columns_ = Buffer<int>(context, n_integrals_);
     values_ = Buffer<double>(context, n_integrals_);
@@ -616,6 +663,10 @@ void ExactAoPairOperator::apply(ConstPairPanel source, PairPanel target) const {
       check_cuda(cudaMemsetAsync(target.data + row * target.ld, 0,
                                  target.cols * sizeof(double), context_->stream()),
                  "zero empty AO-pair target");
+    return;
+  }
+  if (packed_) {
+    packed_->apply(source,target);
     return;
   }
   if (compact_) {
@@ -701,6 +752,48 @@ void ExactAoPairOperator::generated_rows_impl(
     throw std::invalid_argument("invalid CUDA generated AO-pair tile");
   const std::int64_t work = checked_product(output.rows, pairs);
   if (!work) return;
+  if (packed_) {
+    const auto available=response_capacity();
+    const auto channel_bytes=static_cast<std::size_t>(n_pairs_)*sizeof(double);
+    int slab=static_cast<int>(std::min<std::size_t>(pairs,available/channel_bytes));
+    for (;slab>0;slab/=2) {
+      const auto bytes=channel_bytes*slab;
+      if (bytes<=available && packed_->workspace_bytes(slab,begin,output.rows)<=available-bytes)
+        break;
+    }
+    if (slab) {
+      Buffer<double> features(*context_,n_pairs_*slab);
+      for (std::int64_t channel=0;channel<pairs;channel+=slab) {
+        const auto count=std::min<std::int64_t>(slab,pairs-channel);
+        const PairPanel source{features.data(),n_pairs_,count,count};
+        const auto source_work=n_pairs_*count;
+        if (direction_only)
+          mixed_feature_rows<<<blocks(source_work),256,0,context_->stream()>>>(
+              c,d,pair_first_.data(),pair_second_.data(),0,channel,source,source_work);
+        else
+          feature_rows<<<blocks(source_work),256,0,context_->stream()>>>(
+              c,{},pair_first_.data(),pair_second_.data(),0,channel,source,{},source_work);
+        check_launch("CUDA packed pair source features");
+        packed_->apply({source.data,source.rows,source.cols,source.ld},
+            {output.data+channel,output.rows,count,output.ld},begin);
+        if (directional.data) {
+          mixed_feature_rows<<<blocks(source_work),256,0,context_->stream()>>>(
+              c,d,pair_first_.data(),pair_second_.data(),0,channel,source,source_work);
+          check_launch("CUDA packed directional source features");
+          packed_->apply({source.data,source.rows,source.cols,source.ld},
+              {directional.data+channel,directional.rows,count,directional.ld},begin);
+        }
+      }
+    } else {
+      // A genuine low-budget row tile cannot hold a complete source panel.
+      // Generate its exact features in-register while reading the same layout.
+      generated_packed<<<blocks(work),256,0,context_->stream()>>>(packed_->view(),
+          c,d,pair_first_.data(),pair_second_.data(),begin,output,directional,work,n_pairs_,
+          direction_only);
+      check_launch("CUDA streamed packed pair features");
+    }
+    return;
+  }
   if (!compact_ && n_integrals_ != 0 && begin == 0 && output.rows == n_pairs_) {
     // Full AO rows admit one graph SpMM per active-pair channel slab. The
     // generated CSR kernel below is retained for row subsets, where a full
@@ -830,17 +923,18 @@ void ExactAoPairOperator::forward(linalg::ConstMatrixView c,
     pair_features(c, {}, begin, bp);
     // A full-row forward tile already owns B. Reuse it directly as the
     // SpMM source instead of regenerating the same active-pair features.
-    bool direct_spmm=false;
+    bool direct_action=false;
     if (!compact_ && n_integrals_ != 0 && begin == 0 && count == n_pairs_) {
       std::size_t device_free=0,device_total=0;
       check_cuda(cudaMemGetInfo(&device_free,&device_total),
                  "query CUDA forward SpMM free memory");
       const auto available=std::min(context_->device_byte_budget()-
           context_->counters().current_device_bytes,device_free);
-      direct_spmm=spmm_scratch_bytes(sparse_,csr_,n_pairs_,static_cast<int>(pairs),
-          pp.ld,bp.data,pp.data)<=available;
+      direct_action=(packed_ ? packed_->workspace_bytes(pairs,0,n_pairs_):
+          spmm_scratch_bytes(sparse_,csr_,n_pairs_,static_cast<int>(pairs),
+              pp.ld,bp.data,pp.data))<=available;
     }
-    if (direct_spmm) apply({bp.data,bp.rows,bp.cols,bp.ld},pp);
+    if (direct_action) apply({bp.data,bp.rows,bp.cols,bp.ld},pp);
     else
       generated_rows_impl(c, {}, begin, pp, {});
     contract_tile(*context_, kernel,
@@ -991,7 +1085,8 @@ void ExactAoPairOperator::contract_jk(linalg::ConstMatrixView density,
     else
       launch_exchange_rows(*context_,
           row_offsets_.data(),columns_.data(),values_.data(),pair_first_.data(),
-          pair_second_.data(),density,output,exchange,1,exchange_shared_values_,n_pairs_);
+          pair_second_.data(),density,output,exchange,1,exchange_shared_values_,n_pairs_,
+          packed_ ? packed_->view():PackedAoPairMatrix::DeviceView{});
     check_launch("CUDA unique-ERI exchange contraction");
   }
   if (coulomb != 0.0 || coulomb_output.data) {
@@ -1027,7 +1122,9 @@ void ExactAoPairOperator::contract_jk_batch(linalg::ConstMatrixView density,
   const int channels=blas_int(density.cols/n_bf_);
   zero_matrix(*context_,output);
   if (exchange!=0.0 && n_integrals_!=0) {
-    if (compact_)
+    if (packed_)
+      packed_exchange(density,output,exchange,channels);
+    else if (compact_)
       exchange_unique<<<blocks(n_integrals_),256,0,context_->stream()>>>(
           integral_rows_.data(),integral_columns_.data(),integral_values_.data(),n_integrals_,
           pair_first_.data(),pair_second_.data(),density,output,exchange,channels);

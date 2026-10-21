@@ -7,6 +7,7 @@
 #include <Eigen/Core>
 
 #include "cuda/integrals/exact.hpp"
+#include "cuda/integrals/packed.hpp"
 #include "cuda/integrals/one_electron.hpp"
 #include "cuda/linalg/blas.hpp"
 #include "cuda/memory/buffer.hpp"
@@ -64,7 +65,7 @@ struct Fixture {
   std::vector<double> unique_values;
   std::vector<int> first, second;
 
-  Fixture() : pair_kernel(ao_pairs, ao_pairs) {
+  explicit Fixture(bool sparse=false) : pair_kernel(ao_pairs, ao_pairs) {
     pair_kernel.setZero();
     for (int i = 0; i < n_bf; ++i)
       for (int j = 0; j <= i; ++j) {
@@ -73,6 +74,7 @@ struct Fixture {
       }
     for (int p = 0; p < ao_pairs; ++p)
       for (int q = 0; q <= p; ++q) {
+        if (sparse && (p+q)%7!=0) continue;
         const double value =
             0.07 * std::cos(0.19 * (p + 1) * (q + 2)) +
             0.011 / static_cast<double>(p + q + 1);
@@ -174,8 +176,8 @@ double trace_product(const Matrix& left, const Matrix& right) {
   return (left.array() * right.transpose().array()).sum();
 }
 
-void check_graph_and_pair(int active, bool compact) {
-  const Fixture fixture;
+void check_graph_and_pair(int active, bool compact,bool sparse=false) {
+  const Fixture fixture(sparse);
   xmvb::cuda::Context context(128ULL * 1024ULL * 1024ULL);
   const xmvb::cuda::ExactAoPairOperator gpu(context, fixture.graph(compact),
                                             fixture.n_bf);
@@ -357,8 +359,8 @@ void check_graph_and_pair(int active, bool compact) {
   }
 }
 
-void check_one_electron_and_core(bool compact) {
-  const Fixture fixture;
+void check_one_electron_and_core(bool compact,bool sparse=false) {
+  const Fixture fixture(sparse);
   constexpr int active = 3;
   xmvb::cuda::Context context(128ULL * 1024ULL * 1024ULL);
   const xmvb::cuda::ExactAoPairOperator gpu(context, fixture.graph(compact),
@@ -422,6 +424,19 @@ void check_one_electron_and_core(bool compact) {
   near(download(context,dout),reference_jk(fixture,density),"CUDA shared JK differs from oracle");
   near(download(context,dheff),reference_jk(fixture,density,1.0,0.0),
        "CUDA reused Coulomb image differs from oracle");
+  {
+    const Matrix nonsymmetric=values(fixture.n_bf,fixture.n_bf,1.71);
+    DeviceMatrix padded(context,fixture.n_bf+2,fixture.n_bf);
+    DeviceMatrix image(context,fixture.n_bf+1,fixture.n_bf);
+    const xmvb::linalg::MatrixView pview{padded.data(),fixture.n_bf,fixture.n_bf,fixture.n_bf+2};
+    const xmvb::linalg::MatrixView oview{image.data(),fixture.n_bf,fixture.n_bf,fixture.n_bf+1};
+    xmvb::cuda::copy_to_device(context,pview,nonsymmetric);
+    gpu.contract_jk(pview,oview,0.0,1.0);
+    Matrix actual(fixture.n_bf,fixture.n_bf);
+    xmvb::cuda::copy_to_host(context,actual,oview);
+    near(actual,reference_jk(fixture,nonsymmetric,0.0,1.0),
+        "CUDA exchange transposed the supplied density row");
+  }
   Matrix density_batch(fixture.n_bf,3*fixture.n_bf);
   density_batch << density,density_direction,(density+0.37*density_direction).eval();
   DeviceMatrix dbatch(context,fixture.n_bf,3*fixture.n_bf),obatch(context,fixture.n_bf,3*fixture.n_bf);
@@ -507,10 +522,12 @@ void check_exchange_row_graph() {
   xmvb::cuda::Context context(128ULL*1024*1024);
   const auto before=context.counters().current_device_bytes;
   const xmvb::cuda::ExactAoPairOperator gpu(context,graph,fixture.n_bf);
-  const auto expected=(3*fixture.ao_pairs+1)*sizeof(int)+
+  const auto csr=static_cast<std::size_t>(fixture.ao_pairs+1)*sizeof(int)+
       graph.columns.size()*(sizeof(int)+sizeof(double));
+  const auto expected=2*fixture.ao_pairs*sizeof(int)+std::min(csr,
+      xmvb::cuda::PackedAoPairMatrix::storage_bytes(fixture.ao_pairs));
   require(context.counters().current_device_bytes-before==expected,
-      "CUDA CSR duplicated unique-integral row/edge buffers");
+      "CUDA AO operator retained duplicate integral representations");
   Matrix densities(fixture.n_bf,2*fixture.n_bf);
   densities.leftCols(fixture.n_bf)=symmetric_values(fixture.n_bf,0.41);
   densities.rightCols(fixture.n_bf)=symmetric_values(fixture.n_bf,1.23);
@@ -542,6 +559,62 @@ void check_exchange_row_graph() {
       near(image.middleCols(c*fixture.n_bf,fixture.n_bf),
           reference_jk(fixture,batch.middleCols(c*fixture.n_bf,fixture.n_bf)),
           "CUDA shared-memory channel-tiled exchange differs from oracle");
+  }
+}
+
+void check_symmetric_tiles() {
+  constexpr int nb=46,pairs=nb*(nb+1)/2,channels=3,source_stride=5,target_stride=7;
+  Matrix kernel=Matrix::Zero(pairs,pairs),source(pairs,channels);
+  std::vector<int> left,right;
+  std::vector<double> values;
+  for (int p=0;p<pairs;++p) {
+    for (int c=0;c<channels;++c) source(p,c)=std::sin(0.003*(p+1)*(c+2));
+    for (int q=0;q<=p;++q) {
+      if ((p+q)%7==0) continue;
+      const double v=0.07*std::cos(0.00017*(p+1)*(q+1));
+      kernel(p,q)=kernel(q,p)=v;
+      left.push_back(p);right.push_back(q);values.push_back(v);
+    }
+  }
+  auto graph=xmvb::integrals::build_ao_pair_graph(left,right,values,nb);
+  xmvb::cuda::Context context(64ULL*1024*1024);
+  const xmvb::cuda::PackedAoPairMatrix packed(context,graph,nb);
+  require(context.counters().current_device_bytes==
+      xmvb::cuda::PackedAoPairMatrix::storage_bytes(pairs),
+      "CUDA packed integral matrix retained a duplicate CSR");
+  const Matrix expected=kernel*source;
+  std::vector<double> input(pairs*source_stride,-71.0);
+  for (int p=0;p<pairs;++p) for (int c=0;c<channels;++c)
+    input[p*source_stride+c]=source(p,c);
+  xmvb::cuda::Buffer<double> device_input(context,input.size());
+  context.copy_to_device(device_input.data(),input.data(),input.size()*sizeof(double));
+  const std::vector<std::pair<int,int>> intervals{{0,pairs},{1,pairs-2},{511,5},
+      {512,512},{1022,59},{1079,2}};
+  for (auto [first,count]:intervals) {
+    std::vector<double> output(count*target_stride,-83.0);
+    xmvb::cuda::Buffer<double> device_output(context,output.size());
+    context.copy_to_device(device_output.data(),output.data(),output.size()*sizeof(double));
+    packed.apply({device_input.data(),pairs,channels,source_stride},
+        {device_output.data(),count,channels,target_stride},first);
+    context.copy_to_host(output.data(),device_output.data(),output.size()*sizeof(double));
+    Matrix actual(count,channels);
+    for (int p=0;p<count;++p) {
+      for (int c=0;c<channels;++c) actual(p,c)=output[p*target_stride+c];
+      for (int c=channels;c<target_stride;++c)
+        require(output[p*target_stride+c]==-83.0,"CUDA packed action overwrote stride padding");
+    }
+    near(actual,expected.middleRows(first,count),
+        "CUDA multi-tile symmetric pair action differs from oracle");
+  }
+  DeviceMatrix plane(context,nb+2,nb*2);
+  const xmvb::linalg::MatrixView view{plane.data(),nb,nb*2,nb+2};
+  for (int mu:{0,nb-1}) {
+    packed.ao_plane(mu,view,3);
+    Matrix actual(nb,nb*2),reference(nb,nb*2);
+    xmvb::cuda::copy_to_host(context,actual,view);
+    for (int nu=0;nu<2;++nu) for (int k=0;k<nb;++k) for (int l=0;l<nb;++l)
+      reference(l,nu*nb+k)=kernel(pair_index(mu,nu+3),pair_index(k,l));
+    near(actual,reference,"CUDA sliced packed AO plane differs from oracle");
   }
 }
 
@@ -656,7 +729,10 @@ void check_budgeted_pair_tiles(bool compact) {
 int main() {
   try {
     check_exchange_row_graph();
+    check_symmetric_tiles();
     check_wide_density_projection();
+    check_graph_and_pair(3,false,true);
+    check_one_electron_and_core(false,true);
     for (bool compact : {false, true}) {
       check_graph_and_pair(2, compact);
       check_graph_and_pair(3, compact);
