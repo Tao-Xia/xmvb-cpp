@@ -12,6 +12,11 @@ namespace xmvb::cuda {
 /** Device replay of the CPU transform's retained diagonal and ordered shears. */
 class ExteriorTransform {
  public:
+  /** Fixed device schedule; coefficients are updated separately in place. */
+  struct Shear {
+    std::size_t offset;
+    int count;
+  };
   ExteriorTransform(Context& context, const vb::ExteriorOrbitalTransform& source);
   ExteriorTransform(const ExteriorTransform&) = delete;
   ExteriorTransform& operator=(const ExteriorTransform&) = delete;
@@ -36,17 +41,15 @@ class ExteriorTransform {
     return (scales_.size()+inverse_scales_.size()+shear_coefficients_.size()+
             unit_upper_.rows()*unit_upper_.cols())*sizeof(double) +
            occupations_.size()*sizeof(std::uint64_t) +
+           schedule_.size()*sizeof(Shear) +
            edges_.size()*sizeof(vb::ExteriorOrbitalTransform::ShearEdge);
   }
 
  private:
-  struct Shear {
-    std::size_t offset;
-    int count;
-  };
   Context* context_;
   int dimension_;
   int n_orbitals_;
+  int shared_values_=0;
   Buffer<double> scales_;
   Buffer<double> inverse_scales_;
   Buffer<double> shear_coefficients_;
@@ -54,6 +57,7 @@ class ExteriorTransform {
   Matrix<double> unit_upper_;
   Buffer<vb::ExteriorOrbitalTransform::ShearEdge> edges_;
   std::vector<Shear> shears_;
+  Buffer<Shear> schedule_;
 };
 
 }  // namespace xmvb::cuda

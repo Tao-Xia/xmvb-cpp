@@ -1,6 +1,7 @@
 #include "cuda/vb/transform.hpp"
 
 #include <cstdint>
+#include <algorithm>
 #include <limits>
 #include <stdexcept>
 
@@ -92,6 +93,51 @@ __global__ void shear_right(linalg::MatrixView coefficients,
       coefficients.data[row + coefficients.ld*source_column];
 }
 
+// Each spin column/row tile is independent. Retain it in block-local memory
+// for the complete ordered exterior product: sources and targets of one
+// elementary shear are disjoint, and the barrier orders consecutive shears.
+// This is not a new factorization, truncation, or full product-space cache.
+template<bool Right>
+__global__ void exterior_tile(linalg::MatrixView panel,const Edge* edges,
+    const ExteriorTransform::Shear* schedule,int steps,const double* coefficients,const double* scales,
+    int dimension,int lanes,bool adjoint,bool inverse) {
+  extern __shared__ double values[];
+  const auto row_tiles=(panel.rows+lanes-1)/lanes;
+  const auto column=Right ? blockIdx.x/row_tiles*dimension:blockIdx.x;
+  const auto row_begin=Right ? blockIdx.x%row_tiles*lanes:0;
+  const int work=dimension*lanes;
+  for (int k=threadIdx.x;k<work;k+=blockDim.x) {
+    const int spin=k/lanes,lane=k%lanes;
+    const auto row=Right ? row_begin+lane:spin;
+    const auto col=Right ? column+spin:column;
+    double v=row<panel.rows ? panel.data[row+panel.ld*col]:0.0;
+    if (adjoint==inverse) v*=scales[spin];
+    values[k]=v;
+  }
+  __syncthreads();
+  for (int step=0;step<steps;++step) {
+    const int index=adjoint!=inverse ? steps-1-step:step;
+    const auto shear=schedule[index];
+    for (int k=threadIdx.x;k<shear.count*lanes;k+=blockDim.x) {
+      const auto edge=edges[shear.offset+k/lanes];
+      const int lane=k%lanes;
+      const int source=adjoint ? edge.target:edge.source;
+      const int target=adjoint ? edge.source:edge.target;
+      values[target*lanes+lane]+=(inverse ? -1.0:1.0)*coefficients[index]*edge.sign*
+          values[source*lanes+lane];
+    }
+    __syncthreads();
+  }
+  for (int k=threadIdx.x;k<work;k+=blockDim.x) {
+    const int spin=k/lanes,lane=k%lanes;
+    const auto row=Right ? row_begin+lane:spin;
+    const auto col=Right ? column+spin:column;
+    double v=values[k];
+    if (adjoint!=inverse) v*=scales[spin];
+    if (row<panel.rows) panel.data[row+panel.ld*col]=v;
+  }
+}
+
 }  // namespace
 
 ExteriorTransform::ExteriorTransform(
@@ -104,6 +150,11 @@ ExteriorTransform::ExteriorTransform(
       unit_upper_(context,source.n_orbitals(),source.n_orbitals()) {
   if (dimension_ <= 0 || source.determinant_scales().size() != dimension_)
     throw std::invalid_argument("invalid CUDA exterior transform dimensions");
+  int device=0,shared_bytes=0;
+  check_cuda(cudaGetDevice(&device),"query exterior device");
+  check_cuda(cudaDeviceGetAttribute(&shared_bytes,cudaDevAttrMaxSharedMemoryPerBlock,device),
+      "query exterior block capacity");
+  shared_values_=shared_bytes/sizeof(double);
   context.copy_to_device(scales_.data(), source.determinant_scales().data(),
                          scales_.size()*sizeof(double));
   inverse_scale<<<grid_size(dimension_),256,0,context.stream()>>>(
@@ -122,6 +173,8 @@ ExteriorTransform::ExteriorTransform(
     all_edges.insert(all_edges.end(), edges.begin(), edges.end());
   }
   edges_ = Buffer<Edge>(context, all_edges.size());
+  schedule_=Buffer<Shear>(context,shears_.size());
+  context.copy_to_device(schedule_.data(),shears_.data(),shears_.size()*sizeof(Shear));
   context.copy_to_device(edges_.data(), all_edges.data(),
                          all_edges.size()*sizeof(Edge));
   context.copy_to_device(shear_coefficients_.data(),coefficients.data(),
@@ -146,6 +199,14 @@ void ExteriorTransform::apply_left(linalg::MatrixView coefficients,
   if (coefficients.rows != dimension_ || coefficients.cols <= 0 ||
       coefficients.ld < coefficients.rows || coefficients.data == nullptr)
     throw std::invalid_argument("invalid CUDA exterior left panel");
+  if (!shears_.empty() && dimension_<=shared_values_) {
+    exterior_tile<false><<<grid_size(coefficients.cols*256),256,
+        static_cast<std::size_t>(dimension_)*sizeof(double),context_->stream()>>>(
+        coefficients,edges_.data(),schedule_.data(),shears_.size(),shear_coefficients_.data(),
+        inverse ? inverse_scales_.data():scales_.data(),dimension_,1,adjoint,inverse);
+    check_cuda(cudaGetLastError(),"CUDA fused exterior left tile");
+    return;
+  }
   const auto scale = [&] {
     // cuBLAS permits in-place dgmm when lda == ldc, as here.
     check_cublas(cublasDdgmm(context_->blas(), CUBLAS_SIDE_LEFT,
@@ -180,6 +241,17 @@ void ExteriorTransform::apply_right(linalg::MatrixView coefficients,
       coefficients.ld < coefficients.rows || coefficients.data == nullptr)
     throw std::invalid_argument("invalid CUDA exterior right panel");
   const std::int64_t rhs = coefficients.cols/dimension_;
+  if (!shears_.empty() && dimension_<=shared_values_) {
+    int lanes=1;
+    while (lanes<32 && 2*lanes<=shared_values_/dimension_) lanes*=2;
+    const auto tiles=((coefficients.rows+lanes-1)/lanes)*rhs;
+    exterior_tile<true><<<grid_size(tiles*256),256,
+        static_cast<std::size_t>(dimension_)*lanes*sizeof(double),context_->stream()>>>(
+        coefficients,edges_.data(),schedule_.data(),shears_.size(),shear_coefficients_.data(),
+        inverse ? inverse_scales_.data():scales_.data(),dimension_,lanes,adjoint,inverse);
+    check_cuda(cudaGetLastError(),"CUDA fused exterior right tile");
+    return;
+  }
   const auto scale = [&] {
     for (std::int64_t block = 0; block < rhs; ++block) {
       const auto panel = coefficients.columns(block*dimension_, dimension_);

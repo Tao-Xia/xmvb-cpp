@@ -397,15 +397,14 @@ void check_spin_metric(int rhs_count) {
        "spin metric fixture has an inconsistent selected Gram");
 }
 
-void check_exterior(int rhs_count) {
-  constexpr int n = 4;
-  const Strings alpha = xmvb::mcscf::SpinStrings(n, 2).occupations();
-  const Strings beta = xmvb::mcscf::SpinStrings(n, 1).occupations();
+void check_exterior(int rhs_count,int n=4,int nalpha=2,int nbeta=1) {
+  const Strings alpha = xmvb::mcscf::SpinStrings(n, nalpha).occupations();
+  const Strings beta = xmvb::mcscf::SpinStrings(n, nbeta).occupations();
   Matrix upper = Matrix::Identity(n, n);
   for (int p = 0; p < n; ++p) {
     upper(p, p) = 0.86 + 0.11 * p;
     for (int q = p + 1; q < n; ++q)
-      upper(p, q) = 0.045 * (p + 1) * (q + 2);
+      upper(p, q) = 0.045 * (p + 1) * (q + 2)*16.0/(n*n);
   }
   const xmvb::vb::ExteriorOrbitalTransform cpu_alpha(alpha, upper);
   const xmvb::vb::ExteriorOrbitalTransform cpu_beta(beta, upper);
@@ -430,6 +429,18 @@ void check_exterior(int rhs_count) {
   gpu_beta.apply_right(device.view());
   near(download(context, device), forward, 2.0e-11,
        "CUDA exterior forward transform differs from CPU");
+  {
+    Matrix padded=Matrix::Constant(seed.rows()+2,seed.cols(),0.125);
+    padded.topRows(seed.rows())=seed;
+    xmvb::cuda::Matrix<double> storage(context,padded.rows(),padded.cols());
+    xmvb::cuda::copy_to_device(context,storage.view(),padded);
+    const xmvb::linalg::MatrixView view{storage.data(),seed.rows(),seed.cols(),padded.rows()};
+    gpu_alpha.apply_left(view);
+    gpu_beta.apply_right(view);
+    padded.topRows(seed.rows())=forward;
+    near(download(context,storage),padded,2.0e-11,
+        "CUDA exterior tiles changed padded rows or partial row lanes");
+  }
   gpu_beta.apply_right(device.view(), false, true);
   gpu_alpha.apply_left(device.view(), false, true);
   near(download(context, device), seed, 2.0e-11,
@@ -592,6 +603,8 @@ int main() {
       }
     for (int rhs_count : {1, 3}) check_spin_metric(rhs_count);
     for (int rhs_count : {1, 3}) check_exterior(rhs_count);
+    check_exterior(1,12,6,5); // Unequal wide spin sectors in shared tiles.
+    check_exterior(1,16,8,1); // Left column exceeds block shared capacity.
     for (int rhs_count : {1, 3}) check_cholesky(rhs_count);
     for (int rhs_count : {1, 3}) check_full_metric(rhs_count);
     std::cout << "CUDA production CI sigma/adjoint/metric/exterior/FULL parity: PASS\n";
