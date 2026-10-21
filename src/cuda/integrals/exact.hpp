@@ -179,6 +179,8 @@ class ExactAoPairOperator {
 
  private:
   std::size_t response_capacity() const;
+  void upload_unique(const integrals::AoPairGraph&);
+  void unique_exchange(linalg::ConstMatrixView,linalg::MatrixView,double,int) const;
   struct ExchangeRequest {
     linalg::ConstMatrixView coefficients,targets;
     PairPanel image,coulomb;
@@ -210,15 +212,15 @@ class ExactAoPairOperator {
   std::int64_t n_integrals_ = 0;
   int exchange_shared_values_ = 0;
   bool compact_ = false;
+  bool wide_ = false;
   std::unique_ptr<PackedAoPairMatrix> packed_;
   Buffer<int> pair_first_;
   Buffer<int> pair_second_;
   Buffer<int> row_offsets_;
   Buffer<int> columns_;
   Buffer<double> values_;
-  Buffer<int> integral_rows_;
-  Buffer<int> integral_columns_;
-  Buffer<double> integral_values_;
+  Buffer<std::int64_t> wide_offsets_,wide_columns_;
+  Buffer<double> diagonal_;
   cusparseHandle_t sparse_ = nullptr;
   cusparseSpMatDescr_t csr_ = nullptr;
 };

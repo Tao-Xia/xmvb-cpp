@@ -96,7 +96,21 @@ struct Fixture {
         chunks[i].columns.assign(unique_right.begin()+edges[i],unique_right.begin()+edges[i+1]);
         chunks[i].values.assign(unique_values.begin()+edges[i],unique_values.begin()+edges[i+1]);
       }
+      std::reverse(chunks.begin(),chunks.end());
       return xmvb::integrals::build_ao_pair_graph(std::move(chunks),n_bf);
+    }
+    if (compact) {
+      auto rows=unique_left,columns=unique_right;
+      auto coefficients=unique_values;
+      for (int i=0;i<2;++i) {
+        rows.push_back(rows[i]);columns.push_back(columns[i]);
+        coefficients.push_back(0.25*coefficients[i]);coefficients[i]*=0.75;
+      }
+      std::reverse(rows.begin(),rows.end());
+      std::reverse(columns.begin(),columns.end());
+      std::reverse(coefficients.begin(),coefficients.end());
+      return xmvb::integrals::build_ao_pair_graph(std::move(rows),std::move(columns),
+          std::move(coefficients),n_bf,xmvb::integrals::AoPairLayout::Unique);
     }
     return xmvb::integrals::build_ao_pair_graph(unique_left,unique_right,unique_values,n_bf,
         compact ? xmvb::integrals::AoPairLayout::Unique:xmvb::integrals::AoPairLayout::Automatic);
@@ -845,10 +859,84 @@ void check_budgeted_pair_tiles(bool compact) {
   }
 }
 
+// Certify the library contract needed by the unique-row AO representation:
+// Same-width CSR row/column indices, unsorted columns, FP64 row-major
+// panels and both N/T operations, including the scalar SpMV dispatch.
+template<class Index>
+void check_unique_csr_library() {
+  xmvb::cuda::Context context(64ULL*1024*1024);
+  const std::vector<Index> offsets{0,2,3,5,6};
+  const std::vector<Index> columns{2,0,1,3,1,3};
+  const std::vector<double> coefficients{0.8,1.2,-0.2,1.4,0.7,0.3};
+  xmvb::cuda::Buffer<Index> row(context,offsets.size()),col(context,columns.size());
+  xmvb::cuda::Buffer<double> val(context,coefficients.size());
+  context.copy_to_device(row.data(),offsets.data(),offsets.size()*sizeof(offsets[0]));
+  context.copy_to_device(col.data(),columns.data(),columns.size()*sizeof(columns[0]));
+  context.copy_to_device(val.data(),coefficients.data(),coefficients.size()*sizeof(double));
+  struct Descriptors {
+    cusparseHandle_t handle=nullptr;
+    cusparseSpMatDescr_t matrix=nullptr;
+    cusparseDnMatDescr_t source=nullptr,target=nullptr;
+    ~Descriptors() {
+      if (target) cusparseDestroyDnMat(target);
+      if (source) cusparseDestroyDnMat(source);
+      if (matrix) cusparseDestroySpMat(matrix);
+      if (handle) cusparseDestroy(handle);
+    }
+  } d;
+  const auto check=[](cusparseStatus_t status) {
+    require(status==CUSPARSE_STATUS_SUCCESS,"unique CSR library operation failed");
+  };
+  check(cusparseCreate(&d.handle));
+  check(cusparseSetStream(d.handle,context.stream()));
+  constexpr auto index_type=sizeof(Index)==8 ? CUSPARSE_INDEX_64I:CUSPARSE_INDEX_32I;
+  check(cusparseCreateCsr(&d.matrix,4,4,coefficients.size(),row.data(),col.data(),val.data(),
+      index_type,index_type,CUSPARSE_INDEX_BASE_ZERO,CUDA_R_64F));
+  Matrix u=Matrix::Zero(4,4);
+  for (int r=0;r<4;++r)
+    for (auto e=offsets[r];e<offsets[r+1];++e) u(r,columns[e])+=coefficients[e];
+  for (int width:{1,3}) {
+    const auto x=values(4,width,0.79);
+    const int source_stride=width+2,target_stride=width+3;
+    std::vector<double> source(4*source_stride,-71.0),target(4*target_stride,-83.0);
+    for (int r=0;r<4;++r) for (int c=0;c<width;++c) source[r*source_stride+c]=x(r,c);
+    xmvb::cuda::Buffer<double> sx(context,source.size()),sy(context,target.size());
+    context.copy_to_device(sx.data(),source.data(),source.size()*sizeof(double));
+    context.copy_to_device(sy.data(),target.data(),target.size()*sizeof(double));
+    check(cusparseCreateDnMat(&d.source,4,width,source_stride,sx.data(),CUDA_R_64F,CUSPARSE_ORDER_ROW));
+    check(cusparseCreateDnMat(&d.target,4,width,target_stride,sy.data(),CUDA_R_64F,CUSPARSE_ORDER_ROW));
+    const double one=1.0,zero=0.0;
+    std::size_t scratch_bytes=0;
+    for (auto op:{CUSPARSE_OPERATION_NON_TRANSPOSE,CUSPARSE_OPERATION_TRANSPOSE}) {
+      std::size_t bytes=0;
+      check(cusparseSpMM_bufferSize(d.handle,op,CUSPARSE_OPERATION_NON_TRANSPOSE,&one,
+          d.matrix,d.source,&zero,d.target,CUDA_R_64F,CUSPARSE_SPMM_ALG_DEFAULT,&bytes));
+      scratch_bytes=std::max(scratch_bytes,bytes);
+    }
+    xmvb::cuda::Buffer<char> scratch(context,scratch_bytes);
+    check(cusparseSpMM(d.handle,CUSPARSE_OPERATION_NON_TRANSPOSE,CUSPARSE_OPERATION_NON_TRANSPOSE,
+        &one,d.matrix,d.source,&zero,d.target,CUDA_R_64F,CUSPARSE_SPMM_ALG_DEFAULT,scratch.data()));
+    check(cusparseSpMM(d.handle,CUSPARSE_OPERATION_TRANSPOSE,CUSPARSE_OPERATION_NON_TRANSPOSE,
+        &one,d.matrix,d.source,&one,d.target,CUDA_R_64F,CUSPARSE_SPMM_ALG_DEFAULT,scratch.data()));
+    context.copy_to_host(target.data(),sy.data(),target.size()*sizeof(double));
+    Matrix result(4,width);
+    for (int r=0;r<4;++r) {
+      for (int c=0;c<width;++c) result(r,c)=target[r*target_stride+c];
+      for (int c=width;c<target_stride;++c)
+        require(target[r*target_stride+c]==-83.0,"unique CSR SpMM overwrote padding");
+    }
+    near(result,(u+u.transpose())*x,"unique CSR N/T action differs from dense oracle");
+    check(cusparseDestroyDnMat(d.target));d.target=nullptr;
+    check(cusparseDestroyDnMat(d.source));d.source=nullptr;
+  }
+}
+
 }  // namespace
 
 int main() {
   try {
+    check_unique_csr_library<int>();
+    check_unique_csr_library<std::int64_t>();
     for (bool sparse:{false,true}) {
       check_graph_and_pair(3,true,sparse,true);
       check_one_electron_and_core(true,sparse,true);

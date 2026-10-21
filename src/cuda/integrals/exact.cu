@@ -175,24 +175,25 @@ __global__ void generated_packed(PairMatrix matrix,linalg::ConstMatrixView c,
   }
 }
 
-__global__ void generated_compact(linalg::ConstMatrixView c,
+template<class Index>
+__global__ void generated_unique(linalg::ConstMatrixView c,
                                   linalg::ConstMatrixView d,
                                   const int* first, const int* second,
-                                  const int* integral_rows,
-                                  const int* integral_columns,
+                                  const Index* offsets,
+                                  const Index* columns,
                                   const double* values,
-                                  std::int64_t integral_count,
                                   std::int64_t begin, PairPanel output,
-                                  PairPanel directional, std::int64_t work,
+                                  PairPanel directional,
                                   bool direction_only) {
-  for (std::int64_t k = blockIdx.x * static_cast<std::int64_t>(blockDim.x) + threadIdx.x;
-       k < work; k += gridDim.x * static_cast<std::int64_t>(blockDim.x)) {
-    const std::int64_t edge = k / output.cols;
+  const int left=blockIdx.x;
+  const auto start=offsets[left],end=offsets[left+1];
+  const auto work=static_cast<std::int64_t>(end-start)*output.cols;
+  for (std::int64_t k=threadIdx.x;k<work;k+=blockDim.x) {
+    const auto edge=start+k/output.cols;
     const std::int64_t p = k % output.cols;
-    if (edge >= integral_count) continue;
     int a, b;
     decode_pair(p, a, b);
-    const int left = integral_rows[edge], right = integral_columns[edge];
+    const int right=static_cast<int>(columns[edge]);
     const double value = values[edge];
     if (left >= begin && left < begin + output.rows) {
       atomic_add_double(output.data + (left - begin) * output.ld + p,
@@ -213,22 +214,12 @@ __global__ void generated_compact(linalg::ConstMatrixView c,
   }
 }
 
-__global__ void compact_apply(const int* rows, const int* columns,
-                              const double* values, std::int64_t edges,
-                              ConstPairPanel source, PairPanel target,
-                              std::int64_t work) {
-  for (std::int64_t k = blockIdx.x * static_cast<std::int64_t>(blockDim.x) + threadIdx.x;
-       k < work; k += gridDim.x * static_cast<std::int64_t>(blockDim.x)) {
-    const std::int64_t edge = k / source.cols;
-    const std::int64_t column = k % source.cols;
-    if (edge >= edges) continue;
-    const int left = rows[edge], right = columns[edge];
-    const double value = values[edge];
-    atomic_add_double(target.data + left * target.ld + column,
-                      value * source.data[right * source.ld + column]);
-    if (left != right)
-      atomic_add_double(target.data + right * target.ld + column,
-                        value * source.data[left * source.ld + column]);
+__global__ void subtract_pair_diagonal(const double* diagonal,ConstPairPanel source,
+    PairPanel target,std::int64_t work) {
+  for (auto k=blockIdx.x*static_cast<std::int64_t>(blockDim.x)+threadIdx.x;
+       k<work;k+=gridDim.x*static_cast<std::int64_t>(blockDim.x)) {
+    const auto row=k/source.cols,column=k%source.cols;
+    target.data[row*target.ld+column]-=diagonal[row]*source.data[row*source.ld+column];
   }
 }
 
@@ -267,12 +258,13 @@ __device__ void add_oriented_exchange(int u,int v,double value,
   }
 }
 
-__global__ void exchange_unique(const int* rows,const int* columns,
-    const double* values,std::int64_t count,const int* first,const int* second,
+template<class Index>
+__global__ void exchange_unique(const Index* offsets,const Index* columns,
+    const double* values,const int* first,const int* second,
     linalg::ConstMatrixView density,linalg::MatrixView output,double weight,int channels) {
-  for (std::int64_t p = blockIdx.x * static_cast<std::int64_t>(blockDim.x) + threadIdx.x;
-       p < count; p += gridDim.x * static_cast<std::int64_t>(blockDim.x)) {
-    const int left=rows[p],right=columns[p];
+  const int left=blockIdx.x;
+  for (std::int64_t p=offsets[left]+threadIdx.x;p<offsets[left+1];p+=blockDim.x) {
+    const int right=static_cast<int>(columns[p]);
     const double value=weight*values[p];
     add_oriented_exchange(left,right,value,first,second,density,output,channels);
     if (left!=right)
@@ -541,7 +533,7 @@ std::int64_t tile_size(Context& context, std::int64_t n_ao_pairs,
 
 std::size_t spmm_scratch_bytes(cusparseHandle_t sparse,
     cusparseSpMatDescr_t csr,std::int64_t rows,int channels,
-    std::int64_t target_ld,double* source_data,double* target_data) {
+    std::int64_t target_ld,double* source_data,double* target_data,bool unique=false) {
   cusparseDnMatDescr_t source=nullptr,target=nullptr;
   check_sparse(cusparseCreateDnMat(&source,rows,channels,channels,
       source_data,CUDA_R_64F,CUSPARSE_ORDER_ROW),
@@ -550,12 +542,18 @@ std::size_t spmm_scratch_bytes(cusparseHandle_t sparse,
     check_sparse(cusparseCreateDnMat(&target,rows,channels,target_ld,
         target_data,CUDA_R_64F,CUSPARSE_ORDER_ROW),
         "create generated AO-pair target descriptor");
-    const double alpha=1.0,beta=0.0;
+    const double alpha=1.0;
     std::size_t bytes=0;
-    check_sparse(cusparseSpMM_bufferSize(sparse,CUSPARSE_OPERATION_NON_TRANSPOSE,
-        CUSPARSE_OPERATION_NON_TRANSPOSE,&alpha,csr,source,&beta,target,
-        CUDA_R_64F,CUSPARSE_SPMM_ALG_DEFAULT,&bytes),
-        "query generated AO-pair SpMM scratch");
+    for (int pass=0;pass<1+unique;++pass) {
+      const double beta=pass ? 1.0:0.0;
+      std::size_t current=0;
+      const auto op=pass ? CUSPARSE_OPERATION_TRANSPOSE:CUSPARSE_OPERATION_NON_TRANSPOSE;
+      check_sparse(cusparseSpMM_bufferSize(sparse,op,
+          CUSPARSE_OPERATION_NON_TRANSPOSE,&alpha,csr,source,&beta,target,
+          CUDA_R_64F,CUSPARSE_SPMM_ALG_DEFAULT,&current),
+          "query generated AO-pair SpMM scratch");
+      bytes=std::max(bytes,current);
+    }
     cusparseDestroyDnMat(target);
     cusparseDestroyDnMat(source);
     return bytes;
@@ -641,17 +639,7 @@ ExactAoPairOperator::ExactAoPairOperator(
     return;
   }
   if (compact_) {
-    integral_rows_ = Buffer<int>(context, n_integrals_);
-    integral_columns_ = Buffer<int>(context, n_integrals_);
-    integral_values_ = Buffer<double>(context, n_integrals_);
-    std::size_t offset=0;
-    graph.for_each_chunk([&](auto rows,auto columns,auto values) {
-      if (values.empty()) return;
-      context.copy_to_device(integral_rows_.data()+offset,rows.data(),rows.size_bytes());
-      context.copy_to_device(integral_columns_.data()+offset,columns.data(),columns.size_bytes());
-      context.copy_to_device(integral_values_.data()+offset,values.data(),values.size_bytes());
-      offset+=values.size();
-    });
+    upload_unique(graph);
   } else {
     row_offsets_ = Buffer<int>(context, n_pairs_ + 1);
     columns_ = Buffer<int>(context, n_integrals_);
@@ -662,20 +650,22 @@ ExactAoPairOperator::ExactAoPairOperator(
                            n_integrals_ * sizeof(int));
     context.copy_to_device(values_.data(), graph.values.data(),
                            n_integrals_ * sizeof(double));
-    if (n_integrals_ != 0) {
-      check_sparse(cusparseCreate(&sparse_), "cusparseCreate");
-      try {
-        check_sparse(cusparseSetStream(sparse_, context.stream()), "cusparseSetStream");
-        check_sparse(cusparseCreateCsr(&csr_, n_pairs_, n_pairs_, n_integrals_,
-                                      row_offsets_.data(), columns_.data(), values_.data(),
-                                      CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
-                                      CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F),
-                     "cusparseCreateCsr");
-      } catch (...) {
-        cusparseDestroy(sparse_);
-        sparse_ = nullptr;
-        throw;
-      }
+  }
+  if (n_integrals_ != 0) {
+    check_sparse(cusparseCreate(&sparse_), "cusparseCreate");
+    try {
+      check_sparse(cusparseSetStream(sparse_, context.stream()), "cusparseSetStream");
+      const auto index_type=wide_ ? CUSPARSE_INDEX_64I:CUSPARSE_INDEX_32I;
+      void* offsets=wide_ ? static_cast<void*>(wide_offsets_.data()):row_offsets_.data();
+      void* columns=wide_ ? static_cast<void*>(wide_columns_.data()):columns_.data();
+      check_sparse(cusparseCreateCsr(&csr_, n_pairs_, n_pairs_, n_integrals_,
+                                    offsets, columns, values_.data(),index_type,index_type,
+                                    CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F),
+                   "cusparseCreateCsr");
+    } catch (...) {
+      cusparseDestroy(sparse_);
+      sparse_ = nullptr;
+      throw;
     }
   }
 }
@@ -714,17 +704,6 @@ void ExactAoPairOperator::apply(ConstPairPanel source, PairPanel target) const {
     packed_->apply(source,target);
     return;
   }
-  if (compact_) {
-    zero_matrix(*context_,{target.data,target.cols,target.rows,target.ld});
-    const std::int64_t work = checked_product(n_integrals_, source.cols);
-    if (work) {
-      compact_apply<<<blocks(work), 256, 0, context_->stream()>>>(
-          integral_rows_.data(), integral_columns_.data(), integral_values_.data(),
-          n_integrals_, source, target, work);
-      check_launch("compact AO-pair action");
-    }
-    return;
-  }
   cusparseDnMatDescr_t a = nullptr, b = nullptr;
   check_sparse(cusparseCreateDnMat(&a, n_pairs_, source.cols, source.ld,
                                   const_cast<double*>(source.data), CUDA_R_64F,
@@ -733,19 +712,35 @@ void ExactAoPairOperator::apply(ConstPairPanel source, PairPanel target) const {
     check_sparse(cusparseCreateDnMat(&b, n_pairs_, target.cols, target.ld,
                                     target.data, CUDA_R_64F, CUSPARSE_ORDER_ROW),
                  "cusparseCreateDnMat target");
-    const double alpha = 1.0, beta = 0.0;
+    const double alpha = 1.0;
     std::size_t bytes = 0;
-    check_sparse(cusparseSpMM_bufferSize(sparse_, CUSPARSE_OPERATION_NON_TRANSPOSE,
+    for (int pass=0;pass<1+compact_;++pass) {
+      const auto op=pass ? CUSPARSE_OPERATION_TRANSPOSE:CUSPARSE_OPERATION_NON_TRANSPOSE;
+      const double beta=pass ? 1.0:0.0;
+      std::size_t current=0;
+      check_sparse(cusparseSpMM_bufferSize(sparse_, op,
                                         CUSPARSE_OPERATION_NON_TRANSPOSE,
                                         &alpha, csr_, a, &beta, b, CUDA_R_64F,
-                                        CUSPARSE_SPMM_ALG_DEFAULT, &bytes),
+                                        CUSPARSE_SPMM_ALG_DEFAULT, &current),
                  "cusparseSpMM_bufferSize");
+      bytes=std::max(bytes,current);
+    }
     Buffer<char> scratch(*context_, bytes);
-    check_sparse(cusparseSpMM(sparse_, CUSPARSE_OPERATION_NON_TRANSPOSE,
+    for (int pass=0;pass<1+compact_;++pass) {
+      const auto op=pass ? CUSPARSE_OPERATION_TRANSPOSE:CUSPARSE_OPERATION_NON_TRANSPOSE;
+      const double beta=pass ? 1.0:0.0;
+      check_sparse(cusparseSpMM(sparse_, op,
                              CUSPARSE_OPERATION_NON_TRANSPOSE,
                              &alpha, csr_, a, &beta, b, CUDA_R_64F,
                              CUSPARSE_SPMM_ALG_DEFAULT, scratch.data()),
                  "cusparseSpMM AO-pair action");
+    }
+    if (compact_) {
+      const auto work=checked_product(n_pairs_,source.cols);
+      subtract_pair_diagonal<<<blocks(work),256,0,context_->stream()>>>(
+          diagonal_.data(),source,target,work);
+      check_launch("remove double-counted unique CSR diagonal");
+    }
   } catch (...) {
     if (b) cusparseDestroyDnMat(b);
     cusparseDestroyDnMat(a);
@@ -836,8 +831,8 @@ void ExactAoPairOperator::generated_rows_impl(
     }
     return;
   }
-  if (!compact_ && n_integrals_ != 0 && begin == 0 && output.rows == n_pairs_) {
-    // Full AO rows admit one graph SpMM per active-pair channel slab. The
+  if (n_integrals_ != 0 && begin == 0 && output.rows == n_pairs_) {
+    // Full AO rows admit a library graph action per active-pair channel slab. The
     // generated CSR kernel below is retained for row subsets, where a full
     // source feature panel would repeat work and increase residency.
     std::size_t device_free=0,device_total=0;
@@ -854,7 +849,7 @@ void ExactAoPairOperator::generated_rows_impl(
         pairs,available/channel_bytes));
     const auto spmm_scratch=[&](int channels) {
       return spmm_scratch_bytes(sparse_,csr_,n_pairs_,channels,output.ld,
-                                output.data,output.data);
+                                output.data,output.data,compact_);
     };
     int slab_channels=0;
     // The library may require different scratch for the final short slab.
@@ -903,13 +898,16 @@ void ExactAoPairOperator::generated_rows_impl(
     zero_matrix(*context_,{output.data,output.cols,output.rows,output.ld});
     if (directional.data)
       zero_matrix(*context_,{directional.data,directional.cols,directional.rows,directional.ld});
-    const std::int64_t compact_work = checked_product(n_integrals_, pairs);
-    if (compact_work) {
-      generated_compact<<<blocks(compact_work), 256, 0, context_->stream()>>>(
-          c, d, pair_first_.data(), pair_second_.data(), integral_rows_.data(),
-          integral_columns_.data(), integral_values_.data(), n_integrals_,
-          begin, output, directional, compact_work, direction_only);
-      check_launch("compact generated AO-pair rows");
+    if (n_integrals_) {
+      if (wide_)
+        generated_unique<<<static_cast<unsigned int>(n_pairs_),256,0,context_->stream()>>>(
+            c,d,pair_first_.data(),pair_second_.data(),wide_offsets_.data(),
+            wide_columns_.data(),values_.data(),begin,output,directional,direction_only);
+      else
+        generated_unique<<<static_cast<unsigned int>(n_pairs_),256,0,context_->stream()>>>(
+            c,d,pair_first_.data(),pair_second_.data(),row_offsets_.data(),
+            columns_.data(),values_.data(),begin,output,directional,direction_only);
+      check_launch("unique CSR generated AO-pair rows");
     }
   } else {
     generated_csr<<<blocks(work), 256, 0, context_->stream()>>>(
@@ -962,7 +960,7 @@ void ExactAoPairOperator::forward(linalg::ConstMatrixView c,
     // A full-row forward tile already owns B. Reuse it directly as the
     // SpMM source instead of regenerating the same active-pair features.
     bool direct_action=false;
-    if (!compact_ && n_integrals_ != 0 && begin == 0 && count == n_pairs_) {
+    if (n_integrals_ != 0 && begin == 0 && count == n_pairs_) {
       std::size_t device_free=0,device_total=0;
       check_cuda(cudaMemGetInfo(&device_free,&device_total),
                  "query CUDA forward SpMM free memory");
@@ -970,7 +968,7 @@ void ExactAoPairOperator::forward(linalg::ConstMatrixView c,
           context_->counters().current_device_bytes,device_free);
       direct_action=(packed_ ? packed_->workspace_bytes(pairs,0,n_pairs_):
           spmm_scratch_bytes(sparse_,csr_,n_pairs_,static_cast<int>(pairs),
-              pp.ld,bp.data,pp.data))<=available;
+              pp.ld,bp.data,pp.data,compact_))<=available;
     }
     if (direct_action) apply({bp.data,bp.rows,bp.cols,bp.ld},pp);
     else
@@ -1099,6 +1097,18 @@ void ExactAoPairOperator::directional_adjoint(
   }
 }
 
+void ExactAoPairOperator::unique_exchange(linalg::ConstMatrixView density,
+    linalg::MatrixView output,double weight,int channels) const {
+  if (wide_)
+    exchange_unique<<<static_cast<unsigned int>(n_pairs_),256,0,context_->stream()>>>(
+        wide_offsets_.data(),wide_columns_.data(),values_.data(),pair_first_.data(),
+        pair_second_.data(),density,output,weight,channels);
+  else
+    exchange_unique<<<static_cast<unsigned int>(n_pairs_),256,0,context_->stream()>>>(
+        row_offsets_.data(),columns_.data(),values_.data(),pair_first_.data(),
+        pair_second_.data(),density,output,weight,channels);
+}
+
 void ExactAoPairOperator::contract_jk(linalg::ConstMatrixView density,
                                        linalg::MatrixView output,
                                        double coulomb, double exchange,
@@ -1120,9 +1130,7 @@ void ExactAoPairOperator::contract_jk(linalg::ConstMatrixView density,
       exchange_pair_gather<<<blas_int(n_pairs_),256,0,context_->stream()>>>(
           packed_->view(),pair_first_.data(),pair_second_.data(),density,output,exchange);
     else if (compact_)
-      exchange_unique<<<blocks(n_integrals_),256,0,context_->stream()>>>(
-          integral_rows_.data(),integral_columns_.data(),integral_values_.data(),n_integrals_,
-          pair_first_.data(),pair_second_.data(),density,output,exchange,1);
+      unique_exchange(density,output,exchange,1);
     else
       launch_exchange_rows(*context_,
           row_offsets_.data(),columns_.data(),values_.data(),pair_first_.data(),
@@ -1169,9 +1177,7 @@ void ExactAoPairOperator::contract_jk_batch(linalg::ConstMatrixView density,
     if (packed_)
       packed_exchange(density,output,exchange,channels);
     else if (compact_)
-      exchange_unique<<<blocks(n_integrals_),256,0,context_->stream()>>>(
-          integral_rows_.data(),integral_columns_.data(),integral_values_.data(),n_integrals_,
-          pair_first_.data(),pair_second_.data(),density,output,exchange,channels);
+      unique_exchange(density,output,exchange,channels);
     else
       launch_exchange_rows(*context_,
           row_offsets_.data(),columns_.data(),values_.data(),pair_first_.data(),

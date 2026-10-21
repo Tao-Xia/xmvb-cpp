@@ -7,6 +7,7 @@ add_library(xmvb_cuda
   ci/sigma.cu
   ci/moments.cu
   integrals/exact.cu
+  integrals/unique.cu
   integrals/packed.cu
   integrals/packed_response.cu
   integrals/exchange.cu

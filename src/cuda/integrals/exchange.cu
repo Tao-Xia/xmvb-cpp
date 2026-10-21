@@ -166,8 +166,8 @@ Buffer<double> ExactAoPairOperator::prepare_exchange(View c,Matrix<double>* proj
 
 Buffer<double> ExactAoPairOperator::reserve_exchange(View c) const {
   validate_coefficients(c);
-  // Compact ERIs retain their existing exact device contractions. Preparation
-  // needs the resident row graph to visit each row without rescanning the stream.
+  // This preparation requires full symmetric row adjacency. A unique CSR
+  // stores one orientation and retains its exact device contractions instead.
   if (compact_) return {};
   const int n=blas_int(c.cols);
   const auto n2=static_cast<std::int64_t>(n)*n,n3=n2*n;
