@@ -40,7 +40,8 @@ case_name=${CUVB_PROFILE_CASE:-full}
 printf '%s\n' "$case_name" > "$out/case.txt"
 profile_range=${CUVB_PROFILE_RANGE:-gpu.scf.macro}
 printf '%s\n' "$profile_range" > "$out/range.txt"
-bundle="$source_dir/cuvbscf-c12-297979/bundle/cases/$case_name"
+bundle="${CUVB_CASE_BUNDLE:-$source_dir/cuvbscf-c12-297979/bundle/cases}/$case_name"
+printf '%s\n' "$bundle" > "$out/bundle.txt"
 cp "$bundle/input.xmi" "$bundle/cc-pvdz.gbs" "$out/"
 cd "$out"
 sha256sum input.xmi cc-pvdz.gbs > input.sha256

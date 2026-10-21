@@ -34,35 +34,34 @@ __global__ void scatter_channels(
   channels[index]=value;
 }
 
-// Exact E_P^T for one intermediate-product row tile. Each output product
-// owns its sum; no atomics or full-carrier channel image are needed.
-__global__ void gather_row_channels(const double* channels,linalg::MatrixView image,
-    std::int64_t products,std::int64_t begin,std::int64_t count,
-    int n_alpha,int n_beta,const int* alpha,const int* beta,int n_channels,bool add) {
-  const auto product=blockIdx.x*static_cast<std::int64_t>(blockDim.x)+threadIdx.x;
-  if (product>=products) return;
+// E_P is a Hermitian packed one-body channel. Its transpose therefore uses
+// the same signed spin links, starting at each source row in this tile.
+// Visit only count*channels links, not products*channels for every row tile.
+// Atomic additions merge different channels without a full-carrier buffer.
+__global__ void scatter_channel_adjoint(const double* channels,linalg::MatrixView image,
+    std::int64_t begin,std::int64_t count,
+    int n_alpha,int n_beta,const int* alpha,const int* beta,int n_channels) {
+  const auto index=blockIdx.x*static_cast<std::int64_t>(blockDim.x)+threadIdx.x;
+  if (index>=count*n_channels) return;
+  const auto product=begin+index%count;
+  const int p=index/count;
   const int a=product%n_alpha;
   const auto column=product/n_alpha;
   const int b=column%n_beta;
   const auto rhs=column/n_beta;
-  double value=0.0;
-  for (int p=0;p<n_channels;++p) {
-    const int sa=alpha[static_cast<std::int64_t>(p)*n_alpha+a];
-    const int sb=beta[static_cast<std::int64_t>(p)*n_beta+b];
-    if (sa) {
-      const auto source=abs(sa)-1+n_alpha*column;
-      if (source>=begin && source<begin+count)
-        value+=(sa>0 ? 1.0:-1.0)*channels[source-begin+count*p];
-    }
-    if (sb) {
-      const auto source=a+n_alpha*(rhs*n_beta+abs(sb)-1);
-      if (source>=begin && source<begin+count)
-        value+=(sb>0 ? 1.0:-1.0)*channels[source-begin+count*p];
-    }
-  }
-  auto& destination=image.data[a+image.ld*column];
-  if (add) destination+=value;
-  else destination=value;
+  const int sa=alpha[static_cast<std::int64_t>(p)*n_alpha+a];
+  const int sb=beta[static_cast<std::int64_t>(p)*n_beta+b];
+  const double value=channels[index];
+  if (sa)
+    atomicAdd(image.data+abs(sa)-1+image.ld*column,(sa>0 ? 1.0:-1.0)*value);
+  if (sb)
+    atomicAdd(image.data+a+image.ld*(rhs*n_beta+abs(sb)-1),(sb>0 ? 1.0:-1.0)*value);
+}
+
+void clear_image(Context& context,linalg::MatrixView image) {
+  check_cuda(cudaMemset2DAsync(image.data,image.ld*sizeof(double),0,
+      image.rows*sizeof(double),image.cols,context.stream()),
+      "clear CUDA source-scattered CI image");
 }
 
 __global__ void absorbed_one_adjoint(linalg::ConstMatrixView channel,
@@ -444,6 +443,7 @@ void DirectCiSigma::apply(linalg::ConstMatrixView coefficients,
     throw std::overflow_error("CUDA direct-CI product panel exceeds cuBLAS range");
   const std::int64_t products = coefficients.rows*coefficients.cols;
   prepare(static_cast<int>(coefficients.cols/n_beta_));
+  if (!add) clear_image(*context_,image);
   const auto* alpha=alpha_->sources.data();
   const auto* beta=beta_->sources.data();
 
@@ -459,9 +459,8 @@ void DirectCiSigma::apply(linalg::ConstMatrixView coefficients,
     const linalg::ConstMatrixView kernel_view{kernel_.data(),n_channels_,n_channels_,n_channels_};
     const linalg::MatrixView p_view{transformed_.data(),count,n_channels_,count};
     gemm(*context_,p_view,q_view,kernel_view,1.0,0.0,Operation::none,Operation::transpose);
-    gather_row_channels<<<grid_size(products),256,0,context_->stream()>>>(
-        transformed_.data(),image,products,begin,count,n_alpha_,n_beta_,alpha,beta,
-        n_channels_,add || begin!=0);
+    scatter_channel_adjoint<<<grid_size(count*n_channels_),256,0,context_->stream()>>>(
+        transformed_.data(),image,begin,count,n_alpha_,n_beta_,alpha,beta,n_channels_);
     check_cuda(cudaGetLastError(), "CUDA direct-CI channel gather");
   }
 }
@@ -475,6 +474,7 @@ void DirectCiSigma::contract_adjoint(linalg::ConstMatrixView left,
   const auto* alpha=alpha_->sources.data();
   const auto* beta=beta_->sources.data();
   const bool same_source=left.data==right.data && left.ld==right.ld;
+  if (image) clear_image(*context_,*image);
   bool first_adjoint=true;
   for (std::int64_t begin=0;begin<products;begin+=rows) {
     const auto count=std::min(rows,products-begin);
@@ -496,9 +496,8 @@ void DirectCiSigma::contract_adjoint(linalg::ConstMatrixView left,
       const linalg::ConstMatrixView kernel_view{kernel_.data(),n_channels_,n_channels_,n_channels_};
       const linalg::MatrixView p_view{transformed_.data(),count,n_channels_,count};
       gemm(*context_,p_view,left_channels,kernel_view,1.0,0.0,Operation::none,Operation::transpose);
-      gather_row_channels<<<grid_size(products),256,0,context_->stream()>>>(
-          transformed_.data(),*image,products,begin,count,n_alpha_,n_beta_,
-          alpha,beta,n_channels_,begin!=0);
+      scatter_channel_adjoint<<<grid_size(count*n_channels_),256,0,context_->stream()>>>(
+          transformed_.data(),*image,begin,count,n_alpha_,n_beta_,alpha,beta,n_channels_);
       check_cuda(cudaGetLastError(),"CUDA direct-CI adjoint sigma gather");
     }
   }
@@ -607,6 +606,7 @@ void DirectCiSigma::apply_direction_with_adjoint(
   const auto rows=scattered_.rows();
   const auto* alpha=alpha_->sources.data();
   const auto* beta=beta_->sources.data();
+  clear_image(*context_,combined_image);
   bool first_adjoint=true;
   for (std::int64_t begin=0;begin<products;begin+=rows) {
     const auto count=std::min(rows,products-begin);
@@ -629,9 +629,8 @@ void DirectCiSigma::apply_direction_with_adjoint(
         1.0,0.0,Operation::none,Operation::transpose);
     gemm(*context_,output,state_channels,directional_kernel,
         1.0,1.0,Operation::none,Operation::transpose);
-    gather_row_channels<<<grid_size(products),256,0,context_->stream()>>>(
-        transformed_.data(),combined_image,products,begin,count,n_alpha_,n_beta_,
-        alpha,beta,n_channels_,begin!=0);
+    scatter_channel_adjoint<<<grid_size(count*n_channels_),256,0,context_->stream()>>>(
+        transformed_.data(),combined_image,begin,count,n_alpha_,n_beta_,alpha,beta,n_channels_);
     check_cuda(cudaGetLastError(),"CUDA direct-CI combined directional gather");
   }
   pullback_channel_kernel(channel_adjoint_.view(),

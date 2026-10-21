@@ -144,8 +144,7 @@ void check_directional_derivative(
   }
 }
 
-void check_sigma(int rhs_count,bool rotated,int maximum_tile=3,bool one_product=false) {
-  constexpr int n = 4;
+void check_sigma(int rhs_count,bool rotated,int maximum_tile=3,bool one_product=false,int n=4) {
   const xmvb::mcscf::SpinStrings alpha_space(n,one_product ? n:2),
       beta_space(n,one_product ? 0:1);
   const Strings alpha = alpha_space.occupations(), beta = beta_space.occupations();
@@ -172,6 +171,26 @@ void check_sigma(int rhs_count,bool rotated,int maximum_tile=3,bool one_product=
   gpu.apply(d_right.view(),d_image.view(),true);
   near(download(context,d_image),cpu.apply(left)+cpu.apply(right),3.0e-10,
        "CUDA source-row sigma add mode differs from CPU");
+
+  // Clearing the scattered destination must not touch padded rows. Both
+  // overwrite and accumulation modes must honor the caller's leading dimension.
+  xmvb::cuda::Matrix<double> padded(context,left.rows()+3,left.cols());
+  const Matrix sentinels=Matrix::Constant(padded.rows(),padded.cols(),7.25);
+  xmvb::cuda::copy_to_device(context,padded.view(),sentinels);
+  const xmvb::linalg::MatrixView padded_image{
+      padded.data(),left.rows(),left.cols(),padded.rows()};
+  gpu.apply(d_left.view(),padded_image);
+  auto padded_result=download(context,padded);
+  near(padded_result.topRows(left.rows()),cpu.apply(left),3.0e-10,
+       "CUDA source-scattered sigma ignores output stride");
+  near(padded_result.bottomRows(3),sentinels.bottomRows(3),0.0,
+       "CUDA source-scattered sigma cleared padded rows");
+  gpu.apply(d_right.view(),padded_image,true);
+  padded_result=download(context,padded);
+  near(padded_result.topRows(left.rows()),cpu.apply(left)+cpu.apply(right),3.0e-10,
+       "CUDA source-scattered sigma add mode ignores output stride");
+  near(padded_result.bottomRows(3),sentinels.bottomRows(3),0.0,
+       "CUDA source-scattered sigma add mode changed padded rows");
 
   const auto cpu_adjoint = cpu.integral_adjoint(left, right);
   gpu.integral_adjoint(d_left.view(), d_right.view(), d_h.view(), d_g.view());
@@ -653,6 +672,9 @@ int main() {
         check_sigma(rhs_count,rotated,1);
         check_sigma(rhs_count,rotated,1,true);
       }
+    // Wide, unequal spin sectors and one-channel-equivalent workspace force
+    // many source tiles. Exercise transpose scatter, add mode and fused HVP.
+    check_sigma(2,false,1,false,8);
     check_partitioned_moments();
     for (int rhs_count : {1, 3}) check_spin_metric(rhs_count);
     for (int rhs_count : {1, 3}) check_exterior(rhs_count);
