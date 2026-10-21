@@ -1,6 +1,6 @@
 #pragma once
 
-#include "cuda/memory/buffer.hpp"
+#include "cuda/integrals/exact.hpp"
 #include "linalg/views.hpp"
 
 namespace xmvb::cuda {
@@ -21,6 +21,7 @@ Matrix<double> build_analytic_rotation_diagonal(
     linalg::ConstMatrixView ao_effective,
     linalg::ConstMatrixView active_one_adjoint,
     linalg::ConstMatrixView full_pair_adjoint,
-    linalg::ConstMatrixView active_pair_kernel,int n_core);
+    linalg::ConstMatrixView active_pair_kernel,int n_core,
+    ConstPairPanel accepted_products = {});
 
 }  // namespace xmvb::cuda

@@ -291,6 +291,20 @@ void check_graph_and_pair(int active, bool compact) {
                      upstream - step * upstream_direction)) / (2 * step);
   near(download(context, dgradient), expected_hvp,
        "CUDA changing-adjoint pair HVP differs from finite difference", 2e-7);
+
+  // Point-owned half transform is filled by forward, then borrowed by every
+  // consumer. A padded row stride catches accidental packed-only addressing.
+  xmvb::cuda::Buffer<double> accepted(context,fixture.ao_pairs*(pairs+2));
+  const xmvb::cuda::PairPanel accepted_panel{accepted.data(),fixture.ao_pairs,pairs,pairs+2};
+  const xmvb::cuda::ConstPairPanel accepted_view{accepted.data(),fixture.ao_pairs,pairs,pairs+2};
+  gpu.forward(dc.view(),dkernel.view(),accepted_panel);
+  near(download(context,dkernel),b.transpose()*p,"CUDA retained pair forward differs from oracle");
+  gpu.directional(dc.view(),dd.view(),ddelta.view(),accepted_view);
+  near(download(context,ddelta),expected_delta,"CUDA retained pair direction differs from oracle");
+  gpu.adjoint(dc.view(),dg.view(),dgradient.view(),accepted_view);
+  near(download(context,dgradient),gradient,"CUDA retained pair gradient differs from oracle");
+  gpu.directional_adjoint(dc.view(),dd.view(),dg.view(),ddg.view(),dgradient.view(),accepted_view);
+  near(download(context,dgradient),expected_hvp,"CUDA retained pair HVP differs from finite difference",2e-7);
 }
 
 void check_one_electron_and_core(bool compact) {
@@ -354,6 +368,22 @@ void check_one_electron_and_core(bool compact) {
   gpu.contract_jk(dp.view(), dout.view(), 1.0, -0.5);
   near(download(context, dout), reference_jk(fixture, density, 1.0, -0.5),
        "CUDA weighted exact JK differs from four-index oracle");
+  gpu.contract_jk(dp.view(),dout.view(),2.0,-1.0,dheff.view());
+  near(download(context,dout),reference_jk(fixture,density),"CUDA shared JK differs from oracle");
+  near(download(context,dheff),reference_jk(fixture,density,1.0,0.0),
+       "CUDA reused Coulomb image differs from oracle");
+  Matrix density_batch(fixture.n_bf,3*fixture.n_bf);
+  density_batch << density,density_direction,(density+0.37*density_direction).eval();
+  DeviceMatrix dbatch(context,fixture.n_bf,3*fixture.n_bf),obatch(context,fixture.n_bf,3*fixture.n_bf);
+  upload(context,dbatch,density_batch);
+  for (const auto weights:std::vector<std::pair<double,double>>{{2.0,-1.0},{0.0,-1.0},{1.0,0.0}}) {
+    gpu.contract_jk_batch(dbatch.view(),obatch.view(),weights.first,weights.second);
+    const Matrix result=download(context,obatch);
+    for (int channel=0;channel<3;++channel)
+      near(result.middleCols(channel*fixture.n_bf,fixture.n_bf),
+          reference_jk(fixture,density_batch.middleCols(channel*fixture.n_bf,fixture.n_bf),
+              weights.first,weights.second),"CUDA batched JK differs from oracle");
+  }
   gpu.core_energy(dp.view(), dh.view(), dheff.view(), denergy.data());
   const Matrix expected_heff = core + reference_jk(fixture, density);
   near(download(context, dheff), expected_heff,
@@ -439,6 +469,30 @@ void check_budgeted_pair_tiles(bool compact) {
         near_scalar(actual_direction[row*pairs+col],expected_direction(row,col),
                     "CUDA low-budget full-row directional image differs");
       }
+  }
+  {
+    // Retain one accepted image, but force the changing-adjoint consumer to
+    // use two-row direction-only CSR/compact tiles, not another full image.
+    xmvb::cuda::Buffer<double> products(context,fixture.ao_pairs*pairs);
+    gpu.forward(dc.view(),kernel.view(),{products.data(),fixture.ao_pairs,pairs,pairs});
+    const Matrix g=values(pairs,pairs,0.78),dg=values(pairs,pairs,1.36);
+    DeviceMatrix upstream(context,pairs,pairs),dupstream(context,pairs,pairs);
+    DeviceMatrix gradient(context,fixture.n_bf,active);
+    upload(context,upstream,g);upload(context,dupstream,dg);
+    const auto free_bytes=context.device_byte_budget()-context.counters().current_device_bytes;
+    const std::size_t allowance=2*matrix_bytes+fixture.n_bf*active*sizeof(double)+
+        2*4*pairs*sizeof(double);
+    require(free_bytes>allowance,"CUDA retained tile fixture has insufficient allowance");
+    xmvb::cuda::Buffer<unsigned char> padding(context,free_bytes-allowance);
+    require(gpu.reserve_products(active).empty(),"CUDA accepted products ignored the live budget");
+    gpu.directional_adjoint(dc.view(),dd.view(),upstream.view(),dupstream.view(),gradient.view(),
+        {products.data(),fixture.ao_pairs,pairs,pairs});
+    constexpr double step=2e-6;
+    const Matrix expected=(pair_gradient(fixture,c+step*d,g+step*dg)-
+        pair_gradient(fixture,c-step*d,g-step*dg))/(2*step);
+    near(download(context,gradient),expected,"CUDA budgeted retained pair HVP differs",2e-7);
+    require(context.counters().peak_device_bytes<=context.device_byte_budget(),
+        "CUDA retained pair response exceeded its budget");
   }
 }
 

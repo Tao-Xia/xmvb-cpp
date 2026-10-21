@@ -156,6 +156,18 @@ void check(bool compact,int ncore) {
               << " expected_norm=" << expected.norm() << '\n';
     throw std::runtime_error("GPU analytic Hessian diagonal differs from CPU oracle");
   }
+  auto products=graph.reserve_products(na);
+  if (products.empty()) throw std::runtime_error("diagonal fixture lacks retained product memory");
+  DeviceMatrix prepared_pair(context,nactivepairs,nactivepairs);
+  graph.forward(dmo.view().columns(ncore,na),prepared_pair.view(),
+      {products.data(),graph.pair_count(),nactivepairs,nactivepairs});
+  const auto reused=xmvb::cuda::build_analytic_rotation_diagonal(
+      context,graph,dmo.view(),dcore.view(),deffective.view(),ddm1.view(),
+      dadjoint.view(),dpair.view(),ncore,
+      {products.data(),graph.pair_count(),nactivepairs,nactivepairs});
+  xmvb::cuda::copy_to_host(context,actual,reused.view());
+  if ((actual-expected).norm()>2e-9*std::max(1.0,expected.norm()))
+    throw std::runtime_error("GPU retained analytic Hessian diagonal differs from CPU oracle");
 }
 
 }  // namespace

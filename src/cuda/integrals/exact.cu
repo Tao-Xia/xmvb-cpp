@@ -8,6 +8,7 @@
 #include <string>
 
 #include <cuda_runtime.h>
+#include <nvtx3/nvtx3.hpp>
 
 #include "cuda/linalg/blas.hpp"
 
@@ -131,7 +132,7 @@ __global__ void generated_csr(linalg::ConstMatrixView c,
                               const int* offsets, const int* columns,
                               const double* values, std::int64_t begin,
                               PairPanel output, PairPanel directional,
-                              std::int64_t work) {
+                              std::int64_t work, bool direction_only) {
   for (std::int64_t k = blockIdx.x * static_cast<std::int64_t>(blockDim.x) + threadIdx.x;
        k < work; k += gridDim.x * static_cast<std::int64_t>(blockDim.x)) {
     const std::int64_t row = k / output.cols;
@@ -142,12 +143,12 @@ __global__ void generated_csr(linalg::ConstMatrixView c,
     for (int edge = offsets[begin + row]; edge < offsets[begin + row + 1]; ++edge) {
       const int source = columns[edge];
       const double integral = values[edge];
-      sum += integral * feature(c, first, second, source, a, b);
+      if (!direction_only) sum += integral * feature(c, first, second, source, a, b);
       if (d.data)
         delta += integral * mixed_feature(c, d, first, second, source, a, b);
     }
-    output.data[row * output.ld + p] = sum;
-    if (d.data) directional.data[row * directional.ld + p] = delta;
+    output.data[row * output.ld + p] = direction_only ? delta:sum;
+    if (directional.data) directional.data[row * directional.ld + p] = delta;
   }
 }
 
@@ -159,7 +160,8 @@ __global__ void generated_compact(linalg::ConstMatrixView c,
                                   const double* values,
                                   std::int64_t integral_count,
                                   std::int64_t begin, PairPanel output,
-                                  PairPanel directional, std::int64_t work) {
+                                  PairPanel directional, std::int64_t work,
+                                  bool direction_only) {
   for (std::int64_t k = blockIdx.x * static_cast<std::int64_t>(blockDim.x) + threadIdx.x;
        k < work; k += gridDim.x * static_cast<std::int64_t>(blockDim.x)) {
     const std::int64_t edge = k / output.cols;
@@ -171,15 +173,17 @@ __global__ void generated_compact(linalg::ConstMatrixView c,
     const double value = values[edge];
     if (left >= begin && left < begin + output.rows) {
       atomic_add_double(output.data + (left - begin) * output.ld + p,
-                        value * feature(c, first, second, right, a, b));
-      if (d.data)
+                        value * (direction_only ? mixed_feature(c,d,first,second,right,a,b):
+                                                   feature(c, first, second, right, a, b)));
+      if (directional.data)
         atomic_add_double(directional.data + (left - begin) * directional.ld + p,
                           value * mixed_feature(c, d, first, second, right, a, b));
     }
     if (left != right && right >= begin && right < begin + output.rows) {
       atomic_add_double(output.data + (right - begin) * output.ld + p,
-                        value * feature(c, first, second, left, a, b));
-      if (d.data)
+                        value * (direction_only ? mixed_feature(c,d,first,second,left,a,b):
+                                                   feature(c, first, second, left, a, b)));
+      if (directional.data)
         atomic_add_double(directional.data + (right - begin) * directional.ld + p,
                           value * mixed_feature(c, d, first, second, left, a, b));
     }
@@ -215,13 +219,23 @@ __global__ void pack_symmetric_density(linalg::ConstMatrixView density,
   }
 }
 
+__global__ void pack_density_batch(linalg::ConstMatrixView densities,
+    const int* first,const int* second,double* packed,std::int64_t pairs,int channels) {
+  for (std::int64_t k=blockIdx.x*static_cast<std::int64_t>(blockDim.x)+threadIdx.x;
+       k<pairs*channels;k+=gridDim.x*static_cast<std::int64_t>(blockDim.x)) {
+    const auto p=k/channels;const int channel=static_cast<int>(k%channels);
+    const int i=first[p],j=second[p];
+    packed[k]=(i==j ? 1.0:2.0)*densities.data[i+densities.ld*(j+channel*densities.rows)];
+  }
+}
+
 __global__ void exchange_unique(const int* rows, const int* columns,
                                 const int* edges, const int* csr_columns,
                                 const double* values, std::int64_t count,
                                 const int* first, const int* second,
                                 linalg::ConstMatrixView density,
                                 linalg::MatrixView output,
-                                double weight, bool compact) {
+                                double weight, bool compact,int channels) {
   for (std::int64_t p = blockIdx.x * static_cast<std::int64_t>(blockDim.x) + threadIdx.x;
        p < count; p += gridDim.x * static_cast<std::int64_t>(blockDim.x)) {
     const std::int64_t edge = compact ? p : edges[p];
@@ -237,11 +251,25 @@ __global__ void exchange_unique(const int* rows, const int* columns,
         const int a = swap_u ? uj : ui, b = swap_u ? ui : uj;
         for (int swap_v = 0; swap_v < (vi == vj ? 1 : 2); ++swap_v) {
           const int c = swap_v ? vj : vi, d = swap_v ? vi : vj;
-          atomic_add_double(output.data + a + output.ld * c,
-                            value * density.data[b + density.ld * d]);
+          // Decode each unique ERI and symmetry orbit once for all densities.
+          for (int channel=0;channel<channels;++channel)
+            atomic_add_double(output.data+a+output.ld*(c+channel*output.rows),
+                value*density.data[b+density.ld*(d+channel*density.rows)]);
         }
       }
     }
+  }
+}
+
+__global__ void finish_jk_batch(const double* image,linalg::MatrixView output,
+    double weight,std::int64_t work,int channels) {
+  for (std::int64_t k=blockIdx.x*static_cast<std::int64_t>(blockDim.x)+threadIdx.x;
+       k<work;k+=gridDim.x*static_cast<std::int64_t>(blockDim.x)) {
+    const auto row=k%output.rows,column=k/output.rows;
+    const auto col=column%output.rows,channel=column/output.rows;
+    const auto hi=row>col ? row:col,lo=row>col ? col:row;
+    const auto pair=hi*(hi+1)/2+lo;
+    output.data[row+output.ld*column]+=weight*image[pair*channels+channel];
   }
 }
 
@@ -322,10 +350,8 @@ __global__ void pair_pullback(PairPanel pair_gradient,
 }
 
 void zero_matrix(Context& context, linalg::MatrixView matrix) {
-  for (std::int64_t col = 0; col < matrix.cols; ++col)
-    check_cuda(cudaMemsetAsync(matrix.data + col * matrix.ld, 0,
-                               matrix.rows * sizeof(double), context.stream()),
-               "zero CUDA matrix");
+  check_cuda(cudaMemset2DAsync(matrix.data,matrix.ld*sizeof(double),0,
+      matrix.rows*sizeof(double),matrix.cols,context.stream()),"zero CUDA matrix");
 }
 
 void multiply_pair_tile(Context& context, PairPanel result, ConstPairPanel product,
@@ -613,7 +639,8 @@ void ExactAoPairOperator::pair_features(
 
 void ExactAoPairOperator::generated_rows_impl(
     linalg::ConstMatrixView c, linalg::ConstMatrixView d,
-    std::int64_t begin, PairPanel output, PairPanel directional) const {
+    std::int64_t begin, PairPanel output, PairPanel directional,
+    bool direction_only) const {
   validate_coefficients(c);
   if (d.data && (d.rows != c.rows || d.cols != c.cols || d.ld < d.rows))
     throw std::invalid_argument("invalid CUDA active direction");
@@ -621,8 +648,9 @@ void ExactAoPairOperator::generated_rows_impl(
   if (begin < 0 || begin > n_pairs_ || output.rows < 0 ||
       output.rows > n_pairs_ - begin || output.cols != pairs ||
       output.ld < pairs || (output.rows && !output.data) ||
-      ((d.data != nullptr) != (directional.data != nullptr)) ||
-      (d.data && (directional.rows != output.rows || directional.cols != pairs ||
+      (direction_only && (!d.data || directional.data)) ||
+      (!direction_only && ((d.data != nullptr) != (directional.data != nullptr))) ||
+      (directional.data && (directional.rows != output.rows || directional.cols != pairs ||
                   directional.ld < pairs)))
     throw std::invalid_argument("invalid CUDA generated AO-pair tile");
   const std::int64_t work = checked_product(output.rows, pairs);
@@ -667,12 +695,16 @@ void ExactAoPairOperator::generated_rows_impl(
         const PairPanel source{features.data(),n_pairs_,count,count};
         const PairPanel product{output.data+channel,n_pairs_,count,output.ld};
         const auto slab_work=checked_product(n_pairs_,count);
-        feature_rows<<<blocks(slab_work),256,0,context_->stream()>>>(
-            c,{},pair_first_.data(),pair_second_.data(),0,channel,
-            source,{},slab_work);
+        if (direction_only)
+          mixed_feature_rows<<<blocks(slab_work),256,0,context_->stream()>>>(
+              c,d,pair_first_.data(),pair_second_.data(),0,channel,source,slab_work);
+        else
+          feature_rows<<<blocks(slab_work),256,0,context_->stream()>>>(
+              c,{},pair_first_.data(),pair_second_.data(),0,channel,
+              source,{},slab_work);
         check_launch("full-row CUDA AO-pair features");
         apply({source.data,source.rows,source.cols,source.ld},product);
-        if (d.data) {
+        if (directional.data) {
           mixed_feature_rows<<<blocks(slab_work),256,0,context_->stream()>>>(
               c,d,pair_first_.data(),pair_second_.data(),0,channel,
               source,slab_work);
@@ -689,7 +721,7 @@ void ExactAoPairOperator::generated_rows_impl(
       check_cuda(cudaMemsetAsync(output.data + row * output.ld, 0,
                                  pairs * sizeof(double), context_->stream()),
                  "zero compact generated AO-pair tile");
-      if (d.data)
+      if (directional.data)
         check_cuda(cudaMemsetAsync(directional.data + row * directional.ld, 0,
                                    pairs * sizeof(double), context_->stream()),
                    "zero compact directional AO-pair tile");
@@ -699,13 +731,13 @@ void ExactAoPairOperator::generated_rows_impl(
       generated_compact<<<blocks(compact_work), 256, 0, context_->stream()>>>(
           c, d, pair_first_.data(), pair_second_.data(), integral_rows_.data(),
           integral_columns_.data(), integral_values_.data(), n_integrals_,
-          begin, output, directional, compact_work);
+          begin, output, directional, compact_work, direction_only);
       check_launch("compact generated AO-pair rows");
     }
   } else {
     generated_csr<<<blocks(work), 256, 0, context_->stream()>>>(
         c, d, pair_first_.data(), pair_second_.data(), row_offsets_.data(),
-        columns_.data(), values_.data(), begin, output, directional, work);
+        columns_.data(), values_.data(), begin, output, directional, work,direction_only);
     check_launch("CSR generated AO-pair rows");
   }
 }
@@ -716,19 +748,39 @@ void ExactAoPairOperator::generated_rows(
   generated_rows_impl(c, d, begin, output, directional);
 }
 
+Buffer<double> ExactAoPairOperator::reserve_products(int n_active) const {
+  const auto count=checked_product(n_pairs_,active_pairs(n_active));
+  const auto bytes=static_cast<std::size_t>(checked_product(count,sizeof(double)));
+  std::size_t free=0,total=0;
+  check_cuda(cudaMemGetInfo(&free,&total),"query accepted AO-pair products memory");
+  const auto used=context_->counters().current_device_bytes;
+  const auto budget=context_->device_byte_budget();
+  if (used>budget) throw std::runtime_error("CUDA accepted pair accounting exceeds budget");
+  // One retained image, another physical point, and two full response panels.
+  // Streaming remains entirely on device when this complete working set cannot fit.
+  if (bytes>std::min(free,budget-used)/4) return {};
+  return Buffer<double>(*context_,count);
+}
+
 void ExactAoPairOperator::forward(linalg::ConstMatrixView c,
-                                   linalg::MatrixView kernel) const {
+    linalg::MatrixView kernel,PairPanel accepted) const {
+  const nvtx3::scoped_range range{"ao.pair_forward"};
   validate_coefficients(c);
   const std::int64_t pairs = active_pairs(c.cols);
   if (!kernel.data || kernel.rows != pairs || kernel.cols != pairs || kernel.ld < pairs)
     throw std::invalid_argument("invalid CUDA active pair kernel");
+  if (accepted.data && (accepted.rows!=n_pairs_ || accepted.cols!=pairs || accepted.ld<pairs))
+    throw std::invalid_argument("invalid CUDA accepted pair products");
   const std::int64_t rows = tile_size(*context_, n_pairs_, pairs, 2,
                                       checked_product(pairs, pairs));
-  Buffer<double> b(*context_, rows * pairs), p(*context_, rows * pairs);
+  Buffer<double> b(*context_, rows * pairs), p;
+  if (!accepted.data) p=Buffer<double>(*context_,rows*pairs);
   zero_matrix(*context_, kernel);
   for (std::int64_t begin = 0; begin < n_pairs_; begin += rows) {
     const std::int64_t count = std::min(rows, n_pairs_ - begin);
-    PairPanel bp{b.data(), count, pairs, pairs}, pp{p.data(), count, pairs, pairs};
+    PairPanel bp{b.data(), count, pairs, pairs};
+    PairPanel pp{accepted.data ? accepted.data+begin*accepted.ld:p.data(),
+        count,pairs,accepted.data ? accepted.ld:pairs};
     pair_features(c, {}, begin, bp);
     // A full-row forward tile already owns B. Reuse it directly as the
     // SpMM source instead of regenerating the same active-pair features.
@@ -753,45 +805,52 @@ void ExactAoPairOperator::forward(linalg::ConstMatrixView c,
 
 void ExactAoPairOperator::directional(
     linalg::ConstMatrixView c, linalg::ConstMatrixView d,
-    linalg::MatrixView kernel_direction) const {
+    linalg::MatrixView kernel_direction,ConstPairPanel accepted) const {
+  const nvtx3::scoped_range range{"ao.pair_direction"};
   validate_coefficients(c);
   const std::int64_t pairs = active_pairs(c.cols);
   if (!d.data || d.rows != c.rows || d.cols != c.cols || d.ld < d.rows ||
       !kernel_direction.data || kernel_direction.rows != pairs ||
       kernel_direction.cols != pairs || kernel_direction.ld < pairs)
     throw std::invalid_argument("invalid CUDA directional pair kernel");
+  if (accepted.data && (accepted.rows!=n_pairs_ || accepted.cols!=pairs || accepted.ld<pairs))
+    throw std::invalid_argument("invalid CUDA accepted pair products");
   // K is symmetric. The CPU exact response forms U=dB^T(KB) and completes
   // dM=U+U^T; KdB and the accepted B tile are unnecessary for this consumer.
   Matrix<double> unsymmetric(*context_, pairs, pairs);
   const std::int64_t rows = tile_size(*context_, n_pairs_, pairs, 2,
                                       checked_product(pairs, pairs));
-  Buffer<double> db(*context_, rows * pairs), p(*context_, rows * pairs);
+  Buffer<double> db(*context_, rows * pairs), p;
+  if (!accepted.data) p=Buffer<double>(*context_,rows*pairs);
   zero_matrix(*context_, unsymmetric.view());
   for (std::int64_t begin = 0; begin < n_pairs_; begin += rows) {
     const std::int64_t count = std::min(rows, n_pairs_ - begin);
-    PairPanel dbp{db.data(), count, pairs, pairs}, pp{p.data(), count, pairs, pairs};
+    PairPanel dbp{db.data(), count, pairs, pairs};
+    ConstPairPanel pp{accepted.data ? accepted.data+begin*accepted.ld:p.data(),
+        count,pairs,accepted.data ? accepted.ld:pairs};
     const std::int64_t work = checked_product(count, pairs);
     mixed_feature_rows<<<blocks(work), 256, 0, context_->stream()>>>(
         c, d, pair_first_.data(), pair_second_.data(), begin, 0, dbp, work);
     check_launch("CUDA directional AO-pair features");
-    generated_rows_impl(c, {}, begin, pp, {});
+    if (!accepted.data) generated_rows_impl(c,{},begin,{p.data(),count,pairs,pairs},{});
     contract_tile(*context_, unsymmetric.view(),
                   {dbp.data, count, pairs, pairs},
-                  {pp.data, count, pairs, pairs}, 1.0);
+                  pp, 1.0);
   }
   complete_pair_direction(*context_, unsymmetric.view(), kernel_direction);
 }
 
 void ExactAoPairOperator::adjoint(
     linalg::ConstMatrixView c, linalg::ConstMatrixView g,
-    linalg::MatrixView gradient) const {
-  directional_adjoint(c, {}, g, {}, gradient);
+    linalg::MatrixView gradient,ConstPairPanel accepted) const {
+  const nvtx3::scoped_range range{"ao.pair_adjoint"};
+  directional_adjoint(c, {}, g, {}, gradient,accepted);
 }
 
 void ExactAoPairOperator::directional_adjoint(
     linalg::ConstMatrixView c, linalg::ConstMatrixView d,
     linalg::ConstMatrixView g, linalg::ConstMatrixView dg,
-    linalg::MatrixView gradient) const {
+    linalg::MatrixView gradient,ConstPairPanel accepted) const {
   validate_coefficients(c);
   const std::int64_t pairs = active_pairs(c.cols);
   if ((d.data && (d.rows != c.rows || d.cols != c.cols || d.ld < d.rows)) ||
@@ -801,12 +860,15 @@ void ExactAoPairOperator::directional_adjoint(
       !gradient.data || gradient.rows != c.rows || gradient.cols != c.cols ||
       gradient.ld < gradient.rows)
     throw std::invalid_argument("invalid CUDA exact pair adjoint dimensions");
+  if (accepted.data && (accepted.rows!=n_pairs_ || accepted.cols!=pairs || accepted.ld<pairs))
+    throw std::invalid_argument("invalid CUDA accepted pair products");
   Buffer<double> h(*context_, pairs * pairs);
   Buffer<double> dh;
   if (dg.data) dh = Buffer<double>(*context_, pairs * pairs);
   const std::int64_t rows = tile_size(*context_, n_pairs_, pairs,
       d.data ? 4 : 2, checked_product(gradient.rows, gradient.cols));
-  Buffer<double> p(*context_, rows * pairs), t(*context_, rows * pairs);
+  Buffer<double> p, t(*context_, rows * pairs);
+  if (!accepted.data) p=Buffer<double>(*context_,rows*pairs);
   Buffer<double> dp, dt;
   if (d.data) {
     dp = Buffer<double>(*context_, rows * pairs);
@@ -819,11 +881,14 @@ void ExactAoPairOperator::directional_adjoint(
   zero_matrix(*context_, gradient);
   for (std::int64_t begin = 0; begin < n_pairs_; begin += rows) {
     const std::int64_t count = std::min(rows, n_pairs_ - begin);
-    PairPanel pp{p.data(), count, pairs, pairs};
+    ConstPairPanel pp{accepted.data ? accepted.data+begin*accepted.ld:p.data(),
+        count,pairs,accepted.data ? accepted.ld:pairs};
     PairPanel dpp{dp.data(), count, pairs, pairs};
-    generated_rows_impl(c, d, begin, pp, d.data ? dpp : PairPanel{});
+    if (!accepted.data)
+      generated_rows_impl(c,d,begin,{p.data(),count,pairs,pairs},d.data ? dpp:PairPanel{});
+    else if (d.data) generated_rows_impl(c,d,begin,dpp,{},true);
     PairPanel tp{t.data(), count, pairs, pairs};
-    multiply_pair_tile(*context_, tp, {pp.data, count, pairs, pairs},
+    multiply_pair_tile(*context_, tp, pp,
                        h.data(), blas_int(pairs));
     const std::int64_t work = count * pairs;
     pair_pullback<<<blocks(work), 256, 0, context_->stream()>>>(
@@ -835,7 +900,7 @@ void ExactAoPairOperator::directional_adjoint(
       multiply_pair_tile(*context_, dtp, {dpp.data, count, pairs, pairs},
                          h.data(), blas_int(pairs));
       if (dg.data)
-        multiply_pair_tile(*context_, dtp, {pp.data, count, pairs, pairs},
+        multiply_pair_tile(*context_, dtp, pp,
                            dh.data(), blas_int(pairs), 1.0);
       pair_pullback<<<blocks(work), 256, 0, context_->stream()>>>(
           dtp, c, pair_first_.data(), pair_second_.data(), begin, gradient, work);
@@ -846,23 +911,29 @@ void ExactAoPairOperator::directional_adjoint(
 
 void ExactAoPairOperator::contract_jk(linalg::ConstMatrixView density,
                                        linalg::MatrixView output,
-                                       double coulomb, double exchange) const {
+                                       double coulomb, double exchange,
+                                       linalg::MatrixView coulomb_output) const {
+  const nvtx3::scoped_range range{"ao.jk"};
   if (!density.data || density.rows != n_bf_ || density.cols != n_bf_ ||
       density.ld < n_bf_ || !output.data || output.rows != n_bf_ ||
       output.cols != n_bf_ || output.ld < n_bf_ ||
       density.data == output.data || !std::isfinite(coulomb) ||
       !std::isfinite(exchange))
     throw std::invalid_argument("invalid CUDA symmetric JK contraction");
+  if (coulomb_output.data && (coulomb_output.rows!=n_bf_ ||
+      coulomb_output.cols!=n_bf_ || coulomb_output.ld<n_bf_ ||
+      coulomb_output.data==output.data || coulomb_output.data==density.data))
+    throw std::invalid_argument("invalid CUDA separate Coulomb output");
   zero_matrix(*context_, output);
   if (exchange != 0.0 && n_unique_ != 0) {
     exchange_unique<<<blocks(n_unique_), 256, 0, context_->stream()>>>(
         integral_rows_.data(), integral_columns_.data(), integral_edges_.data(),
         columns_.data(), compact_ ? integral_values_.data() : values_.data(),
         n_unique_, pair_first_.data(), pair_second_.data(), density, output,
-        exchange, compact_);
+        exchange, compact_,1);
     check_launch("CUDA unique-ERI exchange contraction");
   }
-  if (coulomb != 0.0) {
+  if (coulomb != 0.0 || coulomb_output.data) {
     Buffer<double> packed_density(*context_, n_pairs_);
     Buffer<double> j_pairs(*context_, n_pairs_);
     pack_symmetric_density<<<blocks(n_pairs_), 256, 0, context_->stream()>>>(
@@ -875,6 +946,44 @@ void ExactAoPairOperator::contract_jk(linalg::ConstMatrixView density,
     finish_jk<<<blocks(work), 256, 0, context_->stream()>>>(
         j_pairs.data(), output, coulomb, work);
     check_launch("finish CUDA AO Coulomb contraction");
+    if (coulomb_output.data) {
+      zero_matrix(*context_,coulomb_output);
+      finish_jk<<<blocks(work),256,0,context_->stream()>>>(
+          j_pairs.data(),coulomb_output,1.0,work);
+      check_launch("reuse CUDA separate Coulomb contraction");
+    }
+  }
+}
+
+void ExactAoPairOperator::contract_jk_batch(linalg::ConstMatrixView density,
+    linalg::MatrixView output,double coulomb,double exchange) const {
+  const nvtx3::scoped_range range{"ao.jk_batch"};
+  if (!density.data || density.rows!=n_bf_ || density.cols<=0 ||
+      density.cols%n_bf_!=0 || density.ld<n_bf_ || !output.data ||
+      output.rows!=n_bf_ || output.cols!=density.cols || output.ld<n_bf_ ||
+      output.data==density.data || !std::isfinite(coulomb) || !std::isfinite(exchange))
+    throw std::invalid_argument("invalid CUDA symmetric JK batch");
+  const int channels=blas_int(density.cols/n_bf_);
+  zero_matrix(*context_,output);
+  if (exchange!=0.0 && n_unique_!=0) {
+    exchange_unique<<<blocks(n_unique_),256,0,context_->stream()>>>(
+        integral_rows_.data(),integral_columns_.data(),integral_edges_.data(),
+        columns_.data(),compact_ ? integral_values_.data():values_.data(),
+        n_unique_,pair_first_.data(),pair_second_.data(),density,output,exchange,compact_,channels);
+    check_launch("CUDA batched unique-ERI exchange contraction");
+  }
+  if (coulomb!=0.0) {
+    Buffer<double> packed(*context_,checked_product(n_pairs_,channels));
+    Buffer<double> image(*context_,checked_product(n_pairs_,channels));
+    const auto work=checked_product(n_pairs_,channels);
+    pack_density_batch<<<blocks(work),256,0,context_->stream()>>>(
+        density,pair_first_.data(),pair_second_.data(),packed.data(),n_pairs_,channels);
+    check_launch("pack CUDA symmetric AO density batch");
+    apply({packed.data(),n_pairs_,channels,channels},{image.data(),n_pairs_,channels,channels});
+    const auto dense_work=checked_product(output.rows,output.cols);
+    finish_jk_batch<<<blocks(dense_work),256,0,context_->stream()>>>(
+        image.data(),output,coulomb,dense_work,channels);
+    check_launch("finish CUDA batched Coulomb contraction");
   }
 }
 

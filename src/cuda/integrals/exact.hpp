@@ -25,8 +25,8 @@ using ConstPairPanel = BasicPairPanel<const double>;
 /** Device-resident exact AO-pair ERI graph and its matrix-free orbital response.
  * All matrix arguments and packed outputs refer to device memory. The graph is
  * uploaded once; CPU work in the constructor only validates and packs metadata.
- * No complete AO four-index tensor or AO-pair by active-pair coefficient image
- * is retained by this class. Forward/response work uses bounded row tiles.
+ * No complete AO four-index tensor is retained. Point-owned half transforms
+ * may be borrowed by consumers; otherwise work uses bounded device row tiles.
  */
 class ExactAoPairOperator {
  public:
@@ -56,24 +56,32 @@ class ExactAoPairOperator {
 
   /** Full active pair kernel B(C)^T K B(C), column-major. */
   void forward(linalg::ConstMatrixView coefficients,
-               linalg::MatrixView kernel) const;
+               linalg::MatrixView kernel, PairPanel products = {}) const;
+
+  /** Reserve a point-owned KB(C) image only when the live budget also admits
+   * another point and response workspaces. Empty means device-streamed tiles.
+   * forward() fills the image, avoiding a separate preparation contraction.
+   */
+  Buffer<double> reserve_products(int n_active) const;
 
   /** Full directional pair kernel for dC at the accepted C. */
   void directional(linalg::ConstMatrixView coefficients,
                    linalg::ConstMatrixView direction,
-                   linalg::MatrixView kernel_direction) const;
+                   linalg::MatrixView kernel_direction,
+                   ConstPairPanel products = {}) const;
 
   /** Pullback of a full Frobenius pair-kernel adjoint into AO-by-active C. */
   void adjoint(linalg::ConstMatrixView coefficients,
                linalg::ConstMatrixView kernel_adjoint,
-               linalg::MatrixView gradient) const;
+               linalg::MatrixView gradient, ConstPairPanel products = {}) const;
 
   /** Directional derivative of the pullback, including changing adjoint. */
   void directional_adjoint(linalg::ConstMatrixView coefficients,
                            linalg::ConstMatrixView direction,
                            linalg::ConstMatrixView kernel_adjoint,
                            linalg::ConstMatrixView kernel_adjoint_direction,
-                           linalg::MatrixView gradient_direction) const;
+                           linalg::MatrixView gradient_direction,
+                           ConstPairPanel products = {}) const;
 
 
   /** Symmetric AO-density contraction coulomb*J(P)+exchange*K(P).
@@ -82,7 +90,15 @@ class ExactAoPairOperator {
    */
   void contract_jk(linalg::ConstMatrixView density,
                    linalg::MatrixView output,
-                   double coulomb = 2.0, double exchange = -1.0) const;
+                   double coulomb = 2.0, double exchange = -1.0,
+                   linalg::MatrixView coulomb_output = {}) const;
+
+  /** Independent symmetric densities, packed as nbf-by-(nbf*channels).
+   * One shared graph traversal and SpMM serves the entire device batch.
+   */
+  void contract_jk_batch(linalg::ConstMatrixView densities,
+                         linalg::MatrixView outputs,
+                         double coulomb = 2.0, double exchange = -1.0) const;
 
   /** heff=H+G(P), E=Tr[P(H+heff)]; E is one device double. */
   void core_energy(linalg::ConstMatrixView density,
@@ -116,7 +132,8 @@ class ExactAoPairOperator {
   void generated_rows_impl(linalg::ConstMatrixView coefficients,
                            linalg::ConstMatrixView direction,
                            std::int64_t row_begin, PairPanel products,
-                           PairPanel directional_products) const;
+                           PairPanel directional_products,
+                           bool direction_only = false) const;
 
   Context* context_;
   int n_bf_;

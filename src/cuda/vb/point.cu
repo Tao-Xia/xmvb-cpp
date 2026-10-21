@@ -118,7 +118,11 @@ void VbPoint::prepare(View raw) {
   Matrix<double> core_energy(c,1,1);
   integrals_->core_energy(geometry_.inactive_density(),core_,effective_.view(),core_energy.data());
   transform_one_electron(c,effective_.view(),geometry_.orthogonal_active(),one_.view());
-  integrals_->forward(geometry_.orthogonal_active(),pair_.view());
+  pair_products_={};
+  pair_products_=integrals_->reserve_products(one_.rows());
+  integrals_->forward(geometry_.orthogonal_active(),pair_.view(),
+      pair_products_.empty() ? PairPanel{}:
+          PairPanel{pair_products_.data(),integrals_->pair_count(),pair_.rows(),pair_.rows()});
   sigma_.update_integrals(one_.view(),pair_.view());
   select_frame();
   c.copy_to_host(&core_energy_,core_energy.data(),sizeof(double));
@@ -151,7 +155,8 @@ double VbPoint::evaluate_coefficients(View coefficients) {
   sigma_.one_body_generator_adjoint(carrier_gradient_.view(),state_.view(),frame_moment_.view());
   gemm(c,frame_gradient_.view(),frame_moment_.view(),geometry_.frame_inverse_transform(),
       1.0,0.0,Operation::none,Operation::transpose);
-  integrals_->adjoint(geometry_.orthogonal_active(),pair_adjoint_.view(),active_gradient_.view());
+  integrals_->adjoint(geometry_.orthogonal_active(),pair_adjoint_.view(),
+      active_gradient_.view(),pair_products());
   Matrix<double> one_gradient(c,active_gradient_.rows(),active_gradient_.cols());
   transform_one_electron_adjoint(c,effective_.view(),geometry_.orthogonal_active(),
       one_adjoint_.view(),one_gradient.view());
@@ -198,7 +203,8 @@ void VbPoint::hessian(View orbital,View structure,Out orbital_image,Out structur
   Matrix<double> extra_h(c,one_.rows(),one_.cols());
   transform_one_electron(c,dheff.view(),geometry_.orthogonal_active(),extra_h.view());
   add(c,dh.view(),extra_h.view());
-  integrals_->directional(geometry_.orthogonal_active(),d.orthogonal_active.view(),dg.view());
+  integrals_->directional(geometry_.orthogonal_active(),d.orthogonal_active.view(),
+      dg.view(),pair_products());
   direction_sigma_.update_integrals(dh.view(),dg.view());
   Matrix<double> dhy(c,state_.rows(),state_.cols());
   const double dn=2.0*dot(c,state_.view(),dy.view());
@@ -232,7 +238,7 @@ void VbPoint::hessian(View orbital,View structure,Out orbital_image,Out structur
   Matrix<double> dfgrad(c,active_gradient_.rows(),active_gradient_.cols());
   Matrix<double> one_extra(c,active_gradient_.rows(),active_gradient_.cols());
   integrals_->directional_adjoint(geometry_.orthogonal_active(),d.orthogonal_active.view(),
-      pair_adjoint_.view(),dga.view(),dfgrad.view());
+      pair_adjoint_.view(),dga.view(),dfgrad.view(),pair_products());
   transform_one_electron_directional_adjoint(c,effective_.view(),geometry_.orthogonal_active(),
       d.orthogonal_active.view(),one_adjoint_.view(),dha.view(),one_extra.view());
   add(c,dfgrad.view(),one_extra.view());
