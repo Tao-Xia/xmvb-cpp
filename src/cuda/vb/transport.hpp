@@ -62,20 +62,22 @@ class SelectedCrossOverlap {
                linalg::MatrixView left_gradient,
                linalg::MatrixView right_gradient) const;
 
-  /** Direction of both frame cotangents, including coefficient directions.
-   * Empty coefficient-direction views mean zero. The frame directions must
-   * be supplied, including an explicit zero matrix for a frozen frame.
+  /** F(current)^T [F(origin) base + dF(origin)[direction] reference].
+   * reference is the already evaluated orthogonal spin-product carrier.
    */
-  void adjoint_direction(linalg::ConstMatrixView left_frame,
-                         linalg::ConstMatrixView right_frame,
-                         linalg::ConstMatrixView left_direction,
-                         linalg::ConstMatrixView right_direction,
-                         linalg::ConstMatrixView left_coefficients,
-                         linalg::ConstMatrixView right_coefficients,
-                         linalg::ConstMatrixView left_coeff_direction,
-                         linalg::ConstMatrixView right_coeff_direction,
-                         linalg::MatrixView left_gradient_direction,
-                         linalg::MatrixView right_gradient_direction) const;
+  void transport_image(linalg::ConstMatrixView current,linalg::ConstMatrixView origin,
+      linalg::ConstMatrixView direction,linalg::ConstMatrixView base,
+      linalg::ConstMatrixView reference,linalg::MatrixView image) const;
+
+  /** Contracted finite-transport pullback and F(origin)^T F(current) lambda.
+   * reference and transported are borrowed physical spin-product carriers;
+   * no selected-space completeness or CI stationarity is assumed.
+   */
+  void transport_gradient(linalg::ConstMatrixView current,linalg::ConstMatrixView origin,
+      linalg::ConstMatrixView direction,linalg::ConstMatrixView lambda,
+      linalg::ConstMatrixView base,linalg::ConstMatrixView reference,
+      linalg::ConstMatrixView transported,linalg::MatrixView current_gradient,
+      linalg::MatrixView origin_gradient,linalg::MatrixView image) const;
 
   /** Matrix-free selected Gram action, never H sigma. */
   void apply_metric(linalg::ConstMatrixView frame,
@@ -109,11 +111,10 @@ class SelectedCrossOverlap {
   void pullback(linalg::ConstMatrixView frame,
                 linalg::ConstMatrixView moment,
                 linalg::MatrixView gradient) const;
-  void pullback_direction(linalg::ConstMatrixView frame,
-                          linalg::ConstMatrixView direction,
-                          linalg::ConstMatrixView moment,
-                          linalg::ConstMatrixView moment_direction,
-                          linalg::MatrixView gradient_direction) const;
+  void transport_target(linalg::ConstMatrixView origin,linalg::ConstMatrixView direction,
+      linalg::ConstMatrixView base,linalg::ConstMatrixView reference,
+      linalg::MatrixView target) const;
+  void check_carrier(linalg::ConstMatrixView) const;
 
   Context* context_;
   StructureAction* action_;
@@ -151,7 +152,8 @@ struct SingleStateCiTransportModel {
  * Hc0 and Mc0 must be the exact accepted selected-action images, including
  * any finite Ritz residual. The optional physical coefficient gradient is the
  * authoritative frozen residual when supplied; it must use the same weight
- * as evaluate_model. No stationarity cutoff is imposed.
+ * as evaluate_model. origin_carrier must equal F(origin_frame)*selected_state
+ * and remain valid through transport calls. No stationarity cutoff is imposed.
  */
 class SingleStateCiTransport {
  public:
@@ -160,6 +162,7 @@ class SingleStateCiTransport {
       linalg::ConstMatrixView selected_state,
       linalg::ConstMatrixView hamiltonian_image,
       linalg::ConstMatrixView metric_image,
+      linalg::ConstMatrixView origin_carrier,
       double normalized_weight,
       linalg::ConstMatrixView physical_origin_coefficient_gradient = {});
 
@@ -172,7 +175,8 @@ class SingleStateCiTransport {
   /** Physical coefficient gradient must include normalized_weight. */
   SingleStateCiTransportModel evaluate_model(
       const SingleStateCiTransportPoint& point, double physical_energy,
-      linalg::ConstMatrixView physical_coefficient_gradient) const;
+      linalg::ConstMatrixView physical_coefficient_gradient,
+      linalg::ConstMatrixView physical_carrier) const;
 
   linalg::ConstMatrixView origin_coefficient_gradient() const noexcept {
     return origin_gradient_.view();
@@ -184,7 +188,9 @@ class SingleStateCiTransport {
   SelectedCrossOverlap* overlap_;
   int structures_, active_;
   double coordinate_scale_;
-  Matrix<double> origin_frame_, selected_, origin_gradient_, zero_;
+  Matrix<double> origin_frame_,origin_gradient_;
+  /** Borrowed accepted-point state; its owner must outlive transport calls. */
+  linalg::ConstMatrixView origin_carrier_;
 };
 
 }  // namespace xmvb::cuda

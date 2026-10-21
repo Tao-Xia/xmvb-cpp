@@ -200,7 +200,8 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,double nuclear,
     std::unique_ptr<SingleStateCiTransport> transport;
     if (ns) transport=std::make_unique<SingleStateCiTransport>(context,overlap,
         origin.geometry().frame_transform(),accepted.coefficients.view(),
-        accepted.ci.hamiltonian_eigenvectors.view(),accepted.ci.overlap_view(),1.0,
+        accepted.ci.hamiltonian_eigenvectors.view(),accepted.ci.overlap_view(),
+        origin.orthogonal_state(),1.0,
         coefficient_gradient.view());
     Matrix<double> gradient(context,dimension,1),seed(context,dimension,1);
     copy(context,segment(gradient.view(),0,no),reduced.view());
@@ -307,7 +308,8 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,double nuclear,
       frame.point->gradient(gr.view(),gc.view());
       double energy=physical;
       if (ns) {
-        auto model=transport->evaluate_model(*frame.transport,physical,gc.view());
+        auto model=transport->evaluate_model(*frame.transport,physical,gc.view(),
+            frame.point->orthogonal_state());
         Matrix<double> extra(context,nb,norb);
         frame.point->geometry().pullback({},{},{},model.current_upper.view(),{},extra.view());
         add(context,gr.view(),extra.view());

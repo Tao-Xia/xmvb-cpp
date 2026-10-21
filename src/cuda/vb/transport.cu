@@ -23,22 +23,27 @@ void copy(Context& context, linalg::MatrixView destination,
   if (destination.rows != source.rows || destination.cols != source.cols ||
       destination.ld < destination.rows || source.ld < source.rows)
     throw std::invalid_argument("transport copy dimensions");
-  for (std::int64_t col = 0; col < source.cols; ++col)
-    check_cuda(cudaMemcpyAsync(destination.column(col).data,
-        source.column(col).data, source.rows*sizeof(double),
-        cudaMemcpyDeviceToDevice, context.stream()), "transport device copy");
+  if (source.empty()) return;
+  check_cuda(cudaMemcpy2DAsync(destination.data,destination.ld*sizeof(double),
+      source.data,source.ld*sizeof(double),source.rows*sizeof(double),source.cols,
+      cudaMemcpyDeviceToDevice,context.stream()),"transport device copy");
 }
 
 void zero(Context& context, linalg::MatrixView destination) {
-  for (std::int64_t col = 0; col < destination.cols; ++col)
-    check_cuda(cudaMemsetAsync(destination.column(col).data, 0,
-        destination.rows*sizeof(double), context.stream()), "transport zero");
+  if (destination.empty()) return;
+  check_cuda(cudaMemset2DAsync(destination.data,destination.ld*sizeof(double),0,
+      destination.rows*sizeof(double),destination.cols,context.stream()),"transport zero");
 }
 
 void axpy(Context& context, linalg::MatrixView destination, double factor,
           linalg::ConstMatrixView source) {
   if (destination.rows != source.rows || destination.cols != source.cols)
     throw std::invalid_argument("transport AXPY dimensions");
+  if (source.cols==1 || (source.ld==source.rows && destination.ld==destination.rows)) {
+    check_cublas(cublasDaxpy(context.blas(),blas_int(source.rows*source.cols),&factor,
+        source.data,1,destination.data,1),"transport packed AXPY");
+    return;
+  }
   for (std::int64_t col = 0; col < source.cols; ++col)
     check_cublas(cublasDaxpy(context.blas(), blas_int(source.rows), &factor,
         source.column(col).data, 1, destination.column(col).data, 1),
@@ -131,6 +136,11 @@ void SelectedCrossOverlap::check_gradient(linalg::MatrixView matrix) const {
     throw std::invalid_argument("invalid transport frame gradient");
 }
 
+void SelectedCrossOverlap::check_carrier(linalg::ConstMatrixView carrier) const {
+  if (!carrier.data || carrier.rows!=alpha_ || carrier.cols!=beta_ || carrier.ld!=alpha_)
+    throw std::invalid_argument("invalid transport physical carrier");
+}
+
 void SelectedCrossOverlap::frame_image(linalg::ConstMatrixView frame,
     linalg::ConstMatrixView coefficients, linalg::MatrixView carrier) const {
   check_frame(frame);
@@ -202,28 +212,6 @@ void SelectedCrossOverlap::pullback(linalg::ConstMatrixView frame,
   upper_only(*context_,gradient);
 }
 
-void SelectedCrossOverlap::pullback_direction(linalg::ConstMatrixView frame,
-    linalg::ConstMatrixView direction, linalg::ConstMatrixView moment,
-    linalg::ConstMatrixView moment_direction,
-    linalg::MatrixView gradient_direction) const {
-  check_frame(frame);
-  check_frame(direction);
-  check_frame(moment);
-  check_frame(moment_direction);
-  check_gradient(gradient_direction);
-  Matrix<double> full_gradient(*context_,active_,active_);
-  Matrix<double> correction(*context_,active_,active_);
-  copy(*context_,full_gradient.view(),moment);
-  right_upper_solve(*context_,frame,full_gradient.view(),true);
-  copy(*context_,gradient_direction,moment_direction);
-  right_upper_solve(*context_,frame,gradient_direction,true);
-  gemm(*context_,correction.view(),full_gradient.view(),direction,1.0,0.0,
-       Operation::none,Operation::transpose);
-  right_upper_solve(*context_,frame,correction.view(),true);
-  axpy(*context_,gradient_direction,-1.0,correction.view());
-  upper_only(*context_,gradient_direction);
-}
-
 void SelectedCrossOverlap::adjoint(linalg::ConstMatrixView left_frame,
     linalg::ConstMatrixView right_frame,
     linalg::ConstMatrixView left_coefficients,
@@ -244,55 +232,55 @@ void SelectedCrossOverlap::adjoint(linalg::ConstMatrixView left_frame,
   pullback(right_frame,moment.view(),right_gradient);
 }
 
-void SelectedCrossOverlap::adjoint_direction(
-    linalg::ConstMatrixView left_frame,
-    linalg::ConstMatrixView right_frame,
-    linalg::ConstMatrixView left_direction,
-    linalg::ConstMatrixView right_direction,
-    linalg::ConstMatrixView left_coefficients,
-    linalg::ConstMatrixView right_coefficients,
-    linalg::ConstMatrixView left_coeff_direction,
-    linalg::ConstMatrixView right_coeff_direction,
-    linalg::MatrixView left_gradient_direction,
-    linalg::MatrixView right_gradient_direction) const {
-  check_gradient(left_gradient_direction);
-  check_gradient(right_gradient_direction);
-  Matrix<double> left(*context_,alpha_,beta_), right(*context_,alpha_,beta_);
-  Matrix<double> dleft(*context_,alpha_,beta_), dright(*context_,alpha_,beta_);
-  Matrix<double> scratch(*context_,alpha_,beta_);
-  Matrix<double> moment(*context_,active_,active_);
-  Matrix<double> dmoment(*context_,active_,active_);
-  frame_image(left_frame,left_coefficients,left.view());
-  frame_image(right_frame,right_coefficients,right.view());
-  frame_direction(left_frame,left_direction,left.view(),dleft.view());
-  frame_direction(right_frame,right_direction,right.view(),dright.view());
-  if (!left_coeff_direction.empty()) {
-    frame_image(left_frame,left_coeff_direction,scratch.view());
-    axpy(*context_,dleft.view(),1.0,scratch.view());
-  }
-  if (!right_coeff_direction.empty()) {
-    frame_image(right_frame,right_coeff_direction,scratch.view());
-    axpy(*context_,dright.view(),1.0,scratch.view());
-  }
-  action_->carrier_sigma().one_body_generator_adjoint(
-      right.view(),left.view(),moment.view());
-  action_->carrier_sigma().one_body_generator_adjoint(
-      dright.view(),left.view(),dmoment.view());
-  Matrix<double> extra(*context_,active_,active_);
-  action_->carrier_sigma().one_body_generator_adjoint(
-      right.view(),dleft.view(),extra.view());
-  axpy(*context_,dmoment.view(),1.0,extra.view());
-  pullback_direction(left_frame,left_direction,moment.view(),dmoment.view(),
-                     left_gradient_direction);
-  action_->carrier_sigma().one_body_generator_adjoint(
-      left.view(),right.view(),moment.view());
-  action_->carrier_sigma().one_body_generator_adjoint(
-      dleft.view(),right.view(),dmoment.view());
-  action_->carrier_sigma().one_body_generator_adjoint(
-      left.view(),dright.view(),extra.view());
-  axpy(*context_,dmoment.view(),1.0,extra.view());
-  pullback_direction(right_frame,right_direction,moment.view(),dmoment.view(),
-                     right_gradient_direction);
+void SelectedCrossOverlap::transport_target(linalg::ConstMatrixView origin,
+    linalg::ConstMatrixView direction,linalg::ConstMatrixView base,
+    linalg::ConstMatrixView reference,linalg::MatrixView target) const {
+  check_carrier(reference);
+  frame_image(origin,base,target);
+  Matrix<double> derivative(*context_,alpha_,beta_);
+  frame_direction(origin,direction,reference,derivative.view());
+  axpy(*context_,target,1.0,derivative.view());
+}
+
+void SelectedCrossOverlap::transport_image(linalg::ConstMatrixView current,
+    linalg::ConstMatrixView origin,linalg::ConstMatrixView direction,
+    linalg::ConstMatrixView base,linalg::ConstMatrixView reference,
+    linalg::MatrixView image) const {
+  check_frame(current);check_structure(image);
+  Matrix<double> target(*context_,alpha_,beta_);
+  transport_target(origin,direction,base,reference,target.view());
+  action_->update_frame(current);
+  action_->apply_adjoint_orbital_transform(target.view());
+  action_->contract_spin(target.view(),image);
+}
+
+void SelectedCrossOverlap::transport_gradient(linalg::ConstMatrixView current,
+    linalg::ConstMatrixView origin,linalg::ConstMatrixView direction,
+    linalg::ConstMatrixView lambda,linalg::ConstMatrixView base,
+    linalg::ConstMatrixView reference,linalg::ConstMatrixView transported,
+    linalg::MatrixView current_gradient,linalg::MatrixView origin_gradient,
+    linalg::MatrixView image) const {
+  const nvtx3::scoped_range range{"transport.contracted_pullback"};
+  check_carrier(reference);check_carrier(transported);
+  check_gradient(current_gradient);check_gradient(origin_gradient);check_structure(image);
+  Matrix<double> left(*context_,alpha_,beta_),target(*context_,alpha_,beta_);
+  Matrix<double> moment(*context_,active_,active_),extra(*context_,active_,active_);
+  frame_image(current,lambda,left.view());
+  transport_target(origin,direction,base,reference,target.view());
+  axpy(*context_,target.view(),-1.0,transported);
+  // M(u,v) is the cotangent of <u|E(K)|v>. Linearity gives the
+  // current moment M(target,left)-M(left,transported); both metric sides
+  // remain. The origin moment is M(left,reference), with no zero generator.
+  auto& sigma=action_->carrier_sigma();
+  sigma.one_body_generator_adjoint(target.view(),left.view(),moment.view());
+  sigma.one_body_generator_adjoint(left.view(),transported,extra.view());
+  axpy(*context_,moment.view(),-1.0,extra.view());
+  pullback(current,moment.view(),current_gradient);
+  sigma.one_body_generator_adjoint(left.view(),reference,moment.view());
+  pullback(origin,moment.view(),origin_gradient);
+  action_->update_frame(origin);
+  action_->apply_adjoint_orbital_transform(left.view());
+  action_->contract_spin(left.view(),image);
 }
 
 void SelectedCrossOverlap::apply_metric(linalg::ConstMatrixView frame,
@@ -470,14 +458,14 @@ SingleStateCiTransport::SingleStateCiTransport(
     linalg::ConstMatrixView selected_state,
     linalg::ConstMatrixView hamiltonian_image,
     linalg::ConstMatrixView metric_image,
+    linalg::ConstMatrixView origin_carrier,
     double normalized_weight,
     linalg::ConstMatrixView physical_origin_coefficient_gradient)
     : context_(&context), overlap_(&overlap), structures_(overlap.size()),
       active_(overlap.active_orbitals()),
       coordinate_scale_(std::sqrt(2.0*normalized_weight)),
       origin_frame_(context,active_,active_),
-      selected_(context,structures_,1),
-      origin_gradient_(context,structures_,1), zero_(context,active_,active_) {
+      origin_gradient_(context,structures_,1),origin_carrier_(origin_carrier) {
   if (!(normalized_weight>0.0) || !std::isfinite(normalized_weight) ||
       !std::isfinite(coordinate_scale_))
     throw std::invalid_argument("invalid CI transport state weight");
@@ -491,8 +479,6 @@ SingleStateCiTransport::SingleStateCiTransport(
       metric_image.ld<structures_ || !metric_image.data)
     throw std::invalid_argument("invalid CI transport origin data");
   copy(context,origin_frame_.view(),origin_frame);
-  copy(context,selected_.view(),selected_state);
-  zero(context,zero_.view());
   const double selected_norm=dot(context,selected_state,metric_image);
   const double tolerance=1.0e3*std::numeric_limits<double>::epsilon()*
       std::max(1,structures_);
@@ -538,13 +524,9 @@ SingleStateCiTransportPoint SingleStateCiTransport::retract(
   copy(*context_,point.frame.view(),trial_frame);
   copy(*context_,point.origin_direction.view(),origin_frame_direction);
   copy(*context_,point.base_coefficients.view(),base_coefficients);
-  Matrix<double> rhs(*context_,structures_,1),direction(*context_,structures_,1);
-  overlap_->apply(point.frame.view(),origin_frame_.view(),
-                  point.base_coefficients.view(),rhs.view());
-  overlap_->apply_direction(point.frame.view(),origin_frame_.view(),
-      zero_.view(),point.origin_direction.view(),selected_.view(),
-      direction.view());
-  axpy(*context_,rhs.view(),1.0,direction.view());
+  Matrix<double> rhs(*context_,structures_,1);
+  overlap_->transport_image(point.frame.view(),origin_frame_.view(),
+      point.origin_direction.view(),point.base_coefficients.view(),origin_carrier_,rhs.view());
   overlap_->solve_metric(point.frame.view(),rhs.view(),
                          point.coefficients.view(),
                          point.base_coefficients.view(),nullptr,
@@ -554,7 +536,8 @@ SingleStateCiTransportPoint SingleStateCiTransport::retract(
 
 SingleStateCiTransportModel SingleStateCiTransport::evaluate_model(
     const SingleStateCiTransportPoint& point, double physical_energy,
-    linalg::ConstMatrixView physical_coefficient_gradient) const {
+    linalg::ConstMatrixView physical_coefficient_gradient,
+    linalg::ConstMatrixView physical_carrier) const {
   const nvtx3::scoped_range range{"transport.keyframe_model"};
   if (!std::isfinite(physical_energy) ||
       physical_coefficient_gradient.rows!=structures_ ||
@@ -568,31 +551,15 @@ SingleStateCiTransportModel SingleStateCiTransport::evaluate_model(
       Matrix<double>(*context_,active_,active_),
       Matrix<double>(*context_,structures_,1)};
   Matrix<double> rhs(*context_,structures_,1),lambda(*context_,structures_,1);
-  Matrix<double> left(*context_,active_,active_);
-  Matrix<double> right(*context_,active_,active_);
-  Matrix<double> dleft(*context_,active_,active_);
-  Matrix<double> dright(*context_,active_,active_);
   copy(*context_,rhs.view(),physical_coefficient_gradient);
   axpy(*context_,rhs.view(),-1.0,origin_gradient_.view());
   overlap_->solve_metric(point.frame.view(),rhs.view(),lambda.view(),{},nullptr,
                          point.selected_metric.get());
 
-  overlap_->adjoint(point.frame.view(),origin_frame_.view(),lambda.view(),
-                    point.base_coefficients.view(),left.view(),right.view());
-  copy(*context_,model.current_upper.view(),left.view());
-  overlap_->adjoint_direction(point.frame.view(),origin_frame_.view(),
-      zero_.view(),point.origin_direction.view(),lambda.view(),selected_.view(),
-      {},{},dleft.view(),dright.view());
-  axpy(*context_,model.current_upper.view(),1.0,dleft.view());
-  overlap_->adjoint(point.frame.view(),point.frame.view(),lambda.view(),
-                    point.coefficients.view(),left.view(),right.view());
-  axpy(*context_,model.current_upper.view(),-1.0,left.view());
-  axpy(*context_,model.current_upper.view(),-1.0,right.view());
-  overlap_->adjoint(point.frame.view(),origin_frame_.view(),lambda.view(),
-                    selected_.view(),left.view(),model.origin_upper.view());
-
-  overlap_->apply(origin_frame_.view(),point.frame.view(),lambda.view(),
-                  model.structure_covector.view());
+  overlap_->transport_gradient(point.frame.view(),origin_frame_.view(),
+      point.origin_direction.view(),lambda.view(),point.base_coefficients.view(),
+      origin_carrier_,physical_carrier,model.current_upper.view(),model.origin_upper.view(),
+      model.structure_covector.view());
   axpy(*context_,model.structure_covector.view(),1.0,origin_gradient_.view());
   const double inverse_scale=1.0/coordinate_scale_;
   check_cublas(cublasDscal(context_->blas(),structures_,&inverse_scale,

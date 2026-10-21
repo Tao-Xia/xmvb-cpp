@@ -41,6 +41,8 @@ class VbPoint {
   linalg::ConstMatrixView pair_kernel_adjoint() const noexcept { return pair_adjoint_.view(); }
   linalg::ConstMatrixView one_electron() const noexcept { return one_.view(); }
   linalg::ConstMatrixView pair_kernel() const noexcept { return pair_.view(); }
+  /** Evaluated, unrenormalized orthogonal spin-product state, owned by this point. */
+  linalg::ConstMatrixView orthogonal_state() const noexcept { return state_.view(); }
   ConstPairPanel pair_products() const noexcept {
     return pair_products_.empty() ? ConstPairPanel{}:
         ConstPairPanel{pair_products_.data(),integrals_->pair_count(),pair_.rows(),pair_.rows()};
