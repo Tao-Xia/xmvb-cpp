@@ -4,6 +4,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <vector>
 
 #include <Eigen/Core>
@@ -147,6 +148,29 @@ struct StructureActionStorage {
  */
 class StructureAction {
 public:
+  /** @brief One entry of the selected-structure to touched-product map. */
+  struct StructureTerm {
+    int group = 0;
+    int structure = 0;
+    double coefficient = 0.0;
+  };
+
+  /** @brief Borrowed exact orthogonal action data, independent of an executor.
+   * All views remain valid for the lifetime of this action. Products use
+   * alpha*n_beta+beta addresses; no determinant-indexed numerical array exists.
+   */
+  struct OrthogonalView {
+    const ExteriorOrbitalTransform& alpha;
+    const ExteriorOrbitalTransform& beta;
+    const mcscf::DirectCiSigmaAction& sigma;
+    std::span<const mcscf::ProductIndex> products;
+    std::span<const std::size_t> offsets;
+    std::span<const StructureTerm> terms;
+  };
+
+  /** @brief Export the retained orthogonal representation without rebuilding it. */
+  OrthogonalView orthogonal_view() const;
+
   StructureAction(
       const std::vector<std::vector<StructureExpansionTerm>>&
           determinant_to_structure_terms,
@@ -532,12 +556,6 @@ private:
       const Eigen::Ref<const Eigen::VectorXd>& energies,double eigenvalue) const;
   struct OrthogonalDirectCiData;
   struct TiledPairData;
-  struct StructureTerm {
-    /** Index into shared original support, not the full product-grid address. */
-    int group = 0;
-    int structure = 0;
-    double coefficient = 0.0;
-  };
 
   /** @brief Exact common transpose parity of all sparse structure columns. */
   int detect_spin_exchange() const;

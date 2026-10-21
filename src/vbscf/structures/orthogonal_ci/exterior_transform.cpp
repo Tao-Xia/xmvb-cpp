@@ -211,7 +211,7 @@ ExteriorOrbitalTransform::ExteriorOrbitalTransform(
         throw std::invalid_argument(
             "exterior transform requires a complete fixed-spin space");
       }
-      shear.pairs.push_back(DeterminantPair{
+      shear.pairs.push_back(ShearEdge{
           source,
           target->second,
           replacement_sign(
@@ -387,7 +387,7 @@ void ExteriorOrbitalTransform::apply_supported_left(
       for (int index = 0; index < n_shears; ++index) {
         const Shear& shear = shears_[adjoint ? n_shears - 1 - index : index];
         if (shear.coefficient==0.0) continue;
-        const auto update=[&](const DeterminantPair& pair) {
+        const auto update=[&](const ShearEdge& pair) {
           const int target = adjoint ? pair.source : pair.target;
           const int source = adjoint ? pair.target : pair.source;
           const double factor=shear.coefficient*pair.sign;
@@ -561,7 +561,7 @@ void ExteriorOrbitalTransform::transform_left(
       const Shear& shear = shears_[reverse ? n_shears - 1 - index : index];
       if (shear.coefficient==0.0) continue;
       const double factor = inverse ? -shear.coefficient : shear.coefficient;
-      for (const DeterminantPair& pair : shear.pairs) {
+      for (const ShearEdge& pair : shear.pairs) {
         const int target = adjoint ? pair.source : pair.target;
         const int source = adjoint ? pair.target : pair.source;
         values[target] += (factor * pair.sign) * values[source];
@@ -596,7 +596,7 @@ void ExteriorOrbitalTransform::transform_right(
       const Shear& shear = shears_[reverse ? n_shears - 1 - index : index];
       if (shear.coefficient==0.0) continue;
       const double factor = inverse ? -shear.coefficient : shear.coefficient;
-      for (const DeterminantPair& pair : shear.pairs) {
+      for (const ShearEdge& pair : shear.pairs) {
         const int target = adjoint ? pair.source : pair.target;
         const int source = adjoint ? pair.target : pair.source;
         values.col(target) += (factor * pair.sign) * values.col(source);
@@ -717,7 +717,7 @@ void ExteriorOrbitalTransform::transform_directional_left(
       const int ordered = adjoint ? n_shears - 1 - index : index;
       const Shear& shear = shears_[ordered];
       const double dc = direction.shear_coefficients[ordered];
-      for (const DeterminantPair& pair : shear.pairs) {
+      for (const ShearEdge& pair : shear.pairs) {
         const int source = adjoint ? pair.target : pair.source;
         const int target = adjoint ? pair.source : pair.target;
         delta[target] += pair.sign *
@@ -754,7 +754,7 @@ void ExteriorOrbitalTransform::apply_directional_right(
     const Shear& shear = shears_[shear_index];
     const double delta_coefficient =
         direction.shear_coefficients[shear_index];
-    for (const DeterminantPair& pair : shear.pairs) {
+    for (const ShearEdge& pair : shear.pairs) {
       directional_coefficients->col(pair.target) += pair.sign *
           (delta_coefficient * coefficients->col(pair.source) +
            shear.coefficient * directional_coefficients->col(pair.source));
@@ -787,7 +787,7 @@ void ExteriorOrbitalTransform::apply_directional_adjoint_right(
   for (std::size_t reverse = shears_.size(); reverse-- > 0;) {
     const Shear& shear = shears_[reverse];
     const double delta_coefficient = direction.shear_coefficients[reverse];
-    for (const DeterminantPair& pair : shear.pairs) {
+    for (const ShearEdge& pair : shear.pairs) {
       directional_coefficients->col(pair.source) += pair.sign *
           (delta_coefficient * coefficients->col(pair.target) +
            shear.coefficient * directional_coefficients->col(pair.target));
@@ -908,7 +908,7 @@ std::size_t ExteriorOrbitalTransform::dynamic_bytes() const noexcept {
       static_cast<std::size_t>(determinant_scales_.size()) * sizeof(double) +
       shears_.capacity() * sizeof(Shear);
   for (const Shear& shear : shears_) {
-    bytes += shear.pairs.capacity() * sizeof(DeterminantPair);
+    bytes += shear.pairs.capacity() * sizeof(ShearEdge);
     bytes += shear.source_words.capacity()*sizeof(std::uint64_t)+
         shear.word_offsets.capacity()*sizeof(int);
   }

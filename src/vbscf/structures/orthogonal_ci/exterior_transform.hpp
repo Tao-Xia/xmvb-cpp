@@ -43,6 +43,11 @@ struct ExteriorGeneratorTerm {
  */
 class ExteriorOrbitalTransform {
 public:
+  struct ShearEdge {
+    int source = 0;
+    int target = 0;
+    double sign = 1.0;
+  };
   ExteriorOrbitalTransform(
       const std::vector<std::vector<int>>& determinants,
       const Eigen::Ref<const Eigen::MatrixXd>& upper_orbital_transform);
@@ -125,6 +130,13 @@ public:
       Eigen::MatrixXd* directional_coefficients) const;
 
   int dimension() const noexcept { return static_cast<int>(masks_.size()); }
+  /** Borrowed factors in the exact order used by the CPU exterior action. */
+  const Eigen::VectorXd& determinant_scales() const noexcept { return determinant_scales_; }
+  std::size_t shear_count() const noexcept { return shears_.size(); }
+  double shear_coefficient(std::size_t shear) const { return shears_.at(shear).coefficient; }
+  std::span<const ShearEdge> shear_edges(std::size_t shear) const {
+    return shears_.at(shear).pairs;
+  }
   int n_orbitals() const noexcept { return n_orbitals_; }
   /** @brief Upper-chart pullback of a one-body generator contraction.
    * delta Y = E(delta R R^-1) Y. Inputs are bounded single-spin factor panels.
@@ -156,15 +168,9 @@ public:
 
 private:
   struct RowCache;
-  struct DeterminantPair {
-    int source = 0;
-    int target = 0;
-    double sign = 1.0;
-  };
-
   struct Shear {
     double coefficient = 0.0;
-    std::vector<DeterminantPair> pairs;
+    std::vector<ShearEdge> pairs;
     /** Source-bit rank maps a support intersection back to the shared edges. */
     std::vector<std::uint64_t> source_words;
     std::vector<int> word_offsets;

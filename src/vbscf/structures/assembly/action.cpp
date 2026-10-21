@@ -1182,6 +1182,13 @@ void StructureAction::inverse_adjoint_orbital_transform(Eigen::MatrixXd* spin_pr
         spin_products->middleCols(first, n_unique_beta_));
 }
 
+StructureAction::OrthogonalView StructureAction::orthogonal_view() const {
+  if (!direct_ci_)
+    throw std::invalid_argument("structure action has no orthogonal representation");
+  return {direct_ci_->alpha_transform, direct_ci_->beta_transform(), direct_ci_->sigma,
+      spin_products_, spin_term_offsets_, spin_terms_};
+}
+
 Eigen::MatrixXd StructureAction::apply_hamiltonian(
     const Eigen::Ref<const Eigen::MatrixXd>& vectors) const {
   if (vectors.rows()!=n_structures_ || vectors.cols()<=0)

@@ -142,6 +142,10 @@ public:
    * Includes the absorbed one-electron Hamiltonian. Borrowed immutable data.
    */
   const Eigen::MatrixXd& channel_kernel() const noexcept { return hamiltonian_pair_kernel_; }
+  /** Borrowed immutable topology used by the packed-channel CUDA action. */
+  const SpinConnections& alpha_connections() const noexcept { return *alpha_; }
+  const SpinConnections& beta_connections_view() const noexcept { return distinct_beta_ ? *distinct_beta_ : *alpha_; }
+  bool shared_spin_connections() const noexcept { return !distinct_beta_; }
   int n_alpha_strings() const noexcept { return n_alpha_; }
   int n_beta_strings() const noexcept { return n_beta_; }
   int n_orbitals() const noexcept { return n_orbitals_; }
