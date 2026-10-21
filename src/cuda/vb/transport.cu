@@ -11,6 +11,7 @@
 
 #include "cuda/linalg/blas.hpp"
 #include "cuda/vb/action.hpp"
+#include "cuda/vb/metric.hpp"
 #include "cuda/ci/sigma.hpp"
 
 namespace xmvb::cuda {
@@ -304,7 +305,8 @@ void SelectedCrossOverlap::apply_metric(linalg::ConstMatrixView frame,
 
 void SelectedCrossOverlap::solve_metric(linalg::ConstMatrixView frame,
     linalg::ConstMatrixView rhs, linalg::MatrixView solution,
-    linalg::ConstMatrixView initial, linalg::MetricSolveStats* stats) const {
+    linalg::ConstMatrixView initial, linalg::MetricSolveStats* stats,
+    const SelectedMetric* metric) const {
   check_frame(frame);
   check_structure(rhs);
   check_structure(solution);
@@ -314,12 +316,35 @@ void SelectedCrossOverlap::solve_metric(linalg::ConstMatrixView frame,
   linalg::MetricSolveStats local;
   if (!stats) stats=&local;
   *stats={};
-  Matrix<double> r(*context_,structures_,1),z(*context_,structures_,1);
-  Matrix<double> p(*context_,structures_,1),ap(*context_,structures_,1);
-  Matrix<double> image(*context_,structures_,1);
   const double rhs_norm=norm(*context_,rhs);
   if (!std::isfinite(rhs_norm))
     throw std::invalid_argument("non-finite metric RHS");
+  if (metric) {
+    if (metric->dimension()!=structures_)
+      throw std::invalid_argument("point selected metric dimension mismatch");
+    if (rhs_norm==0.0) {
+      zero(*context_,solution);
+      return;
+    }
+    // The caller owns this immutable metric at exactly `frame`. Neither a
+    // shared-action frame update nor a CI-model refresh is needed here.
+    metric->solve(rhs,solution);
+    Matrix<double> residual(*context_,structures_,1);
+    metric->apply(solution,residual.view());
+    ++stats->actions;
+    ++stats->certifications;
+    axpy(*context_,residual.view(),-1.0,rhs);
+    const double residual_norm=norm(*context_,residual.view());
+    stats->relative_residual=residual_norm/rhs_norm;
+    const double target=std::sqrt(std::numeric_limits<double>::epsilon())*rhs_norm;
+    if (!std::isfinite(residual_norm) || residual_norm>target)
+      throw std::runtime_error(
+          "exact selected metric inverse failed true-residual certification");
+    return;
+  }
+  Matrix<double> r(*context_,structures_,1),z(*context_,structures_,1);
+  Matrix<double> p(*context_,structures_,1),ap(*context_,structures_,1);
+  Matrix<double> image(*context_,structures_,1);
   action_->update_frame(frame);
   const auto apply=[&](linalg::ConstMatrixView input,linalg::MatrixView output) {
     ++stats->actions;
@@ -492,7 +517,8 @@ SingleStateCiTransport::SingleStateCiTransport(
 SingleStateCiTransportPoint SingleStateCiTransport::retract(
     linalg::ConstMatrixView trial_frame,
     linalg::ConstMatrixView origin_frame_direction,
-    linalg::ConstMatrixView base_coefficients) const {
+    linalg::ConstMatrixView base_coefficients,
+    std::shared_ptr<const SelectedMetric> selected_metric) const {
   if (trial_frame.rows!=active_ || trial_frame.cols!=active_ ||
       trial_frame.ld<active_ || !trial_frame.data ||
       origin_frame_direction.rows!=active_ ||
@@ -505,7 +531,8 @@ SingleStateCiTransportPoint SingleStateCiTransport::retract(
       Matrix<double>(*context_,active_,active_),
       Matrix<double>(*context_,active_,active_),
       Matrix<double>(*context_,structures_,1),
-      Matrix<double>(*context_,structures_,1)};
+      Matrix<double>(*context_,structures_,1),
+      std::move(selected_metric)};
   copy(*context_,point.frame.view(),trial_frame);
   copy(*context_,point.origin_direction.view(),origin_frame_direction);
   copy(*context_,point.base_coefficients.view(),base_coefficients);
@@ -518,7 +545,8 @@ SingleStateCiTransportPoint SingleStateCiTransport::retract(
   axpy(*context_,rhs.view(),1.0,direction.view());
   overlap_->solve_metric(point.frame.view(),rhs.view(),
                          point.coefficients.view(),
-                         point.base_coefficients.view());
+                         point.base_coefficients.view(),nullptr,
+                         point.selected_metric.get());
   return point;
 }
 
@@ -543,7 +571,8 @@ SingleStateCiTransportModel SingleStateCiTransport::evaluate_model(
   Matrix<double> dright(*context_,active_,active_);
   copy(*context_,rhs.view(),physical_coefficient_gradient);
   axpy(*context_,rhs.view(),-1.0,origin_gradient_.view());
-  overlap_->solve_metric(point.frame.view(),rhs.view(),lambda.view());
+  overlap_->solve_metric(point.frame.view(),rhs.view(),lambda.view(),{},nullptr,
+                         point.selected_metric.get());
 
   overlap_->adjoint(point.frame.view(),origin_frame_.view(),lambda.view(),
                     point.base_coefficients.view(),left.view(),right.view());

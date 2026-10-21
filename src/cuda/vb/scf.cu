@@ -67,6 +67,7 @@ double dot(Context& c,View x,View y) {
 
 struct Trial {
   std::unique_ptr<VbPoint> point;
+  std::shared_ptr<const StructureCiPoint> ci_point;
   Matrix<double> raw,coefficients;
   DeviceDavidsonResult ci;
   double energy=0.0;
@@ -117,6 +118,7 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,double nuclear,
       options.gradient_tolerance,options.energy_tolerance);
   ScfResult result;
   const auto finish=[&](Trial& trial,View guess) {
+    trial.ci_point=ci_solver.point();
     trial.coefficients=clone(context,trial.ci.eigenpairs.eigenvector_matrix.view());
     if (guess.data && dot(context,guess,trial.ci.overlap_view())<0.0) {
       scale(context,trial.coefficients.view(),-1.0);
@@ -179,7 +181,8 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,double nuclear,
           [&](View x,Out m) { origin.activate();action.apply_overlap(x,m); },
           [&](View x,double eigenvalue,Out y) {
             ci_solver.inverse_augmented_hessian_model(x,
-                accepted.ci.eigenpairs.eigenvalues.front(),eigenvalue,y);
+                accepted.ci.eigenpairs.eigenvalues.front(),eigenvalue,y,
+                accepted.ci_point.get());
           },
           [&](View x) { origin.activate();return action.maximum_orthogonal_component(x); },
           input.complete_active_space ? CiInverseConstraint::Carrier:CiInverseConstraint::Spin});
@@ -264,6 +267,7 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,double nuclear,
           tangent->maximum_coefficient_component_coordinates(segment(x,no,ns)):0.0);
     };
     struct Keyframe { Matrix<double> displacement;std::unique_ptr<VbPoint> point;
+      std::shared_ptr<const StructureCiPoint> ci_point;
       Matrix<double> raw;std::optional<SingleStateCiTransportPoint> transport; };
     std::optional<Keyframe> cache;
     const auto keyframe=[&](View x)->Keyframe& {
@@ -275,6 +279,7 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,double nuclear,
       Keyframe frame;frame.displacement=clone(context,x);frame.raw=Matrix<double>(context,nb,norb);
       chart.retract(accepted.raw.view(),segment(x,0,no),1.0,frame.raw.view());
       frame.point=new_point();frame.point->prepare(frame.raw.view());
+      if (ci_solver.uses_selected_metric()) frame.ci_point=ci_solver.point();
       if (ns) {
         Matrix<double> dr(context,nb,norb),dc(context,nstr,1);
         chart.expand(segment(x,0,no),dr.view());
@@ -282,7 +287,8 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,double nuclear,
         tangent->coefficient_response_coordinates(segment(x,no,ns),dc.view());
         add(context,dc.view(),accepted.coefficients.view());
         frame.transport.emplace(transport->retract(frame.point->geometry().frame_transform(),
-            direction.frame_transform.view(),dc.view()));
+            direction.frame_transform.view(),dc.view(),
+            frame.ci_point ? frame.ci_point->metric:nullptr));
       }
       cache.emplace(std::move(frame));return *cache;
     };
@@ -330,7 +336,9 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,double nuclear,
       const auto guess=ns ? frame.transport->coefficients.view():accepted.coefficients.view();
       // Reuse the already prepared point instead of regenerating AO response.
       Trial trial;trial.raw=clone(context,frame.raw.view());trial.point=std::move(frame.point);
-      trial.point->activate();trial.ci=ci_solver.solve_device(guess,ci_options);
+      trial.point->activate();
+      if (frame.ci_point) ci_solver.bind_point(frame.ci_point);
+      trial.ci=ci_solver.solve_device(guess,ci_options);
       result.ci_actions+=trial.ci.block_actions;
       finish(trial,guess);
       cache.reset();return trial;
@@ -368,6 +376,8 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,double nuclear,
   }
   result.energy=accepted.energy;result.orbitals=std::move(accepted.raw);
   result.coefficients=std::move(accepted.coefficients);
+  result.ci_prepared_points=ci_solver.prepared_points();
+  result.selected_metric_builds=ci_solver.metric_builds();
   result.seconds=std::chrono::duration<double>(Clock::now()-start).count();
   return result;
 }

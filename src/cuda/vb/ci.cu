@@ -6,17 +6,13 @@
 #include <stdexcept>
 #include <utility>
 
-#include "cuda/linalg/cholesky.hpp"
+#include <nvtx3/nvtx3.hpp>
+
 #include "cuda/vb/action.hpp"
 #include "vbscf/structures/overlap/representation.hpp"
 
 namespace xmvb::cuda {
 namespace {
-
-__global__ void identity(linalg::MatrixView x, std::int64_t count) {
-  const auto i=static_cast<std::int64_t>(blockIdx.x)*blockDim.x+threadIdx.x;
-  if (i<count) x.data[i]=(i%x.rows==i/x.rows) ? 1.0:0.0;
-}
 
 __global__ void positive_model(const double* h,const double* m,double energy,
     double* model,int n) {
@@ -33,11 +29,6 @@ __global__ void augmented_positive_model(const double* h,const double* m,
   const int i=blockIdx.x*blockDim.x+threadIdx.x;
   if (i<n)
     model[i]=fmax(fabs(h[i]-(selected_energy+eigenvalue)*m[i]),1.0e-8);
-}
-
-__global__ void extract_diagonal(linalg::ConstMatrixView metric,double* diagonal,int n) {
-  const int i=blockIdx.x*blockDim.x+threadIdx.x;
-  if (i<n) diagonal[i]=metric.data[i+metric.ld*i];
 }
 
 __global__ void select_jacobi_seed(linalg::MatrixView seed,
@@ -110,7 +101,6 @@ linalg::DavidsonResult download_result(Context& context,
 StructureCi::StructureCi(Context& context,const StructureAction& action,
     const SpinMetric& spin,bool complete_space)
     : context_(&context),action_(&action),spin_(&spin),
-      diagonal_h_(context,action.size(),1),diagonal_m_(context,action.size(),1),
       positive_(context,action.size(),1),energy_(context,1,1) {
   if (spin.dimension()!=action.size())
     throw std::invalid_argument("CUDA CI spin metric dimension mismatch");
@@ -119,7 +109,6 @@ StructureCi::StructureCi(Context& context,const StructureAction& action,
   } else if (vb::RepresentationOverlap::PreparedMetric::fits_selected(action.size())) {
     selected_mode_=true;
   }
-  refresh();
 }
 
 StructureCi::~StructureCi()=default;
@@ -131,25 +120,36 @@ const char* StructureCi::preconditioner_name() const noexcept {
 
 void StructureCi::refresh() {
   if (refreshed_version_==action_->version()) return;
-  action_->diagonal_model(diagonal_h_.view(),diagonal_m_.view());
+  const nvtx3::scoped_range range{"ci.point_prepare"};
+  auto point=std::make_shared<StructureCiPoint>();
+  point->diagonal_h=Matrix<double>(*context_,action_->size(),1);
+  point->diagonal_m=Matrix<double>(*context_,action_->size(),1);
+  action_->diagonal_model(point->diagonal_h.view(),point->diagonal_m.view());
   if (selected_mode_) {
-    // The exact selected metric changes with the orbital frame. Rebuild the
-    // bounded factor, and use its exact diagonal in the Davidson model.
-    selected_.reset();
-    Matrix<double> unit(*context_,action_->size(),action_->size());
     Matrix<double> metric(*context_,action_->size(),action_->size());
-    const std::int64_t count=unit.rows()*unit.cols();
-    if ((count+255)/256>std::numeric_limits<unsigned int>::max())
-      throw std::overflow_error("CUDA selected metric identity grid overflow");
-    identity<<<static_cast<unsigned int>((count+255)/256),256,0,context_->stream()>>>(
-        unit.view(),count);
-    check_cuda(cudaGetLastError(),"CUDA selected metric identity");
-    action_->apply_overlap(unit.view(),metric.view());
-    extract_diagonal<<<(action_->size()+255)/256,256,0,context_->stream()>>>(
-        metric.view(),diagonal_m_.data(),action_->size());
-    check_cuda(cudaGetLastError(),"CUDA selected metric diagonal");
-    selected_=std::make_unique<Cholesky>(*context_,metric.view());
+    action_->build_selected_metric(metric.view());
+    point->metric=std::make_shared<SelectedMetric>(*context_,metric.view());
+    ++metric_builds_;
+    check_cuda(cudaMemcpyAsync(point->diagonal_m.data(),point->metric->diagonal().data,
+        action_->size()*sizeof(double),cudaMemcpyDeviceToDevice,context_->stream()),
+        "reuse selected point metric diagonal");
   }
+  point_=std::move(point);
+  ++prepared_points_;
+  refreshed_version_=action_->version();
+}
+
+std::shared_ptr<const StructureCiPoint> StructureCi::point() {
+  refresh();
+  return point_;
+}
+
+void StructureCi::bind_point(std::shared_ptr<const StructureCiPoint> point) {
+  if (!point || point->diagonal_h.rows()!=action_->size() ||
+      point->diagonal_m.rows()!=action_->size() ||
+      static_cast<bool>(point->metric)!=selected_mode_)
+    throw std::invalid_argument("CUDA CI point does not match structure model");
+  point_=std::move(point);
   refreshed_version_=action_->version();
 }
 
@@ -157,26 +157,25 @@ void StructureCi::inverse_metric(linalg::ConstMatrixView rhs,
     linalg::MatrixView image) {
   if (!has_exact_metric_inverse())
     throw std::logic_error("CUDA CI has no exact selected metric inverse");
-  refresh();
   if (full_) full_->inverse_metric(rhs,image);
-  else selected_->solve(rhs,image);
+  else { refresh();point_->metric->solve(rhs,image); }
 }
 
 void StructureCi::inverse_augmented_hessian_model(
     linalg::ConstMatrixView rhs,double selected_energy,double eigenvalue,
-    linalg::MatrixView image) {
+    linalg::MatrixView image,const StructureCiPoint* point) {
   if (rhs.rows!=action_->size() || rhs.cols!=1 || rhs.ld<rhs.rows || !rhs.data ||
       image.rows!=rhs.rows || image.cols!=1 || image.ld<image.rows ||
       !image.data || !std::isfinite(selected_energy) || !std::isfinite(eigenvalue))
     throw std::invalid_argument("CUDA CI augmented inverse dimensions");
-  refresh();
   if (full_) {
     context_->copy_to_device(energy_.data(),&selected_energy,sizeof(double));
     full_->apply_structure_carrier_inverse(rhs,energy_.view(),eigenvalue,image);
   } else {
+    if (!point) { refresh();point=point_.get(); }
     const int n=action_->size();
     augmented_positive_model<<<(n+255)/256,256,0,context_->stream()>>>(
-        diagonal_h_.data(),diagonal_m_.data(),selected_energy,eigenvalue,
+        point->diagonal_h.data(),point->diagonal_m.data(),selected_energy,eigenvalue,
         positive_.data(),n);
     check_cuda(cudaGetLastError(),"CUDA CI augmented positive model");
     spin_->solve_diagonal_model(rhs,positive_.view(),image);
@@ -188,12 +187,12 @@ void StructureCi::precondition(linalg::ConstMatrixView residual,double energy,
   if (full_) {
     context_->copy_to_device(energy_.data(),&energy,sizeof(double));
     full_->apply_ci_preconditioner(residual,energy_.view(),0.0,output);
-  } else if (selected_) {
-    selected_->solve(residual,output);
+  } else if (point_->metric) {
+    point_->metric->solve(residual,output);
   } else {
     const int n=action_->size();
     positive_model<<<(n+255)/256,256,0,context_->stream()>>>(
-        diagonal_h_.data(),diagonal_m_.data(),energy,
+        point_->diagonal_h.data(),point_->diagonal_m.data(),energy,
         positive_.data(),n);
     check_cuda(cudaGetLastError(),"CUDA CI positive inverse model");
     spin_->solve_diagonal_model(residual,positive_.view(),output);
@@ -236,8 +235,8 @@ DeviceDavidsonResult StructureCi::solve_device(
   };
   const DeviceEigenPreconditioner inverse=[this](linalg::ConstMatrixView r,double e,
       linalg::MatrixView p) { precondition(r,e,p); };
-  auto result=cuda::solve_device_davidson(*context_,action,diagonal_h_.view(),
-      diagonal_m_.view(),guess,options,inverse);
+  auto result=cuda::solve_device_davidson(*context_,action,point_->diagonal_h.view(),
+      point_->diagonal_m.view(),guess,options,inverse);
   if (full_) {
     const int n=action_->size(),roots=options.n_roots;
     Matrix<double> m_structure(*context_,n,roots);
@@ -264,7 +263,7 @@ DeviceDavidsonResult StructureCi::solve_device(const linalg::DavidsonOptions& op
       seed.cols()*sizeof(double),context_->stream()),"CUDA structure CI clear seed");
   for (int column=0;column<count;++column) {
     select_jacobi_seed<<<1,256,0,context_->stream()>>>(seed.view(),
-        diagonal_h_.data(),diagonal_m_.data(),selected.data(),action_->size(),column);
+        point_->diagonal_h.data(),point_->diagonal_m.data(),selected.data(),action_->size(),column);
     check_cuda(cudaGetLastError(),"CUDA structure CI select Jacobi seed");
   }
   return solve_device(seed.view(),options);

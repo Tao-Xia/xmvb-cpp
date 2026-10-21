@@ -12,13 +12,27 @@
 #include <cusolverDn.h>
 
 #include "cuda/linalg/blas.hpp"
+#include "cuda/linalg/cholesky.hpp"
 #include "cuda/vb/action.hpp"
 #include "vbscf/structures/assembly/action.hpp"
+#include "vbscf/structures/overlap/representation.hpp"
 
 namespace xmvb::cuda {
 namespace {
 
 constexpr int kThreads = 256;
+
+int selected_dimension(linalg::ConstMatrixView gram) {
+  if (gram.rows<=0 || gram.rows!=gram.cols || gram.ld<gram.rows || !gram.data ||
+      !vb::RepresentationOverlap::PreparedMetric::fits_selected(gram.rows))
+    throw std::invalid_argument("CUDA selected Gram exceeds bounded representation");
+  return static_cast<int>(gram.rows);
+}
+
+__global__ void selected_diagonal(linalg::ConstMatrixView gram,double* diagonal) {
+  const int i=blockIdx.x*blockDim.x+threadIdx.x;
+  if (i<gram.rows) diagonal[i]=gram.data[i+gram.ld*i];
+}
 
 unsigned int grid_size(std::int64_t count) {
   if (count<=0 || (count-1)/kThreads+1>
@@ -135,6 +149,30 @@ void check_panel(linalg::ConstMatrixView input,linalg::MatrixView output,int row
 }
 
 }  // namespace
+
+SelectedMetric::SelectedMetric(Context& context,linalg::ConstMatrixView gram)
+    : context_(&context),gram_(context,selected_dimension(gram),gram.cols),
+      diagonal_(context,gram.rows,1) {
+  check_cuda(cudaMemcpy2DAsync(gram_.data(),gram_.rows()*sizeof(double),
+      gram.data,gram.ld*sizeof(double),gram.rows*sizeof(double),gram.cols,
+      cudaMemcpyDeviceToDevice,context.stream()),"copy selected point Gram");
+  selected_diagonal<<<(dimension()+255)/256,256,0,context.stream()>>>(
+      gram_.view(),diagonal_.data());
+  check_cuda(cudaGetLastError(),"selected point metric diagonal");
+  factor_=std::make_unique<Cholesky>(context,gram_.view());
+}
+
+SelectedMetric::~SelectedMetric()=default;
+
+void SelectedMetric::apply(linalg::ConstMatrixView rhs,linalg::MatrixView image) const {
+  if (rhs.data==image.data)
+    throw std::invalid_argument("selected point Gram action aliases its input");
+  gemm(*context_,image,gram_.view(),rhs);
+}
+
+void SelectedMetric::solve(linalg::ConstMatrixView rhs,linalg::MatrixView image) const {
+  factor_->solve(rhs,image);
+}
 
 void SpinMetric::initialize_layout(
     Context& context,const std::vector<std::vector<int>>& blocks,

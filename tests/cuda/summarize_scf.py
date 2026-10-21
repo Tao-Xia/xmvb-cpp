@@ -24,9 +24,14 @@ def summarize(root: Path, output: Path) -> None:
             if len(fields) == 3:
                 samples.setdefault(fields[1].strip(), []).append(float(fields[2]))
         # Do not attribute another process's memory to this calculation.
-        if len(samples) > 1:
+        pid_file = directory / "gpu.pid"
+        if pid_file.exists():
+            process_samples = samples.get(pid_file.read_text().strip(), [])
+        elif len(samples) > 1:
             raise ValueError(f"{case}: ambiguous GPU process samples")
-        peak = max(next(iter(samples.values()))) if samples else ""
+        else:
+            process_samples = next(iter(samples.values()), [])
+        peak = max(process_samples) if process_samples else ""
         rss = re.search(r"Maximum resident set size \(kbytes\):\s*(\d+)",
                         (directory / "gpu.time").read_text())
         rows.append({
@@ -37,6 +42,8 @@ def summarize(root: Path, output: Path) -> None:
             "iterations": data["scf_iterations"],
             "hvp": data["orbital_hvp_actions"],
             "ci_actions": data["ci_block_actions"],
+            "ci_prepared_points": data.get("ci_prepared_points", ""),
+            "selected_metric_builds": data.get("selected_metric_builds", ""),
             "scf_seconds": data["scf_seconds"],
             "process_seconds": data["process_seconds"],
             "context_peak_gib": int(data["gpu_peak_device_bytes"]) / 1024**3,

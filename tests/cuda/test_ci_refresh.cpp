@@ -144,11 +144,19 @@ void check_case(bool full_space) {
   const Matrix old_m=download(context,model_m.view());
 
   auto first=ci.solve_device(options);
+  const auto origin_point=ci.point();
+  const auto first_preparations=ci.prepared_points();
+  require(ci.point()==origin_point && ci.prepared_points()==first_preparations,
+      "unchanged CI point was rebuilt");
   require(first.eigenpairs.eigenvector_matrix.rows()==count &&
       first.hamiltonian_eigenvectors.rows()==count &&
       first.overlap_view().rows==count,
       "device CI did not retain full-dimension roots and images");
   auto old_roots=first.eigenpairs.eigenvector_matrix.view();
+  DeviceMatrix frozen_before(context,count,1),frozen_after(context,count,1);
+  if (!full_space)
+    ci.inverse_augmented_hessian_model(old_roots,
+        first.eigenpairs.eigenvalues.front(),-0.01,frozen_before.view(),origin_point.get());
 
   auto d_upper=upload(context,upper_frame(true));
   action.update_frame(d_upper.view());
@@ -225,6 +233,25 @@ void check_case(bool full_space) {
     near(download(context,check.view()),rhs,3e-9,
         "FULL current-frame metric inverse is not exact");
   }
+  if (!full_space) {
+    const auto preparations=ci.prepared_points();
+    ci.inverse_augmented_hessian_model(old_roots,
+        first.eigenpairs.eigenvalues.front(),-0.01,frozen_after.view(),origin_point.get());
+    near(download(context,frozen_after.view()),download(context,frozen_before.view()),
+        2e-10,"accepted AH model changed with trial action cursor");
+    require(ci.prepared_points()==preparations,"frozen AH inverse rebuilt trial model");
+  }
+  auto original_upper=upload(context,upper_frame(false));
+  auto original_h=upload(context,one_electron(false));
+  auto original_g=upload(context,pair_kernel(false));
+  action.update_integrals(original_h.view(),original_g.view(),original_upper.view());
+  const auto builds=ci.metric_builds(),preparations=ci.prepared_points();
+  ci.bind_point(origin_point);
+  auto restored=ci.solve_device(old_roots,options);
+  near(restored.eigenpairs.eigenvalues.front(),first.eigenpairs.eigenvalues.front(),
+      2e-8,"retained origin CI point did not restore its energy");
+  require(ci.metric_builds()==builds && ci.prepared_points()==preparations,
+      "binding a retained point rebuilt its selected metric");
 }
 
 }  // namespace

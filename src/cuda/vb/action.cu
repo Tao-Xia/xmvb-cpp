@@ -1,9 +1,13 @@
 #include "cuda/vb/action.hpp"
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <chrono>
 #include <cmath>
 #include <limits>
+#include <stdexcept>
+#include <utility>
 #include <vector>
 
 #include <cusparse.h>
@@ -61,6 +65,63 @@ __global__ void assemble_carrier_jacobi(const std::int64_t* row_offsets,
     const double square=coefficient*coefficient;
     atomicAdd(hamiltonian+structure,square*energy);
     atomicAdd(overlap+structure,square);
+  }
+}
+
+unsigned int tile_grid(std::int64_t work) {
+  return static_cast<unsigned int>(std::min<std::int64_t>(
+      65535,(work+255)/256));
+}
+
+__global__ void spin_gram_identity(const std::int64_t* product_indices,
+    std::int64_t first_group,int count,int alpha,int beta,
+    linalg::MatrixView alpha_columns,linalg::MatrixView beta_columns) {
+  const auto alpha_size=static_cast<std::int64_t>(alpha)*count;
+  const auto total=alpha_size+static_cast<std::int64_t>(beta)*count;
+  for (auto index=static_cast<std::int64_t>(blockIdx.x)*blockDim.x+threadIdx.x;
+       index<total;index+=static_cast<std::int64_t>(gridDim.x)*blockDim.x) {
+    if (index<alpha_size) {
+      const int column=static_cast<int>(index/alpha);
+      const int row=static_cast<int>(index%alpha);
+      const auto product=product_indices[first_group+column];
+      alpha_columns.data[row+alpha_columns.ld*column]=
+          row==product%alpha ? 1.0:0.0;
+    } else {
+      const auto local=index-alpha_size;
+      const int column=static_cast<int>(local/beta);
+      const int row=static_cast<int>(local%beta);
+      const auto product=product_indices[first_group+column];
+      beta_columns.data[row+beta_columns.ld*column]=
+          row==product/alpha ? 1.0:0.0;
+    }
+  }
+}
+
+__global__ void spin_gram_product(const std::int64_t* product_indices,
+    std::int64_t first_group,std::int64_t groups,int count,int alpha,
+    linalg::ConstMatrixView alpha_gram,linalg::ConstMatrixView beta_gram,
+    linalg::MatrixView product_gram) {
+  const auto work=groups*count;
+  for (auto index=static_cast<std::int64_t>(blockIdx.x)*blockDim.x+threadIdx.x;
+       index<work;index+=static_cast<std::int64_t>(gridDim.x)*blockDim.x) {
+    const auto source=index/groups;
+    const auto target=index%groups;
+    const auto q=product_indices[target];
+    product_gram.data[target+product_gram.ld*source]=
+        alpha_gram.data[q%alpha+alpha_gram.ld*source]*
+        beta_gram.data[q/alpha+beta_gram.ld*source];
+  }
+}
+
+__global__ void selected_source_terms(const std::int64_t* row_offsets,
+    const std::int64_t* columns,const double* weights,
+    std::int64_t first_group,int count,linalg::MatrixView source_terms) {
+  for (auto local=static_cast<std::int64_t>(blockIdx.x)*blockDim.x+threadIdx.x;
+       local<count;local+=static_cast<std::int64_t>(gridDim.x)*blockDim.x) {
+    const auto group=first_group+local;
+    // One owner per source row also sums duplicate structure terms exactly.
+    for (auto term=row_offsets[group];term<row_offsets[group+1];++term)
+      source_terms.data[local+source_terms.ld*columns[term]]+=weights[term];
   }
 }
 
@@ -186,14 +247,19 @@ struct StructureAction::Impl {
     return bytes;
   }
 
-  void spmm(bool transpose, linalg::ConstMatrixView input,
-             linalg::MatrixView output) const {
+  void spmm_with_workspace(bool transpose,linalg::ConstMatrixView input,
+             linalg::MatrixView output,void* workspace) const {
     DenseDescriptor x(input), y(output);
     const double one=1, zero=0;
     check_sparse(cusparseSpMM(sparse,
         transpose ? CUSPARSE_OPERATION_TRANSPOSE : CUSPARSE_OPERATION_NON_TRANSPOSE,
         CUSPARSE_OPERATION_NON_TRANSPOSE, &one, incidence, x, &zero, y,
-        CUDA_R_64F, CUSPARSE_SPMM_ALG_DEFAULT, sparse_workspace.data()), "cusparseSpMM");
+        CUDA_R_64F, CUSPARSE_SPMM_ALG_DEFAULT, workspace), "cusparseSpMM");
+  }
+
+  void spmm(bool transpose, linalg::ConstMatrixView input,
+             linalg::MatrixView output) const {
+    spmm_with_workspace(transpose,input,output,sparse_workspace.data());
   }
 
   void project(linalg::ConstMatrixView carrier,linalg::MatrixView output) const {
@@ -281,6 +347,109 @@ void StructureAction::diagonal_model(linalg::MatrixView h,
       p.alpha_transform.scale_data(),p.beta_transform->scale_data(),
       h.data,m.data,p.groups,p.alpha,p.beta);
   check_cuda(cudaGetLastError(),"CUDA carrier Jacobi assembly");
+}
+void StructureAction::build_selected_metric(linalg::MatrixView output) const {
+  const nvtx3::scoped_range range{"vb.selected_metric_gram"};
+  const auto& p=*impl_;
+  if (output.rows!=p.structures || output.cols!=p.structures ||
+      output.ld<output.rows || !output.data)
+    throw std::invalid_argument("CUDA selected metric output dimensions");
+  if (p.groups==0) {
+    for (int column=0;column<p.structures;++column)
+      check_cuda(cudaMemsetAsync(output.data+output.ld*column,0,
+          p.structures*sizeof(double),p.context.stream()),
+          "clear empty selected metric");
+    return;
+  }
+  const auto& counters=p.context.counters();
+  const auto budget=p.context.device_byte_budget();
+  if (counters.current_device_bytes>budget)
+    throw std::runtime_error("CUDA selected metric accounting exceeds budget");
+  std::size_t device_free=0,device_total=0;
+  check_cuda(cudaMemGetInfo(&device_free,&device_total),
+             "query CUDA selected metric free memory");
+  const auto available=std::min(budget-counters.current_device_bytes,device_free);
+  const auto elements_per_column=static_cast<std::size_t>(p.alpha)+p.beta+
+      static_cast<std::size_t>(p.groups)+2*static_cast<std::size_t>(p.structures);
+  if (elements_per_column>std::numeric_limits<std::size_t>::max()/sizeof(double))
+    throw std::overflow_error("CUDA selected metric tile size overflow");
+  const auto bytes_per_column=elements_per_column*sizeof(double);
+  int width=static_cast<int>(std::min<std::size_t>({
+      static_cast<std::size_t>(p.groups),static_cast<std::size_t>(p.structures),
+      available/bytes_per_column}));
+  Buffer<double> spin_grams;
+  Matrix<double> product_gram,selected_product,source_terms;
+  Buffer<std::byte> extra_workspace;
+  for (;width>0;width/=2) {
+    Buffer<double> proposed_grams(p.context,
+        static_cast<std::size_t>(p.alpha+p.beta)*width);
+    Matrix<double> proposed_product(p.context,p.groups,width);
+    Matrix<double> proposed_selected(p.context,p.structures,width);
+    Matrix<double> proposed_terms(p.context,width,p.structures);
+    auto scratch=p.spmm_bytes(true,proposed_product.view(),proposed_selected.view());
+    const int tail=static_cast<int>(p.groups%width);
+    if (tail)
+      scratch=std::max(scratch,p.spmm_bytes(true,
+          proposed_product.view().columns(0,tail),
+          proposed_selected.view().columns(0,tail)));
+    if (scratch>p.sparse_workspace.size()) {
+      std::size_t free_after=0,total_after=0;
+      check_cuda(cudaMemGetInfo(&free_after,&total_after),
+                 "query CUDA selected metric scratch memory");
+      const auto budget_after=budget-p.context.counters().current_device_bytes;
+      if (scratch>std::min(budget_after,free_after)) continue;
+      extra_workspace=Buffer<std::byte>(p.context,scratch);
+    }
+    spin_grams=std::move(proposed_grams);
+    product_gram=std::move(proposed_product);
+    selected_product=std::move(proposed_selected);
+    source_terms=std::move(proposed_terms);
+    break;
+  }
+  if (width==0)
+    throw std::runtime_error("CUDA selected metric budget cannot hold one source-product column");
+  void* workspace=extra_workspace.empty() ?
+      static_cast<void*>(p.sparse_workspace.data()):
+      static_cast<void*>(extra_workspace.data());
+  for (std::int64_t begin=0;begin<p.groups;begin+=width) {
+    const int count=static_cast<int>(std::min<std::int64_t>(width,p.groups-begin));
+    const auto alpha_gram=linalg::MatrixView{spin_grams.data(),p.alpha,count,p.alpha};
+    const auto beta_gram=linalg::MatrixView{
+        spin_grams.data()+static_cast<std::int64_t>(p.alpha)*count,
+        p.beta,count,p.beta};
+    const auto identity_elements=static_cast<std::int64_t>(p.alpha+p.beta)*count;
+    spin_gram_identity<<<tile_grid(identity_elements),256,0,p.context.stream()>>>(
+        p.product_indices.data(),begin,count,p.alpha,p.beta,alpha_gram,beta_gram);
+    check_cuda(cudaGetLastError(),"CUDA selected spin Gram identities");
+    if (p.beta_transform==&p.alpha_transform) {
+      const linalg::MatrixView both{spin_grams.data(),p.alpha,2*count,p.alpha};
+      p.alpha_transform.apply_left(both);
+      p.alpha_transform.apply_left(both,true);
+    } else {
+      p.alpha_transform.apply_left(alpha_gram);
+      p.alpha_transform.apply_left(alpha_gram,true);
+      p.beta_transform->apply_left(beta_gram);
+      p.beta_transform->apply_left(beta_gram,true);
+    }
+    const auto gram=product_gram.view().columns(0,count);
+    const auto product_work=p.groups*static_cast<std::int64_t>(count);
+    spin_gram_product<<<tile_grid(product_work),256,0,p.context.stream()>>>(
+        p.product_indices.data(),begin,p.groups,count,p.alpha,
+        alpha_gram,beta_gram,gram);
+    check_cuda(cudaGetLastError(),"CUDA selected product Gram tile");
+    const auto projected=selected_product.view().columns(0,count);
+    p.spmm_with_workspace(true,gram,projected,workspace);
+    const linalg::MatrixView terms{source_terms.data(),count,p.structures,width};
+    for (int column=0;column<p.structures;++column)
+      check_cuda(cudaMemsetAsync(terms.data+terms.ld*column,0,
+          count*sizeof(double),p.context.stream()),
+          "clear selected source term tile");
+    selected_source_terms<<<tile_grid(count),256,0,p.context.stream()>>>(
+        p.row_offsets.data(),p.columns.data(),p.weights.data(),
+        begin,count,terms);
+    check_cuda(cudaGetLastError(),"CUDA selected source terms");
+    gemm(p.context,output,projected,terms,1.0,begin==0 ? 0.0:1.0);
+  }
 }
 const DirectCiSigma& StructureAction::carrier_sigma() const noexcept { return impl_->sigma; }
 void StructureAction::update_frame(linalg::ConstMatrixView upper) {

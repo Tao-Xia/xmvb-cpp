@@ -51,7 +51,9 @@ for case in "${cases[@]}"; do
     sampler=$!
     trap 'kill "$sampler" 2>/dev/null || true' EXIT
     srun --exact --ntasks=1 --cpus-per-task=32 --cpu-bind=cores \
-      /usr/bin/time -v -o gpu.time "$out/cuvbscf" input.xmi > gpu.out 2> gpu.err
+      /usr/bin/time -v -o gpu.time bash -c \
+        'printf "%s\n" "$$" > gpu.pid; exec "$1" input.xmi' _ "$out/cuvbscf" \
+        > gpu.out 2> gpu.err
   ) || status=1
 done
 exit "$status"

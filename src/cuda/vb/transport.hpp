@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include <memory>
 #include <utility>
 
 #include "cuda/memory/buffer.hpp"
@@ -10,6 +11,7 @@
 namespace xmvb::cuda {
 
 class StructureAction;
+class SelectedMetric;
 
 /** Exact F(R_left)^T F(R_right) in the original selected structure space.
  * F(R)=wedge(R) W; W is the sparse selected expansion in StructureAction.
@@ -81,14 +83,16 @@ class SelectedCrossOverlap {
                     linalg::MatrixView image) const;
 
   /** Selected SPD inverse with the CPU metric solver's certified true-residual
-   * and stagnation rules. The Jacobi diagonal is the accepted-frame source
-   * diagonal, not an identity/closed-carrier approximation. No host vector
-   * transfers occur; only cuBLAS scalars and diagnostics cross to the host.
+   * and stagnation rules. A supplied immutable point metric uses its factor and
+   * Gram for the certified solve without changing the shared action frame.
+   * Otherwise the existing matrix-free inverse is used unchanged. No host
+   * vector transfers occur; only cuBLAS scalars and diagnostics cross to host.
    */
   void solve_metric(linalg::ConstMatrixView frame,
                     linalg::ConstMatrixView rhs, linalg::MatrixView solution,
                     linalg::ConstMatrixView initial = {},
-                    linalg::MetricSolveStats* stats = nullptr) const;
+                    linalg::MetricSolveStats* stats = nullptr,
+                    const SelectedMetric* metric = nullptr) const;
 
  private:
   void check_frame(linalg::ConstMatrixView frame) const;
@@ -126,6 +130,8 @@ struct SingleStateCiTransportPoint {
   Matrix<double> origin_direction;
   Matrix<double> base_coefficients;
   Matrix<double> coefficients;
+  /** Immutable exact bounded Gram and factor at this trial frame. */
+  std::shared_ptr<const SelectedMetric> selected_metric;
 };
 
 /** Residual-balanced physical model outputs, all non-scalar cotangents on GPU.
@@ -160,7 +166,8 @@ class SingleStateCiTransport {
   SingleStateCiTransportPoint retract(
       linalg::ConstMatrixView trial_frame,
       linalg::ConstMatrixView origin_frame_direction,
-      linalg::ConstMatrixView base_coefficients) const;
+      linalg::ConstMatrixView base_coefficients,
+      std::shared_ptr<const SelectedMetric> selected_metric = {}) const;
 
   /** Physical coefficient gradient must include normalized_weight. */
   SingleStateCiTransportModel evaluate_model(

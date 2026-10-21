@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <memory>
 #include <vector>
 
 #include "cuda/memory/buffer.hpp"
@@ -12,6 +13,25 @@ namespace xmvb::vb { class StructureAction; }
 namespace xmvb::cuda {
 
 class StructureAction;
+class Cholesky;
+
+/** Immutable exact Gram and Cholesky shared by one bounded selected point.
+ * The matrix is at most the existing CPU selected-metric limit. Large selected
+ * spaces and FULL keep their matrix-free/spin representations instead.
+ */
+class SelectedMetric {
+ public:
+  SelectedMetric(Context& context,linalg::ConstMatrixView gram);
+  ~SelectedMetric();
+  int dimension() const noexcept { return static_cast<int>(gram_.rows()); }
+  linalg::ConstMatrixView diagonal() const noexcept { return diagonal_.view(); }
+  void apply(linalg::ConstMatrixView rhs,linalg::MatrixView image) const;
+  void solve(linalg::ConstMatrixView rhs,linalg::MatrixView image) const;
+ private:
+  Context* context_;
+  Matrix<double> gram_,diagonal_;
+  std::unique_ptr<Cholesky> factor_;
+};
 
 /** Device occupation-block Cholesky factors of W^T W.
  * Construction assembles and factors the Grams on the device.

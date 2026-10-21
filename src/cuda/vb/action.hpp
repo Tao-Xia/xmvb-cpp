@@ -45,6 +45,12 @@ class StructureAction {
    */
   void diagonal_model(linalg::MatrixView hamiltonian,
                       linalg::MatrixView overlap) const;
+  /** Exact current-frame selected overlap W^T (G_alpha tensor G_beta) W.
+   * Builds bounded single-spin Gram and touched-product tiles on the device;
+   * no full product carrier, structure unit-action loop, or determinant-square
+   * matrix is formed. The caller owns the overwritten column-major output.
+   */
+  void build_selected_metric(linalg::MatrixView overlap) const;
   std::uint64_t version() const noexcept;
   /** Change the orbital frame without modifying the current sigma kernel. */
   void update_frame(linalg::ConstMatrixView upper);

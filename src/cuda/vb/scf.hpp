@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -21,6 +22,7 @@ struct ScfResult {
   std::string reason;
   double energy=0.0,gradient_inf=0.0,seconds=0.0;
   int iterations=0,hvp=0,ci_actions=0;
+  std::uint64_t ci_prepared_points=0,selected_metric_builds=0;
   std::vector<ScfIteration> trace;
 };
 

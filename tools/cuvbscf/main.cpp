@@ -47,6 +47,8 @@ int main(int argc,char** argv) {
              <<"scf_iterations="<<result.iterations<<'\n'
              <<"orbital_hvp_actions="<<result.hvp<<'\n'
              <<"ci_block_actions="<<result.ci_actions<<'\n'
+             <<"ci_prepared_points="<<result.ci_prepared_points<<'\n'
+             <<"selected_metric_builds="<<result.selected_metric_builds<<'\n'
              <<"gradient_inf="<<result.gradient_inf<<'\n'
              <<"scf_seconds="<<result.seconds<<'\n'
              <<"process_seconds="<<std::chrono::duration<double>(

@@ -10,6 +10,7 @@
 
 #include "core/pair_index.hpp"
 #include "cuda/vb/action.hpp"
+#include "cuda/vb/metric.hpp"
 #include "cuda/vb/transport.hpp"
 #include "vbscf/determinants/pairs/same_spin_cache.hpp"
 #include "vbscf/structures/assembly/action.hpp"
@@ -147,6 +148,23 @@ void check_selected_transport() {
   const Matrix gram=reference.apply(trial,trial,identity);
   near(download(context,dout.view()),gram.llt().solve(rhs),3e-8,
        "selected metric GPU solve differs from exact selected Gram");
+  xmvb::cuda::Matrix<double> dgram(context,3,3);
+  xmvb::cuda::copy_to_device(context,dgram.view(),gram);
+  auto shared_metric=std::make_shared<xmvb::cuda::SelectedMetric>(context,dgram.view());
+  const auto before_cached_solve=action.version();
+  xmvb::linalg::MetricSolveStats cached_stats;
+  overlap.solve_metric(dt.view(),dx.view(),dout.view(),{},&cached_stats,
+                       shared_metric.get());
+  near(download(context,dout.view()),gram.llt().solve(rhs),3e-8,
+       "point-owned selected metric solve differs from exact selected Gram");
+  require(action.version()==before_cached_solve &&
+          cached_stats.actions==1 && cached_stats.certifications==1 &&
+          cached_stats.relative_residual<3e-8,
+          "point-owned metric solve changed action frame or skipped certification");
+  overlap.solve_metric(dt.view(),dx.view(),dout.view(),{},&cached_stats,
+                       shared_metric.get());
+  require(action.version()==before_cached_solve,
+          "repeated point-owned metric solve changed action frame");
 
   Vector c0(3); c0<<0.51,-0.36,0.28;
   const Matrix gram0=reference.apply(f.r0,f.r0,identity);
@@ -166,14 +184,25 @@ void check_selected_transport() {
   Matrix b(3,3); b<<0.4,0.03,-0.02, 0.03,0.7,0.06, -0.02,0.06,0.5;
   Vector u(3); u<<0.12,-0.08,0.17;
   struct Value { double energy; double orbital; double ci; };
-  const auto evaluate=[&](double orbital,double ci) -> Value {
+  const auto evaluate=[&](double orbital,double ci,
+      std::shared_ptr<const xmvb::cuda::SelectedMetric> selected_metric={}) -> Value {
     const Matrix frame=f.r0+orbital*d;
     const Matrix origin_direction=orbital*d;
     const Vector base=c0+ci*u;
+    if (!selected_metric) {
+      const Matrix selected_gram=reference.apply(frame,frame,identity);
+      xmvb::cuda::Matrix<double> device_gram(context,3,3);
+      xmvb::cuda::copy_to_device(context,device_gram.view(),selected_gram);
+      selected_metric=std::make_shared<xmvb::cuda::SelectedMetric>(
+          context,device_gram.view());
+    }
     xmvb::cuda::copy_to_device(context,dt.view(),frame);
     xmvb::cuda::copy_to_device(context,dd.view(),origin_direction);
     xmvb::cuda::copy_to_device(context,dx.view(),base);
-    const auto point=transport.retract(dt.view(),dd.view(),dx.view());
+    const auto point=transport.retract(dt.view(),dd.view(),dx.view(),selected_metric);
+    require(point.selected_metric.get()==selected_metric.get(),
+            "transport point did not retain its selected metric");
+    selected_metric.reset();
     const Vector coeff=download(context,point.coefficients.view());
     const Vector delta=coeff-c0;
     const double physical=gc0.dot(delta)+0.5*delta.dot(b*delta);
@@ -188,6 +217,16 @@ void check_selected_transport() {
   };
   constexpr double step=2e-5;
   const auto model=evaluate(0.035,-0.023);
+  const Matrix repeated_frame=f.r0+0.035*d;
+  const Matrix repeated_gram=reference.apply(repeated_frame,repeated_frame,identity);
+  xmvb::cuda::copy_to_device(context,dgram.view(),repeated_gram);
+  auto repeated_metric=std::make_shared<xmvb::cuda::SelectedMetric>(context,dgram.view());
+  const auto repeated_a=evaluate(0.035,-0.023,repeated_metric);
+  const auto repeated_b=evaluate(0.035,-0.023,repeated_metric);
+  require(std::abs(repeated_a.energy-repeated_b.energy)<1e-12 &&
+          std::abs(repeated_a.orbital-repeated_b.orbital)<1e-12 &&
+          std::abs(repeated_a.ci-repeated_b.ci)<1e-12,
+          "same-frame point-owned metric changed repeated transport gradient");
   const double orbital_fd=(evaluate(0.035+step,-0.023).energy-
                            evaluate(0.035-step,-0.023).energy)/(2*step);
   const double ci_fd=(evaluate(0.035,-0.023+step).energy-

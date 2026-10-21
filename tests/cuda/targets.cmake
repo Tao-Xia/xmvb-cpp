@@ -7,7 +7,7 @@ add_executable(test_cuda_production_ci
   ${CMAKE_SOURCE_DIR}/tests/cuda/test_production_ci.cpp)
 target_link_libraries(test_cuda_production_ci PRIVATE xmvb_cuda xmvb_vbscf)
 
-foreach(name IN ITEMS exact orbitals ciah point tangent chart device_davidson ci_refresh transport coarse diagonal macro ci_ah_inverse)
+foreach(name IN ITEMS exact orbitals ciah point tangent chart device_davidson ci_refresh transport coarse diagonal macro ci_ah_inverse selected_metric)
   add_executable(test_cuda_${name} ${CMAKE_SOURCE_DIR}/tests/cuda/test_${name}.cpp)
   target_link_libraries(test_cuda_${name} PRIVATE xmvb_cuda xmvb_vbscf)
 endforeach()
