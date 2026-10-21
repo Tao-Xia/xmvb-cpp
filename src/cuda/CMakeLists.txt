@@ -2,6 +2,7 @@ add_library(xmvb_cuda
   linalg/davidson.cu
   linalg/cholesky.cu
   linalg/spectrum.cu
+  linalg/svd.cu
   ci/sigma.cu
   integrals/exact.cu
   integrals/packed.cu

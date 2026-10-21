@@ -29,6 +29,10 @@ int main(int argc,char** argv) {
              <<"basis_functions="<<loaded.input.orbital_preparation_input.n_basis_functions<<'\n'
              <<"active_orbitals="<<loaded.input.orbital_preparation_input.n_active_orbitals<<'\n'
              <<"input_seconds="<<loaded.total_seconds<<'\n'
+             <<"input_integral_provider_seconds="<<loaded.ao_integral_provider_seconds<<'\n'
+             <<"input_pair_graph_seconds="<<loaded.ao_integral_input_build_seconds<<'\n'
+             <<"input_orbital_guess_seconds="<<loaded.orbital_guess_seconds<<'\n'
+             <<"input_structure_expansion_seconds="<<loaded.structure_expansion_seconds<<'\n'
              <<"iteration,energy,delta_energy,gradient_inf,hvp,ci_actions,keyframes,seconds\n";
     const auto solve_start=std::chrono::steady_clock::now();
     auto result=xmvb::cuda::solve_scf(context,loaded.input,loaded.nuclear_repulsion_energy,

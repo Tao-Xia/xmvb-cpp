@@ -1,6 +1,7 @@
 #include "cuda/vb/chart.hpp"
 #include "cuda/vb/orbitals.hpp"
 #include "cuda/linalg/blas.hpp"
+#include "cuda/linalg/svd.hpp"
 #include "vbscf/orbitals/charts/partition.hpp"
 #include "vbscf/core/contracts/orbital_type.hpp"
 
@@ -106,7 +107,7 @@ void chart_copy(Context&,Mut,Const);
 Matrix<double> chart_product(Context&,Const,Const,
     Operation=Operation::none,Operation=Operation::none);
 Matrix<double> chart_eye(Context&,int);
-ChartSvd chart_svd(Context&,cusolverDnHandle_t,Const);
+ChartSvd chart_svd(Context&,Const);
 Buffer<int> chart_indices(Context&,const std::vector<int>&);
 void chart_check_view(Const,int,int,const char*);
 __global__ void chart_scatter_inactive(Const,const int*,const int*,double*,int,int);
@@ -477,7 +478,7 @@ Matrix<double> AcceptedOrbitalChart::Impl::build_quotient(
     chart_gather_rows<<<grid(forbidden*nsource),kThreads,0,ctx.stream()>>>(
         source.view(),meta.forbidden_device.data(),constrained.data(),forbidden,nsource);
     check_cuda(cudaGetLastError(),"CUDA chart forbidden-source gather");
-    auto svd=chart_svd(ctx,solver,constrained.view());
+    auto svd=chart_svd(ctx,constrained.view());
     const int nullity=nsource-svd.rank;
     admissible=Matrix<double>(ctx,nsource,nullity);
     if (nullity)
@@ -494,7 +495,7 @@ Matrix<double> AcceptedOrbitalChart::Impl::build_quotient(
       overlap,meta.local_device.data(),local_overlap.data(),m);
   check_cuda(cudaGetLastError(),"CUDA chart local overlap gather");
   auto horizontal=chart_product(ctx,generator.view(),local_overlap.view(),Operation::transpose);
-  auto svd=chart_svd(ctx,solver,horizontal.view());
+  auto svd=chart_svd(ctx,horizontal.view());
   const int q=m-svd.rank;
   Matrix<double> quotient(ctx,m,q);
   if (q) {
@@ -581,7 +582,7 @@ void AcceptedOrbitalChart::Impl::build_rotation_frame(const OrbitalGeometry& geo
     if (occupied) {
       auto horizontal=chart_product(ctx,occupied_frame.view(),
           overlap_root,Operation::transpose);
-      auto svd=chart_svd(ctx,solver,horizontal.view());
+      auto svd=chart_svd(ctx,horizontal.view());
       if (svd.rank!=occupied)
         throw std::runtime_error("CUDA chart occupied rotation frame rank deficient");
       chart_copy(ctx,null_vectors.view(),svd.right.view().columns(occupied,virtual_count));
@@ -1165,44 +1166,19 @@ Matrix<double> chart_projector_apply(Context& ctx,Const overlap,Const carrier,
   return result;
 }
 
-ChartSvd chart_svd(Context& ctx,cusolverDnHandle_t solver,Const input) {
+ChartSvd chart_svd(Context& ctx,Const input) {
   const int m=static_cast<int>(input.rows),n=static_cast<int>(input.cols);
   if (!n) return {Matrix<double>(ctx,0,0),0};
   if (!m) return {chart_eye(ctx,n),0};
-  Matrix<double> a(ctx,m,n),values(ctx,std::min(m,n),1);
-  const int economy=m>=n?1:0;
-  Matrix<double> left(ctx,m,economy?n:m),right(ctx,n,n);
-  chart_copy(ctx,a.view(),input);
-  gesvdjInfo_t params=nullptr;
-  chart_solver(cusolverDnCreateGesvdjInfo(&params),"cusolverDnCreateGesvdjInfo chart");
-  try {
-    int work_size=0;
-    chart_solver(cusolverDnDgesvdj_bufferSize(solver,CUSOLVER_EIG_MODE_VECTOR,
-        economy,m,n,a.data(),m,values.data(),left.data(),m,right.data(),n,
-        &work_size,params),"cusolverDnDgesvdj_bufferSize chart");
-    Buffer<double> work(ctx,work_size);
-    Buffer<int> info(ctx,1);
-    chart_solver(cusolverDnDgesvdj(solver,CUSOLVER_EIG_MODE_VECTOR,
-        economy,m,n,a.data(),m,values.data(),left.data(),m,right.data(),n,
-        work.data(),work_size,info.data(),params),"cusolverDnDgesvdj chart");
-    int host_info=0;
-    ctx.copy_to_host(&host_info,info.data(),sizeof(int));
-    if (host_info) throw std::runtime_error("CUDA chart SVD did not converge");
-    std::vector<double> spectrum(std::min(m,n));
-    ctx.copy_to_host(spectrum.data(),values.data(),spectrum.size()*sizeof(double));
-    const double maximum=*std::max_element(spectrum.begin(),spectrum.end());
-    const double tolerance=DBL_EPSILON*std::max(m,n)*maximum;
-    int rank=0;
-    for (double sigma:spectrum) {
-      if (!std::isfinite(sigma)) throw std::runtime_error("nonfinite CUDA chart singular value");
-      if (sigma>tolerance) ++rank;
-    }
-    chart_solver(cusolverDnDestroyGesvdjInfo(params),"cusolverDnDestroyGesvdjInfo chart");
-    return {std::move(right),rank};
-  } catch (...) {
-    cusolverDnDestroyGesvdjInfo(params);
-    throw;
+  auto svd=right_svd(ctx,input);
+  const double maximum=*std::max_element(svd.values.begin(),svd.values.end());
+  const double tolerance=DBL_EPSILON*std::max(m,n)*maximum;
+  int rank=0;
+  for (double sigma:svd.values) {
+    if (!std::isfinite(sigma)) throw std::runtime_error("nonfinite CUDA chart singular value");
+    if (sigma>tolerance) ++rank;
   }
+  return {std::move(svd.right),rank};
 }
 
 Buffer<int> chart_indices(Context& ctx,const std::vector<int>& values) {

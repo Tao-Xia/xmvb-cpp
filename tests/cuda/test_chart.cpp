@@ -7,8 +7,10 @@
 #include <Eigen/Core>
 #include <Eigen/Cholesky>
 #include <Eigen/Eigenvalues>
+#include <Eigen/SVD>
 
 #include "cuda/memory/buffer.hpp"
+#include "cuda/linalg/svd.hpp"
 #include "cuda/vb/chart.hpp"
 #include "cuda/vb/orbitals.hpp"
 #include "vbscf/core/contracts/orbital_type.hpp"
@@ -71,6 +73,46 @@ void check_matrix_transfers() {
     throw std::runtime_error("empty matrix transfer changed byte accounting");
 }
 
+void check_right_svd() {
+  xmvb::cuda::Context context;
+  for (const auto [m,n]:std::vector<std::pair<int,int>>{{185,29},{29,185},{7,7},{3,1},{1,3}})
+    for (int kind=0;kind<4;++kind) {
+      Matrix input(m,n);
+      for (int j=0;j<n;++j) for (int i=0;i<m;++i)
+        input(i,j)=kind==2 ? 0.0:kind==1 ? (i+1.0)/(j+1.0):
+            std::sin(0.19*(i+1)*(j+2))+(i==j ? 0.01:0.0);
+      if (kind==3) {
+        input.setZero();
+        const int r=std::min(m,n);
+        for (int i=0;i<r;++i) input(i,i)=1.0;
+        if (r>=3) {
+          const double cutoff=std::numeric_limits<double>::epsilon()*std::max(m,n);
+          input(r-1,r-1)=2.0*cutoff;
+          input(r-2,r-2)=0.5*cutoff;
+        }
+      }
+      DeviceMatrix storage(context,m+3,n);
+      const xmvb::linalg::MatrixView view{storage.data(),m,n,m+3};
+      xmvb::cuda::copy_to_device(context,view,input);
+      auto svd=xmvb::cuda::right_svd(context,view);
+      const Eigen::JacobiSVD<Matrix> reference(input,Eigen::ComputeFullV);
+      const Eigen::Map<const Eigen::VectorXd> values(svd.values.data(),svd.values.size());
+      if (!values.allFinite() ||
+          (values-reference.singularValues()).norm()>2e-11*std::max(1.0,input.norm()))
+        throw std::runtime_error("GPU right singular values differ from independent oracle");
+      const Matrix right=download(context,svd.right.view());
+      if (!right.allFinite() ||
+          (right.transpose()*right-Matrix::Identity(n,n)).norm()>2e-11*n)
+        throw std::runtime_error("GPU right singular vectors lost orthogonality");
+      const double tolerance=std::numeric_limits<double>::epsilon()*std::max(m,n)*values[0];
+      const int rank=static_cast<int>((values.array()>tolerance).count());
+      const int expected_rank=static_cast<int>((reference.singularValues().array()>tolerance).count());
+      if (rank!=expected_rank ||
+          (input*right.rightCols(n-rank)).norm()>2e-11*std::max(1.0,input.norm()))
+        throw std::runtime_error("GPU right SVD rank or null space differs from independent oracle");
+    }
+}
+
 void check_map() {
   xmvb::cuda::Context context;
   // Exact block values would normally be exported from one accepted
@@ -124,7 +166,7 @@ void check_map() {
     throw std::runtime_error("CUDA chart changed a fixed sparse slot");
 }
 
-xmvb::vb::OrbitalPreparationInput fixture(bool oeo,int inactive) {
+xmvb::vb::OrbitalPreparationInput fixture(bool oeo,int inactive,bool separated=false) {
   xmvb::vb::OrbitalPreparationInput input;
   input.n_basis_functions=5;
   input.n_orbitals=inactive+2;
@@ -141,10 +183,13 @@ xmvb::vb::OrbitalPreparationInput fixture(bool oeo,int inactive) {
   input.orbital_value_table.assign(5*norb,0.0);
   input.orbital_basis_counts.resize(norb);
   input.original_orbital_basis_counts.resize(norb);
-  const std::vector<std::vector<int>> hao=inactive==2?
+  std::vector<std::vector<int>> hao=inactive==2?
       std::vector<std::vector<int>>{{1,2,3},{1,2,3},{2,3,4},{1,4,5}}:inactive?
       std::vector<std::vector<int>>{{1,2,3},{2,3,4},{1,4,5}}:
       std::vector<std::vector<int>>{{1,2,3},{3,4,5}};
+  if (separated)
+    hao=inactive==2 ? std::vector<std::vector<int>>{{1,2},{3,4,5},{1,2},{3,4,5}}:
+        std::vector<std::vector<int>>{{1,2},{3,4,5},{1,2}};
   for (int o=0;o<norb;++o) {
     const std::vector<int> support=oeo?std::vector<int>{1,2,3,4,5}:hao[o];
     input.orbital_basis_counts[o]=static_cast<int>(support.size());
@@ -155,7 +200,7 @@ xmvb::vb::OrbitalPreparationInput fixture(bool oeo,int inactive) {
           0.07*std::sin(0.3+o+2*j)+0.13;
     }
   }
-  if (!oeo) input.original_orbital_basis_counts.back()=2;
+  if (!oeo && !separated) input.original_orbital_basis_counts.back()=2;
   return input;
 }
 
@@ -164,9 +209,9 @@ Matrix raw_table(const xmvb::vb::OrbitalPreparationInput& input) {
       input.n_basis_functions,input.n_orbitals);
 }
 
-void check_accepted(bool oeo,int inactive,bool complete=true) {
+void check_accepted(bool oeo,int inactive,bool complete=true,bool separated=false) {
   xmvb::cuda::Context context;
-  auto input=fixture(oeo,inactive);
+  auto input=fixture(oeo,inactive,separated);
   const xmvb::cuda::AoMetric ao_metric(context,input.ao_overlap_matrix);
   const Matrix root=download(context,ao_metric.root());
   const Matrix inverse_root=download(context,ao_metric.inverse_root());
@@ -333,12 +378,15 @@ void check_accepted(bool oeo,int inactive,bool complete=true) {
 
 int main() {
   try {
+    check_right_svd();
     check_matrix_transfers();check_map();
     for (bool oeo:{false,true})
       for (bool inactive:{false,true}) check_accepted(oeo,inactive);
     check_accepted(false,2); // Equal inactive support, different fixed active tails.
     check_accepted(true,2);
     check_accepted(true,2,false); // Selected active rays must not be merged.
+    check_accepted(false,1,true,true); // No contained inactive direction for one atom.
+    check_accepted(false,2,true,true); // Separated supports with nonzero cross-atom AO overlap.
     std::cout<<"CUDA orbital chart map checks passed\n";
     return 0;
   } catch (const std::exception& error) {
