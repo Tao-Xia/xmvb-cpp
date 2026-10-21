@@ -47,7 +47,8 @@ DeviceCoarsePreconditioner::DeviceCoarsePreconditioner(Context& context,
       images_(context,dimension,std::max(0,capacity_)),
       metrics_(context,dimension,std::max(0,capacity_)),
       sample_v_(context,dimension,1),sample_h_(context,dimension,1),
-      sample_m_(context,dimension,1),finite_(context,1),
+      sample_m_(context,dimension,1),
+      coefficients_(context,std::max(1,capacity_),1),finite_(context,1),
       hessian_projection_(Eigen::MatrixXd::Zero(std::max(0,capacity_),
                                                   std::max(0,capacity_))),
       metric_projection_(Eigen::MatrixXd::Zero(std::max(0,capacity_),
@@ -101,9 +102,29 @@ double DeviceCoarsePreconditioner::norm(linalg::ConstMatrixView vector) const {
 double DeviceCoarsePreconditioner::frobenius(linalg::ConstMatrixView panel,
     int columns) const {
   double value=0.0;
-  for (int column=0;column<columns;++column)
-    value=std::hypot(value,norm(panel.column(column)));
+  // Owned panels are contiguous; the Frobenius norm is one vector norm.
+  check_cublas(cublasDnrm2(context_->blas(),blas_int(panel.rows*columns),
+      panel.data,1,&value),"CUDA coarse panel norm");
   return value;
+}
+
+Eigen::VectorXd DeviceCoarsePreconditioner::project(linalg::ConstMatrixView panel,
+    linalg::ConstMatrixView vector,int columns) const {
+  Eigen::VectorXd result(columns);
+  if (!columns) return result;
+  const linalg::MatrixView output{coefficients_.data(),columns,1,columns};
+  gemm(*context_,output,panel.columns(0,columns),vector,1.0,0.0,Operation::transpose);
+  context_->copy_to_host(result.data(),output.data,columns*sizeof(double));
+  return result;
+}
+
+void DeviceCoarsePreconditioner::combine(linalg::MatrixView output,
+    linalg::ConstMatrixView panel,const Eigen::VectorXd& coefficients,double scale) const {
+  const int columns=static_cast<int>(coefficients.size());
+  if (!columns) return;
+  context_->copy_to_device(coefficients_.data(),coefficients.data(),columns*sizeof(double));
+  gemm(*context_,output,panel.columns(0,columns),
+      {coefficients_.data(),columns,1,columns},scale,1.0);
 }
 
 void DeviceCoarsePreconditioner::copy(linalg::MatrixView out,
@@ -183,20 +204,14 @@ void DeviceCoarsePreconditioner::observe(linalg::ConstMatrixView direction,
   scale(basis_.view().column(candidate),inverse);
   scale(images_.view().column(candidate),inverse);
   scale(metrics_.view().column(candidate),inverse);
-  for (int i=0;i<candidate;++i) {
-    hessian_projection_(i,candidate)=dot(basis_.view().column(i),
-        images_.view().column(candidate));
-    hessian_projection_(candidate,i)=dot(images_.view().column(i),
-        basis_.view().column(candidate));
-    metric_projection_(i,candidate)=dot(basis_.view().column(i),
-        metrics_.view().column(candidate));
-    metric_projection_(candidate,i)=dot(metrics_.view().column(i),
-        basis_.view().column(candidate));
-  }
-  hessian_projection_(candidate,candidate)=dot(
-      basis_.view().column(candidate),images_.view().column(candidate));
-  metric_projection_(candidate,candidate)=dot(
-      basis_.view().column(candidate),metrics_.view().column(candidate));
+  hessian_projection_.col(candidate).head(candidate+1)=
+      project(basis_.view(),images_.view().column(candidate),candidate+1);
+  hessian_projection_.row(candidate).head(candidate)=
+      project(images_.view(),basis_.view().column(candidate),candidate).transpose();
+  metric_projection_.col(candidate).head(candidate+1)=
+      project(basis_.view(),metrics_.view().column(candidate),candidate+1);
+  metric_projection_.row(candidate).head(candidate)=
+      project(metrics_.view(),basis_.view().column(candidate),candidate).transpose();
   const auto certified=[&](const Eigen::MatrixXd& projection,
       linalg::ConstMatrixView images,double action_accuracy) {
     const Eigen::MatrixXd raw=projection.topLeftCorner(candidate+1,candidate+1);
@@ -255,26 +270,20 @@ void DeviceCoarsePreconditioner::apply(linalg::ConstMatrixView residual,
       throw std::runtime_error("CUDA coarse inverse failed residual certificate");
     return solution;
   };
-  Eigen::VectorXd projected(size_);
-  for (int i=0;i<size_;++i)
-    projected[i]=dot(basis_.view().column(i),residual);
+  Eigen::VectorXd projected=project(basis_.view(),residual,size_);
   const Eigen::VectorXd a=solve(projected);
   copy(sample_v_.view(),residual);
-  for (int i=0;i<size_;++i) {
-    axpy(sample_v_.view(),-a[i],images_.view().column(i));
-    axpy(sample_v_.view(),eigenvalue*a[i],metrics_.view().column(i));
-  }
+  combine(sample_v_.view(),images_.view(),a,-1.0);
+  combine(sample_v_.view(),metrics_.view(),a,eigenvalue);
   inverse(sample_v_.view(),sample_h_.view());
   check_cublas(cublasSetPointerMode(context_->blas(),CUBLAS_POINTER_MODE_HOST),
       "CUDA coarse restore scalar pointer mode");
   ensure_finite(sample_h_.view());
-  for (int i=0;i<size_;++i)
-    projected[i]=dot(images_.view().column(i),sample_h_.view())-
-        eigenvalue*dot(metrics_.view().column(i),sample_h_.view());
+  projected=project(images_.view(),sample_h_.view(),size_)-
+      eigenvalue*project(metrics_.view(),sample_h_.view(),size_);
   const Eigen::VectorXd b=solve(projected);
   copy(output,sample_h_.view());
-  for (int i=0;i<size_;++i)
-    axpy(output,a[i]-b[i],basis_.view().column(i));
+  combine(output,basis_.view(),a-b);
 }
 
 }  // namespace xmvb::cuda

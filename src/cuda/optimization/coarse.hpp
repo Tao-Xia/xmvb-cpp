@@ -47,12 +47,17 @@ class DeviceCoarsePreconditioner {
   void axpy(linalg::MatrixView out,double coefficient,
             linalg::ConstMatrixView in) const;
   void scale(linalg::MatrixView out,double coefficient) const;
+  Eigen::VectorXd project(linalg::ConstMatrixView panel,
+      linalg::ConstMatrixView vector,int columns) const;
+  void combine(linalg::MatrixView output,linalg::ConstMatrixView panel,
+      const Eigen::VectorXd& coefficients,double scale=1.0) const;
 
   Context* context_;
   int dimension_,capacity_,size_=0;
   double lindep_,action_accuracy_;
   Matrix<double> basis_,images_,metrics_;
   mutable Matrix<double> sample_v_,sample_h_,sample_m_;
+  mutable Matrix<double> coefficients_;
   mutable Buffer<int> finite_;
   Eigen::MatrixXd hessian_projection_,metric_projection_,sample_factor_;
 };
