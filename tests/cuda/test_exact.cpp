@@ -429,7 +429,10 @@ void check_unique_half_tiles() {
   xmvb::cuda::Context context(128ULL*1024*1024);
   const xmvb::cuda::ExactAoPairOperator gpu(context,fixture.graph(true),n);
   DeviceMatrix c(context,n,active);
-  upload(context,c,values(n,active,0.73));
+  Matrix factors=values(n,active,0.73);
+  for (int j=0;j<active;++j) for (int i=0;i<n;++i)
+    if ((i+j)%3) factors(i,j)=0.0;
+  upload(context,c,factors);
   auto image=gpu.prepare_exchange(c.view());
   std::vector<double> expected(image.size()),actual(image.size());
   context.copy_to_host(expected.data(),image.data(),expected.size()*sizeof(double));
@@ -459,7 +462,10 @@ void check_one_electron_and_core(bool compact,bool sparse=false,bool chunked=fal
   const xmvb::cuda::ExactAoPairOperator gpu(context, fixture.graph(compact,chunked),
                                             fixture.n_bf);
   {
-    const Matrix mo=values(fixture.n_bf,fixture.n_bf,0.33);
+    Matrix mo=values(fixture.n_bf,fixture.n_bf,0.33);
+    for (int j=0;j<fixture.n_bf;++j) for (int i=0;i<fixture.n_bf;++i)
+      if ((i+j)%3) mo(i,j)=0.0;
+    mo.col(1).setZero(); // One null source must not contaminate other batch channels.
     DeviceMatrix dmo(context,fixture.n_bf,fixture.n_bf);
     upload(context,dmo,mo);
     const int ncore=std::min(3,fixture.n_bf);
@@ -582,6 +588,19 @@ void check_one_electron_and_core(bool compact,bool sparse=false,bool chunked=fal
       near(result.middleCols(channel*fixture.n_bf,fixture.n_bf),
           reference_jk(fixture,density_batch.middleCols(channel*fixture.n_bf,fixture.n_bf),
               weights.first,weights.second),"CUDA batched JK differs from oracle");
+  }
+  {
+    Matrix sparse=Matrix::Zero(fixture.n_bf,fixture.n_bf);
+    sparse(0,fixture.n_bf-1)=0.37;
+    sparse(fixture.n_bf-1,0)=-0.21;
+    upload(context,dp,sparse);
+    gpu.contract_jk(dp.view(),dout.view(),0.0,1.0);
+    near(download(context,dout),reference_jk(fixture,sparse,0.0,1.0),
+        "CUDA exact-zero exchange support changed a nonzero contribution");
+    sparse.setZero();upload(context,dp,sparse);
+    gpu.contract_jk(dp.view(),dout.view(),0.0,1.0);
+    near(download(context,dout),sparse,"CUDA null density left a stale exchange image");
+    upload(context,dp,density);
   }
   gpu.core_energy(dp.view(), dh.view(), dheff.view(), denergy.data());
   const Matrix expected_heff = core + reference_jk(fixture, density);

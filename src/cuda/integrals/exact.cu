@@ -270,8 +270,10 @@ __device__ void add_oriented_exchange(int u,int v,double value,
         if constexpr (RankOne)
           source=density.data[b+density.ld*channel]*density.data[d+density.ld*channel];
         else source=density.data[b+density.ld*(d+channel*density.rows)];
-        atomic_add_double(output.data+a+output.ld*(c+channel*output.rows),
-            value*source);
+        // Literal zero support is exact; do not issue an atomic add of zero.
+        // No magnitude threshold or screening approximation is introduced.
+        if (source!=0.0)
+          atomic_add_double(output.data+a+output.ld*(c+channel*output.rows),value*source);
       }
     }
   }
@@ -318,8 +320,12 @@ __device__ void add_half_orientation(int u,int v,double value,const int* first,
     if (mu<begin || mu>=begin+count) continue;
     auto* out=half+(mu-begin)*plane+nu*nb*n;
     for (int b=0;b<n;++b) {
-      atomicAdd(out+vi*n+b,value*c.data[vj+c.ld*b]);
-      if (vi!=vj) atomicAdd(out+vj*n+b,value*c.data[vi+c.ld*b]);
+      const double right=c.data[vj+c.ld*b];
+      if (right!=0.0) atomicAdd(out+vi*n+b,value*right);
+      if (vi!=vj) {
+        const double left=c.data[vi+c.ld*b];
+        if (left!=0.0) atomicAdd(out+vj*n+b,value*left);
+      }
     }
   }
 }
