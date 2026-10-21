@@ -631,6 +631,88 @@ void DirectCiSigma::apply_with_adjoint(linalg::ConstMatrixView response,
       one_electron_adjoint,pair_kernel_adjoint);
 }
 
+void DirectCiSigma::apply_direction_with_adjoint(
+    linalg::ConstMatrixView response,linalg::ConstMatrixView state,
+    const DirectCiSigma& direction,linalg::MatrixView combined_image,
+    linalg::MatrixView one_electron_adjoint,
+    linalg::MatrixView pair_kernel_adjoint) const {
+  const nvtx3::scoped_range range{"ci.sigma_direction_adjoint"};
+  const int block_width=validate_adjoint_panels(response,state,n_alpha_,n_beta_);
+  validate_output(combined_image,n_alpha_,response.cols,
+      "invalid CUDA direct-CI combined directional image");
+  validate_output(one_electron_adjoint,n_orbitals_,n_orbitals_,
+      "invalid CUDA direct-CI directional one-electron adjoint");
+  validate_output(pair_kernel_adjoint,n_channels_,n_channels_,
+      "invalid CUDA direct-CI directional pair-kernel adjoint");
+  if (direction.context_!=context_ || direction.n_alpha_!=n_alpha_ ||
+      direction.n_beta_!=n_beta_ || direction.n_orbitals_!=n_orbitals_ ||
+      direction.n_channels_!=n_channels_ || direction.n_electrons_!=n_electrons_ ||
+      direction.alpha_!=alpha_ || direction.beta_!=beta_)
+    throw std::invalid_argument("CUDA direct-CI direction must share the spin graph");
+  if (combined_image.data==response.data || combined_image.data==state.data ||
+      one_electron_adjoint.data==response.data ||
+      one_electron_adjoint.data==state.data ||
+      pair_kernel_adjoint.data==response.data ||
+      pair_kernel_adjoint.data==state.data ||
+      combined_image.data==one_electron_adjoint.data ||
+      combined_image.data==pair_kernel_adjoint.data ||
+      one_electron_adjoint.data==pair_kernel_adjoint.data)
+    throw std::invalid_argument("CUDA direct-CI directional outputs alias another view");
+  prepare_adjoint(block_width,true,true);
+  const std::int64_t products=response.rows*response.cols;
+  const auto rows=scattered_.rows();
+  const auto blocks=(products+rows-1)/rows;
+  const int tile=static_cast<int>(transformed_.cols());
+  const auto* alpha=alpha_->sources.data();
+  const auto* beta=beta_->sources.data();
+  std::int64_t retained_begin=-1;
+  bool first_adjoint=true;
+  for (int p=0;p<n_channels_;p+=tile) {
+    const int p_count=std::min(tile,n_channels_-p);
+    for (std::int64_t step=0;step<blocks;++step) {
+      const auto begin=(p/tile)%2 ? (blocks-1-step)*rows:step*rows;
+      const auto count=std::min(rows,products-begin);
+      if (begin!=retained_begin) {
+        scatter_channels<<<grid_size(count*n_channels_),256,0,context_->stream()>>>(
+            response,scattered_.data(),begin,count,n_alpha_,n_beta_,
+            alpha,beta,n_channels_);
+        check_cuda(cudaGetLastError(),"CUDA direct-CI directional response scatter");
+        scatter_channels<<<grid_size(count*n_channels_),256,0,context_->stream()>>>(
+            state,right_scattered_.data(),begin,count,n_alpha_,n_beta_,
+            alpha,beta,n_channels_);
+        check_cuda(cudaGetLastError(),"CUDA direct-CI directional state scatter");
+        retained_begin=begin;
+      }
+      const linalg::ConstMatrixView response_channels{
+          scattered_.data(),count,n_channels_,count};
+      const linalg::ConstMatrixView state_channels{
+          right_scattered_.data(),count,n_channels_,count};
+      if (p==0) {
+        gemm(*context_,channel_adjoint_.view(),response_channels,state_channels,
+            1.0,first_adjoint ? 0.0:1.0,
+            Operation::transpose,Operation::none);
+        first_adjoint=false;
+      }
+      const linalg::MatrixView output{
+          transformed_.data()+begin,count,p_count,products};
+      const linalg::ConstMatrixView fixed_kernel{
+          kernel_.data()+p,p_count,n_channels_,n_channels_};
+      const linalg::ConstMatrixView directional_kernel{
+          direction.kernel_.data()+p,p_count,n_channels_,n_channels_};
+      gemm(*context_,output,response_channels,fixed_kernel,
+          1.0,0.0,Operation::none,Operation::transpose);
+      gemm(*context_,output,state_channels,directional_kernel,
+          1.0,1.0,Operation::none,Operation::transpose);
+    }
+    gather_channels<<<grid_size(products),256,0,context_->stream()>>>(
+        transformed_.data(),combined_image,products,n_alpha_,n_beta_,
+        alpha,beta,p,p_count,p!=0);
+    check_cuda(cudaGetLastError(),"CUDA direct-CI combined directional gather");
+  }
+  pullback_channel_kernel(channel_adjoint_.view(),
+      one_electron_adjoint,pair_kernel_adjoint);
+}
+
 void DirectCiSigma::diagonal(linalg::MatrixView values) const {
   validate_output(values,n_alpha_,n_beta_,
       "invalid CUDA direct-CI diagonal output");

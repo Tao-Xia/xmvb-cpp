@@ -7,11 +7,21 @@
 
 namespace xmvb::cuda {
 
+/** CPU structure AH inverse uses distinct constraints for the two models. */
+enum class CiInverseConstraint { Spin, Carrier };
+
 /** Device actions in the original selected structure space. */
 struct SingleStateCiActions {
   std::function<void(linalg::ConstMatrixView, linalg::MatrixView,
                      linalg::MatrixView)> hamiltonian_metric;
   std::function<void(linalg::ConstMatrixView, linalg::MatrixView)> metric;
+  /** Current-frame unconstrained AH inverse in original structure coordinates. */
+  std::function<void(linalg::ConstMatrixView, double,
+                     linalg::MatrixView)> augmented_inverse;
+  /** Direct-CI clipping uses the orthogonal carrier, not raw structures. */
+  std::function<double(linalg::ConstMatrixView)> maximum_component;
+  /** Carrier: P_L R P_R, Spin: positive-model constrained Schur inverse. */
+  CiInverseConstraint inverse_constraint=CiInverseConstraint::Spin;
 };
 
 /**
@@ -55,6 +65,12 @@ public:
                                 linalg::MatrixView metric_image) const;
   /** sqrt(2w) Q_perp^T(H-E S)c at the frozen origin. */
   void origin_gradient(linalg::MatrixView gradient) const;
+  /** CPU single-state constrained inverse: Carrier uses P_L R P_R;
+   * Spin uses the positive-model one-state Schur complement.
+   */
+  void apply_inverse_augmented_hessian_diagonal(
+      linalg::ConstMatrixView covector,double eigenvalue,
+      linalg::MatrixView direction) const;
 
 private:
   void check_ambient(linalg::ConstMatrixView view) const;
@@ -64,7 +80,7 @@ private:
 
   Context* context_;
   int structures_;
-  double selected_energy_, coordinate_scale_, reflector_factor_;
+  double selected_energy_, coordinate_scale_, reflector_factor_, reflected_first_;
   SingleStateCiActions actions_;
   Matrix<double> selected_, reflector_;
   mutable Matrix<double> ambient_, hessian_, metric_, work_;

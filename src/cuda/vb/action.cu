@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <chrono>
+#include <cmath>
 #include <limits>
 #include <vector>
 
@@ -12,6 +13,7 @@
 #include <thrust/system/cuda/execution_policy.h>
 
 #include "cuda/ci/sigma.hpp"
+#include "cuda/linalg/blas.hpp"
 #include "cuda/memory/buffer.hpp"
 #include "cuda/memory/graph.hpp"
 #include "cuda/vb/transform.hpp"
@@ -357,6 +359,28 @@ void StructureAction::apply_adjoint_orbital_transform(linalg::MatrixView carrier
 }
 void StructureAction::apply_carrier_hamiltonian(linalg::ConstMatrixView carrier,
     linalg::MatrixView image) const { impl_->sigma.apply(carrier,image); }
+
+double StructureAction::maximum_orthogonal_component(
+    linalg::ConstMatrixView structure) const {
+  auto& p=*impl_;
+  if (structure.rows!=p.structures || structure.cols!=1 ||
+      structure.ld<structure.rows || !structure.data)
+    throw std::invalid_argument("CUDA orthogonal CI maximum dimensions");
+  expand_spin(structure,p.coefficients);
+  apply_orbital_transform(p.coefficients);
+  int index=0;
+  check_cublas(cublasSetPointerMode(p.context.blas(),CUBLAS_POINTER_MODE_HOST),
+      "CUDA orthogonal CI maximum scalar pointer mode");
+  check_cublas(cublasIdamax(p.context.blas(),blas_int(p.products),
+      p.coefficients.data,1,&index),"CUDA orthogonal CI maximum index");
+  if (index<1 || index>p.products)
+    throw std::runtime_error("CUDA orthogonal CI maximum index is invalid");
+  double value=0.0;
+  p.context.copy_to_host(&value,p.coefficients.data+index-1,sizeof(double));
+  if (!std::isfinite(value))
+    throw std::runtime_error("CUDA orthogonal CI maximum is non-finite");
+  return std::abs(value);
+}
 
 void StructureAction::divide_carrier_diagonal(linalg::MatrixView carrier,
     linalg::ConstMatrixView energies,double eigenvalue) const {

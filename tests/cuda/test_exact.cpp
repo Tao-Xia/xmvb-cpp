@@ -247,6 +247,25 @@ void check_graph_and_pair(int active, bool compact) {
                   "CUDA generated directional image differs from oracle");
     }
 
+  // A complete AO-row request takes the CSR feature-then-SpMM route. The
+  // direction shares its temporary feature slab but must keep a distinct
+  // full-row output, including all off-diagonal active-pair channels.
+  xmvb::cuda::Buffer<double> d_full_p(context,fixture.ao_pairs*pairs);
+  xmvb::cuda::Buffer<double> d_full_dp(context,fixture.ao_pairs*pairs);
+  gpu.generated_rows(dc.view(),dd.view(),0,
+      {d_full_p.data(),fixture.ao_pairs,pairs,pairs},
+      {d_full_dp.data(),fixture.ao_pairs,pairs,pairs});
+  std::vector<double> full_p(fixture.ao_pairs*pairs),full_dp(full_p.size());
+  context.copy_to_host(full_p.data(),d_full_p.data(),full_p.size()*sizeof(double));
+  context.copy_to_host(full_dp.data(),d_full_dp.data(),full_dp.size()*sizeof(double));
+  for (int row=0;row<fixture.ao_pairs;++row)
+    for (int col=0;col<pairs;++col) {
+      near_scalar(full_p[row*pairs+col],p(row,col),
+                  "CUDA full-row CSR generated image differs from oracle");
+      near_scalar(full_dp[row*pairs+col],dp(row,col),
+                  "CUDA full-row CSR directional image differs from oracle");
+    }
+
   gpu.forward(dc.view(), dkernel.view());
   near(download(context, dkernel), b.transpose() * p,
        "CUDA full active pair kernel differs from dense oracle");
@@ -393,6 +412,33 @@ void check_budgeted_pair_tiles(bool compact) {
     gpu.directional(dc.view(),dd.view(),kernel.view());
     near(download(context,kernel),db.transpose()*fixture.pair_kernel*b+
          b.transpose()*fixture.pair_kernel*db,"CUDA budgeted directional tiles differ");
+  }
+  if (!compact) {
+    // Leave room for at most two AO-row feature channels, much less than the
+    // six-channel full feature panel. Whether cuSPARSE's own scratch fits is
+    // device-dependent; either a split SpMM or the exact generated CSR GPU
+    // path must produce the same full-row answer without exceeding budget.
+    xmvb::cuda::Buffer<double> image(context,fixture.ao_pairs*pairs);
+    xmvb::cuda::Buffer<double> dimage(context,fixture.ao_pairs*pairs);
+    const auto free_bytes=context.device_byte_budget()-context.counters().current_device_bytes;
+    const std::size_t channel_bytes=fixture.ao_pairs*sizeof(double);
+    require(free_bytes>2*channel_bytes,"CUDA budget fixture has no row-channel allowance");
+    xmvb::cuda::Buffer<unsigned char> padding(context,free_bytes-2*channel_bytes);
+    gpu.generated_rows(dc.view(),dd.view(),0,
+        {image.data(),fixture.ao_pairs,pairs,pairs},
+        {dimage.data(),fixture.ao_pairs,pairs,pairs});
+    std::vector<double> actual(fixture.ao_pairs*pairs),actual_direction(actual.size());
+    context.copy_to_host(actual.data(),image.data(),actual.size()*sizeof(double));
+    context.copy_to_host(actual_direction.data(),dimage.data(),actual_direction.size()*sizeof(double));
+    const Matrix expected=fixture.pair_kernel*b;
+    const Matrix expected_direction=fixture.pair_kernel*db;
+    for (int row=0;row<fixture.ao_pairs;++row)
+      for (int col=0;col<pairs;++col) {
+        near_scalar(actual[row*pairs+col],expected(row,col),
+                    "CUDA low-budget full-row generated image differs");
+        near_scalar(actual_direction[row*pairs+col],expected_direction(row,col),
+                    "CUDA low-budget full-row directional image differs");
+      }
   }
 }
 

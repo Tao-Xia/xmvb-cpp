@@ -92,14 +92,15 @@ __device__ double mixed_feature(linalg::ConstMatrixView c,
 __global__ void feature_rows(linalg::ConstMatrixView c,
                              linalg::ConstMatrixView d,
                              const int* first, const int* second,
-                             std::int64_t begin, PairPanel output,
+                             std::int64_t begin, std::int64_t channel_begin,
+                             PairPanel output,
                              PairPanel directional, std::int64_t work) {
   for (std::int64_t k = blockIdx.x * static_cast<std::int64_t>(blockDim.x) + threadIdx.x;
        k < work; k += gridDim.x * static_cast<std::int64_t>(blockDim.x)) {
     const std::int64_t row = k / output.cols;
     const std::int64_t p = k % output.cols;
     int a, b;
-    decode_pair(p, a, b);
+    decode_pair(channel_begin + p, a, b);
     output.data[row * output.ld + p] = feature(c, first, second, begin + row, a, b);
     if (d.data)
       directional.data[row * directional.ld + p] =
@@ -110,14 +111,15 @@ __global__ void feature_rows(linalg::ConstMatrixView c,
 __global__ void mixed_feature_rows(linalg::ConstMatrixView c,
                                    linalg::ConstMatrixView d,
                                    const int* first, const int* second,
-                                   std::int64_t begin, PairPanel output,
+                                   std::int64_t begin, std::int64_t channel_begin,
+                                   PairPanel output,
                                    std::int64_t work) {
   for (std::int64_t k = blockIdx.x * static_cast<std::int64_t>(blockDim.x) + threadIdx.x;
        k < work; k += gridDim.x * static_cast<std::int64_t>(blockDim.x)) {
     const std::int64_t row = k / output.cols;
     const std::int64_t p = k % output.cols;
     int a, b;
-    decode_pair(p, a, b);
+    decode_pair(channel_begin + p, a, b);
     output.data[row * output.ld + p] =
         mixed_feature(c, d, first, second, begin + row, a, b);
   }
@@ -384,6 +386,33 @@ std::int64_t tile_size(Context& context, std::int64_t n_ao_pairs,
       ? n_ao_pairs : static_cast<std::int64_t>(affordable_rows);
 }
 
+std::size_t spmm_scratch_bytes(cusparseHandle_t sparse,
+    cusparseSpMatDescr_t csr,std::int64_t rows,int channels,
+    std::int64_t target_ld,double* source_data,double* target_data) {
+  cusparseDnMatDescr_t source=nullptr,target=nullptr;
+  check_sparse(cusparseCreateDnMat(&source,rows,channels,channels,
+      source_data,CUDA_R_64F,CUSPARSE_ORDER_ROW),
+      "create generated AO-pair source descriptor");
+  try {
+    check_sparse(cusparseCreateDnMat(&target,rows,channels,target_ld,
+        target_data,CUDA_R_64F,CUSPARSE_ORDER_ROW),
+        "create generated AO-pair target descriptor");
+    const double alpha=1.0,beta=0.0;
+    std::size_t bytes=0;
+    check_sparse(cusparseSpMM_bufferSize(sparse,CUSPARSE_OPERATION_NON_TRANSPOSE,
+        CUSPARSE_OPERATION_NON_TRANSPOSE,&alpha,csr,source,&beta,target,
+        CUDA_R_64F,CUSPARSE_SPMM_ALG_DEFAULT,&bytes),
+        "query generated AO-pair SpMM scratch");
+    cusparseDestroyDnMat(target);
+    cusparseDestroyDnMat(source);
+    return bytes;
+  } catch (...) {
+    if (target) cusparseDestroyDnMat(target);
+    cusparseDestroyDnMat(source);
+    throw;
+  }
+}
+
 }  // namespace
 
 ExactAoPairOperator::ExactAoPairOperator(
@@ -577,7 +606,8 @@ void ExactAoPairOperator::pair_features(
   const std::int64_t work = checked_product(output.rows, pairs);
   if (!work) return;
   feature_rows<<<blocks(work), 256, 0, context_->stream()>>>(
-      c, d, pair_first_.data(), pair_second_.data(), begin, output, directional, work);
+      c, d, pair_first_.data(), pair_second_.data(), begin, 0,
+      output, directional, work);
   check_launch("CUDA AO-pair features");
 }
 
@@ -597,6 +627,63 @@ void ExactAoPairOperator::generated_rows_impl(
     throw std::invalid_argument("invalid CUDA generated AO-pair tile");
   const std::int64_t work = checked_product(output.rows, pairs);
   if (!work) return;
+  if (!compact_ && n_integrals_ != 0 && begin == 0 && output.rows == n_pairs_) {
+    // Full AO rows admit one graph SpMM per active-pair channel slab. The
+    // generated CSR kernel below is retained for row subsets, where a full
+    // source feature panel would repeat work and increase residency.
+    std::size_t device_free=0,device_total=0;
+    check_cuda(cudaMemGetInfo(&device_free,&device_total),
+               "query CUDA generated AO-pair free memory");
+    const auto resident=context_->counters().current_device_bytes;
+    const auto budget=context_->device_byte_budget();
+    if (resident>budget)
+      throw std::runtime_error("CUDA generated AO-pair accounting exceeds budget");
+    const auto available=std::min(budget-resident,device_free);
+    const auto channel_bytes=static_cast<std::size_t>(
+        checked_product(n_pairs_,sizeof(double)));
+    const auto max_channels=static_cast<int>(std::min<std::size_t>(
+        pairs,available/channel_bytes));
+    const auto spmm_scratch=[&](int channels) {
+      return spmm_scratch_bytes(sparse_,csr_,n_pairs_,channels,output.ld,
+                                output.data,output.data);
+    };
+    int slab_channels=0;
+    // The library may require different scratch for the final short slab.
+    // Query both exact widths, so apply() cannot overrun the live budget.
+    for (int candidate=max_channels;candidate>0;candidate/=2) {
+      const int remainder=static_cast<int>(pairs%candidate);
+      const auto scratch=std::max(spmm_scratch(candidate),
+                                  remainder ? spmm_scratch(remainder):std::size_t{0});
+      const auto feature_bytes=channel_bytes*static_cast<std::size_t>(candidate);
+      if (feature_bytes<=available && scratch<=available-feature_bytes) {
+        slab_channels=candidate;
+        break;
+      }
+    }
+    if (slab_channels>0) {
+      Buffer<double> features(*context_,checked_product(n_pairs_,slab_channels));
+      for (std::int64_t channel=0;channel<pairs;channel+=slab_channels) {
+        const auto count=std::min<std::int64_t>(slab_channels,pairs-channel);
+        const PairPanel source{features.data(),n_pairs_,count,count};
+        const PairPanel product{output.data+channel,n_pairs_,count,output.ld};
+        const auto slab_work=checked_product(n_pairs_,count);
+        feature_rows<<<blocks(slab_work),256,0,context_->stream()>>>(
+            c,{},pair_first_.data(),pair_second_.data(),0,channel,
+            source,{},slab_work);
+        check_launch("full-row CUDA AO-pair features");
+        apply({source.data,source.rows,source.cols,source.ld},product);
+        if (d.data) {
+          mixed_feature_rows<<<blocks(slab_work),256,0,context_->stream()>>>(
+              c,d,pair_first_.data(),pair_second_.data(),0,channel,
+              source,slab_work);
+          check_launch("full-row CUDA directional AO-pair features");
+          apply({source.data,source.rows,source.cols,source.ld},
+                {directional.data+channel,n_pairs_,count,directional.ld});
+        }
+      }
+      return;
+    }
+  }
   if (compact_) {
     for (std::int64_t row = 0; row < output.rows; ++row) {
       check_cuda(cudaMemsetAsync(output.data + row * output.ld, 0,
@@ -643,7 +730,21 @@ void ExactAoPairOperator::forward(linalg::ConstMatrixView c,
     const std::int64_t count = std::min(rows, n_pairs_ - begin);
     PairPanel bp{b.data(), count, pairs, pairs}, pp{p.data(), count, pairs, pairs};
     pair_features(c, {}, begin, bp);
-    generated_rows_impl(c, {}, begin, pp, {});
+    // A full-row forward tile already owns B. Reuse it directly as the
+    // SpMM source instead of regenerating the same active-pair features.
+    bool direct_spmm=false;
+    if (!compact_ && n_integrals_ != 0 && begin == 0 && count == n_pairs_) {
+      std::size_t device_free=0,device_total=0;
+      check_cuda(cudaMemGetInfo(&device_free,&device_total),
+                 "query CUDA forward SpMM free memory");
+      const auto available=std::min(context_->device_byte_budget()-
+          context_->counters().current_device_bytes,device_free);
+      direct_spmm=spmm_scratch_bytes(sparse_,csr_,n_pairs_,static_cast<int>(pairs),
+          pp.ld,bp.data,pp.data)<=available;
+    }
+    if (direct_spmm) apply({bp.data,bp.rows,bp.cols,bp.ld},pp);
+    else
+      generated_rows_impl(c, {}, begin, pp, {});
     contract_tile(*context_, kernel,
                   {bp.data, bp.rows, bp.cols, bp.ld},
                   {pp.data, pp.rows, pp.cols, pp.ld}, 1.0);
@@ -671,7 +772,7 @@ void ExactAoPairOperator::directional(
     PairPanel dbp{db.data(), count, pairs, pairs}, pp{p.data(), count, pairs, pairs};
     const std::int64_t work = checked_product(count, pairs);
     mixed_feature_rows<<<blocks(work), 256, 0, context_->stream()>>>(
-        c, d, pair_first_.data(), pair_second_.data(), begin, dbp, work);
+        c, d, pair_first_.data(), pair_second_.data(), begin, 0, dbp, work);
     check_launch("CUDA directional AO-pair features");
     generated_rows_impl(c, {}, begin, pp, {});
     contract_tile(*context_, unsymmetric.view(),

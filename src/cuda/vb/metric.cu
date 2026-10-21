@@ -430,6 +430,27 @@ void FullMetric::inverse_metric(linalg::ConstMatrixView covector,
   }
 }
 
+void FullMetric::apply_structure_carrier_inverse(
+    linalg::ConstMatrixView covector,
+    linalg::ConstMatrixView selected_energy,double eigenvalue,
+    linalg::MatrixView structure) const {
+  validate(covector,structure);
+  if (selected_energy.rows!=1 || selected_energy.cols!=1 ||
+      selected_energy.ld<1 || !selected_energy.data || !std::isfinite(eigenvalue))
+    throw std::invalid_argument("CUDA FULL structure AH inverse scalar dimensions");
+  // This is the original-structure-coordinate counterpart of the isometric
+  // CI inverse: G^-1 W^T T^-1 D^-1 T^-T W G^-1.
+  for (std::int64_t column=0;column<covector.cols;++column) {
+    spin_->solve(covector.column(column),structure_.view(),SpinMetric::Part::Gram);
+    action_->expand_spin(structure_.view(),carrier_.view());
+    action_->apply_inverse_adjoint_orbital_transform(carrier_.view());
+    action_->divide_carrier_diagonal(carrier_.view(),selected_energy,eigenvalue);
+    action_->apply_inverse_orbital_transform(carrier_.view());
+    action_->contract_spin(carrier_.view(),structure_.view());
+    spin_->solve(structure_.view(),structure.column(column),SpinMetric::Part::Gram);
+  }
+}
+
 void FullMetric::apply_ci_hamiltonian(linalg::ConstMatrixView coordinates,
                                       linalg::MatrixView image) const {
   validate(coordinates,image);

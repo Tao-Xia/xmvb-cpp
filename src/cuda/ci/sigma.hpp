@@ -57,6 +57,18 @@ class DirectCiSigma {
                           linalg::MatrixView one_electron_adjoint,
                           linalg::MatrixView pair_kernel_adjoint) const;
 
+  /** One exact directional sweep on the shared spin graph. Overwrites
+   * combined_image=H*response+dH*state and the integral cotangent of
+   * response^T H state. The directional Hamiltonian is supplied by
+   * direction.update_integrals(). Both products use the same transformed_
+   * channel panel; no directional carrier or output slab is retained.
+   */
+  void apply_direction_with_adjoint(linalg::ConstMatrixView response,
+      linalg::ConstMatrixView state,const DirectCiSigma& direction,
+      linalg::MatrixView combined_image,
+      linalg::MatrixView one_electron_adjoint,
+      linalg::MatrixView pair_kernel_adjoint) const;
+
   /** Exact product-basis diagonal of the current Hamiltonian channel kernel.
    * Output has n_alpha rows and n_beta columns, in apply's product ordering.
    */

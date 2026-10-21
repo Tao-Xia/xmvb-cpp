@@ -3,6 +3,8 @@
 #include <cmath>
 #include <stdexcept>
 
+#include <nvtx3/nvtx3.hpp>
+
 #include "cuda/integrals/one_electron.hpp"
 #include "cuda/linalg/blas.hpp"
 
@@ -14,11 +16,15 @@ using Out=linalg::MatrixView;
 void copy(Context& context,Out out,View in) {
   if (out.rows!=in.rows || out.cols!=in.cols)
     throw std::invalid_argument("CUDA point copy dimensions");
-  for (std::int64_t j=0;j<in.cols;++j)
-    check_cuda(cudaMemcpyAsync(out.column(j).data,in.column(j).data,
-        in.rows*sizeof(double),cudaMemcpyDeviceToDevice,context.stream()),"point copy");
+  check_cuda(cudaMemcpy2DAsync(out.data,out.ld*sizeof(double),in.data,in.ld*sizeof(double),
+      in.rows*sizeof(double),in.cols,cudaMemcpyDeviceToDevice,context.stream()),"point copy");
 }
 void scale(Context& context,Out out,double value) {
+  if (out.ld==out.rows) {
+    check_cublas(cublasDscal(context.blas(),blas_int(out.rows*out.cols),&value,
+        out.data,1),"point scale");
+    return;
+  }
   for (std::int64_t j=0;j<out.cols;++j)
     check_cublas(cublasDscal(context.blas(),blas_int(out.rows),&value,
         out.column(j).data,1),"point scale");
@@ -26,6 +32,11 @@ void scale(Context& context,Out out,double value) {
 void add(Context& context,Out out,View in,double value=1.0) {
   if (out.rows!=in.rows || out.cols!=in.cols)
     throw std::invalid_argument("CUDA point sum dimensions");
+  if (out.ld==out.rows && in.ld==in.rows) {
+    check_cublas(cublasDaxpy(context.blas(),blas_int(out.rows*out.cols),&value,
+        in.data,1,out.data,1),"point sum");
+    return;
+  }
   for (std::int64_t j=0;j<out.cols;++j)
     check_cublas(cublasDaxpy(context.blas(),blas_int(out.rows),&value,
         in.column(j).data,1,out.column(j).data,1),"point sum");
@@ -34,6 +45,11 @@ double dot(Context& context,View x,View y) {
   if (x.rows!=y.rows || x.cols!=y.cols)
     throw std::invalid_argument("CUDA point dot dimensions");
   double result=0.0;
+  if (x.ld==x.rows && y.ld==y.rows) {
+    check_cublas(cublasDdot(context.blas(),blas_int(x.rows*x.cols),x.data,1,
+        y.data,1,&result),"point dot");
+    return result;
+  }
   for (std::int64_t j=0;j<x.cols;++j) {
     double column=0.0;
     check_cublas(cublasDdot(context.blas(),blas_int(x.rows),x.column(j).data,1,
@@ -81,7 +97,11 @@ VbPoint::VbPoint(Context& context,const vb::OrbitalPreparationInput& input,
 }
 
 void VbPoint::select_frame() const {
+  // An accepted point is immutable between prepare() calls. Only a different
+  // point/transport frame invalidates its binding to the shared action.
+  if (prepared_ && selected_action_version_==action_->version()) return;
   action_->update_integrals(one_.view(),pair_.view(),geometry_.frame_transform());
+  selected_action_version_=action_->version();
 }
 
 double VbPoint::evaluate(View raw,View coefficients) {
@@ -90,6 +110,7 @@ double VbPoint::evaluate(View raw,View coefficients) {
 }
 
 void VbPoint::prepare(View raw) {
+  const nvtx3::scoped_range range{"point.prepare"};
   ready_=false;
   prepared_=false;
   auto& c=*context_;
@@ -105,6 +126,7 @@ void VbPoint::prepare(View raw) {
 }
 
 double VbPoint::evaluate_coefficients(View coefficients) {
+  const nvtx3::scoped_range range{"point.energy_gradient"};
   if (!prepared_) throw std::logic_error("CUDA point coefficients require preparation");
   check_structure(coefficients,action_->size());
   ready_=false;
@@ -156,6 +178,7 @@ void VbPoint::gradient(Out orbital,Out structure) const {
 }
 
 void VbPoint::hessian(View orbital,View structure,Out orbital_image,Out structure_image) const {
+  const nvtx3::scoped_range range{"point.hvp"};
   if (!ready_) throw std::logic_error("CUDA point HVP requires evaluation");
   check_structure(structure,action_->size());
   auto& c=*context_;
@@ -177,16 +200,19 @@ void VbPoint::hessian(View orbital,View structure,Out orbital_image,Out structur
   add(c,dh.view(),extra_h.view());
   integrals_->directional(geometry_.orthogonal_active(),d.orthogonal_active.view(),dg.view());
   direction_sigma_.update_integrals(dh.view(),dg.view());
-  Matrix<double> dhy(c,state_.rows(),state_.cols()),hy_direction(c,state_.rows(),state_.cols());
-  direction_sigma_.apply(state_.view(),dhy.view());
+  Matrix<double> dhy(c,state_.rows(),state_.cols());
   const double dn=2.0*dot(c,state_.view(),dy.view());
-  const double de=(2.0*dot(c,dy.view(),image_.view())+
-      dot(c,state_.view(),dhy.view()))/norm_-active_energy_*dn/norm_;
+  // The accepted normalized integral adjoints already represent Y^T dH Y/N.
+  // Only H*dy+dH*Y is consumed below, so no separate directional carrier or
+  // second sigma gather is mathematically required.
+  const double de=2.0*dot(c,dy.view(),image_.view())/norm_+
+      dot(c,one_adjoint_.view(),dh.view())+dot(c,pair_adjoint_.view(),dg.view())-
+      active_energy_*dn/norm_;
   Matrix<double> dha(c,one_.rows(),one_.cols()),dga(c,pair_.rows(),pair_.cols());
-  sigma_.apply_with_adjoint(dy.view(),state_.view(),hy_direction.view(),dha.view(),dga.view());
+  sigma_.apply_direction_with_adjoint(dy.view(),state_.view(),direction_sigma_,
+      dhy.view(),dha.view(),dga.view());
   scale(c,dha.view(),2.0/norm_);add(c,dha.view(),one_adjoint_.view(),-dn/norm_);
   scale(c,dga.view(),2.0/norm_);add(c,dga.view(),pair_adjoint_.view(),-dn/norm_);
-  add(c,dhy.view(),hy_direction.view());
   add(c,dhy.view(),state_.view(),-de);
   add(c,dhy.view(),dy.view(),-active_energy_);
   scale(c,dhy.view(),2.0/norm_);

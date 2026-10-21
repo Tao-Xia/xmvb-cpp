@@ -91,6 +91,13 @@ class FullMetric {
   /** Exact current-frame selected metric inverse in FULL space. */
   void inverse_metric(linalg::ConstMatrixView covector,
                       linalg::MatrixView structure) const;
+  /** CPU StructureMetricInverse carrier AH inverse in structure coordinates.
+   * The selected-state horizontal constraint is applied by the caller.
+   * selected_energy is a device 1-by-1 scalar; no structure vector leaves GPU.
+   */
+  void apply_structure_carrier_inverse(linalg::ConstMatrixView covector,
+      linalg::ConstMatrixView selected_energy, double eigenvalue,
+      linalg::MatrixView structure) const;
   void apply_ci_hamiltonian(linalg::ConstMatrixView coordinates,
                             linalg::MatrixView image) const;
   /** energies is a device row vector with one value per RHS. */

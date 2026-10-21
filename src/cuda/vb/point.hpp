@@ -53,6 +53,7 @@ class VbPoint {
   Matrix<double> one_adjoint_,pair_adjoint_,frame_gradient_,frame_moment_;
   Matrix<double> active_gradient_,density_gradient_;
   mutable Matrix<double> carrier_scratch_;
+  mutable std::uint64_t selected_action_version_=0;
   bool ready_=false,prepared_=false;
   double core_energy_=0.0;
 };

@@ -34,7 +34,8 @@ SingleStateCiTangent::SingleStateCiTangent(
     : context_(&context), structures_(structures),
       selected_energy_(selected_energy),
       coordinate_scale_(std::sqrt(2.0*normalized_weight)),
-      reflector_factor_(0.0), actions_(std::move(actions)),
+      reflector_factor_(0.0), reflected_first_(0.0),
+      actions_(std::move(actions)),
       selected_(context,structures,1), reflector_(context,structures,1),
       ambient_(context,structures,1), hessian_(context,structures,1),
       metric_(context,structures,1), work_(context,structures,1) {
@@ -68,6 +69,7 @@ SingleStateCiTangent::SingleStateCiTangent(
       !std::isfinite(first))
     throw std::invalid_argument("single-state CI tangent constraint is invalid");
   const double reflected_first=-std::copysign(metric_image_norm,first);
+  reflected_first_=reflected_first;
   subtract_first<<<1,1,0,context.stream()>>>(reflector_.data(),reflected_first);
   check_cuda(cudaGetLastError(),"CI tangent reflector kernel");
   double squared=0.0;
@@ -140,12 +142,72 @@ void SingleStateCiTangent::coefficient_response_coordinates(
 double SingleStateCiTangent::maximum_coefficient_component_coordinates(
     linalg::ConstMatrixView coordinates) const {
   expand_coordinates(coordinates,ambient_.view());
+  const double inverse_scale=1.0/coordinate_scale_;
+  if (actions_.maximum_component) {
+    check_cublas(cublasDscal(context_->blas(),structures_,&inverse_scale,
+                            ambient_.data(),1),
+                 "CI tangent maximum coefficient scale");
+    return actions_.maximum_component(ambient_.view());
+  }
   int one_based=0;
   check_cublas(cublasIdamax(context_->blas(),structures_,ambient_.data(),1,
                            &one_based),"CI tangent maximum coefficient");
   double largest=0.0;
   context_->copy_to_host(&largest,ambient_.data()+one_based-1,sizeof(double));
   return std::abs(largest)/coordinate_scale_;
+}
+
+void SingleStateCiTangent::apply_inverse_augmented_hessian_diagonal(
+    linalg::ConstMatrixView covector,double eigenvalue,
+    linalg::MatrixView direction) const {
+  check_coordinates(covector);
+  check_coordinates(direction);
+  if (!actions_.augmented_inverse || !std::isfinite(eigenvalue))
+    throw std::invalid_argument("CI tangent augmented inverse is unavailable");
+  expand_coordinates(covector,ambient_.view());
+  // reflector = S c - reflected_first * e_1. Reconstruct the cached selected
+  // metric image from the Householder data without another H/M action.
+  device_copy(*context_,metric_.data(),reflector_.data(),structures_);
+  subtract_first<<<1,1,0,context_->stream()>>>(metric_.data(),-reflected_first_);
+  check_cuda(cudaGetLastError(),"CI tangent metric constraint reconstruction");
+  if (actions_.inverse_constraint==CiInverseConstraint::Carrier) {
+    // FULL uses P_L R P_R, not a Schur inverse of R: the signed carrier
+    // diagonal can make R indefinite. This is the CPU FULL branch exactly.
+    double selected_rhs=0.0;
+    check_cublas(cublasDdot(context_->blas(),structures_,selected_.data(),1,
+        ambient_.data(),1,&selected_rhs),"CI tangent carrier right constraint dot");
+    device_copy(*context_,work_.data(),ambient_.data(),structures_);
+    const double negative=-selected_rhs;
+    check_cublas(cublasDaxpy(context_->blas(),structures_,&negative,
+        metric_.data(),1,work_.data(),1),
+        "CI tangent carrier right constraint projection");
+    actions_.augmented_inverse(work_.view(),eigenvalue,hessian_.view());
+    double left_weight=0.0;
+    check_cublas(cublasDdot(context_->blas(),structures_,metric_.data(),1,
+        hessian_.data(),1,&left_weight),"CI tangent carrier left constraint dot");
+    const double minus_left=-left_weight;
+    check_cublas(cublasDaxpy(context_->blas(),structures_,&minus_left,
+        selected_.data(),1,hessian_.data(),1),
+        "CI tangent carrier left constraint projection");
+    project_coordinates(hessian_.view(),direction);
+    return;
+  }
+  // The CPU spin branch directly solves the ambient RHS and S c, then forms
+  // the positive one-state Schur complement; it does not use P_R here.
+  actions_.augmented_inverse(ambient_.view(),eigenvalue,hessian_.view());
+  actions_.augmented_inverse(metric_.view(),eigenvalue,ambient_.view());
+  double numerator=0.0,denominator=0.0;
+  check_cublas(cublasDdot(context_->blas(),structures_,metric_.data(),1,
+      hessian_.data(),1,&numerator),"CI tangent Schur numerator");
+  check_cublas(cublasDdot(context_->blas(),structures_,metric_.data(),1,
+      ambient_.data(),1,&denominator),"CI tangent Schur denominator");
+  if (!(denominator>0.0) || !std::isfinite(denominator) ||
+      !std::isfinite(numerator))
+    throw std::runtime_error("CI tangent AH constraint model is not positive definite");
+  const double factor=-numerator/denominator;
+  check_cublas(cublasDaxpy(context_->blas(),structures_,&factor,
+      ambient_.data(),1,hessian_.data(),1),"CI tangent left constraint projection");
+  project_coordinates(hessian_.view(),direction);
 }
 
 void SingleStateCiTangent::apply_metric_coordinates(

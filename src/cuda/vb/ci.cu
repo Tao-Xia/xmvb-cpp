@@ -28,6 +28,13 @@ __global__ void positive_model(const double* h,const double* m,double energy,
   }
 }
 
+__global__ void augmented_positive_model(const double* h,const double* m,
+    double selected_energy,double eigenvalue,double* model,int n) {
+  const int i=blockIdx.x*blockDim.x+threadIdx.x;
+  if (i<n)
+    model[i]=fmax(fabs(h[i]-(selected_energy+eigenvalue)*m[i]),1.0e-8);
+}
+
 __global__ void extract_diagonal(linalg::ConstMatrixView metric,double* diagonal,int n) {
   const int i=blockIdx.x*blockDim.x+threadIdx.x;
   if (i<n) diagonal[i]=metric.data[i+metric.ld*i];
@@ -153,6 +160,27 @@ void StructureCi::inverse_metric(linalg::ConstMatrixView rhs,
   refresh();
   if (full_) full_->inverse_metric(rhs,image);
   else selected_->solve(rhs,image);
+}
+
+void StructureCi::inverse_augmented_hessian_model(
+    linalg::ConstMatrixView rhs,double selected_energy,double eigenvalue,
+    linalg::MatrixView image) {
+  if (rhs.rows!=action_->size() || rhs.cols!=1 || rhs.ld<rhs.rows || !rhs.data ||
+      image.rows!=rhs.rows || image.cols!=1 || image.ld<image.rows ||
+      !image.data || !std::isfinite(selected_energy) || !std::isfinite(eigenvalue))
+    throw std::invalid_argument("CUDA CI augmented inverse dimensions");
+  refresh();
+  if (full_) {
+    context_->copy_to_device(energy_.data(),&selected_energy,sizeof(double));
+    full_->apply_structure_carrier_inverse(rhs,energy_.view(),eigenvalue,image);
+  } else {
+    const int n=action_->size();
+    augmented_positive_model<<<(n+255)/256,256,0,context_->stream()>>>(
+        diagonal_h_.data(),diagonal_m_.data(),selected_energy,eigenvalue,
+        positive_.data(),n);
+    check_cuda(cudaGetLastError(),"CUDA CI augmented positive model");
+    spin_->solve_diagonal_model(rhs,positive_.view(),image);
+  }
 }
 
 void StructureCi::precondition(linalg::ConstMatrixView residual,double energy,

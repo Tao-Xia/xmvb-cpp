@@ -44,6 +44,12 @@ class StructureCi {
    * dense selected factor and deliberately rejects this entry point.
    */
   void inverse_metric(linalg::ConstMatrixView rhs,linalg::MatrixView image);
+  /** Unconstrained ambient inverse for the coupled CIAH preconditioner.
+   * FULL uses the exact carrier model; selected spaces use the current-frame
+   * positive spin-Gram diagonal model. Horizontal constraints live in tangent.
+   */
+  void inverse_augmented_hessian_model(linalg::ConstMatrixView rhs,
+      double selected_energy,double eigenvalue,linalg::MatrixView image);
   /** Return Rayleigh energy and metric norm for a device structure vector.
    * Both outputs are device-resident scalar 1-by-1 matrices.
    */

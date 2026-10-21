@@ -8,6 +8,8 @@
 #include <optional>
 #include <stdexcept>
 
+#include <nvtx3/nvtx3.hpp>
+
 #include "cuda/linalg/blas.hpp"
 #include "cuda/optimization/ciah.hpp"
 #include "cuda/optimization/coarse.hpp"
@@ -61,15 +63,6 @@ double dot(Context& c,View x,View y) {
   double result=0.0;
   check_cublas(cublasDdot(c.blas(),blas_int(x.rows),x.data,1,y.data,1,&result),"SCF dot");
   return result;
-}
-__global__ void ci_inverse_kernel(const double* r,const double* h,const double* m,
-    double energy,double shift,double* out,int n) {
-  const int i=blockIdx.x*blockDim.x+threadIdx.x;
-  if (i>=n) return;
-  double denominator=h[i]-(energy+shift)*m[i];
-  const double floor=sqrt(2.2204460492503131e-16)*fmax(1.0,fmax(fabs(h[i]),fabs((energy+shift)*m[i])));
-  if (fabs(denominator)<floor) denominator=copysign(floor,denominator==0.0?1.0:denominator);
-  out[i]=r[i]/denominator;
 }
 
 struct Trial {
@@ -134,6 +127,7 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,double nuclear,
     trial.energy=trial.point->evaluate_coefficients(trial.coefficients.view());
   };
   const auto relax=[&](Matrix<double> trial_raw,View guess)->Trial {
+    const nvtx3::scoped_range range{"scf.relax_ci"};
     Trial trial;trial.raw=std::move(trial_raw);trial.point=new_point();
     trial.point->prepare(trial.raw.view());
     trial.ci=guess.data ? ci_solver.solve_device(guess,ci_options) : ci_solver.solve_device(ci_options);
@@ -145,7 +139,9 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,double nuclear,
   DeviceCiahVectorOps ops{&context};
   Matrix<double> last_raw,last_ci;
   std::unique_ptr<AcceptedOrbitalChart> next_chart;
+  static const nvtx3::registered_string macro_name{"gpu.scf.macro"};
   for (int iteration=0;iteration<=options.max_iterations;++iteration) {
+    const nvtx3::scoped_range macro_range{macro_name};
     auto& origin=*accepted.point;
     auto chart_owner=std::move(next_chart);
     if (!chart_owner) {
@@ -180,7 +176,13 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,double nuclear,
         accepted.coefficients.view(),accepted.ci.eigenpairs.eigenvalues.front(),1.0,
         SingleStateCiActions{
           [&](View x,Out h,Out m) { origin.activate();action.apply(x,h,m); },
-          [&](View x,Out m) { origin.activate();action.apply_overlap(x,m); }});
+          [&](View x,Out m) { origin.activate();action.apply_overlap(x,m); },
+          [&](View x,double eigenvalue,Out y) {
+            ci_solver.inverse_augmented_hessian_model(x,
+                accepted.ci.eigenpairs.eigenvalues.front(),eigenvalue,y);
+          },
+          [&](View x) { origin.activate();return action.maximum_orthogonal_component(x); },
+          input.complete_active_space ? CiInverseConstraint::Carrier:CiInverseConstraint::Spin});
     const int ns=tangent ? tangent->tangent_size():0,dimension=no+ns;
     SelectedCrossOverlap overlap(context,action,na,
         ci_solver.has_exact_metric_inverse() ? SelectedCrossOverlap::ExactMetricInverse(
@@ -212,17 +214,13 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,double nuclear,
       chart.physical_metric(segment(x,0,no),segment(mx,0,no));
       if (ns) tangent->apply_metric_coordinates(segment(x,no,ns),segment(mx,no,ns));
     };
-    Matrix<double> hmodel(context,nstr,1),mmodel(context,nstr,1),last_image(context,dimension,1);
-    action.diagonal_model(hmodel.view(),mmodel.view());
+    Matrix<double> last_image(context,dimension,1);
     const auto base_inverse=[&](View r,double eigenvalue,Out p) {
       chart.apply_inverse_hessian_diagonal(segment(r,0,no),eigenvalue-1.0e-8,segment(p,0,no));
       if (ns) {
-        Matrix<double> ambient(context,nstr,1),inverse(context,nstr,1);
-        tangent->expand_coordinates(segment(r,no,ns),ambient.view());
-        ci_inverse_kernel<<<(nstr+255)/256,256,0,context.stream()>>>(ambient.data(),hmodel.data(),
-            mmodel.data(),accepted.ci.eigenpairs.eigenvalues.front(),eigenvalue-1.0e-8,inverse.data(),nstr);
-        check_cuda(cudaGetLastError(),"CI curvature model inverse");
-        tangent->project_coordinates(inverse.view(),segment(p,no,ns));
+        origin.activate();
+        tangent->apply_inverse_augmented_hessian_diagonal(segment(r,no,ns),
+            eigenvalue-1.0e-8,segment(p,no,ns));
       }
     };
     const int hvp_before=result.hvp,ci_before=result.ci_actions;
@@ -236,6 +234,7 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,double nuclear,
     DeviceCoarsePreconditioner coarse(context,dimension,ns?ciah.max_cycle:0,
         ciah.lindep,ciah.operator_relative_accuracy);
     ciah.apply_images=[&](View x,Out hx,Out mx) {
+      const nvtx3::scoped_range range{"scf.coupled_action"};
       AllocationPhase allocation(context,"coupled orbital-CI HVP");
       Matrix<double> dr(context,nb,norb),dc(context,nstr,1),hr(context,nb,norb),hc(context,nstr,1);
       chart.expand(segment(x,0,no),dr.view());

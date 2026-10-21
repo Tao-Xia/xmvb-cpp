@@ -186,6 +186,42 @@ void check_sigma(int rhs_count, bool rotated) {
   near(download(context, d_g), fused.integrals.pair_kernel, 3.0e-10,
        "CUDA fused direct-CI g adjoint differs from CPU");
 
+  // A genuinely independent integral direction and state tangent exercise
+  // H*left+dH*right without materializing two carrier images. The adjoint
+  // remains that of the fixed Hamiltonian, not the directional Hamiltonian.
+  const xmvb::mcscf::ActiveIntegrals delta{
+      symmetric_values(n,1.74),0.11*symmetric_values(pairs,2.36)};
+  const xmvb::mcscf::DirectCiSigmaAction cpu_direction(alpha,beta,delta);
+  xmvb::cuda::DirectCiSigma gpu_direction(context,gpu);
+  xmvb::cuda::Matrix<double> d_delta_h(context,n,n),d_delta_g(context,pairs,pairs);
+  xmvb::cuda::copy_to_device(context,d_delta_h.view(),delta.one_electron);
+  xmvb::cuda::copy_to_device(context,d_delta_g.view(),delta.pair_kernel);
+  gpu_direction.update_integrals(d_delta_h.view(),d_delta_g.view());
+  const auto direction_bytes=gpu_direction.resident_bytes();
+  const Matrix combined_reference=cpu.apply(left)+cpu_direction.apply(right);
+  gpu.apply_direction_with_adjoint(d_left.view(),d_right.view(),gpu_direction,
+      d_image.view(),d_h.view(),d_g.view());
+  near(download(context,d_image),combined_reference,3.0e-10,
+       "CUDA combined directional CI image differs from CPU");
+  near(download(context,d_h),fused.integrals.one_electron,3.0e-10,
+       "CUDA combined directional h adjoint differs from CPU");
+  near(download(context,d_g),fused.integrals.pair_kernel,3.0e-10,
+       "CUDA combined directional g adjoint differs from CPU");
+  const auto accepted=cpu.integral_adjoint(right,right);
+  const double explicit_forcing=bilinear(right,cpu_direction.apply(right));
+  const double adjoint_forcing=
+      bilinear(accepted.one_electron,delta.one_electron)+
+      bilinear(accepted.pair_kernel,delta.pair_kernel);
+  require(std::abs(explicit_forcing-adjoint_forcing)<
+          3.0e-10*std::max(1.0,std::abs(explicit_forcing)),
+      "CUDA directional energy elimination violates the integral adjoint identity");
+  require(gpu_direction.resident_bytes()==direction_bytes,
+       "CUDA combined directional sweep allocated a directional channel panel");
+  const xmvb::cuda::Graph directional_graph(context,[&] {
+    gpu.apply_direction_with_adjoint(d_left.view(),d_right.view(),gpu_direction,
+        d_image.view(),d_h.view(),d_g.view());
+  });
+
   xmvb::cuda::Matrix<double> d_diagonal(context, alpha.size(), beta.size());
   gpu.diagonal(d_diagonal.view());
   near(download(context, d_diagonal), cpu.diagonal(integrals.one_electron),
@@ -217,6 +253,11 @@ void check_sigma(int rhs_count, bool rotated) {
        "CUDA fused sigma changed after generator workspace reuse");
   near(download(context,d_g),fused.integrals.pair_kernel,3.0e-10,
        "CUDA fused adjoint changed after generator workspace reuse");
+  directional_graph.launch();
+  near(download(context,d_image),combined_reference,3.0e-10,
+       "CUDA captured directional sweep changed after generator workspace reuse");
+  near(download(context,d_g),fused.integrals.pair_kernel,3.0e-10,
+       "CUDA captured directional adjoint changed after generator workspace reuse");
 
   // The ordinary action captures scattered_/transformed_ addresses. A
   // generator VJP must borrow them without invalidating the captured graph.

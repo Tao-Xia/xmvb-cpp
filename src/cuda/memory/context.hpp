@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -41,12 +42,23 @@ class Context {
     check_cuda(cudaStreamCreateWithFlags(&stream_, cudaStreamNonBlocking),
                "cudaStreamCreateWithFlags");
     try {
+      int device=0;
+      check_cuda(cudaGetDevice(&device),"cudaGetDevice");
+      cudaMemPoolProps properties{};
+      properties.allocType=cudaMemAllocationTypePinned;
+      properties.location.type=cudaMemLocationTypeDevice;
+      properties.location.id=device;
+      check_cuda(cudaMemPoolCreate(&pool_,&properties),"cudaMemPoolCreate");
+      std::uint64_t release_threshold=device_byte_budget_;
+      check_cuda(cudaMemPoolSetAttribute(pool_,cudaMemPoolAttrReleaseThreshold,
+          &release_threshold),"cudaMemPoolSetAttribute");
       check_cublas(cublasCreate(&blas_), "cublasCreate");
       check_cublas(cublasSetStream(blas_, stream_), "cublasSetStream");
       check_cublas(cublasSetMathMode(blas_, CUBLAS_DEFAULT_MATH),
                    "cublasSetMathMode");
     } catch (...) {
       if (blas_ != nullptr) cublasDestroy(blas_);
+      if (pool_ != nullptr) cudaMemPoolDestroy(pool_);
       cudaStreamDestroy(stream_);
       throw;
     }
@@ -58,7 +70,11 @@ class Context {
   Context& operator=(Context&&) = delete;
 
   ~Context() {
+    // All owned allocations and frees are ordered on this stream. Complete
+    // them once at shutdown, rather than synchronizing every temporary free.
+    if (stream_ != nullptr) cudaStreamSynchronize(stream_);
     if (blas_ != nullptr) cublasDestroy(blas_);
+    if (pool_ != nullptr) cudaMemPoolDestroy(pool_);
     if (stream_ != nullptr) cudaStreamDestroy(stream_);
   }
 
@@ -82,7 +98,8 @@ class Context {
           ", budget="+std::to_string(device_byte_budget_)+", phase="+allocation_phase_);
     }
     void* pointer = nullptr;
-    check_cuda(cudaMalloc(&pointer, bytes), "cudaMalloc");
+    check_cuda(cudaMallocFromPoolAsync(&pointer,bytes,pool_,stream_),
+               "cudaMallocFromPoolAsync");
     counters_.current_device_bytes += bytes;
     counters_.peak_device_bytes =
         std::max(counters_.peak_device_bytes, counters_.current_device_bytes);
@@ -91,8 +108,9 @@ class Context {
 
   void deallocate(void* pointer, std::size_t bytes) noexcept {
     if (pointer == nullptr) return;
-    // cudaFree synchronizes pending uses of this pointer before releasing it.
-    cudaFree(pointer);
+    // The stream dependency preserves every preceding consumer and lets CUDA
+    // reuse the storage for subsequent work without a host/device barrier.
+    cudaFreeAsync(pointer,stream_);
     counters_.current_device_bytes -= bytes;
   }
 
@@ -115,6 +133,7 @@ class Context {
 
  private:
   cudaStream_t stream_ = nullptr;
+  cudaMemPool_t pool_ = nullptr;
   cublasHandle_t blas_ = nullptr;
   std::size_t device_byte_budget_;
   TransferCounters counters_;

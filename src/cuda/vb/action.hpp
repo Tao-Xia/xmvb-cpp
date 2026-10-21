@@ -65,6 +65,11 @@ class StructureAction {
   void apply_adjoint_orbital_transform(linalg::MatrixView carrier) const;
   void apply_carrier_hamiltonian(linalg::ConstMatrixView carrier,
                                 linalg::MatrixView image) const;
+  /** Maximum orthogonal-carrier amplitude of a structure response.
+   * Matches direct-CI CIAH clipping; reuses the action's carrier workspace.
+   * Caller must select the intended orbital frame first.
+   */
+  double maximum_orthogonal_component(linalg::ConstMatrixView structure) const;
   /** @brief Production FULL diagonal inverse; energies is a 1-by-RHS device view. */
   void divide_carrier_diagonal(linalg::MatrixView carrier,
       linalg::ConstMatrixView energies, double eigenvalue) const;
