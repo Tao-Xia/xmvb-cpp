@@ -299,21 +299,28 @@ void check_graph_and_pair(int active, bool compact,bool sparse=false,bool chunke
   // A complete AO-row request takes the CSR feature-then-SpMM route. The
   // direction shares its temporary feature slab but must keep a distinct
   // full-row output, including all off-diagonal active-pair channels.
-  xmvb::cuda::Buffer<double> d_full_p(context,fixture.ao_pairs*pairs);
-  xmvb::cuda::Buffer<double> d_full_dp(context,fixture.ao_pairs*pairs);
+  const int full_stride=pairs+2;
+  xmvb::cuda::Buffer<double> d_full_p(context,fixture.ao_pairs*full_stride);
+  xmvb::cuda::Buffer<double> d_full_dp(context,fixture.ao_pairs*full_stride);
+  std::vector<double> full_p(fixture.ao_pairs*full_stride,-17.0),full_dp(full_p);
+  context.copy_to_device(d_full_p.data(),full_p.data(),full_p.size()*sizeof(double));
+  context.copy_to_device(d_full_dp.data(),full_dp.data(),full_dp.size()*sizeof(double));
   gpu.generated_rows(dc.view(),dd.view(),0,
-      {d_full_p.data(),fixture.ao_pairs,pairs,pairs},
-      {d_full_dp.data(),fixture.ao_pairs,pairs,pairs});
-  std::vector<double> full_p(fixture.ao_pairs*pairs),full_dp(full_p.size());
+      {d_full_p.data(),fixture.ao_pairs,pairs,full_stride},
+      {d_full_dp.data(),fixture.ao_pairs,pairs,full_stride});
   context.copy_to_host(full_p.data(),d_full_p.data(),full_p.size()*sizeof(double));
   context.copy_to_host(full_dp.data(),d_full_dp.data(),full_dp.size()*sizeof(double));
   for (int row=0;row<fixture.ao_pairs;++row)
     for (int col=0;col<pairs;++col) {
-      near_scalar(full_p[row*pairs+col],p(row,col),
+      near_scalar(full_p[row*full_stride+col],p(row,col),
                   "CUDA full-row CSR generated image differs from oracle");
-      near_scalar(full_dp[row*pairs+col],dp(row,col),
+      near_scalar(full_dp[row*full_stride+col],dp(row,col),
                   "CUDA full-row CSR directional image differs from oracle");
     }
+  for (int row=0;row<fixture.ao_pairs;++row)
+    for (int col=pairs;col<full_stride;++col)
+      require(full_p[row*full_stride+col]==-17.0 && full_dp[row*full_stride+col]==-17.0,
+              "CUDA generated AO-pair clearing overwrote stride padding");
 
   gpu.forward(dc.view(), dkernel.view());
   near(download(context, dkernel), b.transpose() * p,

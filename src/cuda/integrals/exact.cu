@@ -707,10 +707,7 @@ void ExactAoPairOperator::apply(ConstPairPanel source, PairPanel target) const {
   if (source.cols != target.cols || source.data == target.data)
     throw std::invalid_argument("CUDA AO-pair action panel mismatch or alias");
   if (n_integrals_ == 0) {
-    for (std::int64_t row = 0; row < n_pairs_; ++row)
-      check_cuda(cudaMemsetAsync(target.data + row * target.ld, 0,
-                                 target.cols * sizeof(double), context_->stream()),
-                 "zero empty AO-pair target");
+    zero_matrix(*context_,{target.data,target.cols,target.rows,target.ld});
     return;
   }
   if (packed_) {
@@ -718,10 +715,7 @@ void ExactAoPairOperator::apply(ConstPairPanel source, PairPanel target) const {
     return;
   }
   if (compact_) {
-    for (std::int64_t row = 0; row < n_pairs_; ++row)
-      check_cuda(cudaMemsetAsync(target.data + row * target.ld, 0,
-                                 target.cols * sizeof(double), context_->stream()),
-                 "zero compact AO-pair target");
+    zero_matrix(*context_,{target.data,target.cols,target.rows,target.ld});
     const std::int64_t work = checked_product(n_integrals_, source.cols);
     if (work) {
       compact_apply<<<blocks(work), 256, 0, context_->stream()>>>(
@@ -904,15 +898,11 @@ void ExactAoPairOperator::generated_rows_impl(
     }
   }
   if (compact_) {
-    for (std::int64_t row = 0; row < output.rows; ++row) {
-      check_cuda(cudaMemsetAsync(output.data + row * output.ld, 0,
-                                 pairs * sizeof(double), context_->stream()),
-                 "zero compact generated AO-pair tile");
-      if (directional.data)
-        check_cuda(cudaMemsetAsync(directional.data + row * directional.ld, 0,
-                                   pairs * sizeof(double), context_->stream()),
-                   "zero compact directional AO-pair tile");
-    }
+    // The transposed view shares this row-major panel, including its pitch.
+    // Clear it in one CUDA operation, not one launch per AO-pair row.
+    zero_matrix(*context_,{output.data,output.cols,output.rows,output.ld});
+    if (directional.data)
+      zero_matrix(*context_,{directional.data,directional.cols,directional.rows,directional.ld});
     const std::int64_t compact_work = checked_product(n_integrals_, pairs);
     if (compact_work) {
       generated_compact<<<blocks(compact_work), 256, 0, context_->stream()>>>(
