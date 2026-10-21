@@ -329,15 +329,19 @@ std::size_t DirectCiSigma::resident_bytes() const noexcept {
           channel_adjoint_.rows()*channel_adjoint_.cols());
 }
 
-void DirectCiSigma::prepare(int block_width) const {
-  if (block_width<=0) throw std::invalid_argument("invalid CUDA sigma block width");
-  const auto products=static_cast<std::int64_t>(n_alpha_)*n_beta_*block_width;
-  if (transformed_.rows()==products) return;
+void DirectCiSigma::reset_workspace() const {
   ++workspace_->generation;
   scattered_=Matrix<double>{};
   transformed_=Matrix<double>{};
   right_scattered_=Matrix<double>{};
   channel_adjoint_=Matrix<double>{};
+}
+
+void DirectCiSigma::prepare(int block_width) const {
+  if (block_width<=0) throw std::invalid_argument("invalid CUDA sigma block width");
+  const auto products=static_cast<std::int64_t>(n_alpha_)*n_beta_*block_width;
+  if (transformed_.rows()==products) return;
+  reset_workspace();
   const std::size_t available=context_->device_byte_budget()-
       context_->counters().current_device_bytes;
   const std::size_t per_channel=2*static_cast<std::size_t>(products)*sizeof(double);
@@ -373,12 +377,7 @@ void DirectCiSigma::prepare_adjoint(int block_width,bool with_sigma,
       (!with_sigma || (transformed_.rows()==products && transformed_.cols()>0)) &&
       (!retain_channel_kernel || channel_adjoint_.rows()==n_channels_)) return;
 
-  ++workspace_->generation;
-
-  scattered_=Matrix<double>{};
-  transformed_=Matrix<double>{};
-  right_scattered_=Matrix<double>{};
-  channel_adjoint_=Matrix<double>{};
+  reset_workspace();
   const std::size_t available=context_->device_byte_budget()-
       context_->counters().current_device_bytes;
   const std::size_t kernel_bytes=retain_channel_kernel ?

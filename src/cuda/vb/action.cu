@@ -463,6 +463,9 @@ void StructureAction::build_selected_metric(linalg::MatrixView output) const {
   }
 }
 const DirectCiSigma& StructureAction::carrier_sigma() const noexcept { return impl_->sigma; }
+std::array<linalg::MatrixView,2> StructureAction::carrier_workspace() const noexcept {
+  return {impl_->coefficients,impl_->image};
+}
 void StructureAction::update_frame(linalg::ConstMatrixView upper) {
   impl_->alpha_transform.update_upper(upper);
   if (impl_->beta_storage) impl_->beta_storage->update_upper(upper);

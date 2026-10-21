@@ -76,6 +76,7 @@ void check_action(int count, bool transformed) {
   const xmvb::vb::StructureAction cpu(terms,count,topology,overlap,h,eri,n,&diagonal_model);
   xmvb::cuda::Context context(256ULL*1024ULL*1024ULL);
   const xmvb::cuda::StructureAction gpu(context,cpu);
+  require(gpu.graph_nodes()==0,"topology eagerly prepared numerical sigma workspace");
   Eigen::MatrixXd vectors(count,3);
   for (int j = 0; j < vectors.cols(); ++j)
     for (int i = 0; i < count; ++i)
@@ -111,6 +112,16 @@ void check_action(int count, bool transformed) {
     require((after_resize.hamiltonian-expected.hamiltonian).norm()<2e-10 &&
         (after_resize.overlap-expected.overlap).norm()<2e-10,
         "CUDA structure graph retained stale resized scratch addresses");
+    const auto resident=context.counters().current_device_bytes;
+    const auto generation=point_sigma.workspace_generation();
+    point_sigma.reset_workspace();
+    require(context.counters().current_device_bytes<resident &&
+        point_sigma.workspace_generation()!=generation,
+        "CUDA sigma phase did not release its scratch or invalidate the graph");
+    const auto after_release=gpu.apply(vectors);
+    require((after_release.hamiltonian-expected.hamiltonian).norm()<2e-10 &&
+        (after_release.overlap-expected.overlap).norm()<2e-10,
+        "CUDA structure graph replayed released scratch addresses");
   }
   if (count == 3) {
     const auto& diagonal = cpu.preconditioner_diagonal();

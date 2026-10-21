@@ -204,10 +204,12 @@ double VbPoint::evaluate_coefficients(View coefficients) {
   select_frame();
   action_->expand_spin(coefficients,state_.view());
   action_->apply_orbital_transform(state_.view());
-  // Cloned sigma instances share stream-local scratch. The CI graph recaptures
-  // only when preparing a different scratch layout changes its addresses.
+  // Clones share stream-local scratch; the CI graph tracks its generation.
   sigma_.apply_with_adjoint(state_.view(),state_.view(),image_.view(),
       one_adjoint_.view(),pair_adjoint_.view());
+  // All retained results are point-owned; subsequent AO pullbacks may reuse
+  // the consumed channel storage through Context's stream-ordered pool.
+  sigma_.reset_workspace();
   norm_=dot(c,state_.view(),state_.view());
   if (!(norm_>0.0) || !std::isfinite(norm_))
     throw std::runtime_error("CUDA VB state has invalid norm");
@@ -257,11 +259,14 @@ void VbPoint::hessian(View orbital,View structure,Out orbital_image,Out structur
   select_frame();
   const auto d=geometry_.direction(orbital);
   auto generator=product(c,d.frame_transform.view(),geometry_.frame_inverse_transform());
-  Matrix<double> dy(c,state_.rows(),state_.cols()),dc(c,state_.rows(),state_.cols());
-  action_->expand_spin(structure,dy.view());
-  action_->apply_orbital_transform(dy.view());
-  sigma_.apply_generator(state_.view(),generator.view(),dc.view());
-  add(c,dy.view(),dc.view());
+  // H/S carriers are idle here. All three views remain disjoint until the
+  // final projection overwrites dy, after its last use in the product rule.
+  const auto dy=carrier_scratch_.view();
+  const auto [dc,dhy]=action_->carrier_workspace();
+  action_->expand_spin(structure,dy);
+  action_->apply_orbital_transform(dy);
+  sigma_.apply_generator(state_.view(),generator.view(),dc);
+  add(c,dy,dc);
   const int nc=geometry_.inactive_count(),na=geometry_.active_count(),nb=geometry_.basis_size();
   Matrix<double> dheff,dheff_active(c,nb,na),inactive_projection;
   if (inactive_response_.data()) {
@@ -294,7 +299,6 @@ void VbPoint::hessian(View orbital,View structure,Out orbital_image,Out structur
   integrals_->directional(geometry_.orthogonal_active(),d.orthogonal_active.view(),
       dg.view(),pair_products());
   direction_sigma_.update_integrals(dh.view(),dg.view());
-  Matrix<double> dhy(c,state_.rows(),state_.cols());
   Matrix<double> coefficients(c,8,1);
   // The accepted normalized integral adjoints already represent Y^T dH Y/N.
   // Only H*dy+dH*Y is consumed below, so no separate directional carrier or
@@ -304,14 +308,15 @@ void VbPoint::hessian(View orbital,View structure,Out orbital_image,Out structur
       check_cublas(cublasDdot(c.blas(),blas_int(a.rows*a.cols),a.data,1,b.data,1,
           coefficients.data()+index),"point HVP device dot");
     };
-    inner(state_.view(),dy.view(),0);inner(dy.view(),image_.view(),1);
+    inner(state_.view(),dy,0);inner(dy,image_.view(),1);
     inner(one_adjoint_.view(),dh.view(),2);inner(pair_adjoint_.view(),dg.view(),3);
   });
   hvp_coefficients<<<1,1,0,c.stream()>>>(coefficients.data(),norm_,active_energy_);
   check_cuda(cudaGetLastError(),"point HVP normalization coefficients");
   Matrix<double> dha(c,one_.rows(),one_.cols()),dga(c,pair_.rows(),pair_.cols());
-  sigma_.apply_direction_with_adjoint(dy.view(),state_.view(),direction_sigma_,
-      dhy.view(),dha.view(),dga.view());
+  sigma_.apply_direction_with_adjoint(dy,state_.view(),direction_sigma_,
+      dhy,dha.view(),dga.view());
+  sigma_.reset_workspace();
   device_scalars(c,[&] {
     const auto scaled=[&](Out x,int coefficient) {
       check_cublas(cublasDscal(c.blas(),blas_int(x.rows*x.cols),
@@ -323,14 +328,14 @@ void VbPoint::hessian(View orbital,View structure,Out orbital_image,Out structur
     };
     scaled(dha.view(),4);added(dha.view(),one_adjoint_.view(),5);
     scaled(dga.view(),4);added(dga.view(),pair_adjoint_.view(),5);
-    added(dhy.view(),state_.view(),6);added(dhy.view(),dy.view(),7);
-    scaled(dhy.view(),4);added(dhy.view(),carrier_gradient_.view(),5);
+    added(dhy,state_.view(),6);added(dhy,dy,7);
+    scaled(dhy,4);added(dhy,carrier_gradient_.view(),5);
   });
   // dhy now denotes the exact directional carrier gradient.
   Matrix<double> moment(c,one_.rows(),one_.cols()),other(c,one_.rows(),one_.cols());
-  sigma_.generator_moments(std::array<View,1>{dhy.view()},state_.view(),
+  sigma_.generator_moments(std::array<View,1>{dhy},state_.view(),
       std::array<Out,1>{moment.view()});
-  sigma_.generator_moments(std::array<View,1>{carrier_gradient_.view()},dy.view(),
+  sigma_.generator_moments(std::array<View,1>{carrier_gradient_.view()},dy,
       std::array<Out,1>{other.view()});
   add(c,moment.view(),other.view());
   auto dinverse=product(c,geometry_.frame_inverse_transform(),generator.view());
@@ -385,9 +390,9 @@ void VbPoint::hessian(View orbital,View structure,Out orbital_image,Out structur
       blas_int(generator.cols()),blas_int(generator.rows()),&one,generator.data(),
       blas_int(generator.rows()),&zero,generator.data(),blas_int(generator.rows()),
       transpose.data(),blas_int(transpose.rows())),"point generator transpose");
-  sigma_.apply_generator(carrier_gradient_.view(),transpose.view(),dc.view());
-  add(c,dhy.view(),dc.view());
-  project_carrier(dhy.view(),structure_image);
+  sigma_.apply_generator(carrier_gradient_.view(),transpose.view(),dc);
+  add(c,dhy,dc);
+  project_carrier(dhy,structure_image);
 }
 
 }  // namespace xmvb::cuda

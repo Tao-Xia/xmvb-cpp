@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <cstdint>
+#include <array>
 #include <Eigen/Core>
 
 #include "cuda/memory/context.hpp"
@@ -58,6 +59,11 @@ class StructureAction {
   void update_integrals(linalg::ConstMatrixView one_electron,
       linalg::ConstMatrixView pair_kernel,linalg::ConstMatrixView upper);
   const DirectCiSigma& carrier_sigma() const noexcept;
+  /** Borrow the two H/S carriers between complete structure actions.
+   * Device consumers are serialized on Context's stream. Views must not
+   * remain live across another H/S action; captured addresses are unchanged.
+   */
+  std::array<linalg::MatrixView,2> carrier_workspace() const noexcept;
 
   int n_alpha_strings() const noexcept;
   int n_beta_strings() const noexcept;

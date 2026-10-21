@@ -110,6 +110,11 @@ class DirectCiSigma {
   void prepare_with_adjoint(int block_width) const {
     prepare_adjoint(block_width, true, true);
   }
+  /** Return consumed channel panels to Context's stream-ordered pool.
+   * Point-owned outputs remain valid. Invalidates this clone family's captured
+   * workspace generation; graph owners must recapture before replay.
+   */
+  void reset_workspace() const;
 
   int n_alpha_strings() const noexcept { return n_alpha_; }
   int n_beta_strings() const noexcept { return n_beta_; }

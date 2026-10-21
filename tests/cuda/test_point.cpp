@@ -308,6 +308,7 @@ void check_case(bool inactive,int structures) {
     const auto version=action.version();
     point.activate();
     require(action.version()==version,"unchanged point rebuilt shared action");
+    const auto before_hvp=action.apply(ci);
     auto dorbital=upload(context,orbital),dstructure=upload(context,structure);
     DeviceMatrix out_raw(context,raw.rows(),raw.cols());
     DeviceMatrix out_ci(context,structures,1);
@@ -325,6 +326,11 @@ void check_case(bool inactive,int structures) {
     point.hessian(dorbital.view(),dstructure.view(),out_raw.view(),out_ci.view());
     near(download(context,out_raw.view()),direct_raw,2e-10,"replayed raw HVP");
     near(download(context,out_ci.view()),direct_ci,2e-10,"replayed CI HVP");
+    const auto after_hvp=action.apply(ci);
+    near(after_hvp.hamiltonian,before_hvp.hamiltonian,2e-10,
+        "borrowed HVP carriers corrupted the next H action");
+    near(after_hvp.overlap,before_hvp.overlap,2e-10,
+        "borrowed HVP carriers corrupted the next overlap action");
     return Derivatives{download(context,out_raw.view()),
                        download(context,out_ci.view())};
   };

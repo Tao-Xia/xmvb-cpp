@@ -291,6 +291,9 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,
       if (cache) {
         auto difference=clone(context,x);add(context,difference.view(),cache->displacement.view(),-1.0);
         if (norm(context,difference.view())==0.0) return *cache;
+        // The displaced keyframe has no remaining consumer. Do not overlap
+        // its physical carriers with construction of its replacement.
+        cache.reset();
       }
       Keyframe frame;frame.displacement=clone(context,x);frame.raw=Matrix<double>(context,nb,norb);
       chart.retract(accepted.raw.view(),segment(x,0,no),1.0,frame.raw.view());
