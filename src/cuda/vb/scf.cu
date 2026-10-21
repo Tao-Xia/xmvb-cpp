@@ -124,6 +124,7 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,
   copy_to_device(context,core.view(),input.ao_integral_input.ao_core_hamiltonian_matrix);
   context.copy_to_device(raw.data(),orbital.orbital_value_table.data(),nb*norb*sizeof(double));
   const auto new_point=[&] {
+    AllocationPhase phase(context,"physical point storage");
     return std::make_unique<VbPoint>(context,orbital,action,ao,core.view(),ao_metric.overlap(),nuclear);
   };
   auto ci_options=linalg::make_davidson_options(nstr,1,1.0e-7,

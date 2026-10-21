@@ -215,15 +215,9 @@ struct StructureAction::Impl {
       const auto bytes=std::max(spmm_bytes(false,structure_vector.view(),support.view()),
           spmm_bytes(true,support.view(),structure_vector.view()));
       sparse_workspace=Buffer<std::byte>(context, bytes);
-      sigma.prepare(1);
-      context.synchronize();
-      const auto start=std::chrono::steady_clock::now();
-      graph=std::make_unique<Graph>(context,[&] {
-        emit(input.view(),hamiltonian.view(),overlap.view());
-      });
-      context.synchronize();
-      graph_seconds=std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();
-      graph_workspace_generation=sigma.workspace_generation();
+      // Numerical workspace is planned at first apply, after the physical
+      // point exists. Eager preparation here can consume its carrier storage
+      // while the topology still holds only placeholder integrals.
     } catch (...) {
       if (incidence) cusparseDestroySpMat(incidence);
       if (sparse) cusparseDestroy(sparse);
@@ -303,7 +297,7 @@ struct StructureAction::Impl {
         vectors.cols<=0 || h.cols!=vectors.cols || m.cols!=vectors.cols)
       throw std::invalid_argument("CUDA structure action block dimensions");
     sigma.prepare(1);
-    if (graph_workspace_generation!=sigma.workspace_generation()) {
+    if (!graph || graph_workspace_generation!=sigma.workspace_generation()) {
       // Another point may grow/repartition the shared scratch. Recapture the
       // same physical action before replay, never launch stale device pointers.
       context.synchronize();
@@ -334,7 +328,9 @@ StructureAction::StructureAction(Context& context,const vb::StructureAction& sou
 StructureAction::~StructureAction()=default;
 int StructureAction::size() const noexcept { return impl_->structures; }
 double StructureAction::graph_build_seconds() const noexcept { return impl_->graph_seconds; }
-std::size_t StructureAction::graph_nodes() const noexcept { return impl_->graph->nodes(); }
+std::size_t StructureAction::graph_nodes() const noexcept {
+  return impl_->graph ? impl_->graph->nodes():0;
+}
 const vb::StructureDiagonal& StructureAction::preconditioner_diagonal() const noexcept {
   return impl_->diagonal;
 }
