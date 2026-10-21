@@ -147,7 +147,10 @@ bool ExactAoPairOperator::prepare_core(linalg::ConstMatrixView mo,int ncore,
     if (joint) build_exchange_images(std::array{*joint});
     return true;
   }
-  if (compact_) return unique_core_diagonal(mo,ncore,coulomb,response);
+  if (compact_) {
+    if (joint) build_exchange_images(std::array{*joint});
+    return unique_core_diagonal(mo,ncore,coulomb,response);
+  }
   const auto targets=mo.columns(0,ncore);
   if (projection) {
     const auto dimension=static_cast<std::int64_t>(n_bf_)*ncore;

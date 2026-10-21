@@ -227,7 +227,7 @@ void check(bool compact,int ncore,bool sparse=false) {
     }
   }
   xmvb::cuda::ExactAoResponses joint;
-  if (!compact) {
+  {
     joint=graph.prepare_responses(dmo.view().columns(ncore,na),dmo.view(),ncore);
     if (joint.exchange.empty() || !joint.core_ready)
       throw std::runtime_error("CUDA joint AO response preparation was not admitted");

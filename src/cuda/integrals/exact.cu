@@ -306,6 +306,45 @@ __global__ void exchange_unique(const Index* offsets,const Index* columns,
   }
 }
 
+// One-index half transform H_mu(nu;k,b)=sum_l (mu nu|k l) C(l,b).
+// The mu interval is a workspace tile, not a truncation. Emit each exact
+// ERI symmetry once; factor columns share integral/index reads.
+__device__ void add_half_orientation(int u,int v,double value,const int* first,
+    const int* second,linalg::ConstMatrixView c,int begin,int count,double* half) {
+  const int ui=first[u],uj=second[u],vi=first[v],vj=second[v];
+  const auto n=c.cols,nb=c.rows,plane=nb*nb*n;
+  for (int su=0;su<(ui==uj ? 1:2);++su) {
+    const int mu=su ? uj:ui,nu=su ? ui:uj;
+    if (mu<begin || mu>=begin+count) continue;
+    auto* out=half+(mu-begin)*plane+nu*nb*n;
+    for (int b=0;b<n;++b) {
+      atomicAdd(out+vi*n+b,value*c.data[vj+c.ld*b]);
+      if (vi!=vj) atomicAdd(out+vj*n+b,value*c.data[vi+c.ld*b]);
+    }
+  }
+}
+
+template<class Index>
+__global__ void unique_half_rows(const Index* offsets,const Index* columns,
+    const double* values,int rows,std::int64_t edges,const int* first,const int* second,
+    linalg::ConstMatrixView c,int start,int count,double* half) {
+  const int lane=threadIdx.x&31;
+  for (auto begin=blockIdx.x*static_cast<std::int64_t>(blockDim.x)+threadIdx.x-lane;
+       begin<edges;begin+=gridDim.x*static_cast<std::int64_t>(blockDim.x)) {
+    int left=0;
+    if (!lane) left=unique_row(offsets,rows,begin);
+    left=__shfl_sync(0xffffffff,left,0);
+    const auto edge=begin+lane;
+    if (edge>=edges) continue;
+    if (edge>=offsets[left+1]) left=unique_row(offsets,rows,edge,left+1);
+    const int right=static_cast<int>(columns[edge]);
+    const double value=values[edge];
+    add_half_orientation(left,right,value,first,second,c,start,count,half);
+    if (left!=right)
+      add_half_orientation(right,left,value,first,second,c,start,count,half);
+  }
+}
+
 // A CSR row (i,j) contributes only to output rows i and j. Merge those
 // contributions in block-local panels before the global accumulation. CSR
 // already contains the reverse pair orientation; do not emit it again.
@@ -1175,6 +1214,24 @@ void ExactAoPairOperator::rank_one_exchange(linalg::ConstMatrixView factors,
         row_offsets_.data(),columns_.data(),values_.data(),blas_int(n_pairs_),
         n_integrals_,pair_first_.data(),pair_second_.data(),factors,output,1.0,channels);
   check_launch("CUDA rank-one exchange batch");
+}
+
+void ExactAoPairOperator::unique_half(linalg::ConstMatrixView c,int begin,int count,
+    double* half) const {
+  const nvtx3::scoped_range range{"ao.unique_half"};
+  const auto size=static_cast<std::size_t>(n_bf_)*n_bf_*c.cols*count;
+  check_cuda(cudaMemsetAsync(half,0,size*sizeof(double),context_->stream()),
+      "clear CUDA unique half tile");
+  if (!n_integrals_) return;
+  if (wide_)
+    unique_half_rows<<<blocks(n_integrals_),256,0,context_->stream()>>>(
+        wide_offsets_.data(),wide_columns_.data(),values_.data(),blas_int(n_pairs_),
+        n_integrals_,pair_first_.data(),pair_second_.data(),c,begin,count,half);
+  else
+    unique_half_rows<<<blocks(n_integrals_),256,0,context_->stream()>>>(
+        row_offsets_.data(),columns_.data(),values_.data(),blas_int(n_pairs_),
+        n_integrals_,pair_first_.data(),pair_second_.data(),c,begin,count,half);
+  check_launch("CUDA unique one-index half transform");
 }
 
 void ExactAoPairOperator::contract_jk(linalg::ConstMatrixView density,

@@ -166,9 +166,6 @@ Buffer<double> ExactAoPairOperator::prepare_exchange(View c,Matrix<double>* proj
 
 Buffer<double> ExactAoPairOperator::reserve_exchange(View c) const {
   validate_coefficients(c);
-  // This preparation requires full symmetric row adjacency. A unique CSR
-  // stores one orientation and retains its exact device contractions instead.
-  if (compact_) return {};
   const int n=blas_int(c.cols);
   const auto n2=static_cast<std::int64_t>(n)*n,n3=n2*n;
   blas_int(n3);
@@ -207,7 +204,28 @@ void ExactAoPairOperator::build_exchange_images(std::span<const ExchangeRequest>
       check_cuda(cudaMemsetAsync(out.data,0,out.rows*out.cols*sizeof(double),context_->stream()),
           "zero CUDA projected density response");
   }
-  Buffer<double> half(*context_,max_half),workspace(*context_,max_work);
+  Buffer<double> workspace(*context_,max_work);
+  if (compact_) {
+    for (const auto& request:requests) {
+      const auto c=request.coefficients;
+      const auto plane=static_cast<std::int64_t>(n_bf_)*n_bf_*c.cols;
+      const auto capacity=response_capacity()/(sizeof(double)*plane);
+      if (!capacity) throw std::runtime_error("CUDA unique half cannot fit one AO slice");
+      // Minimize ERI sweeps, then balance the mu intervals. Increasing a tile
+      // beyond this width would consume more memory without saving a sweep.
+      const auto sweeps=(n_bf_+capacity-1)/capacity;
+      const int width=static_cast<int>((n_bf_+sweeps-1)/sweeps);
+      Buffer<double> half(*context_,plane*width);
+      for (int begin=0;begin<n_bf_;begin+=width) {
+        const int count=std::min(width,n_bf_-begin);
+        unique_half(c,begin,count,half.data());
+        for (int local=0;local<count;++local)
+          project_exchange_half(request,begin+local,half.data()+plane*local,workspace.data());
+      }
+    }
+    return;
+  }
+  Buffer<double> half(*context_,max_half);
   Matrix<double> plane;
   int nu_width=0;
   if (packed_) {
@@ -222,30 +240,9 @@ void ExactAoPairOperator::build_exchange_images(std::span<const ExchangeRequest>
     // scheduler streams nu slices per consumer; never retain AO^4 storage.
     if (packed_ && nu_width==n_bf_) packed_->ao_plane(mu,plane.view(),0);
     for (const auto& request:requests) {
-      const auto c=request.coefficients,targets=request.targets;
-      const auto image=request.image,coulomb=request.coulomb;
-      const auto response=request.response;
-      const bool diagonal=request.diagonal,packed=request.packed;
-      const int first_column=request.first_column,n=blas_int(c.cols);
-      const auto n2=static_cast<std::int64_t>(n)*n;
+      const auto c=request.coefficients;
+      const int n=blas_int(c.cols);
       const auto half_count=static_cast<std::int64_t>(n_bf_)*n_bf_*n;
-      const bool shared_projection=response.data && first_column>=0 &&
-          first_column+n<=targets.cols && c.ld==targets.ld &&
-          c.data==targets.data+targets.ld*first_column;
-      Out transformed{},u{},p{};
-      auto* cursor=workspace.data();
-      if (image.data && !shared_projection) {
-        transformed={cursor,static_cast<std::int64_t>(n_bf_)*n,n,
-            static_cast<std::int64_t>(n_bf_)*n};
-        cursor+=transformed.rows*transformed.cols;
-      }
-      if (response.data) {
-        u={cursor,static_cast<std::int64_t>(n_bf_)*n,targets.cols,
-            static_cast<std::int64_t>(n_bf_)*n};
-        cursor+=u.rows*u.cols;
-      }
-      if (response.data || coulomb.data)
-        p={cursor,targets.cols,static_cast<std::int64_t>(n_bf_)*n,targets.cols};
       if (packed_) {
         for (int first=0;first<n_bf_;first+=nu_width) {
           const int count=std::min(nu_width,n_bf_-first);
@@ -263,48 +260,74 @@ void ExactAoPairOperator::build_exchange_images(std::span<const ExchangeRequest>
             pair_second_.data(),mu,half.data());
         check_cuda(cudaGetLastError(),"CUDA one-active-index exchange transform");
       }
-      if (response.data) {
-        gemm(*context_,u,{half.data(),static_cast<std::int64_t>(n_bf_)*n,
-            n_bf_,static_cast<std::int64_t>(n_bf_)*n},targets);
-      }
-      if (p.data) {
-        // H_k[a,nu] already occupies one contiguous n-by-nbf slice. Batched
-        // targets^T H_k^T produces P[t,k,a] directly from that storage, without
-        // permuting/copying the whole AO-by-AO-by-orbital half image.
-        const double one=1.0,zero=0.0;
-        const int nt=blas_int(targets.cols);
-        check_cublas(cublasDgemmStridedBatched(context_->blas(),CUBLAS_OP_T,CUBLAS_OP_T,
-            nt,n,n_bf_,&one,targets.data,blas_int(targets.ld),0,
-            half.data(),n,static_cast<long long>(n_bf_)*n,&zero,
-            p.data,nt,static_cast<long long>(nt)*n,n_bf_),
-            "CUDA batched density response half projection");
-      }
-      if (response.data) {
-        add_density_projection<<<grid(static_cast<std::int64_t>(n_bf_)*n*targets.cols),
-            256,0,context_->stream()>>>(u,p,response,mu,n_bf_,n,packed,first_column);
-        check_cuda(cudaGetLastError(),"assemble CUDA projected density response");
-      }
-      if (coulomb.data) {
-        store_coulomb<<<grid(static_cast<std::int64_t>(mu+1)*n),256,0,context_->stream()>>>(
-            p,coulomb,mu,n,first_column);
-        check_cuda(cudaGetLastError(),"CUDA core Coulomb from shared half projection");
-      }
-      if (!image.data) continue;
-      if (!shared_projection)
-        gemm(*context_,transformed,{half.data(),static_cast<std::int64_t>(n_bf_)*n,
-            n_bf_,static_cast<std::int64_t>(n_bf_)*n},c);
-      const auto image_projection=shared_projection ? u.columns(first_column,n):transformed;
-      store_exchange<<<grid(static_cast<std::int64_t>(mu+1)*(diagonal ? n:n2)),
-          256,0,context_->stream()>>>(image_projection,mu,n,image,diagonal);
-      check_cuda(cudaGetLastError(),"CUDA triangular exchange image");
+      project_exchange_half(request,mu,half.data(),workspace.data());
     }
   }
+}
+
+void ExactAoPairOperator::project_exchange_half(const ExchangeRequest& request,int mu,
+    const double* half,double* workspace) const {
+  const auto c=request.coefficients,targets=request.targets;
+  const auto image=request.image,coulomb=request.coulomb;
+  const auto response=request.response;
+  const bool diagonal=request.diagonal,packed=request.packed;
+  const int first_column=request.first_column,n=blas_int(c.cols);
+  const auto n2=static_cast<std::int64_t>(n)*n;
+  const bool shared_projection=response.data && first_column>=0 &&
+      first_column+n<=targets.cols && c.ld==targets.ld &&
+      c.data==targets.data+targets.ld*first_column;
+  Out transformed{},u{},p{};
+  auto* cursor=workspace;
+  if (image.data && !shared_projection) {
+    transformed={cursor,static_cast<std::int64_t>(n_bf_)*n,n,
+        static_cast<std::int64_t>(n_bf_)*n};
+    cursor+=transformed.rows*transformed.cols;
+  }
+  if (response.data) {
+    u={cursor,static_cast<std::int64_t>(n_bf_)*n,targets.cols,
+        static_cast<std::int64_t>(n_bf_)*n};
+    cursor+=u.rows*u.cols;
+  }
+  if (response.data || coulomb.data)
+    p={cursor,targets.cols,static_cast<std::int64_t>(n_bf_)*n,targets.cols};
+  if (response.data)
+    gemm(*context_,u,{half,static_cast<std::int64_t>(n_bf_)*n,
+        n_bf_,static_cast<std::int64_t>(n_bf_)*n},targets);
+  if (p.data) {
+    // H_k[a,nu] already occupies one contiguous n-by-nbf slice. Batched
+    // targets^T H_k^T produces P[t,k,a] directly from that storage, without
+    // permuting/copying the whole AO-by-AO-by-orbital half image.
+    const double one=1.0,zero=0.0;
+    const int nt=blas_int(targets.cols);
+    check_cublas(cublasDgemmStridedBatched(context_->blas(),CUBLAS_OP_T,CUBLAS_OP_T,
+        nt,n,n_bf_,&one,targets.data,blas_int(targets.ld),0,
+        half,n,static_cast<long long>(n_bf_)*n,&zero,
+        p.data,nt,static_cast<long long>(nt)*n,n_bf_),
+        "CUDA batched density response half projection");
+  }
+  if (response.data) {
+    add_density_projection<<<grid(static_cast<std::int64_t>(n_bf_)*n*targets.cols),
+        256,0,context_->stream()>>>(u,p,response,mu,n_bf_,n,packed,first_column);
+    check_cuda(cudaGetLastError(),"assemble CUDA projected density response");
+  }
+  if (coulomb.data) {
+    store_coulomb<<<grid(static_cast<std::int64_t>(mu+1)*n),256,0,context_->stream()>>>(
+        p,coulomb,mu,n,first_column);
+    check_cuda(cudaGetLastError(),"CUDA core Coulomb from shared half projection");
+  }
+  if (!image.data) return;
+  if (!shared_projection)
+    gemm(*context_,transformed,{half,static_cast<std::int64_t>(n_bf_)*n,
+        n_bf_,static_cast<std::int64_t>(n_bf_)*n},c);
+  const auto image_projection=shared_projection ? u.columns(first_column,n):transformed;
+  store_exchange<<<grid(static_cast<std::int64_t>(mu+1)*(diagonal ? n:n2)),
+      256,0,context_->stream()>>>(image_projection,mu,n,image,diagonal);
+  check_cuda(cudaGetLastError(),"CUDA triangular exchange image");
 }
 
 Matrix<double> ExactAoPairOperator::reserve_density_projection(View c,View targets) const {
   validate_coefficients(c);
   validate_coefficients(targets);
-  if (compact_) return {};
   const auto count=static_cast<std::int64_t>(n_bf_)*n_bf_*c.cols*targets.cols;
   const auto scratch=2*static_cast<std::int64_t>(n_bf_)*n_bf_*c.cols+
       2*static_cast<std::int64_t>(n_bf_)*c.cols*targets.cols+

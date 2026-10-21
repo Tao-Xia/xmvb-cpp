@@ -191,6 +191,7 @@ class ExactAoPairOperator {
   void upload_unique(const integrals::AoPairGraph&);
   void unique_exchange(linalg::ConstMatrixView,linalg::MatrixView,double,int) const;
   void rank_one_exchange(linalg::ConstMatrixView,linalg::MatrixView) const;
+  void unique_half(linalg::ConstMatrixView,int,int,double*) const;
   bool unique_core_diagonal(linalg::ConstMatrixView,int,linalg::MatrixView,
       linalg::MatrixView) const;
   struct ExchangeRequest {
@@ -201,6 +202,7 @@ class ExactAoPairOperator {
     int first_column=0;
   };
   std::int64_t exchange_workspace(const ExchangeRequest&) const;
+  void project_exchange_half(const ExchangeRequest&,int,const double*,double*) const;
   void build_exchange_images(std::span<const ExchangeRequest>) const;
   Buffer<double> reserve_exchange(linalg::ConstMatrixView) const;
   bool prepare_core(linalg::ConstMatrixView,int,linalg::MatrixView,linalg::MatrixView,

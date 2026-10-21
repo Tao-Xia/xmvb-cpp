@@ -376,7 +376,7 @@ void check_graph_and_pair(int active, bool compact,bool sparse=false,bool chunke
   gpu.directional_adjoint(dc.view(),dd.view(),dg.view(),ddg.view(),dgradient.view(),accepted_view);
   near(download(context,dgradient),expected_hvp,"CUDA retained pair HVP differs from finite difference",2e-7);
   auto exchange=gpu.prepare_exchange(dc.view());
-  require(exchange.empty()==(compact && sparse),"CUDA exchange image representation admission differs");
+  require(!exchange.empty(),"CUDA exchange image was not admitted within the test budget");
   if (!exchange.empty()) {
     const xmvb::cuda::ConstPairPanel image{exchange.data(),fixture.ao_pairs,active*active,active*active};
     std::vector<double> host(exchange.size());
@@ -421,6 +421,35 @@ void check_graph_and_pair(int active, bool compact,bool sparse=false,bool chunke
           "CUDA exchange projection exceeded its memory budget");
     }
   }
+}
+
+void check_unique_half_tiles() {
+  constexpr int n=12,active=3;
+  const Fixture fixture(true,n);
+  xmvb::cuda::Context context(128ULL*1024*1024);
+  const xmvb::cuda::ExactAoPairOperator gpu(context,fixture.graph(true),n);
+  DeviceMatrix c(context,n,active);
+  upload(context,c,values(n,active,0.73));
+  auto image=gpu.prepare_exchange(c.view());
+  std::vector<double> expected(image.size()),actual(image.size());
+  context.copy_to_host(expected.data(),image.data(),expected.size()*sizeof(double));
+  image={};
+  const auto image_count=static_cast<std::size_t>(fixture.ao_pairs)*active*active;
+  const auto scratch=std::max(n*n*active+n*active*active,
+      n*active*active*active+active*active*active*active+2*n*active*active);
+  const auto room=(2*image_count+scratch)*sizeof(double);
+  const auto free=context.device_byte_budget()-context.counters().current_device_bytes;
+  require(free>room,"CUDA unique half fixture lacks its minimum workspace");
+  xmvb::cuda::Buffer<unsigned char> padding(context,free-room);
+  // Admission leaves only a few mu slices. Multiple unique-ERI sweeps must
+  // recover the same complete image without a copied adjacency or AO^4 slab.
+  image=gpu.prepare_exchange(c.view());
+  require(image.size()==expected.size(),"CUDA unique half tile image was not admitted");
+  context.copy_to_host(actual.data(),image.data(),actual.size()*sizeof(double));
+  for (std::size_t i=0;i<actual.size();++i)
+    near_scalar(actual[i],expected[i],"CUDA tiled unique half differs from full-mu scheduling");
+  require(context.counters().peak_device_bytes<=context.device_byte_budget(),
+      "CUDA unique half exceeded the shared budget");
 }
 
 void check_one_electron_and_core(bool compact,bool sparse=false,bool chunked=false,int n_bf=4) {
@@ -604,7 +633,7 @@ void check_one_electron_and_core(bool compact,bool sparse=false,bool chunked=fal
     near(download(context,dout),expected_density_adjoint,
         "CUDA accepted density adjoint differs from four-index oracle");
   }
-  require((response.data()==nullptr)==(compact && sparse),"CUDA projected density image admission differs");
+  require(response.data()!=nullptr,"CUDA projected density image was not admitted within the test budget");
   if (response.data()) {
     auto standalone=gpu.prepare_density_projection(dc.view(),target.view());
     near(download(context,response),download(context,standalone),
@@ -972,6 +1001,7 @@ void check_unique_csr_library() {
 
 int main() {
   try {
+    check_unique_half_tiles();
     check_unique_csr_library<int>();
     check_unique_csr_library<std::int64_t>();
     // Multiple warps/blocks, empty CSR rows and a final partial warp exercise
