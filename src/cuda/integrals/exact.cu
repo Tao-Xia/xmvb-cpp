@@ -229,35 +229,43 @@ __global__ void pack_density_batch(linalg::ConstMatrixView densities,
   }
 }
 
-__global__ void exchange_unique(const int* rows, const int* columns,
-                                const int* edges, const int* csr_columns,
-                                const double* values, std::int64_t count,
-                                const int* first, const int* second,
-                                linalg::ConstMatrixView density,
-                                linalg::MatrixView output,
-                                double weight, bool compact,int channels) {
+__device__ void add_oriented_exchange(int u,int v,double value,
+    const int* first,const int* second,linalg::ConstMatrixView density,
+    linalg::MatrixView output,int channels) {
+  const int ui = first[u], uj = second[u], vi = first[v], vj = second[v];
+  for (int swap_u = 0; swap_u < (ui == uj ? 1 : 2); ++swap_u) {
+    const int a = swap_u ? uj : ui, b = swap_u ? ui : uj;
+    for (int swap_v = 0; swap_v < (vi == vj ? 1 : 2); ++swap_v) {
+      const int c = swap_v ? vj : vi, d = swap_v ? vi : vj;
+      for (int channel=0;channel<channels;++channel)
+        atomic_add_double(output.data+a+output.ld*(c+channel*output.rows),
+            value*density.data[b+density.ld*(d+channel*density.rows)]);
+    }
+  }
+}
+
+__global__ void exchange_unique(const int* rows,const int* columns,
+    const double* values,std::int64_t count,const int* first,const int* second,
+    linalg::ConstMatrixView density,linalg::MatrixView output,double weight,int channels) {
   for (std::int64_t p = blockIdx.x * static_cast<std::int64_t>(blockDim.x) + threadIdx.x;
        p < count; p += gridDim.x * static_cast<std::int64_t>(blockDim.x)) {
-    const std::int64_t edge = compact ? p : edges[p];
-    const int left = rows[p];
-    const int right = compact ? columns[p] : csr_columns[edge];
-    const double value = weight * values[edge];
-    const int pair_a[2] = {left, right};
-    const int pair_b[2] = {right, left};
-    for (int swap_pairs = 0; swap_pairs < (left == right ? 1 : 2); ++swap_pairs) {
-      const int u = pair_a[swap_pairs], v = pair_b[swap_pairs];
-      const int ui = first[u], uj = second[u], vi = first[v], vj = second[v];
-      for (int swap_u = 0; swap_u < (ui == uj ? 1 : 2); ++swap_u) {
-        const int a = swap_u ? uj : ui, b = swap_u ? ui : uj;
-        for (int swap_v = 0; swap_v < (vi == vj ? 1 : 2); ++swap_v) {
-          const int c = swap_v ? vj : vi, d = swap_v ? vi : vj;
-          // Decode each unique ERI and symmetry orbit once for all densities.
-          for (int channel=0;channel<channels;++channel)
-            atomic_add_double(output.data+a+output.ld*(c+channel*output.rows),
-                value*density.data[b+density.ld*(d+channel*density.rows)]);
-        }
-      }
-    }
+    const int left=rows[p],right=columns[p];
+    const double value=weight*values[p];
+    add_oriented_exchange(left,right,value,first,second,density,output,channels);
+    if (left!=right)
+      add_oriented_exchange(right,left,value,first,second,density,output,channels);
+  }
+}
+
+// CSR already contains both pair orientations. Consume each once, without
+// regenerating the reverse orbit or retaining another integral-sized index.
+__global__ void exchange_rows(const int* offsets,const int* columns,const double* values,
+    const int* first,const int* second,linalg::ConstMatrixView density,
+    linalg::MatrixView output,double weight,int channels) {
+  const int row=blockIdx.x;
+  for (int edge=offsets[row]+threadIdx.x;edge<offsets[row+1];edge+=blockDim.x) {
+    add_oriented_exchange(row,columns[edge],weight*values[edge],first,second,
+        density,output,channels);
   }
 }
 
@@ -463,7 +471,6 @@ ExactAoPairOperator::ExactAoPairOperator(
         graph.integral_rows.size() != graph.integral_values.size())
       throw std::invalid_argument("invalid compact AO integral stream");
     n_integrals_ = graph.integral_rows.size();
-    n_unique_ = n_integrals_;
     for (std::int64_t k = 0; k < n_integrals_; ++k)
       if (graph.integral_rows[k] < 0 || graph.integral_rows[k] >= n_pairs_ ||
           graph.integral_columns[k] < 0 || graph.integral_columns[k] >= n_pairs_)
@@ -481,15 +488,6 @@ ExactAoPairOperator::ExactAoPairOperator(
       if (column < 0 || column >= n_pairs_)
         throw std::invalid_argument("CUDA AO-pair CSR column out of range");
     n_integrals_ = graph.columns.size();
-    n_unique_ = graph.integral_rows.size();
-    if (graph.integral_edges.size() != static_cast<std::size_t>(n_unique_))
-      throw std::invalid_argument("invalid unique CUDA AO integral references");
-    for (std::int64_t k = 0; k < n_unique_; ++k)
-      if (graph.integral_rows[k] < 0 || graph.integral_rows[k] >= n_pairs_ ||
-          graph.integral_edges[k] < 0 || graph.integral_edges[k] >= n_integrals_ ||
-          graph.integral_edges[k] < graph.row_offsets[graph.integral_rows[k]] ||
-          graph.integral_edges[k] >= graph.row_offsets[graph.integral_rows[k] + 1])
-        throw std::invalid_argument("unique CUDA AO integral reference out of range");
   }
   pair_first_ = Buffer<int>(context, n_pairs_);
   pair_second_ = Buffer<int>(context, n_pairs_);
@@ -515,12 +513,6 @@ ExactAoPairOperator::ExactAoPairOperator(
                            n_integrals_ * sizeof(int));
     context.copy_to_device(values_.data(), graph.values.data(),
                            n_integrals_ * sizeof(double));
-    integral_rows_ = Buffer<int>(context, n_unique_);
-    integral_edges_ = Buffer<int>(context, n_unique_);
-    context.copy_to_device(integral_rows_.data(), graph.integral_rows.data(),
-                           n_unique_ * sizeof(int));
-    context.copy_to_device(integral_edges_.data(), graph.integral_edges.data(),
-                           n_unique_ * sizeof(int));
     if (n_integrals_ != 0) {
       check_sparse(cusparseCreate(&sparse_), "cusparseCreate");
       try {
@@ -937,12 +929,15 @@ void ExactAoPairOperator::contract_jk(linalg::ConstMatrixView density,
       coulomb_output.data==output.data || coulomb_output.data==density.data))
     throw std::invalid_argument("invalid CUDA separate Coulomb output");
   zero_matrix(*context_, output);
-  if (exchange != 0.0 && n_unique_ != 0) {
-    exchange_unique<<<blocks(n_unique_), 256, 0, context_->stream()>>>(
-        integral_rows_.data(), integral_columns_.data(), integral_edges_.data(),
-        columns_.data(), compact_ ? integral_values_.data() : values_.data(),
-        n_unique_, pair_first_.data(), pair_second_.data(), density, output,
-        exchange, compact_,1);
+  if (exchange != 0.0 && n_integrals_ != 0) {
+    if (compact_)
+      exchange_unique<<<blocks(n_integrals_),256,0,context_->stream()>>>(
+          integral_rows_.data(),integral_columns_.data(),integral_values_.data(),n_integrals_,
+          pair_first_.data(),pair_second_.data(),density,output,exchange,1);
+    else
+      exchange_rows<<<n_pairs_,256,0,context_->stream()>>>(
+          row_offsets_.data(),columns_.data(),values_.data(),pair_first_.data(),
+          pair_second_.data(),density,output,exchange,1);
     check_launch("CUDA unique-ERI exchange contraction");
   }
   if (coulomb != 0.0 || coulomb_output.data) {
@@ -977,11 +972,15 @@ void ExactAoPairOperator::contract_jk_batch(linalg::ConstMatrixView density,
     throw std::invalid_argument("invalid CUDA symmetric JK batch");
   const int channels=blas_int(density.cols/n_bf_);
   zero_matrix(*context_,output);
-  if (exchange!=0.0 && n_unique_!=0) {
-    exchange_unique<<<blocks(n_unique_),256,0,context_->stream()>>>(
-        integral_rows_.data(),integral_columns_.data(),integral_edges_.data(),
-        columns_.data(),compact_ ? integral_values_.data():values_.data(),
-        n_unique_,pair_first_.data(),pair_second_.data(),density,output,exchange,compact_,channels);
+  if (exchange!=0.0 && n_integrals_!=0) {
+    if (compact_)
+      exchange_unique<<<blocks(n_integrals_),256,0,context_->stream()>>>(
+          integral_rows_.data(),integral_columns_.data(),integral_values_.data(),n_integrals_,
+          pair_first_.data(),pair_second_.data(),density,output,exchange,channels);
+    else
+      exchange_rows<<<n_pairs_,256,0,context_->stream()>>>(
+          row_offsets_.data(),columns_.data(),values_.data(),pair_first_.data(),
+          pair_second_.data(),density,output,exchange,channels);
     check_launch("CUDA batched unique-ERI exchange contraction");
   }
   if (coulomb!=0.0) {

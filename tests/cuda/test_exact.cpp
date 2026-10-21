@@ -489,6 +489,42 @@ void check_one_electron_and_core(bool compact) {
   }
 }
 
+void check_exchange_row_graph() {
+  const Fixture fixture;
+  auto left=fixture.unique_left,right=fixture.unique_right;
+  auto values=fixture.unique_values;
+  // Change primary ERI orientation/order; exchange must derive its own
+  // pair orientations from CSR, not silently depend on reference metadata.
+  for (std::size_t i=0;i<left.size();++i)
+    if (i%2) std::swap(left[i],right[i]);
+  std::reverse(left.begin(),left.end());
+  std::reverse(right.begin(),right.end());
+  std::reverse(values.begin(),values.end());
+  auto graph=xmvb::integrals::build_ao_pair_graph(left,right,values,fixture.n_bf);
+  // No auxiliary unique list is part of the GPU row-graph contract.
+  graph.integral_rows.clear();
+  graph.integral_edges.clear();
+  xmvb::cuda::Context context(128ULL*1024*1024);
+  const auto before=context.counters().current_device_bytes;
+  const xmvb::cuda::ExactAoPairOperator gpu(context,graph,fixture.n_bf);
+  const auto expected=(3*fixture.ao_pairs+1)*sizeof(int)+
+      graph.columns.size()*(sizeof(int)+sizeof(double));
+  require(context.counters().current_device_bytes-before==expected,
+      "CUDA CSR duplicated unique-integral row/edge buffers");
+  Matrix densities(fixture.n_bf,2*fixture.n_bf);
+  densities.leftCols(fixture.n_bf)=symmetric_values(fixture.n_bf,0.41);
+  densities.rightCols(fixture.n_bf)=symmetric_values(fixture.n_bf,1.23);
+  DeviceMatrix density(context,fixture.n_bf,2*fixture.n_bf);
+  DeviceMatrix response(context,fixture.n_bf,2*fixture.n_bf);
+  upload(context,density,densities);
+  gpu.contract_jk_batch(density.view(),response.view());
+  const auto actual=download(context,response);
+  for (int channel=0;channel<2;++channel)
+    near(actual.middleCols(channel*fixture.n_bf,fixture.n_bf),
+        reference_jk(fixture,densities.middleCols(channel*fixture.n_bf,fixture.n_bf)),
+        "CUDA reordered row-graph exchange differs from four-index oracle");
+}
+
 void check_budgeted_pair_tiles(bool compact) {
   const Fixture fixture;
   xmvb::cuda::Context context(1024ULL*1024ULL);
@@ -574,6 +610,7 @@ void check_budgeted_pair_tiles(bool compact) {
 
 int main() {
   try {
+    check_exchange_row_graph();
     for (bool compact : {false, true}) {
       check_graph_and_pair(2, compact);
       check_graph_and_pair(3, compact);
