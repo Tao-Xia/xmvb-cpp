@@ -10,6 +10,7 @@
 #include <vector>
 
 #include <cusolverDn.h>
+#include <nvtx3/nvtx3.hpp>
 
 #include "cuda/linalg/blas.hpp"
 #include "cuda/linalg/cholesky.hpp"
@@ -357,6 +358,7 @@ std::size_t SpinMetric::resident_bytes() const noexcept {
 
 void SpinMetric::solve(linalg::ConstMatrixView rhs,linalg::MatrixView output,
                        Part part) const {
+  const nvtx3::scoped_range range{"ci.spin_metric_inverse"};
   check_panel(rhs,output,dimension_);
   if (part!=Part::Lower && part!=Part::Upper && part!=Part::Gram)
     throw std::invalid_argument("CUDA spin metric solve part is invalid");
@@ -385,6 +387,7 @@ void SpinMetric::solve(linalg::ConstMatrixView rhs,linalg::MatrixView output,
 
 void SpinMetric::solve_diagonal_model(linalg::ConstMatrixView rhs,
     linalg::ConstMatrixView model,linalg::MatrixView output) const {
+  const nvtx3::scoped_range range{"ci.spin_precondition"};
   check_panel(rhs,output,dimension_);
   if (model.rows!=dimension_ || model.cols!=1 || model.ld<model.rows ||
       !model.data)

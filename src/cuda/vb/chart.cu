@@ -15,6 +15,7 @@
 #include <numeric>
 #include <utility>
 #include <cusolverDn.h>
+#include <nvtx3/nvtx3.hpp>
 
 namespace xmvb::cuda {
 namespace {
@@ -264,6 +265,7 @@ linalg::ConstMatrixView AcceptedOrbitalChart::accepted_mo_frame() const noexcept
 }
 
 void AcceptedOrbitalChart::rebuild(const OrbitalGeometry& geometry) {
+  const nvtx3::scoped_range range{"chart.prepare"};
   auto& p=*impl_;
   Context& ctx=p.context;
   if (geometry.basis_size()!=p.basis || geometry.orbital_count()!=p.orbitals ||
@@ -438,10 +440,25 @@ void AcceptedOrbitalChart::rebuild(const OrbitalGeometry& geometry) {
         local.metric.data(),projection.data(),q);
     check_cuda(cudaGetLastError(),"CUDA chart rank-one metric");
     const double rank_factor=64.0*DBL_EPSILON*q;
-    const auto metric_eig=chart_eigen(ctx,p.solver,local.metric.view());
-    if (!(metric_eig.host_values.front()>rank_factor*metric_eig.host_values.back()))
-      throw std::runtime_error("raw normalized-orbital metric is rank deficient");
-    local.inverse=chart_spectral_power(ctx,metric_eig,-1.0);
+    // M=A-r*r^T and delta=1-r^T A^-1 r. Congruence gives
+    // lambda_min(M)>=delta*lambda_min(A), lambda_max(M)<=lambda_max(A).
+    // This certifies the unchanged spectral rank test without another
+    // eigensystem in ordinary cases, as on the CPU quotient path.
+    if (local.delta*base_eig.host_values.front()>
+        rank_factor*base_eig.host_values.back()) {
+      local.inverse=Matrix<double>(ctx,q,q);
+      chart_copy(ctx,local.inverse.view(),inverse.view());
+      const double alpha=1.0/local.delta;
+      check_cublas(cublasDger(ctx.blas(),q,q,&alpha,image.data(),1,image.data(),1,
+          local.inverse.data(),q),"CUDA chart rank-one metric inverse");
+    } else {
+      // The bound may be inconclusive near the rank boundary. Preserve the
+      // original exact spectral decision and its stable cuSOLVER inverse.
+      const auto metric_eig=chart_eigen(ctx,p.solver,local.metric.view());
+      if (!(metric_eig.host_values.front()>rank_factor*metric_eig.host_values.back()))
+        throw std::runtime_error("raw normalized-orbital metric is rank deficient");
+      local.inverse=chart_spectral_power(ctx,metric_eig,-1.0);
+    }
     local.reference_root=std::move(inverse_root);
     local.projection=std::move(projection);
     Buffer<int> sphere_flag(ctx,1);
@@ -1285,6 +1302,7 @@ void AcceptedOrbitalChart::metric(Const vector,Mut covector) const {
 }
 
 void AcceptedOrbitalChart::physical_metric(Const vector,Mut covector) const {
+  const nvtx3::scoped_range range{"chart.physical_metric"};
   auto& p=*impl_;
   Context& ctx=p.context;
   chart_check_view(vector,p.reduced,1,"CUDA chart physical metric vector");
@@ -1398,6 +1416,7 @@ void AcceptedOrbitalChart::inverse_metric(Const covector,Mut vector) const {
 }
 
 double AcceptedOrbitalChart::coordinate_dual_norm(Const covector) const {
+  const nvtx3::scoped_range range{"chart.coordinate_norm"};
   auto& p=*impl_;
   chart_check_view(covector,p.reduced,1,"CUDA chart dual norm covector");
   if (!p.reduced) return 0.0;
@@ -1412,6 +1431,7 @@ double AcceptedOrbitalChart::coordinate_dual_norm(Const covector) const {
 }
 
 double AcceptedOrbitalChart::reference_gradient_inf_norm(Const covector) const {
+  const nvtx3::scoped_range range{"chart.reference_norm"};
   auto& p=*impl_;
   chart_check_view(covector,p.reduced,1,"CUDA chart reference covector");
   double maximum=0.0;
@@ -1445,6 +1465,7 @@ double AcceptedOrbitalChart::reference_gradient_inf_norm(Const covector) const {
 }
 
 double AcceptedOrbitalChart::max_component(Const vector) const {
+  const nvtx3::scoped_range range{"chart.maximum_step"};
   auto& p=*impl_;
   chart_check_view(vector,p.reduced,1,"CUDA chart maximum component vector");
   if (!p.reduced) return 0.0;
@@ -1502,6 +1523,7 @@ double AcceptedOrbitalChart::max_component(Const vector) const {
 
 void AcceptedOrbitalChart::set_hessian_diagonal(
     const OrbitalGeometry& geometry,Const rotation_diagonal) {
+  const nvtx3::scoped_range range{"chart.prepare_diagonal"};
   auto& p=*impl_;
   Context& ctx=p.context;
   chart_check_view(rotation_diagonal,p.basis,p.basis,
@@ -1602,6 +1624,7 @@ linalg::ConstMatrixView AcceptedOrbitalChart::hessian_diagonal() const noexcept 
 
 void AcceptedOrbitalChart::apply_inverse_hessian_diagonal(Const covector,
     double eigenvalue,Mut direction) const {
+  const nvtx3::scoped_range range{"chart.precondition"};
   auto& p=*impl_;
   chart_check_view(covector,p.reduced,1,"CUDA chart analytic Hessian covector");
   chart_check_view(direction,p.reduced,1,"CUDA chart analytic Hessian direction");

@@ -14,6 +14,26 @@ namespace {
 using View=linalg::ConstMatrixView;
 using Out=linalg::MatrixView;
 
+template<class Emit>
+void device_scalars(Context& c,Emit emit) {
+  check_cublas(cublasSetPointerMode(c.blas(),CUBLAS_POINTER_MODE_DEVICE),
+      "point device scalar mode");
+  try { emit(); }
+  catch (...) { cublasSetPointerMode(c.blas(),CUBLAS_POINTER_MODE_HOST);throw; }
+  check_cublas(cublasSetPointerMode(c.blas(),CUBLAS_POINTER_MODE_HOST),
+      "point restore scalar mode");
+}
+
+// First four entries are device dot products. The last four are BLAS
+// coefficients, including every finite-CI-residual normalization term.
+__global__ void hvp_coefficients(double* values,double norm,double energy) {
+  if (blockIdx.x || threadIdx.x) return;
+  const double dn=2.0*values[0];
+  const double de=2.0*values[1]/norm+values[2]+values[3]-energy*dn/norm;
+  values[4]=2.0/norm;values[5]=-dn/norm;
+  values[6]=-de;values[7]=-energy;
+}
+
 void copy(Context& context,Out out,View in) {
   if (out.rows!=in.rows || out.cols!=in.cols)
     throw std::invalid_argument("CUDA point copy dimensions");
@@ -266,22 +286,37 @@ void VbPoint::hessian(View orbital,View structure,Out orbital_image,Out structur
       dg.view(),pair_products());
   direction_sigma_.update_integrals(dh.view(),dg.view());
   Matrix<double> dhy(c,state_.rows(),state_.cols());
-  const double dn=2.0*dot(c,state_.view(),dy.view());
+  Matrix<double> coefficients(c,8,1);
   // The accepted normalized integral adjoints already represent Y^T dH Y/N.
   // Only H*dy+dH*Y is consumed below, so no separate directional carrier or
   // second sigma gather is mathematically required.
-  const double de=2.0*dot(c,dy.view(),image_.view())/norm_+
-      dot(c,one_adjoint_.view(),dh.view())+dot(c,pair_adjoint_.view(),dg.view())-
-      active_energy_*dn/norm_;
+  device_scalars(c,[&] {
+    const auto inner=[&](View a,View b,int index) {
+      check_cublas(cublasDdot(c.blas(),blas_int(a.rows*a.cols),a.data,1,b.data,1,
+          coefficients.data()+index),"point HVP device dot");
+    };
+    inner(state_.view(),dy.view(),0);inner(dy.view(),image_.view(),1);
+    inner(one_adjoint_.view(),dh.view(),2);inner(pair_adjoint_.view(),dg.view(),3);
+  });
+  hvp_coefficients<<<1,1,0,c.stream()>>>(coefficients.data(),norm_,active_energy_);
+  check_cuda(cudaGetLastError(),"point HVP normalization coefficients");
   Matrix<double> dha(c,one_.rows(),one_.cols()),dga(c,pair_.rows(),pair_.cols());
   sigma_.apply_direction_with_adjoint(dy.view(),state_.view(),direction_sigma_,
       dhy.view(),dha.view(),dga.view());
-  scale(c,dha.view(),2.0/norm_);add(c,dha.view(),one_adjoint_.view(),-dn/norm_);
-  scale(c,dga.view(),2.0/norm_);add(c,dga.view(),pair_adjoint_.view(),-dn/norm_);
-  add(c,dhy.view(),state_.view(),-de);
-  add(c,dhy.view(),dy.view(),-active_energy_);
-  scale(c,dhy.view(),2.0/norm_);
-  add(c,dhy.view(),carrier_gradient_.view(),-dn/norm_);
+  device_scalars(c,[&] {
+    const auto scaled=[&](Out x,int coefficient) {
+      check_cublas(cublasDscal(c.blas(),blas_int(x.rows*x.cols),
+          coefficients.data()+coefficient,x.data,1),"point HVP device scale");
+    };
+    const auto added=[&](Out x,View y,int coefficient) {
+      check_cublas(cublasDaxpy(c.blas(),blas_int(x.rows*x.cols),
+          coefficients.data()+coefficient,y.data,1,x.data,1),"point HVP device sum");
+    };
+    scaled(dha.view(),4);added(dha.view(),one_adjoint_.view(),5);
+    scaled(dga.view(),4);added(dga.view(),pair_adjoint_.view(),5);
+    added(dhy.view(),state_.view(),6);added(dhy.view(),dy.view(),7);
+    scaled(dhy.view(),4);added(dhy.view(),carrier_gradient_.view(),5);
+  });
   // dhy now denotes the exact directional carrier gradient.
   Matrix<double> moment(c,one_.rows(),one_.cols()),other(c,one_.rows(),one_.cols());
   sigma_.one_body_generator_adjoint(dhy.view(),state_.view(),moment.view());

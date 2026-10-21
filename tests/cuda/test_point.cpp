@@ -312,6 +312,18 @@ void check_case(bool inactive,int structures) {
     DeviceMatrix out_ci(context,structures,1);
     point.hessian(dorbital.view(),dstructure.view(),
                   out_raw.view(),out_ci.view());
+    const auto direct_raw=download(context,out_raw.view());
+    const auto direct_ci=download(context,out_ci.view());
+    xmvb::cuda::copy_to_device(context,dorbital.view(),(-0.7*orbital).eval());
+    xmvb::cuda::copy_to_device(context,dstructure.view(),(-0.7*structure).eval());
+    point.hessian(dorbital.view(),dstructure.view(),out_raw.view(),out_ci.view());
+    near(download(context,out_raw.view()),-0.7*direct_raw,2e-10,"device-scalar raw HVP linearity");
+    near(download(context,out_ci.view()),-0.7*direct_ci,2e-10,"device-scalar CI HVP linearity");
+    xmvb::cuda::copy_to_device(context,dorbital.view(),orbital);
+    xmvb::cuda::copy_to_device(context,dstructure.view(),structure);
+    point.hessian(dorbital.view(),dstructure.view(),out_raw.view(),out_ci.view());
+    near(download(context,out_raw.view()),direct_raw,2e-10,"replayed raw HVP");
+    near(download(context,out_ci.view()),direct_ci,2e-10,"replayed CI HVP");
     return Derivatives{download(context,out_raw.view()),
                        download(context,out_ci.view())};
   };

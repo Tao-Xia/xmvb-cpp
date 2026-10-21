@@ -8,6 +8,7 @@
 #include <utility>
 
 #include <cuda_runtime.h>
+#include <nvtx3/nvtx3.hpp>
 
 #include "cuda/linalg/blas.hpp"
 #include "cuda/vb/action.hpp"
@@ -307,6 +308,7 @@ void SelectedCrossOverlap::solve_metric(linalg::ConstMatrixView frame,
     linalg::ConstMatrixView rhs, linalg::MatrixView solution,
     linalg::ConstMatrixView initial, linalg::MetricSolveStats* stats,
     const SelectedMetric* metric) const {
+  const nvtx3::scoped_range range{"transport.metric_inverse"};
   check_frame(frame);
   check_structure(rhs);
   check_structure(solution);
@@ -553,6 +555,7 @@ SingleStateCiTransportPoint SingleStateCiTransport::retract(
 SingleStateCiTransportModel SingleStateCiTransport::evaluate_model(
     const SingleStateCiTransportPoint& point, double physical_energy,
     linalg::ConstMatrixView physical_coefficient_gradient) const {
+  const nvtx3::scoped_range range{"transport.keyframe_model"};
   if (!std::isfinite(physical_energy) ||
       physical_coefficient_gradient.rows!=structures_ ||
       physical_coefficient_gradient.cols!=1 ||
