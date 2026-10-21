@@ -144,17 +144,18 @@ void check_directional_derivative(
   }
 }
 
-void check_sigma(int rhs_count, bool rotated) {
+void check_sigma(int rhs_count,bool rotated,int maximum_tile=3,bool one_product=false) {
   constexpr int n = 4;
-  const xmvb::mcscf::SpinStrings alpha_space(n, 2), beta_space(n, 1);
+  const xmvb::mcscf::SpinStrings alpha_space(n,one_product ? n:2),
+      beta_space(n,one_product ? 0:1);
   const Strings alpha = alpha_space.occupations(), beta = beta_space.occupations();
   const auto integrals = active_integrals(n, rotated);
   const xmvb::mcscf::DirectCiSigmaAction cpu(alpha, beta, integrals);
   const Matrix left = values(alpha.size(), beta.size() * rhs_count, 0.26);
   const Matrix right = values(alpha.size(), beta.size() * rhs_count, 0.82);
   xmvb::cuda::Context context(128ULL * 1024ULL * 1024ULL);
-  xmvb::cuda::DirectCiSigma gpu(context, cpu, 3);
-  require(gpu.n_alpha_strings() != gpu.n_beta_strings(),
+  xmvb::cuda::DirectCiSigma gpu(context,cpu,maximum_tile);
+  require(one_product || gpu.n_alpha_strings() != gpu.n_beta_strings(),
           "CUDA direct-CI fixture lost unequal spin dimensions");
   xmvb::cuda::Matrix<double> d_left(context, left.rows(), left.cols());
   xmvb::cuda::Matrix<double> d_right(context, right.rows(), right.cols());
@@ -164,6 +165,13 @@ void check_sigma(int rhs_count, bool rotated) {
   xmvb::cuda::Matrix<double> d_g(context, pairs, pairs);
   xmvb::cuda::copy_to_device(context, d_left.view(), left);
   xmvb::cuda::copy_to_device(context, d_right.view(), right);
+
+  gpu.apply(d_left.view(),d_image.view());
+  near(download(context,d_image),cpu.apply(left),3.0e-10,
+       "CUDA source-row sigma differs from CPU");
+  gpu.apply(d_right.view(),d_image.view(),true);
+  near(download(context,d_image),cpu.apply(left)+cpu.apply(right),3.0e-10,
+       "CUDA source-row sigma add mode differs from CPU");
 
   const auto cpu_adjoint = cpu.integral_adjoint(left, right);
   gpu.integral_adjoint(d_left.view(), d_right.view(), d_h.view(), d_g.view());
@@ -175,6 +183,15 @@ void check_sigma(int rhs_count, bool rotated) {
                                download(context, d_h), download(context, d_g), true);
   check_directional_derivative(alpha, beta, integrals, left, right,
                                download(context, d_h), download(context, d_g), false);
+
+  gpu.apply_with_adjoint(d_right.view(),d_right.view(),d_image.view(),d_h.view(),d_g.view());
+  const auto same_source=cpu.apply_with_adjoint(right,right);
+  near(download(context,d_image),same_source.sigma,3.0e-10,
+       "CUDA same-source sigma differs from CPU");
+  near(download(context,d_h),same_source.integrals.one_electron,3.0e-10,
+       "CUDA shared scatter h adjoint differs from CPU");
+  near(download(context,d_g),same_source.integrals.pair_kernel,3.0e-10,
+       "CUDA shared scatter g adjoint differs from CPU");
 
   gpu.apply_with_adjoint(d_left.view(), d_right.view(), d_image.view(),
                          d_h.view(), d_g.view());
@@ -568,7 +585,11 @@ void check_full_metric(int rhs_count) {
 int main() {
   try {
     for (bool rotated : {false, true})
-      for (int rhs_count : {1, 3}) check_sigma(rhs_count, rotated);
+      for (int rhs_count : {1, 3}) {
+        check_sigma(rhs_count,rotated);
+        check_sigma(rhs_count,rotated,1);
+        check_sigma(rhs_count,rotated,1,true);
+      }
     for (int rhs_count : {1, 3}) check_spin_metric(rhs_count);
     for (int rhs_count : {1, 3}) check_exterior(rhs_count);
     for (int rhs_count : {1, 3}) check_cholesky(rhs_count);

@@ -34,23 +34,31 @@ __global__ void scatter_channels(
   channels[index]=value;
 }
 
-// E_P is symmetric: the same exact source/sign table implements E_P^T.
-__global__ void gather_channels(const double* channels,linalg::MatrixView image,
-    std::int64_t products,int n_alpha,int n_beta,const int* alpha,const int* beta,
-    int first_channel,int channel_count,bool add) {
-  const std::int64_t product=blockIdx.x*static_cast<std::int64_t>(blockDim.x)+threadIdx.x;
+// Exact E_P^T for one intermediate-product row tile. Each output product
+// owns its sum; no atomics or full-carrier channel image are needed.
+__global__ void gather_row_channels(const double* channels,linalg::MatrixView image,
+    std::int64_t products,std::int64_t begin,std::int64_t count,
+    int n_alpha,int n_beta,const int* alpha,const int* beta,int n_channels,bool add) {
+  const auto product=blockIdx.x*static_cast<std::int64_t>(blockDim.x)+threadIdx.x;
   if (product>=products) return;
   const int a=product%n_alpha;
   const auto column=product/n_alpha;
   const int b=column%n_beta;
   const auto rhs=column/n_beta;
-  double value=0;
-  for (int local=0;local<channel_count;++local) {
-    const int channel=first_channel+local;
-    const int sa=alpha[static_cast<std::int64_t>(channel)*n_alpha+a];
-    const int sb=beta[static_cast<std::int64_t>(channel)*n_beta+b];
-    if (sa) value+=(sa>0 ? 1.0:-1.0)*channels[abs(sa)-1+n_alpha*column+products*local];
-    if (sb) value+=(sb>0 ? 1.0:-1.0)*channels[a+n_alpha*(rhs*n_beta+abs(sb)-1)+products*local];
+  double value=0.0;
+  for (int p=0;p<n_channels;++p) {
+    const int sa=alpha[static_cast<std::int64_t>(p)*n_alpha+a];
+    const int sb=beta[static_cast<std::int64_t>(p)*n_beta+b];
+    if (sa) {
+      const auto source=abs(sa)-1+n_alpha*column;
+      if (source>=begin && source<begin+count)
+        value+=(sa>0 ? 1.0:-1.0)*channels[source-begin+count*p];
+    }
+    if (sb) {
+      const auto source=a+n_alpha*(rhs*n_beta+abs(sb)-1);
+      if (source>=begin && source<begin+count)
+        value+=(sb>0 ? 1.0:-1.0)*channels[source-begin+count*p];
+    }
   }
   auto& destination=image.data[a+image.ld*column];
   if (add) destination+=value;
@@ -325,19 +333,19 @@ DirectCiSigma::SpinGraph::SpinGraph(
 
 DirectCiSigma::DirectCiSigma(
     Context& context, const mcscf::DirectCiSigmaAction& source,
-    int maximum_channel_tile)
+    int channel_capacity)
     : context_(&context), n_alpha_(source.n_alpha_strings()),
       n_beta_(source.n_beta_strings()),
       n_orbitals_(source.n_orbitals()),
       n_electrons_(source.alpha_connections().n_occupied()+
                    source.beta_connections_view().n_occupied()),
       n_channels_(static_cast<int>(source.channel_kernel().rows())),
-      maximum_channel_tile_(maximum_channel_tile),
+      channel_capacity_(channel_capacity),
       shared_spin_graph_(source.shared_spin_connections()),
       kernel_(context, static_cast<std::size_t>(n_channels_)*n_channels_),
       effective_one_(context,n_channels_),
       alpha_(std::make_shared<SpinGraph>(context, source.alpha_connections(), n_channels_)) {
-  if (maximum_channel_tile <= 0 || n_channels_ <= 0 ||
+  if (channel_capacity <= 0 || n_channels_ <= 0 ||
       source.channel_kernel().cols() != n_channels_)
     throw std::invalid_argument("invalid CUDA direct-CI channel dimensions");
   context.copy_to_device(kernel_.data(), source.channel_kernel().data(),
@@ -349,7 +357,7 @@ DirectCiSigma::DirectCiSigma(
 DirectCiSigma::DirectCiSigma(Context& context,const DirectCiSigma& source)
     : context_(&context),n_alpha_(source.n_alpha_),n_beta_(source.n_beta_),
       n_orbitals_(source.n_orbitals_),n_electrons_(source.n_electrons_),
-      n_channels_(source.n_channels_),maximum_channel_tile_(source.maximum_channel_tile_),
+      n_channels_(source.n_channels_),channel_capacity_(source.channel_capacity_),
       shared_spin_graph_(source.shared_spin_graph_),
       kernel_(context,source.kernel_.size()),effective_one_(context,source.effective_one_.size()),
       alpha_(source.alpha_),beta_(source.beta_) {
@@ -379,13 +387,16 @@ void DirectCiSigma::prepare(int block_width) const {
   const std::size_t available=context_->device_byte_budget()-
       context_->counters().current_device_bytes;
   const std::size_t per_channel=2*static_cast<std::size_t>(products)*sizeof(double);
-  const int tile=static_cast<int>(std::min<std::size_t>(
-      {static_cast<std::size_t>(n_channels_),static_cast<std::size_t>(maximum_channel_tile_),
+  int tile=static_cast<int>(std::min<std::size_t>(
+      {static_cast<std::size_t>(n_channels_),static_cast<std::size_t>(channel_capacity_),
        available/per_channel}));
+  tile=std::max<std::int64_t>(tile,(n_channels_+products-1)/products);
+  if (static_cast<std::size_t>(tile)>available/per_channel)
+    throw std::runtime_error("CUDA direct-CI budget cannot hold one complete channel row");
   if (tile<1)
     throw std::runtime_error("CUDA direct-CI budget cannot hold two single-channel slabs");
-  // Keep the same two-slab capacity, but contract all channels for a row tile.
-  // C is written once rather than reread/accumulated for every Q block.
+  // Keep the same two-slab byte capacity. Both panels carry all channels
+  // for one source-row tile, which is consumed before the next is generated.
   auto rows=std::min(products,std::max<std::int64_t>(1,products*tile/n_channels_));
   constexpr int warp_rows=32;
   if (rows>=warp_rows) rows=(rows/warp_rows)*warp_rows;
@@ -428,8 +439,13 @@ void DirectCiSigma::prepare_adjoint(int block_width,bool with_sigma,
       throw std::runtime_error("CUDA direct-CI budget cannot hold fused sigma slab");
     tile=static_cast<int>(std::min<std::size_t>({
         static_cast<std::size_t>(n_channels_),
-        static_cast<std::size_t>(maximum_channel_tile_),
+        static_cast<std::size_t>(channel_capacity_),
         (workspace-minimum_rows)/transform_channel_bytes}));
+    // One all-channel intermediate row must fit even for a one-string
+    // carrier. Channel capacity is a storage bound, not a contraction tile.
+    tile=std::max<std::int64_t>(tile,(n_channels_+products-1)/products);
+    if (static_cast<std::size_t>(products)*tile*sizeof(double)>workspace-minimum_rows)
+      throw std::runtime_error("CUDA direct-CI budget cannot hold one fused channel row");
     rows=std::min<std::int64_t>(products,
         (workspace/sizeof(double)-static_cast<std::size_t>(products)*tile)/
         (2*static_cast<std::size_t>(n_channels_)));
@@ -440,8 +456,10 @@ void DirectCiSigma::prepare_adjoint(int block_width,bool with_sigma,
   // Match the sigma source-panel plan under the shared Context budget. There
   // is no private fixed byte cap competing with the accepted-point workspace.
   const auto panel_rows=std::max<std::int64_t>(1,
-      products*std::min(n_channels_,maximum_channel_tile_)/n_channels_);
+      products*std::min(n_channels_,channel_capacity_)/n_channels_);
   rows=std::min(rows,panel_rows);
+  if (with_sigma)
+    rows=std::min(rows,products*tile/n_channels_);
   if (rows<1) throw std::runtime_error("CUDA direct-CI adjoint row exceeds budget");
   if (rows>=32) rows=(rows/32)*32;
   Matrix<double> kernel_adjoint;
@@ -471,36 +489,24 @@ void DirectCiSigma::apply(linalg::ConstMatrixView coefficients,
     throw std::overflow_error("CUDA direct-CI product panel exceeds cuBLAS range");
   const std::int64_t products = coefficients.rows*coefficients.cols;
   prepare(static_cast<int>(coefficients.cols/n_beta_));
-  const int tile=static_cast<int>(transformed_.cols());
   const auto* alpha=alpha_->sources.data();
   const auto* beta=beta_->sources.data();
 
-  // A serpentine walk reuses the boundary source-row tile at the next P block.
+  // Each source row is generated once; all output channels are completed
+  // before the same bounded storage is reused for the next row tile.
   const auto rows=scattered_.rows();
-  const auto blocks=(products+rows-1)/rows;
-  std::int64_t retained_begin=-1;
-  for (int p = 0; p < n_channels_; p += tile) {
-    const int p_count = std::min(tile, n_channels_ - p);
-    for (std::int64_t step=0;step<blocks;++step) {
-      const auto begin=((p/tile)%2 ? blocks-1-step:step)*rows;
-      const auto count=std::min(rows,products-begin);
-      if (begin!=retained_begin) {
-        scatter_channels<<<grid_size(count*n_channels_),256,0,context_->stream()>>>(
-          coefficients, scattered_.data(),begin,count,n_alpha_,n_beta_,alpha,beta,n_channels_);
-        check_cuda(cudaGetLastError(), "CUDA direct-CI channel scatter");
-        retained_begin=begin;
-      }
-      const linalg::ConstMatrixView q_view{scattered_.data(),count,n_channels_,count};
-      const linalg::ConstMatrixView kernel_view{
-          kernel_.data()+p,p_count,n_channels_,n_channels_};
-      const linalg::MatrixView p_view{transformed_.data()+begin,count,p_count,products};
-      gemm(*context_, p_view, q_view, kernel_view,
-           1.0,0.0,
-           Operation::none, Operation::transpose);
-    }
-    gather_channels<<<grid_size(products),256,0,context_->stream()>>>(
-        transformed_.data(), image, products, n_alpha_, n_beta_,
-        alpha, beta, p, p_count, add || p != 0);
+  for (std::int64_t begin=0;begin<products;begin+=rows) {
+    const auto count=std::min(rows,products-begin);
+    scatter_channels<<<grid_size(count*n_channels_),256,0,context_->stream()>>>(
+        coefficients,scattered_.data(),begin,count,n_alpha_,n_beta_,alpha,beta,n_channels_);
+    check_cuda(cudaGetLastError(),"CUDA direct-CI channel scatter");
+    const linalg::ConstMatrixView q_view{scattered_.data(),count,n_channels_,count};
+    const linalg::ConstMatrixView kernel_view{kernel_.data(),n_channels_,n_channels_,n_channels_};
+    const linalg::MatrixView p_view{transformed_.data(),count,n_channels_,count};
+    gemm(*context_,p_view,q_view,kernel_view,1.0,0.0,Operation::none,Operation::transpose);
+    gather_row_channels<<<grid_size(products),256,0,context_->stream()>>>(
+        transformed_.data(),image,products,begin,count,n_alpha_,n_beta_,alpha,beta,
+        n_channels_,add || begin!=0);
     check_cuda(cudaGetLastError(), "CUDA direct-CI channel gather");
   }
 }
@@ -511,50 +517,33 @@ void DirectCiSigma::contract_adjoint(linalg::ConstMatrixView left,
   const nvtx3::scoped_range range{"ci.sigma_adjoint"};
   const std::int64_t products=left.rows*left.cols;
   const auto rows=scattered_.rows();
-  const auto blocks=(products+rows-1)/rows;
-  const int tile=image ? static_cast<int>(transformed_.cols()):1;
   const auto* alpha=alpha_->sources.data();
   const auto* beta=beta_->sources.data();
-  std::int64_t retained_begin=-1;
+  const bool same_source=left.data==right.data && left.ld==right.ld;
   bool first_adjoint=true;
-  for (int p=0;p<(image ? n_channels_:1);p+=tile) {
-    const int p_count=image ? std::min(tile,n_channels_-p):0;
-    for (std::int64_t step=0;step<blocks;++step) {
-      const auto begin=(image && (p/tile)%2 ? blocks-1-step:step)*rows;
-      const auto count=std::min(rows,products-begin);
-      if (begin!=retained_begin) {
-        scatter_channels<<<grid_size(count*n_channels_),256,0,context_->stream()>>>(
-            left,scattered_.data(),begin,count,n_alpha_,n_beta_,alpha,beta,n_channels_);
-        check_cuda(cudaGetLastError(),"CUDA direct-CI adjoint left scatter");
-        retained_begin=begin;
-      }
-      const linalg::ConstMatrixView left_channels{
-          scattered_.data(),count,n_channels_,count};
-      if (p==0) {
-        scatter_channels<<<grid_size(count*n_channels_),256,0,context_->stream()>>>(
-            right,right_scattered_.data(),begin,count,n_alpha_,n_beta_,
-            alpha,beta,n_channels_);
-        check_cuda(cudaGetLastError(),"CUDA direct-CI adjoint right scatter");
-        const linalg::ConstMatrixView right_channels{
-            right_scattered_.data(),count,n_channels_,count};
-        gemm(*context_,channel_kernel_adjoint,left_channels,right_channels,
-             1.0,first_adjoint ? 0.0:1.0,
-             Operation::transpose,Operation::none);
-        first_adjoint=false;
-      }
-      if (image) {
-        const linalg::ConstMatrixView kernel_view{
-            kernel_.data()+p,p_count,n_channels_,n_channels_};
-        const linalg::MatrixView p_view{
-            transformed_.data()+begin,count,p_count,products};
-        gemm(*context_,p_view,left_channels,kernel_view,
-             1.0,0.0,Operation::none,Operation::transpose);
-      }
+  for (std::int64_t begin=0;begin<products;begin+=rows) {
+    const auto count=std::min(rows,products-begin);
+    scatter_channels<<<grid_size(count*n_channels_),256,0,context_->stream()>>>(
+        left,scattered_.data(),begin,count,n_alpha_,n_beta_,alpha,beta,n_channels_);
+    check_cuda(cudaGetLastError(),"CUDA direct-CI adjoint left scatter");
+    if (!same_source) {
+      scatter_channels<<<grid_size(count*n_channels_),256,0,context_->stream()>>>(
+          right,right_scattered_.data(),begin,count,n_alpha_,n_beta_,alpha,beta,n_channels_);
+      check_cuda(cudaGetLastError(),"CUDA direct-CI adjoint right scatter");
     }
+    const linalg::ConstMatrixView left_channels{scattered_.data(),count,n_channels_,count};
+    const linalg::ConstMatrixView right_channels{
+        same_source ? scattered_.data():right_scattered_.data(),count,n_channels_,count};
+    gemm(*context_,channel_kernel_adjoint,left_channels,right_channels,
+        1.0,first_adjoint ? 0.0:1.0,Operation::transpose,Operation::none);
+    first_adjoint=false;
     if (image) {
-      gather_channels<<<grid_size(products),256,0,context_->stream()>>>(
-          transformed_.data(),*image,products,n_alpha_,n_beta_,
-          alpha,beta,p,p_count,p!=0);
+      const linalg::ConstMatrixView kernel_view{kernel_.data(),n_channels_,n_channels_,n_channels_};
+      const linalg::MatrixView p_view{transformed_.data(),count,n_channels_,count};
+      gemm(*context_,p_view,left_channels,kernel_view,1.0,0.0,Operation::none,Operation::transpose);
+      gather_row_channels<<<grid_size(products),256,0,context_->stream()>>>(
+          transformed_.data(),*image,products,begin,count,n_alpha_,n_beta_,
+          alpha,beta,n_channels_,begin!=0);
       check_cuda(cudaGetLastError(),"CUDA direct-CI adjoint sigma gather");
     }
   }
@@ -661,52 +650,33 @@ void DirectCiSigma::apply_direction_with_adjoint(
   prepare_adjoint(block_width,true,true);
   const std::int64_t products=response.rows*response.cols;
   const auto rows=scattered_.rows();
-  const auto blocks=(products+rows-1)/rows;
-  const int tile=static_cast<int>(transformed_.cols());
   const auto* alpha=alpha_->sources.data();
   const auto* beta=beta_->sources.data();
-  std::int64_t retained_begin=-1;
   bool first_adjoint=true;
-  for (int p=0;p<n_channels_;p+=tile) {
-    const int p_count=std::min(tile,n_channels_-p);
-    for (std::int64_t step=0;step<blocks;++step) {
-      const auto begin=(p/tile)%2 ? (blocks-1-step)*rows:step*rows;
-      const auto count=std::min(rows,products-begin);
-      if (begin!=retained_begin) {
-        scatter_channels<<<grid_size(count*n_channels_),256,0,context_->stream()>>>(
-            response,scattered_.data(),begin,count,n_alpha_,n_beta_,
-            alpha,beta,n_channels_);
-        check_cuda(cudaGetLastError(),"CUDA direct-CI directional response scatter");
-        scatter_channels<<<grid_size(count*n_channels_),256,0,context_->stream()>>>(
-            state,right_scattered_.data(),begin,count,n_alpha_,n_beta_,
-            alpha,beta,n_channels_);
-        check_cuda(cudaGetLastError(),"CUDA direct-CI directional state scatter");
-        retained_begin=begin;
-      }
-      const linalg::ConstMatrixView response_channels{
-          scattered_.data(),count,n_channels_,count};
-      const linalg::ConstMatrixView state_channels{
-          right_scattered_.data(),count,n_channels_,count};
-      if (p==0) {
-        gemm(*context_,channel_adjoint_.view(),response_channels,state_channels,
-            1.0,first_adjoint ? 0.0:1.0,
-            Operation::transpose,Operation::none);
-        first_adjoint=false;
-      }
-      const linalg::MatrixView output{
-          transformed_.data()+begin,count,p_count,products};
-      const linalg::ConstMatrixView fixed_kernel{
-          kernel_.data()+p,p_count,n_channels_,n_channels_};
-      const linalg::ConstMatrixView directional_kernel{
-          direction.kernel_.data()+p,p_count,n_channels_,n_channels_};
-      gemm(*context_,output,response_channels,fixed_kernel,
-          1.0,0.0,Operation::none,Operation::transpose);
-      gemm(*context_,output,state_channels,directional_kernel,
-          1.0,1.0,Operation::none,Operation::transpose);
-    }
-    gather_channels<<<grid_size(products),256,0,context_->stream()>>>(
-        transformed_.data(),combined_image,products,n_alpha_,n_beta_,
-        alpha,beta,p,p_count,p!=0);
+  for (std::int64_t begin=0;begin<products;begin+=rows) {
+    const auto count=std::min(rows,products-begin);
+    scatter_channels<<<grid_size(count*n_channels_),256,0,context_->stream()>>>(
+        response,scattered_.data(),begin,count,n_alpha_,n_beta_,alpha,beta,n_channels_);
+    check_cuda(cudaGetLastError(),"CUDA direct-CI directional response scatter");
+    scatter_channels<<<grid_size(count*n_channels_),256,0,context_->stream()>>>(
+        state,right_scattered_.data(),begin,count,n_alpha_,n_beta_,alpha,beta,n_channels_);
+    check_cuda(cudaGetLastError(),"CUDA direct-CI directional state scatter");
+    const linalg::ConstMatrixView response_channels{scattered_.data(),count,n_channels_,count};
+    const linalg::ConstMatrixView state_channels{right_scattered_.data(),count,n_channels_,count};
+    gemm(*context_,channel_adjoint_.view(),response_channels,state_channels,
+        1.0,first_adjoint ? 0.0:1.0,Operation::transpose,Operation::none);
+    first_adjoint=false;
+    const linalg::MatrixView output{transformed_.data(),count,n_channels_,count};
+    const linalg::ConstMatrixView fixed_kernel{kernel_.data(),n_channels_,n_channels_,n_channels_};
+    const linalg::ConstMatrixView directional_kernel{
+        direction.kernel_.data(),n_channels_,n_channels_,n_channels_};
+    gemm(*context_,output,response_channels,fixed_kernel,
+        1.0,0.0,Operation::none,Operation::transpose);
+    gemm(*context_,output,state_channels,directional_kernel,
+        1.0,1.0,Operation::none,Operation::transpose);
+    gather_row_channels<<<grid_size(products),256,0,context_->stream()>>>(
+        transformed_.data(),combined_image,products,begin,count,n_alpha_,n_beta_,
+        alpha,beta,n_channels_,begin!=0);
     check_cuda(cudaGetLastError(),"CUDA direct-CI combined directional gather");
   }
   pullback_channel_kernel(channel_adjoint_.view(),
@@ -765,7 +735,7 @@ void DirectCiSigma::prepare_generator_adjoint(int block_width) const {
   if (block_width<=0) throw std::invalid_argument("invalid generator block width");
   const auto products=static_cast<std::int64_t>(n_alpha_)*n_beta_*block_width;
   const auto planned_rows=std::max<std::int64_t>(1,products*
-      std::min(n_channels_,maximum_channel_tile_)/n_channels_);
+      std::min(n_channels_,channel_capacity_)/n_channels_);
   const auto transformed_rows=transformed_.data() ?
       transformed_.rows()*transformed_.cols()/n_channels_:0;
   auto low_rows=std::max(right_scattered_.rows(),transformed_rows);

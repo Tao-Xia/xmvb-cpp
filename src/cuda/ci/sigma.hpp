@@ -14,13 +14,17 @@ namespace xmvb::cuda {
 /** Exact packed-channel direct-CI action on a full current-RHS spin product.
  * A panel has n_alpha rows and n_beta*RHS columns, with beta varying fastest.
  * Input/output panels are caller-owned and charged to Context's device budget.
- * Source-row/all-channel and full-row/output-channel slabs share a bounded
- * workspace. No Hamiltonian matrix or extra full-carrier channel cache is retained.
+ * All-channel source-row slabs share a bounded workspace. No Hamiltonian
+ * matrix or extra full-carrier channel cache is retained.
  */
 class DirectCiSigma {
  public:
+  /** channel_capacity bounds storage in full-carrier channel equivalents;
+   * every contraction row still includes all channels. A complete row is the
+   * minimum allocation, including in a one-product carrier.
+   */
   DirectCiSigma(Context& context, const mcscf::DirectCiSigmaAction& source,
-                int maximum_channel_tile = 16);
+                int channel_capacity = 16);
   /** @brief Share immutable device links; update_integrals must precede use. */
   DirectCiSigma(Context& context, const DirectCiSigma& reference);
   DirectCiSigma(const DirectCiSigma&) = delete;
@@ -60,8 +64,9 @@ class DirectCiSigma {
   /** One exact directional sweep on the shared spin graph. Overwrites
    * combined_image=H*response+dH*state and the integral cotangent of
    * response^T H state. The directional Hamiltonian is supplied by
-   * direction.update_integrals(). Both products use the same transformed_
-   * channel panel; no directional carrier or output slab is retained.
+   * direction.update_integrals(). Each source row is scattered once and both
+   * products share its all-channel intermediate; no directional carrier or
+   * full-carrier output slab is retained.
    */
   void apply_direction_with_adjoint(linalg::ConstMatrixView response,
       linalg::ConstMatrixView state,const DirectCiSigma& direction,
@@ -133,7 +138,7 @@ class DirectCiSigma {
                                linalg::MatrixView one_electron_adjoint,
                                linalg::MatrixView pair_kernel_adjoint) const;
   Context* context_;
-  int n_alpha_, n_beta_, n_orbitals_, n_electrons_, n_channels_, maximum_channel_tile_;
+  int n_alpha_, n_beta_, n_orbitals_, n_electrons_, n_channels_, channel_capacity_;
   bool shared_spin_graph_;
   Buffer<double> kernel_;
   Buffer<double> effective_one_;
