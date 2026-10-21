@@ -663,13 +663,60 @@ VbScfInputLoadResult load_vbscf_input_with_timings(
         build_input_deck_basis(input_deck, auxiliary_basis_name).libcint_input;
   }
 
+  // Structure topology is independent of the AO payload. Finish expansion
+  // before generating ERIs so its temporary workspace does not overlap them.
+  const auto raw_structure_selection_start_time = std::chrono::steady_clock::now();
+  const int source_raw_structure_count = raw_structure_data.n_structures;
+  const auto selected_raw_structure_indices =
+      select_raw_structure_indices(raw_structure_data, options.raw_structure_selection);
+  RawStructureData selected_raw_structure_data;
+  if (static_cast<int>(selected_raw_structure_indices.size()) ==
+      raw_structure_data.n_structures) {
+    selected_raw_structure_data = std::move(raw_structure_data);
+  } else {
+    selected_raw_structure_data = build_raw_structure_subset(
+        raw_structure_data,
+        selected_raw_structure_indices);
+  }
+  load_result.raw_structure_selection_seconds =
+      std::chrono::duration<double>(
+          std::chrono::steady_clock::now() - raw_structure_selection_start_time)
+          .count();
+
+  result.complete_active_space =
+      load_result.raw_structure_source ==
+          RawStructureSource::GeneratedFromStructureClass &&
+      input_deck_metadata.structure_class_keyword.find("FULL") !=
+          std::string::npos &&
+      static_cast<int>(selected_raw_structure_indices.size()) ==
+          source_raw_structure_count;
+
+  if (options.expand_selected_raw_structures) {
+    const auto structure_expansion_start_time = std::chrono::steady_clock::now();
+    FullDeterminantStructureExpander expander;
+    result.structure_data = expander.expand(selected_raw_structure_data);
+    load_result.structure_expansion_seconds =
+        std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - structure_expansion_start_time)
+            .count();
+    if (load_result.state_average_count > result.structure_data.n_structures) {
+      throw std::invalid_argument(
+          "NSTATE exceeds the number of expanded VB structures");
+    }
+  }
+
   const auto ao_integral_provider_start_time = std::chrono::steady_clock::now();
   xmvb::libcint::MaterializedAoIntegralBuffers ao_integral_buffers;
   if (!use_standard_ri_two_electron_mode) {
     xmvb::libcint::LibcintMaterializedIntegralProvider provider;
     xmvb::libcint::LibcintMaterializedIntegralProviderOptions provider_options;
     provider_options.ao_pair_layout=options.ao_pair_layout;
-    ao_integral_buffers = provider.build(result.libcint_input,provider_options);
+    xmvb::libcint::IntegralBuildTimings integral_timings;
+    ao_integral_buffers = provider.build(result.libcint_input,provider_options,&integral_timings);
+    load_result.ao_integral_setup_seconds=integral_timings.setup_seconds;
+    load_result.ao_integral_generation_seconds=integral_timings.generation_seconds;
+    load_result.ao_integral_merge_seconds=integral_timings.merge_seconds;
+    load_result.ao_integral_buffered_bytes=integral_timings.buffered_bytes;
   }
   load_result.ao_integral_provider_seconds =
       std::chrono::duration<double>(
@@ -714,32 +761,6 @@ VbScfInputLoadResult load_vbscf_input_with_timings(
             .count();
   }
 
-  const auto raw_structure_selection_start_time = std::chrono::steady_clock::now();
-  const int source_raw_structure_count = raw_structure_data.n_structures;
-  const auto selected_raw_structure_indices =
-      select_raw_structure_indices(raw_structure_data, options.raw_structure_selection);
-  RawStructureData selected_raw_structure_data;
-  if (static_cast<int>(selected_raw_structure_indices.size()) ==
-      raw_structure_data.n_structures) {
-    selected_raw_structure_data = std::move(raw_structure_data);
-  } else {
-    selected_raw_structure_data = build_raw_structure_subset(
-        raw_structure_data,
-        selected_raw_structure_indices);
-  }
-  load_result.raw_structure_selection_seconds =
-      std::chrono::duration<double>(
-          std::chrono::steady_clock::now() - raw_structure_selection_start_time)
-          .count();
-
-  result.complete_active_space =
-      load_result.raw_structure_source ==
-          RawStructureSource::GeneratedFromStructureClass &&
-      input_deck_metadata.structure_class_keyword.find("FULL") !=
-          std::string::npos &&
-      static_cast<int>(selected_raw_structure_indices.size()) ==
-          source_raw_structure_count;
-
   VbScfStaticMoleculeMetadata static_molecule_metadata;
   static_molecule_metadata.n_atoms = resolved_n_atoms;
   static_molecule_metadata.n_shells = static_topology.n_shells;
@@ -761,19 +782,6 @@ VbScfInputLoadResult load_vbscf_input_with_timings(
   static_molecule_metadata.ao_cartesian_exponents =
       static_topology.ao_cartesian_exponents;
 
-  if (options.expand_selected_raw_structures) {
-    const auto structure_expansion_start_time = std::chrono::steady_clock::now();
-    FullDeterminantStructureExpander expander;
-    result.structure_data = expander.expand(selected_raw_structure_data);
-    load_result.structure_expansion_seconds =
-        std::chrono::duration<double>(
-            std::chrono::steady_clock::now() - structure_expansion_start_time)
-            .count();
-    if (load_result.state_average_count > result.structure_data.n_structures) {
-      throw std::invalid_argument(
-          "NSTATE exceeds the number of expanded VB structures");
-    }
-  }
   load_result.input = std::move(result);
   load_result.raw_structure_data = std::move(selected_raw_structure_data);
   load_result.static_molecule_metadata = std::move(static_molecule_metadata);

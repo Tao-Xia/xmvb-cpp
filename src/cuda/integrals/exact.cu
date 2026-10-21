@@ -592,17 +592,17 @@ ExactAoPairOperator::ExactAoPairOperator(
   compact_ = graph.has_compact_integral_stream();
   std::size_t directed_bytes=0,staging_bytes=0;
   if (compact_) {
-    if (graph.integral_rows.size() != graph.integral_columns.size() ||
-        graph.integral_rows.size() != graph.integral_values.size())
+    if (!graph.valid_unique_storage())
       throw std::invalid_argument("invalid compact AO integral stream");
-    n_integrals_ = graph.integral_rows.size();
+    n_integrals_ = graph.integral_count();
     std::size_t directed=0;
-    for (std::int64_t k = 0; k < n_integrals_; ++k) {
-      if (graph.integral_rows[k] < 0 || graph.integral_rows[k] >= n_pairs_ ||
-          graph.integral_columns[k] < 0 || graph.integral_columns[k] >= n_pairs_)
-        throw std::invalid_argument("compact AO integral index out of range");
-      directed+=1+(graph.integral_rows[k]!=graph.integral_columns[k]);
-    }
+    graph.for_each_chunk([&](auto rows,auto columns,auto values) {
+      for (std::size_t k = 0; k < values.size(); ++k) {
+        if (rows[k] < 0 || rows[k] >= n_pairs_ || columns[k] < 0 || columns[k] >= n_pairs_)
+          throw std::invalid_argument("compact AO integral index out of range");
+        directed+=1+(rows[k]!=columns[k]);
+      }
+    });
     directed_bytes=directed*(sizeof(int)+sizeof(double))+(n_pairs_+1)*sizeof(int);
     staging_bytes=2*sizeof(int)+sizeof(double);
   } else {
@@ -644,12 +644,14 @@ ExactAoPairOperator::ExactAoPairOperator(
     integral_rows_ = Buffer<int>(context, n_integrals_);
     integral_columns_ = Buffer<int>(context, n_integrals_);
     integral_values_ = Buffer<double>(context, n_integrals_);
-    context.copy_to_device(integral_rows_.data(), graph.integral_rows.data(),
-                           n_integrals_ * sizeof(int));
-    context.copy_to_device(integral_columns_.data(), graph.integral_columns.data(),
-                           n_integrals_ * sizeof(int));
-    context.copy_to_device(integral_values_.data(), graph.integral_values.data(),
-                           n_integrals_ * sizeof(double));
+    std::size_t offset=0;
+    graph.for_each_chunk([&](auto rows,auto columns,auto values) {
+      if (values.empty()) return;
+      context.copy_to_device(integral_rows_.data()+offset,rows.data(),rows.size_bytes());
+      context.copy_to_device(integral_columns_.data()+offset,columns.data(),columns.size_bytes());
+      context.copy_to_device(integral_values_.data()+offset,values.data(),values.size_bytes());
+      offset+=values.size();
+    });
   } else {
     row_offsets_ = Buffer<int>(context, n_pairs_ + 1);
     columns_ = Buffer<int>(context, n_integrals_);

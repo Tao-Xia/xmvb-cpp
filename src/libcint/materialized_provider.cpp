@@ -1,6 +1,7 @@
 #include "libcint/materialized_provider.hpp"
 
 #include <cmath>
+#include <chrono>
 #include <limits>
 #include <stdexcept>
 #include <vector>
@@ -26,7 +27,11 @@ int pair_index(int first, int second) {
 
 MaterializedAoIntegralBuffers LibcintMaterializedIntegralProvider::build(
     const xmvb::integrals::LibcintInput& input,
-    const LibcintMaterializedIntegralProviderOptions& options) const {
+    const LibcintMaterializedIntegralProviderOptions& options,
+    IntegralBuildTimings* timings) const {
+  using Clock=std::chrono::steady_clock;
+  const auto start=Clock::now();
+  if (timings) *timings={};
   if (!(options.integral_tolerance >= 0.0)) {
     throw std::invalid_argument("integral_tolerance must be non-negative");
   }
@@ -124,6 +129,8 @@ MaterializedAoIntegralBuffers LibcintMaterializedIntegralProvider::build(
     }
   }
 
+  const auto setup_end=Clock::now();
+  double merge_seconds=0;
   auto visit_shell_i_integrals =
       [&](LibcintDirectShellEvaluator& shell_evaluator,
           int shell_i,
@@ -320,47 +327,79 @@ MaterializedAoIntegralBuffers LibcintMaterializedIntegralProvider::build(
               shell_left_pairs[shell_i].push_back(left_pair);
               shell_right_pairs[shell_i].push_back(right_pair);
             });
+        if (options.ao_pair_layout==integrals::AoPairLayout::Chunked) {
+          // Only one compaction temporary may exist at a time; overlap it
+          // with other workers' integral evaluation, not their compactions.
+#pragma omp critical(ao_integral_chunk_compaction)
+          {
+            shell_integral_values[shell_i].shrink_to_fit();
+            shell_left_pairs[shell_i].shrink_to_fit();
+            shell_right_pairs[shell_i].shrink_to_fit();
+          }
+        }
       }
     }
 
+    const auto merge_start=Clock::now();
     std::size_t total_integral_count = 0;
     for (const auto& values : shell_integral_values) {
       total_integral_count += values.size();
     }
-    const std::size_t expansion=options.ao_pair_layout==integrals::AoPairLayout::Unique ? 1:2;
-    if (total_integral_count >
-        std::numeric_limits<std::size_t>::max() / expansion) {
-      throw std::overflow_error("directed ERI capacity exceeds size_t");
+    if (options.ao_pair_layout==integrals::AoPairLayout::Chunked) {
+      buffers.chunks.resize(n_shells);
+      for (int i=0;i<n_shells;++i) {
+        buffers.chunks[i].values=std::move(shell_integral_values[i]);
+        buffers.chunks[i].rows=std::move(shell_left_pairs[i]);
+        buffers.chunks[i].columns=std::move(shell_right_pairs[i]);
+        if (timings) timings->buffered_bytes+=buffers.chunks[i].values.capacity()*sizeof(double)+
+            (buffers.chunks[i].rows.capacity()+buffers.chunks[i].columns.capacity())*sizeof(int);
+      }
+    } else {
+      if (timings) for (int i=0;i<n_shells;++i)
+        timings->buffered_bytes+=shell_integral_values[i].capacity()*sizeof(double)+
+            (shell_left_pairs[i].capacity()+shell_right_pairs[i].capacity())*sizeof(int);
+      const std::size_t expansion=options.ao_pair_layout==integrals::AoPairLayout::Unique ? 1:2;
+      if (total_integral_count >
+          std::numeric_limits<std::size_t>::max() / expansion) {
+        throw std::overflow_error("directed ERI capacity exceeds size_t");
+      }
+      // Row consumers expand this same allocation in place for symmetric CSR.
+      // Unique-stream consumers never expand it and retain only the raw count.
+      buffers.two_electron_values.reserve(expansion * total_integral_count);
+      buffers.left_pair_indices.reserve(total_integral_count);
+      buffers.right_pair_indices.reserve(total_integral_count);
+      for (int shell_i = 0; shell_i < n_shells; ++shell_i) {
+        auto& values = shell_integral_values[shell_i];
+        auto& left_pairs = shell_left_pairs[shell_i];
+        auto& right_pairs = shell_right_pairs[shell_i];
+        buffers.two_electron_values.insert(
+            buffers.two_electron_values.end(),
+            std::make_move_iterator(values.begin()),
+            std::make_move_iterator(values.end()));
+        buffers.left_pair_indices.insert(
+            buffers.left_pair_indices.end(),
+            std::make_move_iterator(left_pairs.begin()),
+            std::make_move_iterator(left_pairs.end()));
+        buffers.right_pair_indices.insert(
+            buffers.right_pair_indices.end(),
+            std::make_move_iterator(right_pairs.begin()),
+            std::make_move_iterator(right_pairs.end()));
+        // The aggregate owns these entries now. Do not retain shell-sized
+        // copies while filling the rest of the output, in either input layout.
+        std::vector<double>().swap(values);
+        std::vector<int>().swap(left_pairs);
+        std::vector<int>().swap(right_pairs);
+      }
     }
-    // Row consumers expand this same allocation in place for symmetric CSR.
-    // Unique-stream consumers never expand it and retain only the raw count.
-    buffers.two_electron_values.reserve(expansion * total_integral_count);
-    buffers.left_pair_indices.reserve(total_integral_count);
-    buffers.right_pair_indices.reserve(total_integral_count);
-    for (int shell_i = 0; shell_i < n_shells; ++shell_i) {
-      auto& values = shell_integral_values[shell_i];
-      auto& left_pairs = shell_left_pairs[shell_i];
-      auto& right_pairs = shell_right_pairs[shell_i];
-      buffers.two_electron_values.insert(
-          buffers.two_electron_values.end(),
-          std::make_move_iterator(values.begin()),
-          std::make_move_iterator(values.end()));
-      buffers.left_pair_indices.insert(
-          buffers.left_pair_indices.end(),
-          std::make_move_iterator(left_pairs.begin()),
-          std::make_move_iterator(left_pairs.end()));
-      buffers.right_pair_indices.insert(
-          buffers.right_pair_indices.end(),
-          std::make_move_iterator(right_pairs.begin()),
-          std::make_move_iterator(right_pairs.end()));
-      // The aggregate owns these entries now. Do not retain shell-sized
-      // copies while filling the rest of the output, in either input layout.
-      std::vector<double>().swap(values);
-      std::vector<int>().swap(left_pairs);
-      std::vector<int>().swap(right_pairs);
-    }
+    merge_seconds=std::chrono::duration<double>(Clock::now()-merge_start).count();
   }
 
+  if (timings) {
+    timings->setup_seconds=std::chrono::duration<double>(setup_end-start).count();
+    timings->merge_seconds=merge_seconds;
+    timings->generation_seconds=std::chrono::duration<double>(Clock::now()-setup_end).count()-
+        merge_seconds;
+  }
   return buffers;
 }
 

@@ -32,8 +32,11 @@ def summarize(root: Path, output: Path) -> None:
         else:
             process_samples = next(iter(samples.values()), [])
         peak = max(process_samples) if process_samples else ""
-        rss = re.search(r"Maximum resident set size \(kbytes\):\s*(\d+)",
-                        (directory / "gpu.time").read_text())
+        time_text=(directory / "gpu.time").read_text()
+        rss = re.search(r"Maximum resident set size \(kbytes\):\s*(\d+)",time_text)
+        elapsed=re.search(r"Elapsed \(wall clock\) time \(h:mm:ss or m:ss\):\s*(\S+)",time_text)
+        wall_seconds=(sum(float(value)*60**i for i,value in
+                          enumerate(reversed(elapsed[1].split(":")))) if elapsed else "")
         rows.append({
             "case": case,
             "structures": data["structures"],
@@ -46,8 +49,17 @@ def summarize(root: Path, output: Path) -> None:
             "selected_metric_builds": data.get("selected_metric_builds", ""),
             "scf_seconds": data["scf_seconds"],
             "process_seconds": data["process_seconds"],
+            "wall_seconds": wall_seconds,
             "input_seconds": data.get("input_seconds", ""),
             "input_integral_provider_seconds": data.get("input_integral_provider_seconds", ""),
+            "input_integral_setup_seconds": data.get("input_integral_setup_seconds", ""),
+            "input_integral_generation_seconds": data.get("input_integral_generation_seconds", ""),
+            "input_integral_merge_seconds": data.get("input_integral_merge_seconds", ""),
+            "input_integral_buffered_bytes": data.get("input_integral_buffered_bytes", ""),
+            "input_unique_integrals": data.get("input_unique_integrals", ""),
+            "input_integral_chunks": data.get("input_integral_chunks", ""),
+            "ao_upload_seconds": data.get("ao_upload_seconds", ""),
+            "host_integral_release_seconds": data.get("host_integral_release_seconds", ""),
             "input_pair_graph_seconds": data.get("input_pair_graph_seconds", ""),
             "input_orbital_guess_seconds": data.get("input_orbital_guess_seconds", ""),
             "input_structure_expansion_seconds": data.get("input_structure_expansion_seconds", ""),

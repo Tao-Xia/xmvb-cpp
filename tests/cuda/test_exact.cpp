@@ -12,6 +12,7 @@
 #include "cuda/linalg/blas.hpp"
 #include "cuda/memory/buffer.hpp"
 #include "integrals/ao/graph.hpp"
+#include "integrals/ao/exact.hpp"
 
 namespace {
 
@@ -86,7 +87,17 @@ struct Fixture {
       }
   }
 
-  xmvb::integrals::AoPairGraph graph(bool compact) const {
+  xmvb::integrals::AoPairGraph graph(bool compact,bool chunked=false) const {
+    if (chunked) {
+      std::vector<xmvb::integrals::AoIntegralChunk> chunks(5);
+      const std::size_t edges[]={0,2,2,unique_values.size()/2,unique_values.size(),unique_values.size()};
+      for (int i=0;i<5;++i) {
+        chunks[i].rows.assign(unique_left.begin()+edges[i],unique_left.begin()+edges[i+1]);
+        chunks[i].columns.assign(unique_right.begin()+edges[i],unique_right.begin()+edges[i+1]);
+        chunks[i].values.assign(unique_values.begin()+edges[i],unique_values.begin()+edges[i+1]);
+      }
+      return xmvb::integrals::build_ao_pair_graph(std::move(chunks),n_bf);
+    }
     return xmvb::integrals::build_ao_pair_graph(unique_left,unique_right,unique_values,n_bf,
         compact ? xmvb::integrals::AoPairLayout::Unique:xmvb::integrals::AoPairLayout::Automatic);
   }
@@ -186,14 +197,32 @@ void check_packed_exchange_blocks() {
   }
 }
 
+void check_chunk_consumers() {
+  const Fixture fixture;
+  xmvb::integrals::AoIntegralInput flat,chunked;
+  flat.n_basis_functions=chunked.n_basis_functions=fixture.n_bf;
+  flat.pair_graph=fixture.graph(true);
+  chunked.pair_graph=fixture.graph(true,true);
+  const Matrix density=symmetric_values(fixture.n_bf,0.91);
+  Matrix result;
+  xmvb::integrals::apply_weighted_symmetric_ao_jk(density,chunked,2.0,-1.0,2,&result);
+  near(result,reference_jk(fixture,density),"CPU chunked weighted JK differs from oracle");
+  const Matrix sources=Eigen::Map<const Matrix>(density.data(),density.size(),1);
+  Matrix flat_result,chunk_result;
+  xmvb::integrals::AoH1eBatchWorkspace a,b;
+  xmvb::integrals::apply_symmetric_ao_h1e_batch(sources,flat,2,&a,&flat_result);
+  xmvb::integrals::apply_symmetric_ao_h1e_batch(sources,chunked,2,&b,&chunk_result);
+  near(chunk_result,flat_result,"CPU chunked H1e batch differs from flat storage");
+}
+
 double trace_product(const Matrix& left, const Matrix& right) {
   return (left.array() * right.transpose().array()).sum();
 }
 
-void check_graph_and_pair(int active, bool compact,bool sparse=false) {
+void check_graph_and_pair(int active, bool compact,bool sparse=false,bool chunked=false) {
   const Fixture fixture(sparse);
   xmvb::cuda::Context context(128ULL * 1024ULL * 1024ULL);
-  const xmvb::cuda::ExactAoPairOperator gpu(context, fixture.graph(compact),
+  const xmvb::cuda::ExactAoPairOperator gpu(context, fixture.graph(compact,chunked),
                                             fixture.n_bf);
   const int pairs = active * (active + 1) / 2;
   const Matrix c = values(fixture.n_bf, active, 0.31);
@@ -373,11 +402,11 @@ void check_graph_and_pair(int active, bool compact,bool sparse=false) {
   }
 }
 
-void check_one_electron_and_core(bool compact,bool sparse=false) {
+void check_one_electron_and_core(bool compact,bool sparse=false,bool chunked=false) {
   const Fixture fixture(sparse);
   constexpr int active = 3;
   xmvb::cuda::Context context(128ULL * 1024ULL * 1024ULL);
-  const xmvb::cuda::ExactAoPairOperator gpu(context, fixture.graph(compact),
+  const xmvb::cuda::ExactAoPairOperator gpu(context, fixture.graph(compact,chunked),
                                             fixture.n_bf);
   const Matrix c = values(fixture.n_bf, active, 0.27);
   const Matrix direction = values(fixture.n_bf, active, 0.83);
@@ -696,6 +725,7 @@ void check_empty_unique() {
   near(download(context,out),Matrix::Zero(4,4),"empty unique JK operator is not zero");
   bool rejected=false;
   try {
+    check_chunk_consumers();
     (void)xmvb::integrals::build_ao_pair_graph({10},{0},{1.0},4,
         xmvb::integrals::AoPairLayout::Unique);
   } catch (const std::invalid_argument&) { rejected=true; }
@@ -812,6 +842,10 @@ void check_budgeted_pair_tiles(bool compact) {
 
 int main() {
   try {
+    for (bool sparse:{false,true}) {
+      check_graph_and_pair(3,true,sparse,true);
+      check_one_electron_and_core(true,sparse,true);
+    }
     check_packed_exchange_blocks();
     check_exchange_row_graph();
     check_empty_unique();

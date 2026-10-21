@@ -87,8 +87,7 @@ void validate_weighted_graph(const AoIntegralInput& ao) {
       graph.row_offsets.size() == n_pairs+1 &&
       graph.columns.size() == graph.values.size();
   const bool compact = graph.has_compact_integral_stream() &&
-      graph.integral_rows.size() == graph.integral_columns.size() &&
-      graph.integral_rows.size() == graph.integral_values.size();
+      graph.valid_unique_storage();
   if ((!csr && !compact) || graph.pair_first.size() != n_pairs ||
       graph.pair_second.size() != n_pairs)
     throw std::invalid_argument("invalid exact AO JK integral representation");

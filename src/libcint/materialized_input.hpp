@@ -22,6 +22,7 @@ struct MaterializedAoIntegralBuffers {
   std::vector<int> left_pair_indices;
   std::vector<int> right_pair_indices;
   std::vector<double> two_electron_values;
+  std::vector<integrals::AoIntegralChunk> chunks;
 };
 
 xmvb::integrals::AoIntegralInput build_core_hamiltonian_only_ao_integral_input(

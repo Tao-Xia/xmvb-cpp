@@ -34,3 +34,7 @@ set_target_properties(xmvb_cuda PROPERTIES CUDA_STANDARD 20)
 add_executable(cuvbscf ${CMAKE_SOURCE_DIR}/tools/cuvbscf/main.cpp)
 target_link_libraries(cuvbscf PRIVATE xmvb_cuda xmvb_input xmvb_output)
 set_target_properties(cuvbscf PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/src)
+
+add_executable(cuvb_input_audit ${CMAKE_SOURCE_DIR}/tests/cuda/input_audit.cpp)
+target_link_libraries(cuvb_input_audit PRIVATE xmvb_input)
+set_target_properties(cuvb_input_audit PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/src)

@@ -190,6 +190,20 @@ int main() {
     check_materialized_equal(original_with_screen, original_without_screen);
     check_materialized_equal(scaled_with_screen, scaled_without_screen);
     check_materialized_equal(original_with_screen, scaled_with_screen);
+    auto chunked=screened;
+    chunked.ao_pair_layout=xmvb::integrals::AoPairLayout::Chunked;
+    auto buffered=provider.build(original_input,chunked);
+    auto streamed=xmvb::libcint::build_materialized_ao_integral_input(std::move(buffered),chunked.ao_pair_layout);
+    require(streamed.pair_graph.valid_unique_storage(),"invalid chunked libcint storage");
+    require(streamed.pair_graph.integral_count()==original_with_screen.two_electron_values.size(),
+        "chunked libcint integral count changed");
+    for (std::size_t i=0;i<streamed.pair_graph.integral_count();++i) {
+      const auto eri=streamed.pair_graph.integral(i);
+      require(eri.left_pair==original_with_screen.left_pair_indices[i] &&
+          eri.right_pair==original_with_screen.right_pair_indices[i] &&
+          eri.value==original_with_screen.two_electron_values[i],
+          "chunked libcint integral order or FP64 value changed");
+    }
     std::cout << "normalized libcint shell screening regression passed\n";
     return 0;
   } catch (const std::exception& error) {

@@ -61,6 +61,9 @@ struct VbScfInputLoadResult {
   bool request_molden_output = false;
   int source_raw_structure_count = 0;
   double ao_integral_provider_seconds = 0.0;
+  double ao_integral_setup_seconds=0,ao_integral_generation_seconds=0,
+      ao_integral_merge_seconds=0;
+  std::size_t ao_integral_buffered_bytes=0;
   double ao_integral_input_build_seconds = 0.0;
   double orbital_guess_seconds = 0.0;
   double raw_structure_selection_seconds = 0.0;

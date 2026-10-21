@@ -5,7 +5,7 @@
 namespace xmvb::integrals {
 
 /** Input layout contract; Unique leaves symmetry expansion to the consumer. */
-enum class AoPairLayout { Automatic, Unique };
+enum class AoPairLayout { Automatic, Unique, Chunked };
 
 /**
  * @brief Builds an exact AO-pair operator in the requested input layout.
@@ -29,5 +29,8 @@ AoPairGraph build_ao_pair_graph(
     std::vector<int> right_pairs,
     std::vector<double> values,
     int n_bf,AoPairLayout layout=AoPairLayout::Automatic);
+
+/** Consume producer chunks without a complete aggregate or symmetry expansion. */
+AoPairGraph build_ao_pair_graph(std::vector<AoIntegralChunk> chunks,int n_bf);
 
 }  // namespace xmvb::integrals

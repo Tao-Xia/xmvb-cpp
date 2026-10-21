@@ -191,8 +191,7 @@ PackedAoPairMatrix::PackedAoPairMatrix(
       graph.pair_second.size() != static_cast<std::size_t>(n_pairs_))
     throw std::invalid_argument("invalid packed AO-pair topology");
   if (unique) {
-    if (graph.integral_rows.size()!=graph.integral_columns.size() ||
-        graph.integral_rows.size()!=graph.integral_values.size())
+    if (!graph.valid_unique_storage())
       throw std::invalid_argument("invalid packed AO-pair unique stream");
   } else if (!graph.has_row_graph() ||
       graph.row_offsets.size() != static_cast<std::size_t>(n_pairs_ + 1) ||
@@ -211,28 +210,32 @@ PackedAoPairMatrix::PackedAoPairMatrix(
              "zero packed AO-pair tiles");
 
   if (unique) {
-    if (graph.integral_values.empty()) return;
+    if (graph.integral_count()==0) return;
     std::size_t free=0,total=0;
     check_cuda(cudaMemGetInfo(&free,&total),"CUDA unique ERI staging capacity");
     const auto available=std::min(free,context.device_byte_budget()-
         context.counters().current_device_bytes);
     // One block-row worth of input is sufficient to stream the conversion;
     // tighter budgets split that row further. There is no full input copy.
-    const auto count=std::min({graph.integral_values.size(),
+    std::size_t largest=0;
+    graph.for_each_chunk([&](auto,auto,auto values) {largest=std::max(largest,values.size());});
+    const auto count=std::min({largest,
         static_cast<std::size_t>(edge_)*static_cast<std::size_t>(n_pairs_),
         available/(2*sizeof(int)+sizeof(double))});
     if (!count) throw std::runtime_error("unique ERI staging cannot hold one entry");
     Buffer<int> rows(context,count),columns(context,count);
     Buffer<double> staging(context,count);
-    for (std::size_t begin=0;begin<graph.integral_values.size();begin+=count) {
-      const auto size=std::min(count,graph.integral_values.size()-begin);
-      context.copy_to_device(rows.data(),graph.integral_rows.data()+begin,size*sizeof(int));
-      context.copy_to_device(columns.data(),graph.integral_columns.data()+begin,size*sizeof(int));
-      context.copy_to_device(staging.data(),graph.integral_values.data()+begin,size*sizeof(double));
-      pack_unique<<<grid(size),256,0,context.stream()>>>(rows.data(),columns.data(),
-          staging.data(),size,edge_,n_blocks_,values_.data());
-      check_cuda(cudaGetLastError(),"CUDA unique ERI tile packing");
-    }
+    graph.for_each_chunk([&](auto source_rows,auto source_columns,auto source_values) {
+      for (std::size_t begin=0;begin<source_values.size();begin+=count) {
+        const auto size=std::min(count,source_values.size()-begin);
+        context.copy_to_device(rows.data(),source_rows.data()+begin,size*sizeof(int));
+        context.copy_to_device(columns.data(),source_columns.data()+begin,size*sizeof(int));
+        context.copy_to_device(staging.data(),source_values.data()+begin,size*sizeof(double));
+        pack_unique<<<grid(size),256,0,context.stream()>>>(rows.data(),columns.data(),
+            staging.data(),size,edge_,n_blocks_,values_.data());
+        check_cuda(cudaGetLastError(),"CUDA unique ERI tile packing");
+      }
+    });
     return;
   }
 

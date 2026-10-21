@@ -3,6 +3,7 @@
 #include <iomanip>
 #include <iostream>
 #include <stdexcept>
+#include <utility>
 
 #include "cuda/vb/scf.hpp"
 #include "input/loading/loader.hpp"
@@ -14,8 +15,8 @@ int main(int argc,char** argv) {
     std::cout<<std::unitbuf<<std::setprecision(16);
     const auto start=std::chrono::steady_clock::now();
     xmvb::vb::VbScfInputLoadOptions load_options;
-    load_options.ao_pair_layout=xmvb::integrals::AoPairLayout::Unique;
-    const auto loaded=xmvb::vb::load_vbscf_input_with_timings(argv[1],load_options);
+    load_options.ao_pair_layout=xmvb::integrals::AoPairLayout::Chunked;
+    auto loaded=xmvb::vb::load_vbscf_input_with_timings(argv[1],load_options);
     if (loaded.state_average_count!=1)
       throw std::invalid_argument("cuvbscf currently supports single-state exact calculations");
     xmvb::vb::VbScfOptimizerOptions options;
@@ -30,14 +31,21 @@ int main(int argc,char** argv) {
              <<"structures="<<loaded.input.structure_data.n_structures<<'\n'
              <<"basis_functions="<<loaded.input.orbital_preparation_input.n_basis_functions<<'\n'
              <<"active_orbitals="<<loaded.input.orbital_preparation_input.n_active_orbitals<<'\n'
+             <<"input_unique_integrals="<<loaded.input.ao_integral_input.pair_graph.integral_count()<<'\n'
+             <<"input_integral_chunks="<<loaded.input.ao_integral_input.pair_graph.chunks.size()<<'\n'
              <<"input_seconds="<<loaded.total_seconds<<'\n'
              <<"input_integral_provider_seconds="<<loaded.ao_integral_provider_seconds<<'\n'
+             <<"input_integral_setup_seconds="<<loaded.ao_integral_setup_seconds<<'\n'
+             <<"input_integral_generation_seconds="<<loaded.ao_integral_generation_seconds<<'\n'
+             <<"input_integral_merge_seconds="<<loaded.ao_integral_merge_seconds<<'\n'
+             <<"input_integral_buffered_bytes="<<loaded.ao_integral_buffered_bytes<<'\n'
              <<"input_pair_graph_seconds="<<loaded.ao_integral_input_build_seconds<<'\n'
              <<"input_orbital_guess_seconds="<<loaded.orbital_guess_seconds<<'\n'
              <<"input_structure_expansion_seconds="<<loaded.structure_expansion_seconds<<'\n'
              <<"iteration,energy,delta_energy,gradient_inf,hvp,ci_actions,keyframes,seconds\n";
     const auto solve_start=std::chrono::steady_clock::now();
-    auto result=xmvb::cuda::solve_scf(context,loaded.input,loaded.nuclear_repulsion_energy,
+    auto result=xmvb::cuda::solve_scf(context,loaded.input,
+        std::move(loaded.input.ao_integral_input.pair_graph),loaded.nuclear_repulsion_energy,
         options,[](const xmvb::cuda::ScfIteration& row) {
           std::cout<<row.iteration<<','<<row.energy<<','<<row.energy_change<<','
               <<row.gradient_inf<<','<<row.hvp<<','<<row.ci_actions<<','
@@ -66,6 +74,8 @@ int main(int argc,char** argv) {
              <<"selected_metric_builds="<<result.selected_metric_builds<<'\n'
              <<"gradient_inf="<<result.gradient_inf<<'\n'
              <<"scf_seconds="<<result.seconds<<'\n'
+             <<"ao_upload_seconds="<<result.ao_upload_seconds<<'\n'
+             <<"host_integral_release_seconds="<<result.host_integral_release_seconds<<'\n'
              <<"context_seconds="<<context_seconds<<'\n'
              <<"solve_call_seconds="<<solve_call_seconds<<'\n'
              <<"solver_teardown_seconds="<<solve_call_seconds-result.seconds<<'\n'

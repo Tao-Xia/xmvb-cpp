@@ -5,6 +5,12 @@
 
 namespace xmvb::libcint {
 
+/** Wall-time decomposition; generation includes shell evaluation and buffering. */
+struct IntegralBuildTimings {
+  double setup_seconds=0,generation_seconds=0,merge_seconds=0;
+  std::size_t buffered_bytes=0;
+};
+
 struct LibcintMaterializedIntegralProviderOptions {
   /** @brief Absolute discard threshold in unit-normalized AO integrals. */
   double integral_tolerance = 1.0e-10;
@@ -23,7 +29,8 @@ class LibcintMaterializedIntegralProvider {
 public:
   MaterializedAoIntegralBuffers build(
       const xmvb::integrals::LibcintInput& input,
-      const LibcintMaterializedIntegralProviderOptions& options = {}) const;
+      const LibcintMaterializedIntegralProviderOptions& options = {},
+      IntegralBuildTimings* timings = nullptr) const;
 };
 
 }  // namespace xmvb::libcint

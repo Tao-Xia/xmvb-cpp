@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstddef>
+#include <algorithm>
+#include <span>
 #include <vector>
 
 #include <Eigen/Core>
@@ -11,6 +13,12 @@ struct AoPairIntegral {
   int left_pair;
   int right_pair;
   double value;
+};
+
+/** Owned unique-integral chunk; no AO-pair symmetry expansion. */
+struct AoIntegralChunk {
+  std::vector<int> rows,columns;
+  std::vector<double> values;
 };
 
 /**
@@ -34,6 +42,9 @@ struct AoPairGraph {
    */
   std::vector<int> integral_columns;
   std::vector<double> integral_values;
+  /** Alternative to flat unique arrays: one retained set of producer chunks. */
+  std::vector<AoIntegralChunk> chunks;
+  std::vector<std::size_t> chunk_offsets;
   std::vector<int> pair_first;
   std::vector<int> pair_second;
 
@@ -50,10 +61,30 @@ struct AoPairGraph {
 
   /** @brief Number of unique permutational AO integrals. */
   std::size_t integral_count() const noexcept {
+    if (!chunks.empty()) return chunk_offsets.empty() ? 0:chunk_offsets.back();
     return integral_rows.size();
   }
 
+  bool valid_unique_storage() const noexcept {
+    if (chunks.empty()) return integral_rows.size()==integral_columns.size() &&
+        integral_rows.size()==integral_values.size();
+    if (!integral_rows.empty() || !integral_columns.empty() || !integral_values.empty() ||
+        chunk_offsets.size()!=chunks.size()+1 || chunk_offsets.front()!=0) return false;
+    for (std::size_t i=0;i<chunks.size();++i)
+      if (chunks[i].rows.size()!=chunks[i].values.size() ||
+          chunks[i].columns.size()!=chunks[i].values.size() ||
+          chunk_offsets[i+1]<chunk_offsets[i] ||
+          chunk_offsets[i+1]-chunk_offsets[i]!=chunks[i].values.size()) return false;
+    return true;
+  }
+
   AoPairIntegral integral(std::size_t index) const noexcept {
+    if (!chunks.empty()) {
+      const auto i=static_cast<std::size_t>(std::upper_bound(chunk_offsets.begin(),
+          chunk_offsets.end(),index)-chunk_offsets.begin()-1);
+      const auto k=index-chunk_offsets[i];
+      return {chunks[i].rows[k],chunks[i].columns[k],chunks[i].values[k]};
+    }
     const int row = integral_rows[index];
     if (has_compact_integral_stream()) {
       return {row, integral_columns[index], integral_values[index]};
@@ -62,9 +93,27 @@ struct AoPairGraph {
     return {row, columns[edge], values[edge]};
   }
 
+  /** Visit contiguous unique chunks without allocating or concatenating them.
+   * Requires has_compact_integral_stream(); CSR uses integral()/for_each_integral().
+   */
+  template<class Function> void for_each_chunk(Function&& function) const {
+    if (chunks.empty()) function(std::span<const int>{integral_rows},
+        std::span<const int>{integral_columns},std::span<const double>{integral_values});
+    else for (const auto& chunk:chunks) function(std::span<const int>{chunk.rows},
+        std::span<const int>{chunk.columns},std::span<const double>{chunk.values});
+  }
+
   /** @brief Visits each unique AO integral once as `(value, i, j, k, l)`. */
   template <typename Function>
   void for_each_integral(Function&& function) const {
+    if (!chunks.empty()) {
+      for_each_chunk([&](auto rows,auto columns,auto values) {
+        for (std::size_t i=0;i<values.size();++i)
+          function(values[i],pair_first[rows[i]],pair_second[rows[i]],
+              pair_first[columns[i]],pair_second[columns[i]]);
+      });
+      return;
+    }
     for (std::size_t index = 0; index < integral_count(); ++index) {
       const AoPairIntegral eri = integral(index);
       function(

@@ -57,6 +57,8 @@ bool retain_dense_pair_products(
       2.0L * static_cast<long double>(n_ao_pairs) *
       static_cast<long double>(n_active_pairs) * sizeof(double);
   const long double graph_bytes =
+      (graph.chunks.empty() ? 0.0L:static_cast<long double>(graph.integral_count())*
+          (2*sizeof(int)+sizeof(double)))+
       static_cast<long double>(graph.row_offsets.size()) * sizeof(int) +
       static_cast<long double>(graph.columns.size()) * sizeof(int) +
       static_cast<long double>(graph.values.size()) * sizeof(double) +

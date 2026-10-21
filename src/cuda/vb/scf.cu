@@ -91,10 +91,11 @@ std::unique_ptr<vb::StructureAction> make_topology(const vb::VbScfInput& input) 
 }
 }  // namespace
 
-ScfResult solve_scf(Context& context,const vb::VbScfInput& input,double nuclear,
+ScfResult solve_scf(Context& context,const vb::VbScfInput& input,
+    integrals::AoPairGraph&& integral_stream,double nuclear,
     const vb::VbScfOptimizerOptions& options,const std::function<void(const ScfIteration&)>& observe) {
   if (input.standard_two_electron_mode==vb::StandardTwoElectronMode::ResolutionOfIdentity ||
-      input.ao_integral_input.pair_graph.empty())
+      integral_stream.empty())
     throw std::invalid_argument("cuvbscf requires exact AO integrals");
   if (options.orbital_preconditioner!=vb::OrbitalPreconditioner::HessianDiagonal)
     throw std::invalid_argument("GPU CIAH requires analytic Hessian-diagonal preconditioning");
@@ -102,6 +103,15 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,double nuclear,
   const auto& orbital=input.orbital_preparation_input;
   const int nb=orbital.n_basis_functions,norb=orbital.n_orbitals;
   const int na=orbital.n_active_orbitals,nstr=input.structure_data.n_structures;
+  const auto upload_start=Clock::now();
+  auto host_integrals=std::move(integral_stream);
+  ExactAoPairOperator ao(context,host_integrals,nb);
+  context.synchronize();
+  const double upload_seconds=std::chrono::duration<double>(Clock::now()-upload_start).count();
+  const auto release_start=Clock::now();
+  host_integrals=integrals::AoPairGraph{};
+  const double release_seconds=std::chrono::duration<double>(Clock::now()-release_start).count();
+  // Release the large host payload before preparing structure topology.
   const AoMetric ao_metric(context,orbital.ao_overlap_matrix);
   auto metadata=make_topology(input);
   StructureAction action(context,*metadata);
@@ -110,7 +120,6 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,double nuclear,
   SpinMetric spin(context,*metadata,topology.alpha_reuse_table.unique_determinants,
       topology.beta_reuse_table.unique_determinants,context.device_byte_budget());
   StructureCi ci_solver(context,action,spin,input.complete_active_space);
-  ExactAoPairOperator ao(context,input.ao_integral_input.pair_graph,nb);
   Matrix<double> core(context,nb,nb),raw(context,nb,norb);
   copy_to_device(context,core.view(),input.ao_integral_input.ao_core_hamiltonian_matrix);
   context.copy_to_device(raw.data(),orbital.orbital_value_table.data(),nb*norb*sizeof(double));
@@ -120,6 +129,8 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,double nuclear,
   auto ci_options=linalg::make_davidson_options(nstr,1,1.0e-7,
       options.gradient_tolerance,options.energy_tolerance);
   ScfResult result;
+  result.ao_upload_seconds=upload_seconds;
+  result.host_integral_release_seconds=release_seconds;
   const auto finish=[&](Trial& trial,View guess) {
     trial.ci_point=ci_solver.point();
     trial.coefficients=clone(context,trial.ci.eigenpairs.eigenvector_matrix.view());

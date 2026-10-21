@@ -46,7 +46,12 @@ xmvb::integrals::AoIntegralInput build_materialized_ao_integral_input(
   ao_integral_input.n_basis_functions = buffers.n_basis_functions;
   ao_integral_input.ao_core_hamiltonian_matrix =
       std::move(buffers.ao_core_hamiltonian_matrix);
-  ao_integral_input.pair_graph = xmvb::integrals::build_ao_pair_graph(
+  if (!buffers.chunks.empty()) {
+    if (!buffers.two_electron_values.empty())
+      throw std::invalid_argument("AO integrals have both flat and chunked storage");
+    ao_integral_input.pair_graph=integrals::build_ao_pair_graph(
+        std::move(buffers.chunks),buffers.n_basis_functions);
+  } else ao_integral_input.pair_graph = xmvb::integrals::build_ao_pair_graph(
       std::move(buffers.left_pair_indices),
       std::move(buffers.right_pair_indices),
       std::move(buffers.two_electron_values),

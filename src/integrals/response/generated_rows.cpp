@@ -70,8 +70,7 @@ void apply_generated_ao_pair_rows(const AoIntegralInput& ao,
       for (int edge = graph.row_offsets[begin + row]; edge < graph.row_offsets[begin + row + 1]; ++edge)
         accumulate(row, graph.columns[edge], graph.values[edge]);
   } else if (graph.has_compact_integral_stream()) {
-    if (graph.integral_columns.size() != graph.integral_count() ||
-        graph.integral_values.size() != graph.integral_count())
+    if (!graph.valid_unique_storage())
       throw std::invalid_argument("invalid generated-row integral stream");
     // One stream traversal per tile, never one traversal per target row.
     for (std::size_t k = 0; k < graph.integral_count(); ++k) {

@@ -118,8 +118,7 @@ void apply_exact_ao_pair_graph(
   double* target = result->data();
 
   if (graph.has_compact_integral_stream()) {
-    if (graph.integral_columns.size() != graph.integral_count() ||
-        graph.integral_values.size() != graph.integral_count()) {
+    if (!graph.valid_unique_storage()) {
       throw std::invalid_argument("invalid compact AO integral stream");
     }
     n_threads = std::min(

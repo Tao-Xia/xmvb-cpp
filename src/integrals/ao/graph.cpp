@@ -121,7 +121,7 @@ AoPairGraph build_ao_pair_graph(
       graph.pair_first.push_back(first);
       graph.pair_second.push_back(second);
     }
-  if (layout==AoPairLayout::Unique) {
+  if (layout==AoPairLayout::Unique || layout==AoPairLayout::Chunked) {
     int invalid=0;
 #pragma omp parallel for num_threads(n_threads) reduction(|:invalid) schedule(static)
     for (std::ptrdiff_t k=0;k<static_cast<std::ptrdiff_t>(n_integrals);++k)
@@ -322,6 +322,30 @@ AoPairGraph build_ao_pair_graph(
   graph.integral_edges = std::move(right_pairs);
   order_ao_integrals_by_storage(&graph);
 
+  return graph;
+}
+
+AoPairGraph build_ao_pair_graph(std::vector<AoIntegralChunk> chunks,int n_bf) {
+  auto graph=build_ao_pair_graph({}, {}, {},n_bf,AoPairLayout::Unique);
+  graph.chunk_offsets.push_back(0);
+  for (const auto& chunk:chunks) {
+    if (chunk.rows.size()!=chunk.values.size() || chunk.columns.size()!=chunk.values.size())
+      throw std::invalid_argument("AO integral chunk dimensions");
+    const auto previous=graph.chunk_offsets.back();
+    if (chunk.values.size()>std::numeric_limits<std::size_t>::max()-previous)
+      throw std::overflow_error("AO integral chunk count overflow");
+    graph.chunk_offsets.push_back(previous+chunk.values.size());
+  }
+  int invalid=0;
+  const auto pairs=graph.pair_first.size();
+#pragma omp parallel for reduction(|:invalid) schedule(dynamic,1)
+  for (std::ptrdiff_t i=0;i<static_cast<std::ptrdiff_t>(chunks.size());++i)
+    for (std::size_t k=0;k<chunks[i].values.size();++k)
+      invalid|=chunks[i].rows[k]<0 || chunks[i].columns[k]<0 ||
+          static_cast<std::size_t>(chunks[i].rows[k])>=pairs ||
+          static_cast<std::size_t>(chunks[i].columns[k])>=pairs;
+  if (invalid) throw std::invalid_argument("AO integral chunk pair index out of range");
+  graph.chunks=std::move(chunks);
   return graph;
 }
 
