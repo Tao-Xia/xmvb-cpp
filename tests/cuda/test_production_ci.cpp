@@ -227,6 +227,12 @@ void check_sigma(int rhs_count,bool rotated,int maximum_tile=3,bool one_product=
        "CUDA fused direct-CI h adjoint differs from CPU");
   near(download(context, d_g), fused.integrals.pair_kernel, 3.0e-10,
        "CUDA fused direct-CI g adjoint differs from CPU");
+  auto fused_rows=std::max<std::int64_t>(1,
+      left.size()*std::min(pairs,maximum_tile)/pairs);
+  if (fused_rows>=32) fused_rows=(fused_rows/32)*32;
+  require(gpu.resident_bytes()-sigma_bytes==sizeof(double)*
+      (static_cast<std::size_t>(pairs)*pairs+2*fused_rows*pairs),
+      "CUDA fixed-kernel fused sigma retained an unnecessary third panel");
 
   // A genuinely independent integral direction and state tangent exercise
   // H*left+dH*right without materializing two carrier images. The adjoint
@@ -239,6 +245,9 @@ void check_sigma(int rhs_count,bool rotated,int maximum_tile=3,bool one_product=
   xmvb::cuda::copy_to_device(context,d_delta_h.view(),delta.one_electron);
   xmvb::cuda::copy_to_device(context,d_delta_g.view(),delta.pair_kernel);
   gpu_direction.update_integrals(d_delta_h.view(),d_delta_g.view());
+  // Directional HVP needs three shared panels; the fixed-kernel fused action
+  // above now uses only two. Prepare this phase before measuring clone reuse.
+  gpu.prepare_with_adjoint(rhs_count);
   const auto direction_bytes=gpu_direction.resident_bytes();
   const Matrix combined_reference=cpu.apply(left)+cpu_direction.apply(right);
   gpu.apply_direction_with_adjoint(d_left.view(),d_right.view(),gpu_direction,

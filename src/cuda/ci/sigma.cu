@@ -484,10 +484,12 @@ void DirectCiSigma::contract_adjoint(linalg::ConstMatrixView left,
     first_adjoint=false;
     if (image) {
       const linalg::ConstMatrixView kernel_view{kernel_.data(),n_channels_,n_channels_,n_channels_};
-      const linalg::MatrixView p_view{transformed_.data(),count,n_channels_,count};
+      // The integral VJP has consumed the right channels. Reuse their slab
+      // for K*left; neither live GEMM input aliases this destination.
+      const linalg::MatrixView p_view{right_scattered_.data(),count,n_channels_,count};
       gemm(*context_,p_view,left_channels,kernel_view,1.0,0.0,Operation::none,Operation::transpose);
       scatter_channel_adjoint<<<grid_size(count*n_channels_),256,0,context_->stream()>>>(
-          transformed_.data(),*image,begin,count,n_alpha_,n_beta_,alpha,beta,n_channels_);
+          right_scattered_.data(),*image,begin,count,n_alpha_,n_beta_,alpha,beta,n_channels_);
       check_cuda(cudaGetLastError(),"CUDA direct-CI adjoint sigma gather");
     }
   }
@@ -558,7 +560,7 @@ void DirectCiSigma::apply_with_adjoint(linalg::ConstMatrixView response,
       image.data==one_electron_adjoint.data || image.data==pair_kernel_adjoint.data ||
       one_electron_adjoint.data==pair_kernel_adjoint.data)
     throw std::invalid_argument("CUDA direct-CI fused response output aliases another view");
-  prepare_adjoint(block_width,true,true);
+  prepare_adjoint(block_width,false,true);
   contract_adjoint(response,state,&image,channel_adjoint_.view());
   pullback_channel_kernel(channel_adjoint_.view(),
       one_electron_adjoint,pair_kernel_adjoint);
