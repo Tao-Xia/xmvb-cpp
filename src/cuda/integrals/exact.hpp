@@ -140,10 +140,14 @@ class ExactAoPairOperator {
                         linalg::MatrixView effective_core_direction,
                         double* energy_direction) const;
 
-  /** Density pullback of C^T G(P) C for a full active Frobenius adjoint A. */
+  /** Density pullback of C^T G(P) C for a full active Frobenius adjoint A.
+   * Borrow point-owned J/K images when available; never regenerate them here.
+   */
   void active_core_density_adjoint(linalg::ConstMatrixView coefficients,
                                    linalg::ConstMatrixView active_adjoint,
-                                   linalg::MatrixView density_adjoint) const;
+                                   linalg::MatrixView density_adjoint,
+                                   ConstPairPanel products = {},
+                                   ConstPairPanel exchange = {}) const;
 
   /** Direction of the density pullback under dC and dA. */
   void active_core_density_directional_adjoint(

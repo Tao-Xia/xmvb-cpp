@@ -200,7 +200,7 @@ double VbPoint::evaluate_coefficients(View coefficients) {
       one_adjoint_.view(),one_gradient.view());
   add(c,active_gradient_.view(),one_gradient.view());
   integrals_->active_core_density_adjoint(geometry_.orthogonal_active(),
-      one_adjoint_.view(),density_gradient_.view());
+      one_adjoint_.view(),density_gradient_.view(),pair_products(),exchange_products());
   add(c,density_gradient_.view(),effective_.view(),2.0);
   ready_=true;
   return total_energy_;

@@ -483,6 +483,22 @@ void check_one_electron_and_core(bool compact,bool sparse=false) {
   upload(context,target,target_host);
   DeviceMatrix response;
   auto exchange=gpu.prepare_exchange(dc.view(),&response,target.view());
+  const int active_pairs=active*(active+1)/2;
+  DeviceMatrix active_kernel(context,active_pairs,active_pairs);
+  xmvb::cuda::Buffer<double> accepted_products(context,fixture.ao_pairs*active_pairs);
+  const xmvb::cuda::PairPanel accepted{accepted_products.data(),fixture.ao_pairs,
+      active_pairs,active_pairs};
+  gpu.forward(dc.view(),active_kernel.view(),accepted);
+  for (bool use_j:{false,true}) for (bool use_k:{false,true}) {
+    if (use_k && exchange.empty()) continue;
+    gpu.active_core_density_adjoint(dc.view(),da.view(),dout.view(),
+        use_j ? xmvb::cuda::ConstPairPanel{accepted.data,accepted.rows,accepted.cols,accepted.ld}:
+            xmvb::cuda::ConstPairPanel{},
+        use_k ? xmvb::cuda::ConstPairPanel{exchange.data(),fixture.ao_pairs,active*active,active*active}:
+            xmvb::cuda::ConstPairPanel{});
+    near(download(context,dout),expected_density_adjoint,
+        "CUDA accepted density adjoint differs from four-index oracle");
+  }
   require((response.data()==nullptr)==compact,"CUDA projected density image admission differs");
   if (response.data()) {
     auto standalone=gpu.prepare_density_projection(dc.view(),target.view());

@@ -31,11 +31,16 @@ class PackedAoPairMatrix {
         row = col;
         col = swap;
       }
-      const std::int64_t p = row / edge;
-      const std::int64_t q = col / edge;
+      // The production block edge is 512. Keep its address arithmetic exact
+      // but avoid runtime 64-bit division for every integral read. Tiny graphs
+      // retain their unpadded edge and use the general indexing expression.
+      const std::int64_t p = edge==512 ? row>>9:row/edge;
+      const std::int64_t q = edge==512 ? col>>9:col/edge;
       const std::int64_t d = p - q;
       const std::int64_t tile = d * blocks - d * (d - 1) / 2 + q;
-      return values[tile * edge * edge + (col % edge) * edge + row % edge];
+      const auto i=edge==512 ? row&511:row%edge;
+      const auto j=edge==512 ? col&511:col%edge;
+      return values[tile * edge * edge + j * edge + i];
     }
 #endif
   };

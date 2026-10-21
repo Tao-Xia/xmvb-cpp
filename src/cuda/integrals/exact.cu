@@ -1185,26 +1185,69 @@ void ExactAoPairOperator::core_directional(
   check_launch("CUDA core energy directional trace");
 }
 
+namespace {
+// KB(C) stores unordered active pairs. Diagonal weights are A_aa;
+// off-diagonal weights are A_ab+A_ba, without another AO-pair multiplicity.
+__global__ void active_density_weights(const double* symmetric,int n,double* weights,
+    std::int64_t count) {
+  for (std::int64_t p=blockIdx.x*static_cast<std::int64_t>(blockDim.x)+threadIdx.x;
+       p<count;p+=gridDim.x*static_cast<std::int64_t>(blockDim.x)) {
+    int a,b;decode_pair(p,a,b);
+    weights[p]=symmetric[a+n*b]*(a==b ? 0.5:1.0);
+  }
+}
+} // namespace
+
 void ExactAoPairOperator::active_core_density_adjoint(
     linalg::ConstMatrixView c, linalg::ConstMatrixView a,
-    linalg::MatrixView density_adjoint) const {
+    linalg::MatrixView density_adjoint,ConstPairPanel products,
+    ConstPairPanel exchange) const {
   validate_coefficients(c);
   if (!a.data || a.rows != c.cols || a.cols != c.cols || a.ld < a.rows ||
       !density_adjoint.data || density_adjoint.rows != n_bf_ ||
       density_adjoint.cols != n_bf_ || density_adjoint.ld < n_bf_)
     throw std::invalid_argument("invalid CUDA active-core density adjoint");
   const int n = blas_int(c.cols);
+  const auto pairs=active_pairs(n);
+  if (products.data && (products.rows!=n_pairs_ || products.cols!=pairs || products.ld<pairs))
+    throw std::invalid_argument("invalid CUDA density adjoint accepted products");
   Buffer<double> symmetric(*context_, static_cast<std::size_t>(n) * n);
   symmetrize<<<blocks(static_cast<std::int64_t>(n) * n), 256, 0, context_->stream()>>>(
       a, {}, symmetric.data(), nullptr, n, static_cast<std::int64_t>(n) * n);
   check_launch("symmetrize CUDA active-core adjoint");
-  Matrix<double> contracted(*context_, n_bf_, n);
-  Matrix<double> active_density(*context_, n_bf_, n_bf_);
-  gemm(*context_, contracted.view(), c,
-       {symmetric.data(), n, n, n});
-  gemm(*context_, active_density.view(), contracted.view(), c,
-       0.5, 0.0, Operation::none, Operation::transpose);
-  contract_jk(active_density.view(), density_adjoint);
+  if (!products.data || !exchange.data) {
+    Matrix<double> contracted(*context_, n_bf_, n);
+    Matrix<double> active_density(*context_, n_bf_, n_bf_);
+    gemm(*context_, contracted.view(), c,{symmetric.data(), n, n, n});
+    gemm(*context_, active_density.view(), contracted.view(), c,
+         0.5, 0.0, Operation::none, Operation::transpose);
+    contract_jk(active_density.view(),density_adjoint,
+        products.data ? 0.0:2.0,exchange.data ? 0.0:-1.0);
+  }
+  if (exchange.data) {
+    if (products.data) {
+      exchange_density(exchange,{symmetric.data(),n,n,n},density_adjoint,-0.5);
+    } else {
+      Matrix<double> k(*context_,n_bf_,n_bf_);
+      exchange_density(exchange,{symmetric.data(),n,n,n},k.view(),-0.5);
+      const auto work=static_cast<std::int64_t>(n_bf_)*n_bf_;
+      add_dense<<<blocks(work),256,0,context_->stream()>>>(density_adjoint,k.view(),work);
+      check_launch("CUDA accepted density exchange addition");
+    }
+  }
+  if (products.data) {
+    const nvtx3::scoped_range range{"ao.accepted_density_coulomb"};
+    Buffer<double> weights(*context_,pairs);
+    Matrix<double> image(*context_,n_pairs_,1);
+    active_density_weights<<<blocks(pairs),256,0,context_->stream()>>>(
+        symmetric.data(),n,weights.data(),pairs);
+    check_launch("CUDA accepted density pair weights");
+    gemm(*context_,image.view(),{products.data,pairs,n_pairs_,products.ld},
+        {weights.data(),pairs,1,pairs},1.0,0.0,Operation::transpose);
+    const auto work=static_cast<std::int64_t>(n_bf_)*n_bf_;
+    finish_jk<<<blocks(work),256,0,context_->stream()>>>(image.data(),density_adjoint,2.0,work);
+    check_launch("CUDA accepted density Coulomb image");
+  }
 }
 
 void ExactAoPairOperator::active_core_density_directional_adjoint(
