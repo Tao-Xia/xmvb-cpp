@@ -19,10 +19,28 @@ struct AddProjection {
   }
 };
 
+struct PairExchange {
+  ConstPairPanel image;
+  __device__ double operator()(std::int64_t pair,int,int,int c) const {
+    return image.data[pair*image.ld+c];
+  }
+};
+
+struct DenseExchange {
+  linalg::ConstMatrixView image;
+  __device__ double operator()(std::int64_t,int i,int j,int c) const {
+    const auto shift=static_cast<std::int64_t>(c)*image.rows;
+    const double value=image.data[i+image.ld*(j+shift)];
+    if (i==j) return value;
+    return 0.5*(value+image.data[j+image.ld*(i+shift)]);
+  }
+};
+
 // Share each AO-pair coefficient between J and K. CUB reduces the pair
 // dimension without storing a MO-by-AO-pair feature matrix or partial sums.
+template<class Exchange>
 __global__ void project_core(linalg::ConstMatrixView mo,const int* first,
-    const int* second,ConstPairPanel j,ConstPairPanel k,
+    const int* second,ConstPairPanel j,Exchange k,
     linalg::MatrixView coulomb,linalg::MatrixView response,int begin) {
   using Reduce=cub::BlockReduce<double2,256>;
   __shared__ typename Reduce::TempStorage scratch;
@@ -34,7 +52,7 @@ __global__ void project_core(linalg::ConstMatrixView mo,const int* first,
       const int i=first[pair],l=second[pair];
       const double coefficient=(i==l ? 1.0:2.0)*mo.data[i+mo.ld*p]*mo.data[l+mo.ld*p];
       sum.x+=coefficient*j.data[pair*j.ld+c];
-      sum.y+=coefficient*k.data[pair*k.ld+c];
+      sum.y+=coefficient*k(pair,i,l,c);
     }
     sum=Reduce(scratch).Reduce(sum,AddProjection{});
     if (threadIdx.x==0) {
@@ -51,6 +69,47 @@ bool ExactAoPairOperator::core_diagonal(linalg::ConstMatrixView mo,int ncore,
     linalg::MatrixView coulomb,linalg::MatrixView response,
     Buffer<double>* projection) const {
   return prepare_core(mo,ncore,coulomb,response,projection);
+}
+
+bool ExactAoPairOperator::unique_core_diagonal(linalg::ConstMatrixView mo,int ncore,
+    linalg::MatrixView coulomb,linalg::MatrixView response) const {
+  const nvtx3::scoped_range range{"ao.rank_one_core_diagonal"};
+  const auto square=static_cast<std::int64_t>(n_bf_)*n_bf_;
+  const auto per_core=static_cast<std::size_t>(2*n_pairs_+square)*sizeof(double);
+  int width=static_cast<int>(std::min<std::size_t>(ncore,response_capacity()/per_core));
+  Buffer<double> features,products;
+  Matrix<double> exchange;
+  for (;width>0;width/=2) {
+    features=Buffer<double>(*context_,n_pairs_*width);
+    products=Buffer<double>(*context_,n_pairs_*width);
+    exchange=Matrix<double>(*context_,n_bf_,static_cast<std::int64_t>(n_bf_)*width);
+    const auto scratch=[&](int count) {
+      return apply_workspace({features.data(),n_pairs_,count,width},
+          {products.data(),n_pairs_,count,width});
+    };
+    const int remainder=ncore%width;
+    if (std::max(scratch(width),remainder ? scratch(remainder):std::size_t{0})<=
+        response_capacity()) break;
+    features={};products={};exchange={};
+  }
+  if (!width) return false;
+  for (int begin=0;begin<ncore;begin+=width) {
+    const int count=std::min(width,ncore-begin);
+    const auto factors=mo.columns(begin,count);
+    const PairPanel source{features.data(),n_pairs_,count,width};
+    const PairPanel image{products.data(),n_pairs_,count,width};
+    density_features(factors,0,source);
+    apply({source.data,source.rows,source.cols,source.ld},image);
+    const auto k=exchange.view().columns(0,static_cast<std::int64_t>(n_bf_)*count);
+    rank_one_exchange(factors,k);
+    const auto cells=static_cast<std::int64_t>(n_bf_)*count;
+    project_core<<<static_cast<unsigned int>(std::min<std::int64_t>(65535,cells)),
+        256,0,context_->stream()>>>(mo,pair_first_.data(),pair_second_.data(),
+            ConstPairPanel{image.data,image.rows,image.cols,image.ld},DenseExchange{k},
+            coulomb,response,begin);
+    check_cuda(cudaGetLastError(),"CUDA rank-one core diagonal projection");
+  }
+  return true;
 }
 
 ExactAoResponses ExactAoPairOperator::prepare_responses(linalg::ConstMatrixView active,
@@ -88,7 +147,7 @@ bool ExactAoPairOperator::prepare_core(linalg::ConstMatrixView mo,int ncore,
     if (joint) build_exchange_images(std::array{*joint});
     return true;
   }
-  if (compact_) return false;
+  if (compact_) return unique_core_diagonal(mo,ncore,coulomb,response);
   const auto targets=mo.columns(0,ncore);
   if (projection) {
     const auto dimension=static_cast<std::int64_t>(n_bf_)*ncore;
@@ -147,7 +206,8 @@ bool ExactAoPairOperator::prepare_core(linalg::ConstMatrixView mo,int ncore,
       const auto cells=static_cast<std::int64_t>(n_bf_)*count;
       const auto blocks=static_cast<unsigned int>(std::min<std::int64_t>(65535,cells));
       project_core<<<blocks,256,0,context_->stream()>>>(mo,pair_first_.data(),pair_second_.data(),
-          {j.data,j.rows,j.cols,j.ld},{k.data,k.rows,k.cols,k.ld},coulomb,response,begin);
+          ConstPairPanel{j.data,j.rows,j.cols,j.ld},
+          PairExchange{{k.data,k.rows,k.cols,k.ld}},coulomb,response,begin);
     }
     check_cuda(cudaGetLastError(),"CUDA direct core J/K diagonal projection");
   }

@@ -129,6 +129,18 @@ __global__ void mixed_feature_rows(linalg::ConstMatrixView c,
   }
 }
 
+__global__ void density_feature_rows(linalg::ConstMatrixView c,
+    const int* first,const int* second,std::int64_t begin,PairPanel output) {
+  const auto work=output.rows*output.cols;
+  for (auto k=blockIdx.x*static_cast<std::int64_t>(blockDim.x)+threadIdx.x;
+       k<work;k+=gridDim.x*static_cast<std::int64_t>(blockDim.x)) {
+    const auto row=k/output.cols,column=k%output.cols;
+    const int i=first[begin+row],j=second[begin+row];
+    output.data[row*output.ld+column]=(i==j ? 1.0:2.0)*
+        c.data[i+c.ld*column]*c.data[j+c.ld*column];
+  }
+}
+
 __global__ void generated_csr(linalg::ConstMatrixView c,
                               linalg::ConstMatrixView d,
                               const int* first, const int* second,
@@ -244,6 +256,7 @@ __global__ void pack_density_batch(linalg::ConstMatrixView densities,
   }
 }
 
+template<bool RankOne=false>
 __device__ void add_oriented_exchange(int u,int v,double value,
     const int* first,const int* second,linalg::ConstMatrixView density,
     linalg::MatrixView output,int channels) {
@@ -252,9 +265,14 @@ __device__ void add_oriented_exchange(int u,int v,double value,
     const int a = swap_u ? uj : ui, b = swap_u ? ui : uj;
     for (int swap_v = 0; swap_v < (vi == vj ? 1 : 2); ++swap_v) {
       const int c = swap_v ? vj : vi, d = swap_v ? vi : vj;
-      for (int channel=0;channel<channels;++channel)
+      for (int channel=0;channel<channels;++channel) {
+        double source;
+        if constexpr (RankOne)
+          source=density.data[b+density.ld*channel]*density.data[d+density.ld*channel];
+        else source=density.data[b+density.ld*(d+channel*density.rows)];
         atomic_add_double(output.data+a+output.ld*(c+channel*output.rows),
-            value*density.data[b+density.ld*(d+channel*density.rows)]);
+            value*source);
+      }
     }
   }
 }
@@ -267,7 +285,7 @@ __device__ int unique_row(const Index* offsets,int rows,std::int64_t edge,int be
 // Balance integral edges, not variably sized CSR rows. A warp finds its
 // first row once; only lanes crossing that row's end need another lookup.
 // Row offsets are small and shared; no full edge-to-row index is stored.
-template<class Index>
+template<class Index,bool RankOne=false>
 __global__ void exchange_unique(const Index* offsets,const Index* columns,
     const double* values,int rows,std::int64_t edges,const int* first,const int* second,
     linalg::ConstMatrixView density,linalg::MatrixView output,double weight,int channels) {
@@ -282,9 +300,9 @@ __global__ void exchange_unique(const Index* offsets,const Index* columns,
     if (p>=offsets[left+1]) left=unique_row(offsets,rows,p,left+1);
     const int right=static_cast<int>(columns[p]);
     const double value=weight*values[p];
-    add_oriented_exchange(left,right,value,first,second,density,output,channels);
+    add_oriented_exchange<RankOne>(left,right,value,first,second,density,output,channels);
     if (left!=right)
-      add_oriented_exchange(right,left,value,first,second,density,output,channels);
+      add_oriented_exchange<RankOne>(right,left,value,first,second,density,output,channels);
   }
 }
 
@@ -548,15 +566,14 @@ std::int64_t tile_size(Context& context, std::int64_t n_ao_pairs,
 }
 
 std::size_t spmm_scratch_bytes(cusparseHandle_t sparse,
-    cusparseSpMatDescr_t csr,std::int64_t rows,int channels,
-    std::int64_t target_ld,double* source_data,double* target_data,bool unique=false) {
+    cusparseSpMatDescr_t csr,ConstPairPanel input,PairPanel output,bool unique=false) {
   cusparseDnMatDescr_t source=nullptr,target=nullptr;
-  check_sparse(cusparseCreateDnMat(&source,rows,channels,channels,
-      source_data,CUDA_R_64F,CUSPARSE_ORDER_ROW),
+  check_sparse(cusparseCreateDnMat(&source,input.rows,input.cols,input.ld,
+      const_cast<double*>(input.data),CUDA_R_64F,CUSPARSE_ORDER_ROW),
       "create generated AO-pair source descriptor");
   try {
-    check_sparse(cusparseCreateDnMat(&target,rows,channels,target_ld,
-        target_data,CUDA_R_64F,CUSPARSE_ORDER_ROW),
+    check_sparse(cusparseCreateDnMat(&target,output.rows,output.cols,output.ld,
+        output.data,CUDA_R_64F,CUSPARSE_ORDER_ROW),
         "create generated AO-pair target descriptor");
     const double alpha=1.0;
     std::size_t bytes=0;
@@ -707,6 +724,12 @@ void ExactAoPairOperator::validate_panel(PairPanel p) const {
     throw std::invalid_argument("invalid CUDA target AO-pair panel");
 }
 
+std::size_t ExactAoPairOperator::apply_workspace(ConstPairPanel source,PairPanel target) const {
+  if (!n_integrals_) return 0;
+  if (packed_) return packed_->workspace_bytes(source.cols,0,target.rows);
+  return spmm_scratch_bytes(sparse_,csr_,source,target,compact_);
+}
+
 void ExactAoPairOperator::apply(ConstPairPanel source, PairPanel target) const {
   validate_panel(source);
   validate_panel(target);
@@ -764,6 +787,20 @@ void ExactAoPairOperator::apply(ConstPairPanel source, PairPanel target) const {
   }
   cusparseDestroyDnMat(b);
   cusparseDestroyDnMat(a);
+}
+
+void ExactAoPairOperator::density_features(linalg::ConstMatrixView c,
+    std::int64_t begin,PairPanel output) const {
+  validate_coefficients(c);
+  if (begin<0 || output.rows<0 || output.rows>n_pairs_-begin ||
+      output.cols!=c.cols || output.ld<output.cols || (output.rows && !output.data))
+    throw std::invalid_argument("invalid CUDA rank-one density feature tile");
+  const auto work=checked_product(output.rows,output.cols);
+  if (work) {
+    density_feature_rows<<<blocks(work),256,0,context_->stream()>>>(
+        c,pair_first_.data(),pair_second_.data(),begin,output);
+    check_launch("CUDA rank-one density features");
+  }
 }
 
 void ExactAoPairOperator::pair_features(
@@ -864,8 +901,8 @@ void ExactAoPairOperator::generated_rows_impl(
     const auto max_channels=static_cast<int>(std::min<std::size_t>(
         pairs,available/channel_bytes));
     const auto spmm_scratch=[&](int channels) {
-      return spmm_scratch_bytes(sparse_,csr_,n_pairs_,channels,output.ld,
-                                output.data,output.data,compact_);
+      return apply_workspace({output.data,n_pairs_,channels,channels},
+          {output.data,n_pairs_,channels,output.ld});
     };
     int slab_channels=0;
     // The library may require different scratch for the final short slab.
@@ -982,9 +1019,7 @@ void ExactAoPairOperator::forward(linalg::ConstMatrixView c,
                  "query CUDA forward SpMM free memory");
       const auto available=std::min(context_->device_byte_budget()-
           context_->counters().current_device_bytes,device_free);
-      direct_action=(packed_ ? packed_->workspace_bytes(pairs,0,n_pairs_):
-          spmm_scratch_bytes(sparse_,csr_,n_pairs_,static_cast<int>(pairs),
-              pp.ld,bp.data,pp.data,compact_))<=available;
+      direct_action=apply_workspace({bp.data,bp.rows,bp.cols,bp.ld},pp)<=available;
     }
     if (direct_action) apply({bp.data,bp.rows,bp.cols,bp.ld},pp);
     else
@@ -1123,6 +1158,23 @@ void ExactAoPairOperator::unique_exchange(linalg::ConstMatrixView density,
     exchange_unique<<<blocks(n_integrals_),256,0,context_->stream()>>>(
         row_offsets_.data(),columns_.data(),values_.data(),blas_int(n_pairs_),
         n_integrals_,pair_first_.data(),pair_second_.data(),density,output,weight,channels);
+}
+
+void ExactAoPairOperator::rank_one_exchange(linalg::ConstMatrixView factors,
+    linalg::MatrixView output) const {
+  const nvtx3::scoped_range range{"ao.rank_one_exchange"};
+  zero_matrix(*context_,output);
+  if (!n_integrals_) return;
+  const auto channels=blas_int(factors.cols);
+  if (wide_)
+    exchange_unique<std::int64_t,true><<<blocks(n_integrals_),256,0,context_->stream()>>>(
+        wide_offsets_.data(),wide_columns_.data(),values_.data(),blas_int(n_pairs_),
+        n_integrals_,pair_first_.data(),pair_second_.data(),factors,output,1.0,channels);
+  else
+    exchange_unique<int,true><<<blocks(n_integrals_),256,0,context_->stream()>>>(
+        row_offsets_.data(),columns_.data(),values_.data(),blas_int(n_pairs_),
+        n_integrals_,pair_first_.data(),pair_second_.data(),factors,output,1.0,channels);
+  check_launch("CUDA rank-one exchange batch");
 }
 
 void ExactAoPairOperator::contract_jk(linalg::ConstMatrixView density,

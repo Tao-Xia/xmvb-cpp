@@ -55,6 +55,12 @@ class ExactAoPairOperator {
                      std::int64_t row_begin, PairPanel features,
                      PairPanel directional_features = {}) const;
 
+  /** AO-pair features of rank-one densities C_i C_i^T, one column per
+   * orbital. Row-major panels include the off-diagonal AO multiplicity.
+   */
+  void density_features(linalg::ConstMatrixView coefficients,
+      std::int64_t row_begin,PairPanel features) const;
+
   /** Generate only target rows of K B(C), optionally K dB(C;dC). */
   void generated_rows(linalg::ConstMatrixView coefficients,
                       linalg::ConstMatrixView direction,
@@ -100,10 +106,12 @@ class ExactAoPairOperator {
   void exchange_pair_direction(ConstPairPanel exchange,linalg::ConstMatrixView direction,
       linalg::ConstMatrixView kernel_adjoint,linalg::MatrixView gradient) const;
 
-  /** Core-only J(p,p;c,c) and 2J(p,p;c,c)-K(p,c;p,c), without full AO
-   * response matrices. Returns false for the compact device representation.
-   * Both images use one half transform, tiled within the live memory budget;
-   * Coulomb is a diagonal slice of its projection, not another ERI sweep.
+  /** Core-only J(p,p;c,c) and 2J(p,p;c,c)-K(p,c;p,c) projections.
+   * Unique CSR batches rank-one source factors directly;
+   * that representation does not retain a full density-response map.
+   * Packed pair storage uses one shared half transform; unique CSR applies
+   * Coulomb and exchange to the same rank-one factor batch. Both are tiled
+   * within the live memory budget and projected directly to MO diagonals.
    * Optional density_projection is the upper-column-packed symmetric map
    * vec(V) -> vec(G(V C^T+C V^T) C), C=mo[:,0:n_core], from the same sweep.
    */
@@ -179,8 +187,12 @@ class ExactAoPairOperator {
 
  private:
   std::size_t response_capacity() const;
+  std::size_t apply_workspace(ConstPairPanel,PairPanel) const;
   void upload_unique(const integrals::AoPairGraph&);
   void unique_exchange(linalg::ConstMatrixView,linalg::MatrixView,double,int) const;
+  void rank_one_exchange(linalg::ConstMatrixView,linalg::MatrixView) const;
+  bool unique_core_diagonal(linalg::ConstMatrixView,int,linalg::MatrixView,
+      linalg::MatrixView) const;
   struct ExchangeRequest {
     linalg::ConstMatrixView coefficients,targets;
     PairPanel image,coulomb;

@@ -29,8 +29,9 @@ struct Fixture {
   std::vector<int> left,right;
   std::vector<double> values;
 
-  Fixture() {
+  explicit Fixture(bool sparse=false) {
     for (int p=0;p<npair;++p) for (int q=0;q<=p;++q) {
+      if (sparse && (p+q)%7!=0) continue;
       const double value=0.06*std::cos(0.23*(p+1)*(q+2))+
           0.008*std::sin(0.19*(p+2)*(q+1));
       graph(p,q)=graph(q,p)=value;
@@ -65,9 +66,9 @@ struct Fixture {
   }
 };
 
-void check(bool compact,int ncore) {
+void check(bool compact,int ncore,bool sparse=false) {
   constexpr int na=2;
-  const Fixture fixture;
+  const Fixture fixture(sparse);
   xmvb::cuda::Context context(128ULL*1024ULL*1024ULL);
   xmvb::cuda::ExactAoPairOperator graph(context,fixture.pair_graph(compact),
       Fixture::nbf);
@@ -356,6 +357,9 @@ int main() {
     check(false,3);
     check(true,1);
     check(true,2);
+    check(true,1,true);
+    check(true,2,true);
+    check(true,3,true);
     check_large_core_projection();
     std::cout << "CUDA analytic orbital diagonal passed\n";
   } catch (const std::exception& error) {

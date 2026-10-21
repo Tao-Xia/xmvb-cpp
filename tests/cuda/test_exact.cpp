@@ -429,6 +429,43 @@ void check_one_electron_and_core(bool compact,bool sparse=false,bool chunked=fal
   xmvb::cuda::Context context(128ULL * 1024ULL * 1024ULL);
   const xmvb::cuda::ExactAoPairOperator gpu(context, fixture.graph(compact,chunked),
                                             fixture.n_bf);
+  {
+    const Matrix mo=values(fixture.n_bf,fixture.n_bf,0.33);
+    DeviceMatrix dmo(context,fixture.n_bf,fixture.n_bf);
+    upload(context,dmo,mo);
+    const int ncore=std::min(3,fixture.n_bf);
+    DeviceMatrix dj(context,fixture.n_bf,ncore),dr(context,fixture.n_bf,ncore);
+    require(gpu.core_diagonal(dmo.view(),ncore,dj.view(),dr.view()),
+        "CUDA core diagonal was not prepared within the test budget");
+    Matrix expected_j(fixture.n_bf,ncore),expected_r(fixture.n_bf,ncore);
+    for (int c=0;c<ncore;++c) {
+      const Matrix density=mo.col(c)*mo.col(c).transpose();
+      const Matrix j=reference_jk(fixture,density,1.0,0.0);
+      const Matrix r=reference_jk(fixture,density);
+      for (int p=0;p<fixture.n_bf;++p) {
+        expected_j(p,c)=mo.col(p).dot(j*mo.col(p));
+        expected_r(p,c)=mo.col(p).dot(r*mo.col(p));
+      }
+    }
+    near(download(context,dj),expected_j,"CUDA rank-one core Coulomb differs from oracle");
+    near(download(context,dr),expected_r,"CUDA rank-one core response differs from oracle");
+    // A short feature panel keeps a padded channel stride, as the final
+    // budgeted core batch does. Untouched padding must remain intact.
+    const int begin=1,rows=fixture.ao_pairs-2,width=ncore+2;
+    std::vector<double> features(rows*width,-17.0);
+    xmvb::cuda::Buffer<double> df(context,features.size());
+    context.copy_to_device(df.data(),features.data(),features.size()*sizeof(double));
+    gpu.density_features(dmo.view().columns(0,ncore),begin,
+        {df.data(),rows,ncore,width});
+    context.copy_to_host(features.data(),df.data(),features.size()*sizeof(double));
+    for (int row=0;row<rows;++row) {
+      const int i=fixture.first[begin+row],j=fixture.second[begin+row];
+      for (int c=0;c<width;++c)
+        near_scalar(features[row*width+c],c<ncore ?
+            (i==j ? 1.0:2.0)*mo(i,c)*mo(j,c):-17.0,
+            "CUDA rank-one density features changed a coefficient or its padding");
+    }
+  }
   const Matrix c = values(fixture.n_bf, active, 0.27);
   const Matrix direction = values(fixture.n_bf, active, 0.83);
   const Matrix core = symmetric_values(fixture.n_bf, 0.59);

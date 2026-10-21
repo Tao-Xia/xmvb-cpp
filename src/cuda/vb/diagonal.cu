@@ -54,18 +54,6 @@ __global__ void difference(linalg::ConstMatrixView effective,
       core.data[row+core.ld*col];
 }
 
-// B[p,(mu,nu)] contracts a symmetric AO matrix directly to its MO diagonal.
-// The same bounded tile serves every Coulomb and exchange density channel.
-__global__ void mo_pair_features(linalg::ConstMatrixView mo,
-    linalg::MatrixView features,std::int64_t begin,int nbf) {
-  const auto k=static_cast<std::int64_t>(blockIdx.x)*blockDim.x+threadIdx.x;
-  if (k>=features.rows*features.cols) return;
-  const int p=static_cast<int>(k%nbf);
-  int mu,nu;
-  decode_pair(begin+k/nbf,mu,nu);
-  features.data[k]=(mu==nu ? 1.0:2.0)*mo.data[mu+mo.ld*p]*mo.data[nu+mo.ld*p];
-}
-
 __global__ void core_density(linalg::ConstMatrixView mo,
     linalg::MatrixView density,int core,std::int64_t elements) {
   const auto k=static_cast<std::int64_t>(blockIdx.x)*blockDim.x+threadIdx.x;
@@ -318,9 +306,7 @@ Matrix<double> build_analytic_rotation_diagonal(Context& context,
         integrals.generated_rows(mo.columns(ncore,active),{},begin,
             {products.data(),count,pairs,pairs});
       const auto b=features.view().columns(0,count);
-      mo_pair_features<<<grid(static_cast<std::int64_t>(nbf)*count),256,0,
-          context.stream()>>>(mo,b,begin,nbf);
-      check_cuda(cudaGetLastError(),"CUDA Hessian shared MO pair projection");
+      integrals.density_features(mo,begin,{b.data,count,nbf,b.ld});
       gemm(context,jactive.view(),b,{tile.data,pairs,count,tile.ld},
           1.0,begin==0 ? 0.0:1.0,Operation::none,Operation::transpose);
       if (exchange_products.data) {
@@ -336,7 +322,7 @@ Matrix<double> build_analytic_rotation_diagonal(Context& context,
     }
   }
 
-  Matrix<double> density(context,nbf,nbf),response(context,nbf,nbf);
+  Matrix<double> density,response;
   Matrix<double> active_left;
   if (!exchange_products.data) active_left=Matrix<double>(context,nbf,active);
   Matrix<double> core_response,jpc;
@@ -351,6 +337,10 @@ Matrix<double> build_analytic_rotation_diagonal(Context& context,
     core_j=jpc.view();core_r=core_response.view();
     core_projected=integrals.core_diagonal(mo,ncore,jpc.view(),core_response.view(),
         density_projection);
+  }
+  if (!core_projected && ncore) {
+    density=Matrix<double>(context,nbf,nbf);
+    response=Matrix<double>(context,nbf,nbf);
   }
   for (int c=0;!core_projected && c<ncore;++c) {
     core_density<<<grid(static_cast<std::int64_t>(nbf)*nbf),256,0,context.stream()>>>(
