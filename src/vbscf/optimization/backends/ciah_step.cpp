@@ -25,6 +25,7 @@
 #include "vbscf/optimization/driver/session.hpp"
 #include "vbscf/optimization/globalization/line_search.hpp"
 #include "mcscf/optimization/ciah/driver.hpp"
+#include "mcscf/optimization/ciah/macro.hpp"
 #include "vbscf/optimization/coupled/ci_transport.hpp"
 #include "vbscf/optimization/coupled/affine.hpp"
 #include "mcscf/optimization/preconditioners/coarse.hpp"
@@ -396,15 +397,10 @@ bool build_ciah_macro_step(
   record->rejected_trial_count += micro.rejected_trial_count;
   auto& displacement = micro.displacement;
   auto& hessian_displacement = micro.hessian_displacement;
-  auto& predicted_gradient = micro.predicted_gradient;
   auto& last_step = micro.last_step;
   auto& candidate = micro.candidate;
-  auto& energy_model = micro.energy_model;
-  auto& keyframes = micro.keyframes;
   const int micro_steps = micro.micro_steps;
   const bool energy_model_stopped = micro.energy_model_stopped;
-  const char* micro_stop = micro.stop_reason;
-  double final_reduction = energy - energy_model.energy();
   if (mcscf::diagnostics::ciah_trace_enabled()) {
     // A diagnostic of the actual coupled trial space, not just its A block.
     // Neither inverse callback evaluates an HVP or changes the retained space.
@@ -443,150 +439,61 @@ bool build_ciah_macro_step(
         spectrum.preconditioned_min, spectrum.preconditioned_max);
   }
 
-  // PySCF commits the coupled keyframe sequence and then reoptimizes CI.
-  // It does not veto that sequence with the original frozen trust model.
-  // Backtrack along evaluated nonlinear keyframes before scaling an origin
-  // ray. Only true-energy checkpoints qualify, never obsolete quadratic prefixes.
-  double scale = 1.0;
-  double linear = initial_gradient.dot(displacement);
-  double quadratic = displacement.dot(hessian_displacement);
-  double last_ritz_norm = candidate.residual_norm;
-  double last_eigenvalue = candidate.eigenvalue;
-  bool last_converged = candidate.converged, keyframe_backtracked = false;
-  bool origin_restarted = false;
-  // Keyframe corrections can turn the accumulated path into an uphill ray
-  // from the macro origin. Shrinking that ray cannot restore local descent.
-  // Re-solve the ORIGIN augmented model in the already retained AH space;
-  // its lowest root supplies descent or negative curvature without a new HVP.
-  const auto restart_origin = [&]() {
-    if (origin_restarted) return false;
-    const auto ray = workspace.origin_ray(initial_gradient);
-    if (!ray) return false;
-    double largest = chart.maximum_rotation_component(ray->step.head(no));
-    if (ns) largest = std::max(largest,
-        structure.maximum_coefficient_component_coordinates(ray->step.tail(ns)));
-    if (!(largest > 0.0)) return false;
-    // Clip BEFORE dividing by a possibly tiny AH reference component. A
-    // Hessian-only negative-curvature root has alpha=0 and uses the same cap.
-    const double factor = largest > mcscf::ciah_max_component * ray->reference_component
-        ? mcscf::ciah_max_component / largest : 1.0 / ray->reference_component;
-    displacement = factor * ray->step;
-    hessian_displacement = factor * ray->hessian_step;
-    last_step = displacement;
-    linear = initial_gradient.dot(displacement);
-    quadratic = displacement.dot(hessian_displacement);
-    final_reduction = -linear - 0.5 * quadratic;
-    last_ritz_norm = ray->residual_norm;
-    last_eigenvalue = ray->eigenvalue;
-    last_converged = false;
-    scale = 1.0;
-    origin_restarted = true;
-    accepted->parameters = build_nonredundant_lifted_trial_parameters(
-        orbitals, chart, layout, displacement.head(no));
-    mcscf::diagnostics::ciah_trace("ciah_origin_restart",
-        "basis=%d,linear=%.17g,quadratic=%.17g,alpha=%.17g,eigenvalue=%.17g,residual=%.17g,hvp_added=0",
-        workspace.basis_size(),linear,quadratic,ray->reference_component,
-        ray->eigenvalue,ray->residual_norm);
-    return true;
+  using MacroOps=mcscf::detail::HostCiahVectorOps;
+  using Trial=VbScfObjectiveTrialEvaluation;
+  mcscf::CiahMacroCallbacks<MacroOps,Trial> macro_callbacks;
+  macro_callbacks.maximum_component=callbacks.maximum_component;
+  macro_callbacks.step_norm=[&](const Eigen::VectorXd& step) {
+    return metric.norm(step.head(no));
   };
-  accepted->parameters = build_nonredundant_lifted_trial_parameters(
-      orbitals, chart, layout, displacement.head(no));
-  if ((accepted->parameters - layout.pack(orbitals)).norm() <=
-      std::numeric_limits<double>::epsilon() * layout.pack(orbitals).norm() &&
-      !keyframes.available() && !restart_origin()) {
-    result->termination_reason = "ciah_zero_macro_step";
-    return false;
-  }
-  double accepted_prediction = 0.0;
-  while (true) {
-    xmvb::profiling::ScopedPhase trial_phase(xmvb::profiling::Phase::CiahTrial, true);
-    if (step_audit) diagnostics::audit_orbital_step(
-        orbitals, chart, scale * displacement.head(no), "macro_trial", micro_steps);
-    accepted->trial = objective->evaluate_trial_energy_with_structure_guess(
-        accepted->parameters, coefficients(scale * displacement));
-    // Keyframe refreshes both the gradient and the energy anchor. Testing the
-    // full microstep sequence against g0*p + p*H0*p/2 discards that update.
-    // A shortened origin-chart displacement is a different path: use its
-    // origin model, not a scaled prediction for the keyframe sequence.
-    const double model_linear = scale == 1.0
-        ? -final_reduction - 0.5 * quadratic : scale * linear;
-    const double prediction = -model_linear - 0.5 * scale * scale * quadratic;
-    const double reduction = energy - accepted->trial.energy;
-    const double ratio = prediction > 0.0 ? reduction / prediction
-        : -std::numeric_limits<double>::infinity();
-    bool keep_trial = reduction > 0.0;
-    // Strict descent globalizes nonterminal steps. Near stationarity, first
-    // give the EXISTING energy/true-gradient stopping rule its candidate.
-    // Ordinary descent trials do not add any convergence work here. A
-    // non-descent candidate with small energy change needs its OWN gradient,
-    // not the source gradient or a model-based substitute.
-    if (!keep_trial && std::abs(reduction) < options.energy_tolerance) {
-      objective->complete_trial(&accepted->trial);
-      keep_trial = accepted->check_convergence(layout, options,
-          objective->input().complete_active_space, energy);
-      mcscf::diagnostics::ciah_trace("ciah_terminal_trial",
-          "energy_change=%.17g,energy_tolerance=%.17g,gradient_tolerance=%.17g,converged=%d",
-          -reduction, options.energy_tolerance, options.gradient_tolerance,
-          static_cast<int>(keep_trial));
-    }
+  macro_callbacks.changes_parameters=[&](const Eigen::VectorXd& step) {
+    const auto parameters=build_nonredundant_lifted_trial_parameters(orbitals,chart,layout,step.head(no));
+    return (parameters-layout.pack(orbitals)).norm()>
+        std::numeric_limits<double>::epsilon()*layout.pack(orbitals).norm();
+  };
+  macro_callbacks.evaluate=[&](const Eigen::VectorXd& step,double scale) {
+    xmvb::profiling::ScopedPhase trial_phase(xmvb::profiling::Phase::CiahTrial,true);
+    if (step_audit)
+      diagnostics::audit_orbital_step(orbitals,chart,scale*step.head(no),"macro_trial",micro_steps);
+    accepted->parameters=build_nonredundant_lifted_trial_parameters(orbitals,chart,layout,scale*step.head(no));
+    return objective->evaluate_trial_energy_with_structure_guess(
+        accepted->parameters,coefficients(scale*step));
+  };
+  macro_callbacks.energy=[](const Trial& trial) { return trial.energy; };
+  macro_callbacks.terminal=[&](Trial& trial) {
+    objective->complete_trial(&trial);
+    accepted->trial=std::move(trial);
+    const bool converged=accepted->check_convergence(layout,options,
+        objective->input().complete_active_space,energy);
+    trial=std::move(accepted->trial);
+    return converged;
+  };
+  macro_callbacks.observe=[&](const mcscf::CiahMacroObservation& point) {
+    const double ratio=point.predicted>0.0 ? point.actual/point.predicted :
+        -std::numeric_limits<double>::infinity();
     mcscf::diagnostics::ciah_trace("ciah_macro_trial",
         "scale=%.17g,linear=%.17g,quadratic=%.17g,current_energy=%.17g,trial_energy=%.17g,predicted=%.17g,actual=%.17g,rho=%.17g,accepted=%d",
-        scale, model_linear, scale * scale * quadratic, energy,
-        accepted->trial.energy, prediction, reduction, ratio,
-        static_cast<int>(keep_trial));
-    if (keep_trial) {
-      accepted_prediction = prediction;
-      break;
-    }
-    ++record->rejected_trial_count;
-    if (keyframes.available()) {
-      auto point = keyframes.take();
-      mcscf::diagnostics::ciah_trace("ciah_keyframe_backtrack",
-          "current_energy=%.17g,rejected_energy=%.17g,keyframe_energy=%.17g",
-          energy,accepted->trial.energy,point.energy);
-      displacement = std::move(point.displacement);
-      hessian_displacement = std::move(point.image);
-      last_step = std::move(point.last_step);
-      last_ritz_norm = point.residual_norm;
-      last_eigenvalue = point.eigenvalue;
-      last_converged = point.converged;
-      final_reduction = energy-point.energy;
-      linear = initial_gradient.dot(displacement);
-      quadratic = displacement.dot(hessian_displacement);
-      scale = 1.0;
-      keyframe_backtracked = true;
-      accepted->parameters = build_nonredundant_lifted_trial_parameters(
-          orbitals,chart,layout,displacement.head(no));
-      continue;
-    }
-    if ((energy_model_stopped || linear >= 0.0) && restart_origin()) continue;
-    scale *= 0.5;
-    if (scale * metric.norm(displacement.head(no)) <= options.minimum_step_size) {
-      if (restart_origin()) continue;
-      // Failure evidence from existing quantities only: no gradient, HVP or
-      // metric inverse is added, and the acceptance policy is unchanged.
-      std::fprintf(stderr,
-          "CIAH_FAILURE,iteration=%d,reason=ciah_macro_energy_rejected,"
-          "trials=%d,origin_slope=%.17g,origin_curvature=%.17g,"
-          "source_energy=%.17g,last_trial_energy=%.17g,next_scale=%.17g,"
-          "keyframe_backtracked=%d,micro_stop=%s,hvp=%d\n",
-          record->accepted_iteration_index,record->rejected_trial_count,
-          linear,quadratic,energy,accepted->trial.energy,scale,
-          static_cast<int>(keyframe_backtracked),micro_stop,record->orbital_hvp_actions);
-      result->termination_reason = "ciah_macro_energy_rejected";
-      return false;
-    }
-    accepted->parameters = build_nonredundant_lifted_trial_parameters(
-        orbitals, chart, layout, scale * displacement.head(no));
+        point.scale,point.linear,point.quadratic,energy,point.trial_energy,
+        point.predicted,point.actual,ratio,static_cast<int>(point.accepted));
+  };
+  auto macro=mcscf::run_ciah_macro(workspace,micro,initial_gradient,energy,
+      options.energy_tolerance,options.minimum_step_size,MacroOps{},macro_callbacks);
+  record->rejected_trial_count+=macro.rejected_trials;
+  if (!macro.trial) {
+    result->termination_reason=macro.reason;
+    return false;
   }
+  accepted->trial=std::move(*macro.trial);
+  accepted->parameters=build_nonredundant_lifted_trial_parameters(orbitals,chart,layout,displacement.head(no));
+  const double scale=macro.scale,accepted_prediction=macro.predicted_reduction;
+  const double last_ritz_norm=macro.residual_norm,last_eigenvalue=macro.eigenvalue;
+  const bool last_converged=macro.ritz_converged;
+  const bool keyframe_backtracked=macro.keyframe_backtracked,origin_restarted=macro.origin_restarted;
   // Only the accepted point needs gradient backpropagation and its context.
   // Complete the retained forward evaluation, rather than rebuilding it.
   xmvb::profiling::ScopedPhase completion_phase(xmvb::profiling::Phase::CiahCompletion, true);
   if (!accepted->trial.gradient_ready) objective->complete_trial(&accepted->trial);
   completion_phase.stop();
-  displacement *= scale;
-  hessian_displacement *= scale;
-  last_step *= scale;
   if (step_audit) diagnostics::audit_orbital_step(
       orbitals, chart, displacement.head(no), "macro_accepted", micro_steps);
   if (mcscf::diagnostics::ciah_event_trace_enabled()) {

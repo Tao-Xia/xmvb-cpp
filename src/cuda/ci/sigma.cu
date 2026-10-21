@@ -365,8 +365,7 @@ std::size_t DirectCiSigma::resident_bytes() const noexcept {
           transformed_.rows()*transformed_.cols()+
           right_scattered_.rows()*right_scattered_.cols()+
           channel_adjoint_.rows()*channel_adjoint_.cols()+
-          generator_high_.rows()*generator_high_.cols()+
-          generator_low_.rows()*generator_low_.cols()+generator_left_.rows());
+          generator_left_.rows());
 }
 
 void DirectCiSigma::prepare(int block_width) const {
@@ -682,27 +681,63 @@ void DirectCiSigma::apply_generator(linalg::ConstMatrixView coefficients,
 
 void DirectCiSigma::prepare_generator_adjoint(int block_width) const {
   if (block_width<=0) throw std::invalid_argument("invalid generator block width");
-  if (generator_high_.rows()>0 && generator_low_.rows()==generator_high_.rows() &&
-      generator_moments_.size()==2*static_cast<std::size_t>(n_channels_)) return;
-  const std::size_t available=context_->device_byte_budget()-
-      context_->counters().current_device_bytes;
-  const std::size_t moments_bytes=2*static_cast<std::size_t>(n_channels_)*sizeof(double);
-  const std::size_t row_bytes=(2*static_cast<std::size_t>(n_channels_)+1)*sizeof(double);
-  if (moments_bytes>available || row_bytes>available-moments_bytes)
-    throw std::runtime_error("CUDA direct-CI budget cannot hold generator adjoint row");
   const auto products=static_cast<std::int64_t>(n_alpha_)*n_beta_*block_width;
   const auto planned_rows=std::max<std::int64_t>(1,products*
       std::min(n_channels_,maximum_channel_tile_)/n_channels_);
-  auto rows=std::min<std::int64_t>({products,planned_rows,
-      static_cast<std::int64_t>((available-moments_bytes)/row_bytes)});
-  if (rows>=32) rows=(rows/32)*32;
-  Buffer<double> moments(*context_,2*static_cast<std::size_t>(n_channels_));
-  Matrix<double> high(*context_,rows,n_channels_);
-  Matrix<double> low(*context_,rows,n_channels_);
-  generator_moments_=std::move(moments);
-  generator_high_=std::move(high);
-  generator_low_=std::move(low);
-  generator_left_=Matrix<double>(*context_,rows,1);
+  const auto transformed_rows=transformed_.data() ?
+      transformed_.rows()*transformed_.cols()/n_channels_:0;
+  auto low_rows=std::max(right_scattered_.rows(),transformed_rows);
+  // Action sigma may be captured in a CUDA graph. Its two existing slab
+  // addresses must remain immutable; the generator only borrows their bytes
+  // between graph launches on Context's single stream.
+  if (scattered_.rows()==0) {
+    generator_left_=Matrix<double>{};
+    generator_moments_=Buffer<double>{};
+    const auto available=context_->device_byte_budget()-
+        context_->counters().current_device_bytes;
+    const auto moments_bytes=2*static_cast<std::size_t>(n_channels_)*sizeof(double);
+    const auto row_bytes=(2*static_cast<std::size_t>(n_channels_)+1)*sizeof(double);
+    if (moments_bytes>available || row_bytes>available-moments_bytes)
+      throw std::runtime_error("CUDA direct-CI budget cannot hold generator adjoint row");
+    auto rows=std::min<std::int64_t>({products,planned_rows,
+        static_cast<std::int64_t>((available-moments_bytes)/row_bytes)});
+    if (rows>=32) rows=(rows/32)*32;
+    Buffer<double> moments(*context_,2*static_cast<std::size_t>(n_channels_));
+    Matrix<double> high(*context_,rows,n_channels_);
+    Matrix<double> low(*context_,rows,n_channels_);
+    Matrix<double> left(*context_,rows,1);
+    scattered_=std::move(high);
+    right_scattered_=std::move(low);
+    generator_moments_=std::move(moments);
+    generator_left_=std::move(left);
+    return;
+  }
+  if (low_rows==0) {
+    // An ordinary prepared sigma already owns scattered_; add only the
+    // missing second panel when no transformed slab can be borrowed.
+    const auto available=context_->device_byte_budget()-
+        context_->counters().current_device_bytes;
+    const auto moments_bytes=generator_moments_.empty() ?
+        2*static_cast<std::size_t>(n_channels_)*sizeof(double):0;
+    const auto row_bytes=(static_cast<std::size_t>(n_channels_)+1)*sizeof(double);
+    if (moments_bytes>available || row_bytes>available-moments_bytes)
+      throw std::runtime_error("CUDA direct-CI budget cannot hold generator adjoint row");
+    auto rows=std::min<std::int64_t>(scattered_.rows(),
+        static_cast<std::int64_t>((available-moments_bytes)/row_bytes));
+    if (rows>=32) rows=(rows/32)*32;
+    right_scattered_=Matrix<double>(*context_,rows,n_channels_);
+    low_rows=rows;
+  }
+  const auto rows=std::min(scattered_.rows(),low_rows);
+  if (rows<1) throw std::runtime_error("CUDA generator adjoint has no shared channel row");
+  if (generator_moments_.size()!=2*static_cast<std::size_t>(n_channels_)) {
+    generator_moments_=Buffer<double>{};
+    generator_moments_=Buffer<double>(*context_,2*static_cast<std::size_t>(n_channels_));
+  }
+  if (generator_left_.rows()!=rows) {
+    generator_left_=Matrix<double>{};
+    generator_left_=Matrix<double>(*context_,rows,1);
+  }
 }
 
 void DirectCiSigma::one_body_generator_adjoint(linalg::ConstMatrixView left,
@@ -715,22 +750,29 @@ void DirectCiSigma::one_body_generator_adjoint(linalg::ConstMatrixView left,
   prepare_generator_adjoint(block_width);
   const auto* alpha=alpha_->sources.data();
   const auto* beta=beta_->sources.data();
-  const int rows=static_cast<int>(generator_high_.rows());
+  const int rows=static_cast<int>(generator_left_.rows());
+  const auto transformed_rows=transformed_.data() ?
+      transformed_.rows()*transformed_.cols()/n_channels_:0;
+  const bool use_right=right_scattered_.rows()>=rows;
+  if (!use_right && transformed_rows<rows)
+    throw std::logic_error("CUDA generator adjoint lost its shared low panel");
+  auto* high_data=scattered_.data();
+  auto* low_data=use_right ? right_scattered_.data():transformed_.data();
   const auto products=left.rows*left.cols;
   bool first=true;
   for (std::int64_t begin=0;begin<products;begin+=rows) {
       const int count=static_cast<int>(std::min<std::int64_t>(rows,products-begin));
       scatter_oriented_generator<<<grid_size(static_cast<std::int64_t>(count)*n_channels_),
           256,0,context_->stream()>>>(left,right,generator_left_.data(),
-              generator_high_.data(),generator_low_.data(),begin,count,
+              high_data,low_data,begin,count,
               n_alpha_,n_beta_,n_channels_,alpha,beta);
       check_cuda(cudaGetLastError(),"CUDA direct-CI oriented generator scatter");
       const linalg::ConstMatrixView left_column{
           generator_left_.data(),count,1,count};
       const linalg::ConstMatrixView high{
-          generator_high_.data(),count,n_channels_,count};
+          high_data,count,n_channels_,count};
       const linalg::ConstMatrixView low{
-          generator_low_.data(),count,n_channels_,count};
+          low_data,count,n_channels_,count};
       const linalg::MatrixView high_moments{
           generator_moments_.data(),n_channels_,1,n_channels_};
       const linalg::MatrixView low_moments{

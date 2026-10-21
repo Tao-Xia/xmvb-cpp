@@ -85,8 +85,13 @@ void VbPoint::select_frame() const {
 }
 
 double VbPoint::evaluate(View raw,View coefficients) {
-  check_structure(coefficients,action_->size());
+  prepare(raw);
+  return evaluate_coefficients(coefficients);
+}
+
+void VbPoint::prepare(View raw) {
   ready_=false;
+  prepared_=false;
   auto& c=*context_;
   geometry_.set_raw(raw);geometry_.prepare();
   Matrix<double> core_energy(c,1,1);
@@ -94,6 +99,16 @@ double VbPoint::evaluate(View raw,View coefficients) {
   transform_one_electron(c,effective_.view(),geometry_.orthogonal_active(),one_.view());
   integrals_->forward(geometry_.orthogonal_active(),pair_.view());
   sigma_.update_integrals(one_.view(),pair_.view());
+  select_frame();
+  c.copy_to_host(&core_energy_,core_energy.data(),sizeof(double));
+  prepared_=true;
+}
+
+double VbPoint::evaluate_coefficients(View coefficients) {
+  if (!prepared_) throw std::logic_error("CUDA point coefficients require preparation");
+  check_structure(coefficients,action_->size());
+  ready_=false;
+  auto& c=*context_;
   select_frame();
   action_->expand_spin(coefficients,state_.view());
   action_->apply_orbital_transform(state_.view());
@@ -105,9 +120,7 @@ double VbPoint::evaluate(View raw,View coefficients) {
   if (!(norm_>0.0) || !std::isfinite(norm_))
     throw std::runtime_error("CUDA VB state has invalid norm");
   active_energy_=dot(c,state_.view(),image_.view())/norm_;
-  double reference=0.0;
-  c.copy_to_host(&reference,core_energy.data(),sizeof(double));
-  total_energy_=reference+active_energy_+nuclear_;
+  total_energy_=core_energy_+active_energy_+nuclear_;
   scale(c,one_adjoint_.view(),1.0/norm_);
   scale(c,pair_adjoint_.view(),1.0/norm_);
   copy(c,carrier_gradient_.view(),image_.view());

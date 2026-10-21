@@ -88,6 +88,9 @@ class FullMetric {
                            linalg::MatrixView structure) const;
   void ci_covector_to_structure(linalg::ConstMatrixView covector,
                                 linalg::MatrixView structure) const;
+  /** Exact current-frame selected metric inverse in FULL space. */
+  void inverse_metric(linalg::ConstMatrixView covector,
+                      linalg::MatrixView structure) const;
   void apply_ci_hamiltonian(linalg::ConstMatrixView coordinates,
                             linalg::MatrixView image) const;
   /** energies is a device row vector with one value per RHS. */

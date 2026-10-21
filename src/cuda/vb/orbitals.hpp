@@ -69,6 +69,7 @@ class OrbitalGeometry {
 
   linalg::ConstMatrixView normalized() const noexcept { return normalized_.view(); }
   linalg::ConstMatrixView raw() const noexcept { return raw_.view(); }
+  linalg::ConstMatrixView ao_overlap() const noexcept { return overlap_.view(); }
   linalg::ConstMatrixView inactive_dual() const noexcept { return dual_.view(); }
   linalg::ConstMatrixView inactive_density() const noexcept { return density_.view(); }
   linalg::ConstMatrixView active_auxiliary() const noexcept { return active_.view(); }

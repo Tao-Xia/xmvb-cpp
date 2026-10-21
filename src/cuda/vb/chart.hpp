@@ -1,9 +1,14 @@
 #pragma once
 
 #include <vector>
+#include <cstdint>
+#include <memory>
 
 #include "cuda/memory/buffer.hpp"
 #include "linalg/views.hpp"
+#include "vbscf/orbitals/preparation/input.hpp"
+
+namespace xmvb::cuda { class OrbitalGeometry; }
 
 namespace xmvb::cuda {
 
@@ -61,6 +66,61 @@ class OrbitalChartMap {
   mutable Buffer<int> retraction_info_;
   Buffer<double> basis_values_;
   mutable Matrix<double> scratch_;
+};
+
+/** Accepted-point unwhitened quotient chart, constructed numerically on GPU.
+ * The host input contributes immutable sparse topology only. rebuild() must
+ * follow OrbitalGeometry::prepare() at each accepted point. The local nullspace
+ * and metric bases never leave the device; only rank-determining spectra do.
+ */
+class AcceptedOrbitalChart {
+ public:
+  AcceptedOrbitalChart(Context& context,
+      const vb::OrbitalPreparationInput& input,bool complete_active_space);
+  ~AcceptedOrbitalChart();
+  AcceptedOrbitalChart(const AcceptedOrbitalChart&)=delete;
+  AcceptedOrbitalChart& operator=(const AcceptedOrbitalChart&)=delete;
+
+  void rebuild(const OrbitalGeometry& geometry);
+  int reduced_size() const noexcept;
+  int raw_size() const noexcept;
+  std::uint64_t rank_signature() const noexcept;
+  /** Frozen accepted AO-metric orthonormal MO frame [core,F,virtual]. */
+  linalg::ConstMatrixView accepted_mo_frame() const noexcept;
+  void expand(linalg::ConstMatrixView reduced,linalg::MatrixView raw) const;
+  void project(linalg::ConstMatrixView raw_covector,
+               linalg::MatrixView reduced_covector) const;
+  /** AO-metric projection of a raw tangent vector (CPU project_vector). */
+  void project_vector(linalg::ConstMatrixView raw_direction,
+                      linalg::MatrixView reduced_vector) const;
+  void retract(linalg::ConstMatrixView accepted,
+               linalg::ConstMatrixView reduced_step,double scale,
+               linalg::MatrixView trial) const;
+  void inverse_metric(linalg::ConstMatrixView covector,
+                      linalg::MatrixView vector) const;
+  void metric(linalg::ConstMatrixView vector,
+              linalg::MatrixView covector) const;
+  /** Coupled selected-ray or complete-span physical metric for AH actions.
+   * This is distinct from the local coordinate metric above. */
+  void physical_metric(linalg::ConstMatrixView vector,
+                       linalg::MatrixView covector) const;
+  double coordinate_dual_norm(linalg::ConstMatrixView covector) const;
+  double reference_gradient_inf_norm(linalg::ConstMatrixView covector) const;
+  /** Physical external-frame rotation maximum in AO-metric units. The
+   * device-built virtual frame may differ by an orthogonal rotation from
+   * the CPU auxiliary frame. */
+  double max_component(linalg::ConstMatrixView vector) const;
+  /** CPU OrbitalChart analytic AH diagonal model in the frozen device frame. */
+  void set_hessian_diagonal(const OrbitalGeometry& geometry,
+                            linalg::ConstMatrixView rotation_diagonal);
+  void apply_inverse_hessian_diagonal(linalg::ConstMatrixView covector,
+                                      double eigenvalue,
+                                      linalg::MatrixView direction) const;
+  linalg::ConstMatrixView hessian_diagonal() const noexcept;
+
+ private:
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
 };
 
 }  // namespace xmvb::cuda

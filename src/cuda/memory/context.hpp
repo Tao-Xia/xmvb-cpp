@@ -70,12 +70,16 @@ class Context {
   [[nodiscard]] std::size_t device_byte_budget() const noexcept {
     return device_byte_budget_;
   }
+  [[nodiscard]] const char* allocation_phase() const noexcept { return allocation_phase_; }
+  void set_allocation_phase(const char* phase) noexcept { allocation_phase_=phase; }
   void synchronize() const { check_cuda(cudaStreamSynchronize(stream_), "CUDA stream synchronization"); }
 
   void* allocate(std::size_t bytes) {
     if (bytes == 0) return nullptr;
     if (bytes > device_byte_budget_ - counters_.current_device_bytes) {
-      throw std::runtime_error("CUDA device allocation exceeds byte budget");
+      throw std::runtime_error("CUDA device allocation exceeds byte budget: requested="+
+          std::to_string(bytes)+", resident="+std::to_string(counters_.current_device_bytes)+
+          ", budget="+std::to_string(device_byte_budget_)+", phase="+allocation_phase_);
     }
     void* pointer = nullptr;
     check_cuda(cudaMalloc(&pointer, bytes), "cudaMalloc");
@@ -114,6 +118,20 @@ class Context {
   cublasHandle_t blas_ = nullptr;
   std::size_t device_byte_budget_;
   TransferCounters counters_;
+  const char* allocation_phase_="unspecified";
+};
+
+/** Failure context only; no allocation, synchronization, or numerical check. */
+class AllocationPhase {
+ public:
+  AllocationPhase(Context& context,const char* phase)
+      : context_(context),previous_(context.allocation_phase()) { context_.set_allocation_phase(phase); }
+  ~AllocationPhase() { context_.set_allocation_phase(previous_); }
+  AllocationPhase(const AllocationPhase&)=delete;
+  AllocationPhase& operator=(const AllocationPhase&)=delete;
+ private:
+  Context& context_;
+  const char* previous_;
 };
 
 }  // namespace xmvb::cuda

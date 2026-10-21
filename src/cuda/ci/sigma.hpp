@@ -128,8 +128,9 @@ class DirectCiSigma {
   std::shared_ptr<const SpinGraph> alpha_, beta_;
   // Reused on the same stream, not allocated/freed at every sigma call.
   mutable Matrix<double> scattered_, transformed_, right_scattered_, channel_adjoint_;
-  // Separate from sigma workspaces so generator VJPs preserve captured pointers.
-  mutable Matrix<double> generator_high_, generator_low_;
+  // Generator VJPs borrow the channel panels (or sigma output slab) after
+  // their preceding action has completed on the same stream. In particular,
+  // a captured action's scattered_/transformed_ addresses are never changed.
   mutable Buffer<double> generator_moments_;
   mutable Matrix<double> generator_left_;
 };

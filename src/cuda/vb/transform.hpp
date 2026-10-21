@@ -30,6 +30,8 @@ class ExteriorTransform {
                    bool inverse = false) const;
 
   int dimension() const noexcept { return dimension_; }
+  /** Current determinant diagonal scales, resident at a stable device address. */
+  const double* scale_data() const noexcept { return scales_.data(); }
   std::size_t resident_bytes() const noexcept {
     return (scales_.size()+inverse_scales_.size()+shear_coefficients_.size()+
             unit_upper_.rows()*unit_upper_.cols())*sizeof(double) +

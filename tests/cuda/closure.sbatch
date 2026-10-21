@@ -34,10 +34,12 @@ find "$source_dir/src/cuda" "$source_dir/src/mcscf/optimization/ciah" \
   > "$out/sources.sha256"
 targets=(test_cuda_structure_action test_cuda_production_ci test_cuda_exact \
          test_cuda_orbitals test_cuda_ciah test_cuda_point test_cuda_tangent test_cuda_chart
-         test_cuda_device_davidson test_davidson test_ciah test_neo test_neo_globalization)
+         test_cuda_device_davidson test_cuda_ci_refresh test_cuda_transport test_cuda_coarse
+         test_cuda_diagonal test_cuda_macro
+         test_davidson test_ciah test_neo test_neo_globalization)
 cmake -S "$source_dir" -B "$source_dir/build-cuvbscf" \
   > "$out/configure.log" 2>&1
-cmake --build "$source_dir/build-cuvbscf" --target "${targets[@]}" -j 16 \
+cmake --build "$source_dir/build-cuvbscf" --target "${targets[@]}" cuvbscf -j 16 \
   > "$out/build.log" 2>&1
 for test in "${targets[@]}"; do
   sha256sum "$source_dir/build-cuvbscf/src/$test" >> "$out/binaries.sha256"

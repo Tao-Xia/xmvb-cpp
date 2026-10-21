@@ -1,0 +1,226 @@
+#include <algorithm>
+#include <cmath>
+#include <iostream>
+#include <memory>
+#include <stdexcept>
+#include <vector>
+
+#include <Eigen/Core>
+#include <Eigen/Cholesky>
+
+#include "core/pair_index.hpp"
+#include "cuda/vb/action.hpp"
+#include "cuda/vb/transport.hpp"
+#include "vbscf/determinants/pairs/same_spin_cache.hpp"
+#include "vbscf/structures/assembly/action.hpp"
+#include "vbscf/structures/assembly/hamiltonian_overlap.hpp"
+#include "vbscf/structures/overlap/representation.hpp"
+
+namespace {
+
+using Matrix=Eigen::MatrixXd;
+using Vector=Eigen::VectorXd;
+using Strings=std::vector<std::vector<int>>;
+using Terms=std::vector<std::vector<xmvb::vb::StructureExpansionTerm>>;
+
+void require(bool condition,const char* message) {
+  if (!condition) throw std::runtime_error(message);
+}
+
+void near(const Matrix& actual,const Matrix& expected,double tolerance,
+          const char* message) {
+  require(actual.rows()==expected.rows() && actual.cols()==expected.cols() &&
+          actual.allFinite() &&
+          (actual-expected).norm()<tolerance*std::max(1.0,expected.norm()),
+          message);
+}
+
+Matrix download(xmvb::cuda::Context& context,
+                xmvb::linalg::ConstMatrixView source) {
+  Matrix host(source.rows,source.cols);
+  xmvb::cuda::copy_to_host(context,host,source);
+  return host;
+}
+
+struct Fixture {
+  constexpr static int orbitals=4,structures=3;
+  Strings alpha{{0,1},{0,2},{0,3},{1,2},{1,3},{2,3}};
+  Strings beta{{0},{1},{2},{3}};
+  Strings products_alpha,products_beta;
+  Terms terms;
+  Matrix r0=Matrix::Identity(orbitals,orbitals);
+  Matrix h=Matrix::Identity(orbitals,orbitals);
+  xmvb::integrals::ActiveSpaceTwoElectronResult eri;
+  xmvb::vb::SameSpinPairCacheContext topology;
+  std::unique_ptr<xmvb::vb::StructureAction> cpu;
+
+  Fixture() {
+    r0(0,0)=1.08; r0(1,1)=1.04; r0(2,2)=1.12; r0(3,3)=1.06;
+    r0(0,1)=0.06; r0(0,2)=-0.025; r0(1,2)=0.035;
+    r0(1,3)=-0.018; r0(2,3)=0.027;
+    h(0,0)=-1.0; h(1,1)=-0.72; h(2,2)=-0.37; h(3,3)=0.14;
+    h(0,1)=h(1,0)=0.035;
+    for (const auto& a:alpha)
+      for (const auto& b:beta) {
+        products_alpha.push_back(a);
+        products_beta.push_back(b);
+        terms.emplace_back();
+      }
+    terms[0].push_back({0,1.0});
+    terms[5].push_back({1,1.0});
+    terms[0].push_back({2,0.6});
+    terms[5].push_back({2,-0.3});
+    terms[23].push_back({2,0.7});
+    auto& packed=eri.packed_active_two_electron_integrals;
+    packed.resize(xmvb::integrals::packed_active_two_electron_integral_count(orbitals));
+    for (int p=0;p<10;++p)
+      for (int q=0;q<=p;++q)
+        packed[xmvb::core::PairIndex::packed_pair_of_pairs_index(p,q)]=
+            0.012*std::cos(0.19*(p+1)*(q+2));
+    topology=xmvb::vb::build_orthogonal_spin_topology(
+        products_alpha,products_beta,orbitals);
+    const Matrix overlap=r0.transpose()*r0;
+    const std::vector<double> flat(overlap.data(),overlap.data()+overlap.size());
+    const auto diagonal=xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder{}
+        .build_davidson_jacobi_preconditioner(
+            products_alpha,products_beta,terms,flat,h,orbitals,eri,structures,
+            topology);
+    cpu=std::make_unique<xmvb::vb::StructureAction>(
+        terms,structures,topology,flat,h,eri,orbitals,&diagonal,
+        xmvb::vb::StructureActionMode::Davidson);
+  }
+};
+
+void check_selected_transport() {
+  Fixture f;
+  xmvb::vb::RepresentationOverlap reference(*f.cpu,
+      f.topology.alpha_reuse_table.unique_determinants,
+      f.topology.beta_reuse_table.unique_determinants,Fixture::orbitals);
+  xmvb::cuda::Context context(128ULL*1024ULL*1024ULL);
+  xmvb::cuda::StructureAction action(context,*f.cpu);
+  xmvb::cuda::SelectedCrossOverlap overlap(context,action,Fixture::orbitals);
+  Matrix d=Matrix::Zero(4,4),e=Matrix::Zero(4,4);
+  d(0,0)=0.12; d(1,1)=-0.09; d(2,2)=0.07; d(3,3)=0.03;
+  d(0,1)=0.14; d(0,3)=-0.05; d(1,2)=0.08; d(2,3)=-0.06;
+  e(0,0)=-0.04; e(1,1)=0.02; e(2,2)=0.03; e(3,3)=-0.01;
+  e(0,2)=0.07; e(1,3)=-0.035;
+  const Matrix trial=f.r0+0.08*d;
+  Vector x(3),y(3),rhs(3);
+  x<<0.37,-0.21,0.49;
+  y<<-0.18,0.33,0.27;
+  rhs<<0.19,-0.41,0.16;
+  xmvb::cuda::Matrix<double> dr0(context,4,4),dt(context,4,4),dd(context,4,4),de(context,4,4);
+  xmvb::cuda::Matrix<double> dx(context,3,1),dy(context,3,1),dout(context,3,1);
+  xmvb::cuda::Matrix<double> dgleft(context,4,4),dgright(context,4,4);
+  xmvb::cuda::copy_to_device(context,dr0.view(),f.r0);
+  xmvb::cuda::copy_to_device(context,dt.view(),trial);
+  xmvb::cuda::copy_to_device(context,dd.view(),d);
+  xmvb::cuda::copy_to_device(context,de.view(),e);
+  xmvb::cuda::copy_to_device(context,dx.view(),x);
+  xmvb::cuda::copy_to_device(context,dy.view(),y);
+  overlap.apply(dt.view(),dr0.view(),dx.view(),dout.view());
+  near(download(context,dout.view()),reference.apply(trial,f.r0,x),2e-10,
+       "selected cross-frame overlap differs from CPU");
+  overlap.apply_direction(dt.view(),dr0.view(),dd.view(),de.view(),
+                          dx.view(),dout.view());
+  near(download(context,dout.view()),
+       reference.apply_direction(trial,f.r0,d,e,x),2e-9,
+       "selected cross-frame direction differs from CPU");
+  overlap.adjoint(dt.view(),dr0.view(),dy.view(),dx.view(),
+                  dgleft.view(),dgright.view());
+  const auto expected=reference.adjoint(trial,f.r0,y,x);
+  near(download(context,dgleft.view()),expected.left,3e-9,
+       "selected cross-frame left adjoint differs from CPU");
+  near(download(context,dgright.view()),expected.right,3e-9,
+       "selected cross-frame right adjoint differs from CPU");
+  overlap.adjoint_direction(dt.view(),dr0.view(),dd.view(),de.view(),
+      dy.view(),dx.view(),{}, {},dgleft.view(),dgright.view());
+  const auto directional=reference.adjoint_direction(trial,f.r0,d,e,y,x);
+  near(download(context,dgleft.view()),directional.left,4e-8,
+       "selected cross-frame directional left adjoint differs from CPU");
+  near(download(context,dgright.view()),directional.right,4e-8,
+       "selected cross-frame directional right adjoint differs from CPU");
+
+  xmvb::cuda::copy_to_device(context,dx.view(),rhs);
+  overlap.solve_metric(dt.view(),dx.view(),dout.view());
+  const Matrix identity=Matrix::Identity(3,3);
+  const Matrix gram=reference.apply(trial,trial,identity);
+  near(download(context,dout.view()),gram.llt().solve(rhs),3e-8,
+       "selected metric GPU solve differs from exact selected Gram");
+
+  Vector c0(3); c0<<0.51,-0.36,0.28;
+  const Matrix gram0=reference.apply(f.r0,f.r0,identity);
+  c0/=std::sqrt(c0.dot(gram0*c0));
+  Matrix c0_block(3,1);
+  c0_block.col(0)=c0;
+  const auto images=f.cpu->apply(c0_block);
+  xmvb::cuda::Matrix<double> dc0(context,3,1),dhc0(context,3,1),dmc0(context,3,1);
+  xmvb::cuda::copy_to_device(context,dc0.view(),c0);
+  xmvb::cuda::copy_to_device(context,dhc0.view(),images.hamiltonian);
+  xmvb::cuda::copy_to_device(context,dmc0.view(),images.overlap);
+  xmvb::cuda::SingleStateCiTransport transport(
+      context,overlap,dr0.view(),dc0.view(),dhc0.view(),dmc0.view(),1.0);
+  const Vector gc0=download(context,transport.origin_coefficient_gradient());
+  require(gc0.norm()>1e-3,
+          "transport test did not retain a finite CI residual");
+  Matrix b(3,3); b<<0.4,0.03,-0.02, 0.03,0.7,0.06, -0.02,0.06,0.5;
+  Vector u(3); u<<0.12,-0.08,0.17;
+  struct Value { double energy; double orbital; double ci; };
+  const auto evaluate=[&](double orbital,double ci) -> Value {
+    const Matrix frame=f.r0+orbital*d;
+    const Matrix origin_direction=orbital*d;
+    const Vector base=c0+ci*u;
+    xmvb::cuda::copy_to_device(context,dt.view(),frame);
+    xmvb::cuda::copy_to_device(context,dd.view(),origin_direction);
+    xmvb::cuda::copy_to_device(context,dx.view(),base);
+    const auto point=transport.retract(dt.view(),dd.view(),dx.view());
+    const Vector coeff=download(context,point.coefficients.view());
+    const Vector delta=coeff-c0;
+    const double physical=gc0.dot(delta)+0.5*delta.dot(b*delta);
+    const Vector coefficient_gradient=gc0+b*delta;
+    xmvb::cuda::copy_to_device(context,dy.view(),coefficient_gradient);
+    const auto model=transport.evaluate_model(point,physical,dy.view());
+    const Matrix current=download(context,model.current_upper.view());
+    const Matrix origin=download(context,model.origin_upper.view());
+    const Vector ci_covector=download(context,model.structure_covector.view());
+    return {model.energy,(current+origin).cwiseProduct(d).sum(),
+            std::sqrt(2.0)*ci_covector.dot(u)};
+  };
+  constexpr double step=2e-5;
+  const auto model=evaluate(0.035,-0.023);
+  const double orbital_fd=(evaluate(0.035+step,-0.023).energy-
+                           evaluate(0.035-step,-0.023).energy)/(2*step);
+  const double ci_fd=(evaluate(0.035,-0.023+step).energy-
+                      evaluate(0.035,-0.023-step).energy)/(2*step);
+  require(std::abs(model.orbital-orbital_fd)<2e-5,
+          "finite-residual transport orbital VJP fails model difference");
+  require(std::abs(model.ci-ci_fd)<2e-5,
+          "finite-residual transport CI VJP fails model difference");
+  const double origin=evaluate(0.0,0.0).energy;
+  const double second_orbital=(evaluate(1e-3,0.0).energy+
+      evaluate(-1e-3,0.0).energy-2*origin)/1e-6;
+  require(std::abs(second_orbital)<3e-4,
+          "residual-balanced origin orbital Hessian was not affine");
+  const double second_ci=(evaluate(0.0,1e-3).energy+
+      evaluate(0.0,-1e-3).energy-2*origin)/1e-6;
+  require(std::abs(second_ci-u.dot(b*u))<3e-4,
+          "residual-balanced origin CI Hessian differs from affine model");
+  const double mixed=(evaluate(1e-3,1e-3).energy-
+      evaluate(1e-3,-1e-3).energy-
+      evaluate(-1e-3,1e-3).energy+
+      evaluate(-1e-3,-1e-3).energy)/(4e-6);
+  require(std::abs(mixed)<3e-4,
+          "residual-balanced origin mixed Hessian was not affine");
+}
+
+}  // namespace
+
+int main() {
+  try {
+    check_selected_transport();
+    std::cout<<"CUDA selected CI transport and residual-balanced model: PASS\n";
+  } catch (const std::exception& error) {
+    std::cerr<<error.what()<<'\n';
+    return 1;
+  }
+}

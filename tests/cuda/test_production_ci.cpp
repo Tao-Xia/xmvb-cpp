@@ -199,7 +199,11 @@ void check_sigma(int rhs_count, bool rotated) {
   gpu.apply_generator(d_right.view(),d_generator.view(),d_image.view());
   near(download(context,d_image),cpu.apply_one_body_generator(right,generator),
        3.0e-10,"CUDA nonsymmetric CI generator differs from CPU");
+  const auto fused_bytes=gpu.resident_bytes();
   gpu.one_body_generator_adjoint(d_left.view(),d_right.view(),d_generator_adjoint.view());
+  require(gpu.resident_bytes()-fused_bytes <= sizeof(double)*
+          (2*static_cast<std::size_t>(pairs)+left.size()),
+          "CUDA generator adjoint duplicated a fused channel slab");
   const Matrix generator_adjoint=download(context,d_generator_adjoint);
   near(generator_adjoint,cpu.one_body_generator_adjoint(left,right),3.0e-10,
        "CUDA nonsymmetric generator adjoint differs from CPU");
@@ -207,6 +211,31 @@ void check_sigma(int rhs_count, bool rotated) {
                    bilinear(left,download(context,d_image))) <
               3.0e-10*std::max(1.0,left.norm()*right.norm()*generator.norm()),
           "CUDA generator violates forward/adjoint pairing");
+  gpu.apply_with_adjoint(d_left.view(),d_right.view(),d_image.view(),
+                         d_h.view(),d_g.view());
+  near(download(context,d_image),fused.sigma,3.0e-10,
+       "CUDA fused sigma changed after generator workspace reuse");
+  near(download(context,d_g),fused.integrals.pair_kernel,3.0e-10,
+       "CUDA fused adjoint changed after generator workspace reuse");
+
+  // The ordinary action captures scattered_/transformed_ addresses. A
+  // generator VJP must borrow them without invalidating the captured graph.
+  xmvb::cuda::DirectCiSigma captured_generator(context,cpu);
+  captured_generator.prepare(rhs_count);
+  const xmvb::cuda::Graph captured_before_generator(context,[&] {
+    captured_generator.apply(d_right.view(),d_image.view());
+  });
+  const auto captured_bytes=captured_generator.resident_bytes();
+  captured_generator.one_body_generator_adjoint(
+      d_left.view(),d_right.view(),d_generator_adjoint.view());
+  require(captured_generator.resident_bytes()-captured_bytes <= sizeof(double)*
+          (2*static_cast<std::size_t>(pairs)+left.size()),
+          "CUDA generator adjoint duplicated a captured channel slab");
+  near(download(context,d_generator_adjoint),generator_adjoint,3.0e-10,
+       "CUDA captured sigma generator adjoint differs from CPU");
+  captured_before_generator.launch();
+  near(download(context,d_image),cpu.apply(right),3.0e-10,
+       "CUDA generator workspace reuse invalidated captured sigma");
 
   auto changed=integrals;
   changed.one_electron+=0.03*symmetric_values(n,1.92);

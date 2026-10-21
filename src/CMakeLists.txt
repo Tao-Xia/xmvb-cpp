@@ -61,6 +61,7 @@ set(XMVB_INTEGRAL_SOURCES
   integrals/response/generated_rows.cpp)
 
 set(XMVB_LINALG_SOURCES
+  core/pair_index.cpp
   linalg/exponential.cpp
   linalg/eigensolver.cpp
   linalg/eigen_response.cpp
@@ -163,6 +164,7 @@ file(
   GLOB_RECURSE _xmvb_discovered_component_sources
   CONFIGURE_DEPENDS
   RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/core/*.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/guess/*.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/scf/*.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/dft/*.cpp"
@@ -253,7 +255,6 @@ endif()
 target_link_libraries(xmvb_linalg PUBLIC ${LAPACKE_LIB} ${LAPACK_LIB} xmvb_openmp m)
 
 xmvb_add_component(xmvb_integrals
-  core/pair_index.cpp
   ${XMVB_INTEGRAL_SOURCES})
 target_link_libraries(xmvb_integrals PUBLIC xmvb_linalg ${CINT_LIB})
 

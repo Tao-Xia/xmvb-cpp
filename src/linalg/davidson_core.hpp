@@ -187,15 +187,23 @@ void validate_images(Backend& backend, ConstMatrixView h, ConstMatrixView s,
 }
 
 /** Shared iteration and stopping decisions for host and CUDA storage. */
-template <class Result = DavidsonResult, class Backend, class InitialVectors>
+template <class Result = DavidsonResult, class Backend, class InitialVectors,
+          class HamiltonianDiagonal, class OverlapDiagonal>
 Result solve_davidson(
     Backend& backend,
-    const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
-    const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
+    const HamiltonianDiagonal& hamiltonian_diagonal,
+    const OverlapDiagonal& overlap_diagonal,
     const InitialVectors& initial_vectors,
     const DavidsonOptions& options) {
-  const int dimension = static_cast<int>(hamiltonian_diagonal.size());
-  validate_davidson_diagonals(hamiltonian_diagonal, overlap_diagonal);
+  const int dimension = [&] {
+    if constexpr (std::is_same_v<HamiltonianDiagonal, ConstMatrixView>) {
+      backend.validate_diagonals(hamiltonian_diagonal, overlap_diagonal);
+      return static_cast<int>(hamiltonian_diagonal.rows);
+    } else {
+      validate_davidson_diagonals(hamiltonian_diagonal, overlap_diagonal);
+      return static_cast<int>(hamiltonian_diagonal.size());
+    }
+  }();
   validate_davidson_options(dimension, options);
   const auto initial_rows = [&] {
     if constexpr (std::is_same_v<InitialVectors, ConstMatrixView>) {

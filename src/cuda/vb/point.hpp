@@ -19,12 +19,21 @@ class VbPoint {
           linalg::ConstMatrixView core,double nuclear_repulsion);
 
   double evaluate(linalg::ConstMatrixView raw,linalg::ConstMatrixView coefficients);
+  /** Prepare a new orbital point once before CI relaxation. */
+  void prepare(linalg::ConstMatrixView raw);
+  /** Evaluate the relaxed or fixed CI state using the prepared integrals. */
+  double evaluate_coefficients(linalg::ConstMatrixView coefficients);
+  void activate() const { select_frame(); }
   void gradient(linalg::MatrixView orbital,linalg::MatrixView structure) const;
   /** @brief Joint Hessian action, not a relaxed orbital response solve. */
   void hessian(linalg::ConstMatrixView orbital,linalg::ConstMatrixView structure,
                linalg::MatrixView orbital_image,linalg::MatrixView structure_image) const;
 
   const OrbitalGeometry& geometry() const noexcept { return geometry_; }
+  linalg::ConstMatrixView effective_one_electron() const noexcept { return effective_.view(); }
+  linalg::ConstMatrixView one_electron_adjoint() const noexcept { return one_adjoint_.view(); }
+  /** Full Frobenius cotangent of the symmetric orthogonal active pair kernel. */
+  linalg::ConstMatrixView pair_kernel_adjoint() const noexcept { return pair_adjoint_.view(); }
   linalg::ConstMatrixView one_electron() const noexcept { return one_.view(); }
   linalg::ConstMatrixView pair_kernel() const noexcept { return pair_.view(); }
   double energy() const noexcept { return total_energy_; }
@@ -44,7 +53,8 @@ class VbPoint {
   Matrix<double> one_adjoint_,pair_adjoint_,frame_gradient_,frame_moment_;
   Matrix<double> active_gradient_,density_gradient_;
   mutable Matrix<double> carrier_scratch_;
-  bool ready_=false;
+  bool ready_=false,prepared_=false;
+  double core_energy_=0.0;
 };
 
 }  // namespace xmvb::cuda

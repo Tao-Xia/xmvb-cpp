@@ -416,6 +416,20 @@ void FullMetric::ci_covector_to_structure(linalg::ConstMatrixView covector,
   }
 }
 
+void FullMetric::inverse_metric(linalg::ConstMatrixView covector,
+                                linalg::MatrixView structure) const {
+  validate(covector,structure);
+  // Match the factorized CPU FULL inverse: G^-1 W^T T^-1 T^-T W G^-1.
+  for (std::int64_t column=0;column<covector.cols;++column) {
+    spin_->solve(covector.column(column),structure_.view(),SpinMetric::Part::Gram);
+    action_->expand_spin(structure_.view(),carrier_.view());
+    action_->apply_inverse_adjoint_orbital_transform(carrier_.view());
+    action_->apply_inverse_orbital_transform(carrier_.view());
+    action_->contract_spin(carrier_.view(),structure_.view());
+    spin_->solve(structure_.view(),structure.column(column),SpinMetric::Part::Gram);
+  }
+}
+
 void FullMetric::apply_ci_hamiltonian(linalg::ConstMatrixView coordinates,
                                       linalg::MatrixView image) const {
   validate(coordinates,image);

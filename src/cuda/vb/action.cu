@@ -33,6 +33,35 @@ __global__ void divide_diagonal(linalg::MatrixView carrier,
   carrier.data[row+column*carrier.ld]/=denominator;
 }
 
+__global__ void assemble_carrier_jacobi(const std::int64_t* row_offsets,
+    const std::int64_t* products,const std::int64_t* columns,
+    const double* weights,const double* carrier_diagonal,
+    const double* alpha_scales,const double* beta_scales,
+    double* hamiltonian,double* overlap,std::int64_t groups,
+    int n_alpha,int n_beta) {
+  const std::int64_t group=static_cast<std::int64_t>(blockIdx.x)*blockDim.x+threadIdx.x;
+  if (group>=groups) return;
+  const auto product=products[group];
+  const int a=static_cast<int>(product%n_alpha);
+  const int b=static_cast<int>(product/n_alpha);
+  const double scaled=alpha_scales[a]*beta_scales[b];
+  const double energy=carrier_diagonal[product];
+  for (auto term=row_offsets[group];term<row_offsets[group+1];++term) {
+    const auto structure=columns[term];
+    bool first=true;
+    for (auto prior=row_offsets[group];prior<term;++prior)
+      if (columns[prior]==structure) { first=false; break; }
+    if (!first) continue;
+    double combined=0.0;
+    for (auto matching=term;matching<row_offsets[group+1];++matching)
+      if (columns[matching]==structure) combined+=weights[matching];
+    const double coefficient=scaled*combined;
+    const double square=coefficient*coefficient;
+    atomicAdd(hamiltonian+structure,square*energy);
+    atomicAdd(overlap+structure,square);
+  }
+}
+
 void check_sparse(cusparseStatus_t status, const char* operation) {
   if (status != CUSPARSE_STATUS_SUCCESS)
     throw std::runtime_error(std::string(operation) + ": " + cusparseGetErrorString(status));
@@ -74,6 +103,7 @@ struct StructureAction::Impl {
   mutable Matrix<double> carrier_diagonal;
   std::unique_ptr<Graph> graph;
   double graph_seconds=0;
+  std::uint64_t version=0;
 
   Impl(Context& ctx, const vb::StructureAction& source)
       : context(ctx), structures(source.n_structures()),
@@ -225,12 +255,41 @@ std::size_t StructureAction::graph_nodes() const noexcept { return impl_->graph-
 const vb::StructureDiagonal& StructureAction::preconditioner_diagonal() const noexcept {
   return impl_->diagonal;
 }
+std::uint64_t StructureAction::version() const noexcept { return impl_->version; }
+void StructureAction::diagonal_model(linalg::MatrixView h,
+    linalg::MatrixView m) const {
+  auto& p=*impl_;
+  if (h.rows!=p.structures || m.rows!=p.structures || h.cols!=1 || m.cols!=1 ||
+      h.ld<h.rows || m.ld<m.rows || !h.data || !m.data || h.data==m.data)
+    throw std::invalid_argument("CUDA carrier Jacobi dimensions");
+  if (p.carrier_diagonal.rows()==0) {
+    p.carrier_diagonal=Matrix<double>(p.context,p.alpha,p.beta);
+    p.sigma.diagonal(p.carrier_diagonal.view());
+  }
+  check_cuda(cudaMemsetAsync(h.data,0,p.structures*sizeof(double),p.context.stream()),
+      "clear carrier Jacobi H");
+  check_cuda(cudaMemsetAsync(m.data,0,p.structures*sizeof(double),p.context.stream()),
+      "clear carrier Jacobi M");
+  const auto blocks=(p.groups+255)/256;
+  if (blocks>std::numeric_limits<unsigned int>::max())
+    throw std::overflow_error("CUDA carrier Jacobi grid overflow");
+  assemble_carrier_jacobi<<<static_cast<unsigned int>(blocks),256,0,p.context.stream()>>>(
+      p.row_offsets.data(),p.product_indices.data(),p.columns.data(),
+      p.weights.data(),p.carrier_diagonal.data(),
+      p.alpha_transform.scale_data(),p.beta_transform->scale_data(),
+      h.data,m.data,p.groups,p.alpha,p.beta);
+  check_cuda(cudaGetLastError(),"CUDA carrier Jacobi assembly");
+}
 const DirectCiSigma& StructureAction::carrier_sigma() const noexcept { return impl_->sigma; }
+void StructureAction::update_frame(linalg::ConstMatrixView upper) {
+  impl_->alpha_transform.update_upper(upper);
+  if (impl_->beta_storage) impl_->beta_storage->update_upper(upper);
+  ++impl_->version;
+}
 void StructureAction::update_integrals(linalg::ConstMatrixView h,
     linalg::ConstMatrixView g,linalg::ConstMatrixView upper) {
   impl_->sigma.update_integrals(h,g);
-  impl_->alpha_transform.update_upper(upper);
-  if (impl_->beta_storage) impl_->beta_storage->update_upper(upper);
+  update_frame(upper);
   if (impl_->carrier_diagonal.rows()) impl_->sigma.diagonal(impl_->carrier_diagonal.view());
 }
 void StructureAction::apply(linalg::ConstMatrixView vectors,
@@ -286,6 +345,11 @@ void StructureAction::apply_orbital_transform(linalg::MatrixView carrier) const 
 void StructureAction::apply_inverse_orbital_transform(linalg::MatrixView carrier) const {
   impl_->beta_transform->apply_right(carrier,false,true);
   impl_->alpha_transform.apply_left(carrier,false,true);
+}
+void StructureAction::apply_inverse_adjoint_orbital_transform(
+    linalg::MatrixView carrier) const {
+  impl_->beta_transform->apply_right(carrier,true,true);
+  impl_->alpha_transform.apply_left(carrier,true,true);
 }
 void StructureAction::apply_adjoint_orbital_transform(linalg::MatrixView carrier) const {
   impl_->beta_transform->apply_right(carrier,true);

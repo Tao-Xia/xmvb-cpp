@@ -44,6 +44,13 @@ __global__ void finite_matrix_kernel(const double* values,
   }
 }
 
+__global__ void valid_diagonal_kernel(linalg::ConstMatrixView h,
+    linalg::ConstMatrixView s,int* valid) {
+  const auto i=static_cast<std::int64_t>(blockIdx.x)*blockDim.x+threadIdx.x;
+  if (i<h.rows && (!isfinite(h.data[i]) || !isfinite(s.data[i]) || !(s.data[i]>0.0)))
+    atomicExch(valid,0);
+}
+
 struct DeviceBackend {
   using Matrix = cuda::Matrix<double>;
   static constexpr bool supports_host_callbacks = false;
@@ -52,6 +59,7 @@ struct DeviceBackend {
   const DeviceEigenPreconditioner& inverse;
   Buffer<double> diagonal_h;
   Buffer<double> diagonal_s;
+  linalg::ConstMatrixView h_diagonal,s_diagonal;
 
   DeviceBackend(Context& context_, const DeviceEigenAction& action_,
                 const Eigen::Ref<const Eigen::VectorXd>& h,
@@ -64,8 +72,30 @@ struct DeviceBackend {
                            static_cast<std::size_t>(h.size()) * sizeof(double));
     context.copy_to_device(diagonal_s.data(), s.data(),
                            static_cast<std::size_t>(s.size()) * sizeof(double));
+    h_diagonal={diagonal_h.data(),h.size(),1,h.size()};
+    s_diagonal={diagonal_s.data(),s.size(),1,s.size()};
     check_cublas(cublasSetPointerMode(context.blas(), CUBLAS_POINTER_MODE_HOST),
                  "cublasSetPointerMode");
+  }
+
+  DeviceBackend(Context& c,const DeviceEigenAction& a,
+      linalg::ConstMatrixView h,linalg::ConstMatrixView s,
+      const DeviceEigenPreconditioner& p)
+      : context(c),action(a),inverse(p),h_diagonal(h),s_diagonal(s) {
+    check_cublas(cublasSetPointerMode(context.blas(),CUBLAS_POINTER_MODE_HOST),
+                 "cublasSetPointerMode");
+  }
+  void validate_diagonals(linalg::ConstMatrixView h,linalg::ConstMatrixView s) const {
+    if (!h.data || !s.data || h.rows<=0 || h.rows>std::numeric_limits<int>::max() ||
+        h.cols!=1 || s.cols!=1 || s.rows!=h.rows || h.ld<h.rows || s.ld<s.rows)
+      throw std::invalid_argument("invalid device Davidson diagonals");
+    Buffer<int> valid(context,1);
+    const int initial=1;
+    context.copy_to_device(valid.data(),&initial,sizeof(int));
+    valid_diagonal_kernel<<<blas_int((h.rows+255)/256),256,0,context.stream()>>>(h,s,valid.data());
+    check_cuda(cudaGetLastError(),"validate device Davidson diagonals");
+    int result=0;context.copy_to_host(&result,valid.data(),sizeof(int));
+    if (!result) throw std::invalid_argument("invalid device Davidson diagonal values");
   }
 
   Matrix make(std::int64_t rows, std::int64_t cols) const {
@@ -201,10 +231,11 @@ struct DeviceBackend {
                             destination.data, 1),
                  "cublasDgemv");
   }
+  template<class H,class S>
   void precondition(linalg::MatrixView correction,
                     linalg::ConstMatrixView residual,
-                    const Eigen::Ref<const Eigen::VectorXd>&,
-                    const Eigen::Ref<const Eigen::VectorXd>&,
+                    const H&,
+                    const S&,
                     double lambda) const {
     if (inverse) {
       inverse(residual, lambda, correction);
@@ -217,7 +248,7 @@ struct DeviceBackend {
     constexpr int threads = 256;
     const int blocks = blas_int((count + threads - 1) / threads);
     jacobi_correction_kernel<<<blocks, threads, 0, context.stream()>>>(
-        correction.data, residual.data, diagonal_h.data(), diagonal_s.data(),
+        correction.data, residual.data, h_diagonal.data, s_diagonal.data,
         count, lambda);
     check_cuda(cudaGetLastError(), "Davidson Jacobi kernel launch");
   }
@@ -332,6 +363,18 @@ DeviceDavidsonResult solve_device_davidson(
   return linalg::detail::solve_davidson<DeviceDavidsonResult>(
       backend, hamiltonian_diagonal, overlap_diagonal, initial_vectors,
       options);
+}
+
+DeviceDavidsonResult solve_device_davidson(
+    Context& context,const DeviceEigenAction& action,
+    linalg::ConstMatrixView hamiltonian_diagonal,
+    linalg::ConstMatrixView overlap_diagonal,
+    linalg::ConstMatrixView initial_vectors,
+    const linalg::DavidsonOptions& options,
+    const DeviceEigenPreconditioner& preconditioner) {
+  DeviceBackend backend(context,action,hamiltonian_diagonal,overlap_diagonal,preconditioner);
+  return linalg::detail::solve_davidson<DeviceDavidsonResult>(backend,
+      hamiltonian_diagonal,overlap_diagonal,initial_vectors,options);
 }
 
 }  // namespace xmvb::cuda

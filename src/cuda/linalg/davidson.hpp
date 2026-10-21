@@ -80,6 +80,15 @@ DeviceDavidsonResult solve_device_davidson(
 /** The borrowed initial block is copied device-to-device before iteration. */
 DeviceDavidsonResult solve_device_davidson(
     Context& context, const DeviceEigenAction& action,
+    linalg::ConstMatrixView hamiltonian_diagonal,
+    linalg::ConstMatrixView overlap_diagonal,
+    linalg::ConstMatrixView initial_vectors,
+    const linalg::DavidsonOptions& options,
+    const DeviceEigenPreconditioner& preconditioner = {});
+
+/** The borrowed initial block is copied device-to-device before iteration. */
+DeviceDavidsonResult solve_device_davidson(
+    Context& context, const DeviceEigenAction& action,
     const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
     const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
     linalg::ConstMatrixView initial_vectors,

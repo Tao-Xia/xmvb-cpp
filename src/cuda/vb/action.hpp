@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <cstdint>
 #include <Eigen/Core>
 
 #include "cuda/memory/context.hpp"
@@ -34,7 +35,19 @@ class StructureAction {
   double graph_build_seconds() const noexcept;
   std::size_t graph_nodes() const noexcept;
   int n_structures() const noexcept { return size(); }
+  /** Frozen source-point CPU diagnostic only; dynamic device solvers use
+   * diagonal_model() and must never use this after a frame/integral update.
+   */
   const vb::StructureDiagonal& preconditioner_diagonal() const noexcept;
+  /** Dynamic, positive-overlap carrier Jacobi model (not exact H/M diagonals).
+   * W squared weights the current orthogonal carrier diagonal and the current
+   * exterior determinant scales. Outputs are device column vectors.
+   */
+  void diagonal_model(linalg::MatrixView hamiltonian,
+                      linalg::MatrixView overlap) const;
+  std::uint64_t version() const noexcept;
+  /** Change the orbital frame without modifying the current sigma kernel. */
+  void update_frame(linalg::ConstMatrixView upper);
   /** @brief Replace only current numerical integrals/frame; topology is shared. */
   void update_integrals(linalg::ConstMatrixView one_electron,
       linalg::ConstMatrixView pair_kernel,linalg::ConstMatrixView upper);
@@ -48,6 +61,7 @@ class StructureAction {
   /** @brief In-place orbital maps on packed alpha-by-(beta*RHS) panels. */
   void apply_orbital_transform(linalg::MatrixView carrier) const;
   void apply_inverse_orbital_transform(linalg::MatrixView carrier) const;
+  void apply_inverse_adjoint_orbital_transform(linalg::MatrixView carrier) const;
   void apply_adjoint_orbital_transform(linalg::MatrixView carrier) const;
   void apply_carrier_hamiltonian(linalg::ConstMatrixView carrier,
                                 linalg::MatrixView image) const;
