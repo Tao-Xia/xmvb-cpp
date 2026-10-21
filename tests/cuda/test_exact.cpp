@@ -462,6 +462,21 @@ void check_one_electron_and_core(bool compact) {
       dc.view(), dd.view(), da.view(), dda.view(), dout.view());
   near(download(context, dout), reference_jk(fixture, active_density_direction),
        "CUDA directional active-core density adjoint differs from oracle");
+  xmvb::cuda::Buffer<double> half;
+  auto exchange=gpu.prepare_exchange(dc.view(),&half);
+  require(half.empty()==compact,"CUDA one-index image admission differs");
+  if (!half.empty()) {
+    const xmvb::cuda::ConstPairPanel retained{half.data(),fixture.ao_pairs,
+        fixture.n_bf*active,fixture.n_bf*active};
+    gpu.half_density_response(retained,dd.view(),dout.view());
+    near(download(context,dout),reference_jk(fixture,
+        direction*c.transpose()+c*direction.transpose()),
+        "CUDA half-density JK differs from four-index oracle");
+    gpu.active_core_density_directional_adjoint(dc.view(),dd.view(),da.view(),
+        dda.view(),dout.view(),retained);
+    near(download(context,dout),reference_jk(fixture,active_density_direction),
+        "CUDA retained-half density derivative differs from oracle");
+  }
 }
 
 void check_budgeted_pair_tiles(bool compact) {

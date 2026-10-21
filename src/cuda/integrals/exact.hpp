@@ -68,7 +68,14 @@ class ExactAoPairOperator {
    * A one-active-index graph sweep and GEMM build this shared exchange image.
    * Empty means the exact device-streamed representation remains in use.
    */
-  Buffer<double> prepare_exchange(linalg::ConstMatrixView coefficients) const;
+  Buffer<double> prepare_exchange(linalg::ConstMatrixView coefficients,
+      Buffer<double>* half_products = nullptr) const;
+
+  /** Apply G(V C^T+C V^T) using accepted (mu nu|k a) half products.
+   * The triangular AO-pair image is shared by all directions.
+   */
+  void half_density_response(ConstPairPanel half_products,
+      linalg::ConstMatrixView factor,linalg::MatrixView output) const;
 
   /** Contract K(C weights C^T) from a prepared exchange image, without ERIs. */
   void exchange_density(ConstPairPanel exchange,linalg::ConstMatrixView weights,
@@ -145,12 +152,13 @@ class ExactAoPairOperator {
       linalg::ConstMatrixView direction,
       linalg::ConstMatrixView active_adjoint,
       linalg::ConstMatrixView active_adjoint_direction,
-      linalg::MatrixView density_adjoint_direction) const;
+      linalg::MatrixView density_adjoint_direction,
+      ConstPairPanel half_products = {}) const;
 
  private:
   std::size_t response_capacity() const;
   void build_exchange_image(linalg::ConstMatrixView coefficients,
-      PairPanel image,bool diagonal) const;
+      PairPanel image,bool diagonal,PairPanel half_products = {}) const;
   void validate_coefficients(linalg::ConstMatrixView coefficients) const;
   void validate_panel(ConstPairPanel panel) const;
   void validate_panel(PairPanel panel) const;

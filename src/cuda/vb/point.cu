@@ -114,6 +114,7 @@ void VbPoint::prepare(View raw) {
   ready_=false;
   prepared_=false;
   exchange_products_={};
+  half_products_={};
   auto& c=*context_;
   geometry_.set_raw(raw);geometry_.prepare();
   Matrix<double> core_energy(c,1,1);
@@ -133,7 +134,7 @@ void VbPoint::prepare(View raw) {
 void VbPoint::prepare_exchange() {
   if (!ready_) throw std::logic_error("CUDA exchange preparation requires an evaluated point");
   if (pair_products_.empty() || !exchange_products_.empty()) return;
-  exchange_products_=integrals_->prepare_exchange(geometry_.orthogonal_active());
+  exchange_products_=integrals_->prepare_exchange(geometry_.orthogonal_active(),&half_products_);
 }
 
 double VbPoint::evaluate_coefficients(View coefficients) {
@@ -254,7 +255,10 @@ void VbPoint::hessian(View orbital,View structure,Out orbital_image,Out structur
   add(c,dfgrad.view(),one_extra.view());
   Matrix<double> dpgrad(c,density_gradient_.rows(),density_gradient_.cols());
   integrals_->active_core_density_directional_adjoint(geometry_.orthogonal_active(),
-      d.orthogonal_active.view(),one_adjoint_.view(),dha.view(),dpgrad.view());
+      d.orthogonal_active.view(),one_adjoint_.view(),dha.view(),dpgrad.view(),
+      half_products_.empty() ? ConstPairPanel{}:ConstPairPanel{half_products_.data(),
+          integrals_->pair_count(),geometry_.basis_size()*one_.rows(),
+          geometry_.basis_size()*one_.rows()});
   add(c,dpgrad.view(),dheff.view(),2.0);
   geometry_.pullback_direction(d,{},density_gradient_.view(),{},frame_gradient_.view(),
       active_gradient_.view(),{},dpgrad.view(),{},dframe_gradient.view(),dfgrad.view(),orbital_image);

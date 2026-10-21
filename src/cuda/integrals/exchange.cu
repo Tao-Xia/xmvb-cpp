@@ -5,6 +5,7 @@
 #include <stdexcept>
 
 #include <nvtx3/nvtx3.hpp>
+#include <cub/block/block_reduce.cuh>
 
 #include "cuda/linalg/blas.hpp"
 
@@ -54,6 +55,36 @@ __global__ void store_exchange(View transformed,int mu,int n,PairPanel exchange,
     exchange.data[static_cast<std::int64_t>(pair(mu,nu))*exchange.ld+channel]=
         transformed.data[nu*n+b+transformed.ld*a];
   }
+}
+
+// Keep the already computed one-index image, without another ERI traversal.
+__global__ void store_half(const double* half,int mu,int nbf,int n,PairPanel image) {
+  const auto width=static_cast<std::int64_t>(nbf)*n;
+  const auto work=static_cast<std::int64_t>(mu+1)*width;
+  for (auto k=blockIdx.x*static_cast<std::int64_t>(blockDim.x)+threadIdx.x;
+       k<work;k+=gridDim.x*static_cast<std::int64_t>(blockDim.x))
+    image.data[static_cast<std::int64_t>(pair(mu,static_cast<int>(k/width)))*image.ld+
+        k%width]=half[k];
+}
+
+__global__ void half_jk(ConstPairPanel half,View v,const double* j,Out out,int nbf,int n) {
+  using Reduce=cub::BlockReduce<double,256>;
+  __shared__ typename Reduce::TempStorage storage;
+  const int mu=blockIdx.x%nbf,nu=blockIdx.x/nbf;
+  double sum=0.0;
+  for (int ka=threadIdx.x;ka<nbf*n;ka+=blockDim.x) {
+    const int k=ka/n,a=ka%n;
+    sum+=(half.data[static_cast<std::int64_t>(pair(mu,k))*half.ld+nu*n+a]+
+          half.data[static_cast<std::int64_t>(pair(nu,k))*half.ld+mu*n+a])*
+        v.data[k+v.ld*a];
+  }
+  sum=Reduce(storage).Sum(sum);
+  if (threadIdx.x==0) out.data[mu+out.ld*nu]=4.0*j[pair(mu,nu)]-sum;
+}
+
+__global__ void pack_factor(View v,double* packed,int nbf,int n) {
+  for (int k=blockIdx.x*blockDim.x+threadIdx.x;k<nbf*n;k+=gridDim.x*blockDim.x)
+    packed[k]=v.data[k/n+v.ld*(k%n)];
 }
 
 __global__ void density_image(ConstPairPanel exchange,View weights,Out out,double scale) {
@@ -114,9 +145,10 @@ std::size_t ExactAoPairOperator::response_capacity() const {
   return std::min(free,budget-used);
 }
 
-Buffer<double> ExactAoPairOperator::prepare_exchange(View c) const {
+Buffer<double> ExactAoPairOperator::prepare_exchange(View c,Buffer<double>* half_products) const {
   const nvtx3::scoped_range range{"ao.exchange_prepare"};
   validate_coefficients(c);
+  if (half_products) *half_products={};
   // Compact ERIs retain their existing exact device contractions. Preparation
   // needs the resident row graph to visit each row without rescanning the stream.
   if (compact_) return {};
@@ -134,11 +166,23 @@ Buffer<double> ExactAoPairOperator::prepare_exchange(View c) const {
   if (static_cast<std::size_t>(workspace)>free/sizeof(double)-2*count) return {};
   Buffer<double> exchange(*context_,count);
   const PairPanel image{exchange.data(),n_pairs_,n2,n2};
-  build_exchange_image(c,image,false);
+  PairPanel retained;
+  if (half_products) {
+    const auto half_size=n_pairs_*n_bf_*n;
+    // Account for both accepted/trial points and existing exchange scratch.
+    // If unavailable, the exact device-streamed JK representation remains.
+    if (static_cast<std::size_t>(2*half_size+workspace+count)<=response_capacity()/sizeof(double)) {
+      *half_products=Buffer<double>(*context_,half_size);
+      retained={half_products->data(),n_pairs_,static_cast<std::int64_t>(n_bf_)*n,
+          static_cast<std::int64_t>(n_bf_)*n};
+    }
+  }
+  build_exchange_image(c,image,false,retained);
   return exchange;
 }
 
-void ExactAoPairOperator::build_exchange_image(View c,PairPanel image,bool diagonal) const {
+void ExactAoPairOperator::build_exchange_image(View c,PairPanel image,bool diagonal,
+    PairPanel retained) const {
   const int n=blas_int(c.cols);
   const auto n2=static_cast<std::int64_t>(n)*n;
   const auto half_count=static_cast<std::int64_t>(n_bf_)*n_bf_*n;
@@ -151,12 +195,34 @@ void ExactAoPairOperator::build_exchange_image(View c,PairPanel image,bool diago
         c,row_offsets_.data(),columns_.data(),values_.data(),pair_first_.data(),
         pair_second_.data(),mu,half.data());
     check_cuda(cudaGetLastError(),"CUDA one-active-index exchange transform");
+    if (retained.data) {
+      store_half<<<grid(static_cast<std::int64_t>(mu+1)*n_bf_*n),256,0,
+          context_->stream()>>>(half.data(),mu,n_bf_,n,retained);
+      check_cuda(cudaGetLastError(),"retain CUDA one-index half transform");
+    }
     gemm(*context_,transformed.view(),{half.data(),static_cast<std::int64_t>(n_bf_)*n,
         n_bf_,static_cast<std::int64_t>(n_bf_)*n},c);
     store_exchange<<<grid(static_cast<std::int64_t>(mu+1)*(diagonal ? n:n2)),
         256,0,context_->stream()>>>(transformed.view(),mu,n,image,diagonal);
     check_cuda(cudaGetLastError(),"CUDA triangular exchange image");
   }
+}
+
+void ExactAoPairOperator::half_density_response(ConstPairPanel half,View v,Out out) const {
+  const nvtx3::scoped_range range{"ao.half_density_response"};
+  validate_coefficients(v);
+  const int n=blas_int(v.cols);
+  const auto width=static_cast<std::int64_t>(n_bf_)*n;
+  if (!half.data || half.rows!=n_pairs_ || half.cols!=width || half.ld<width ||
+      !out.data || out.rows!=n_bf_ || out.cols!=n_bf_ || out.ld<n_bf_)
+    throw std::invalid_argument("invalid CUDA half-density response");
+  Matrix<double> packed(*context_,width,1),j(*context_,n_pairs_,1);
+  pack_factor<<<grid(width),256,0,context_->stream()>>>(v,packed.data(),n_bf_,n);
+  check_cuda(cudaGetLastError(),"pack CUDA half-density factor");
+  gemm(*context_,j.view(),{half.data,width,n_pairs_,half.ld},packed.view(),
+      1.0,0.0,Operation::transpose);
+  half_jk<<<n_bf_*n_bf_,256,0,context_->stream()>>>(half,v,j.data(),out,n_bf_,n);
+  check_cuda(cudaGetLastError(),"CUDA projected half-density JK");
 }
 
 void ExactAoPairOperator::exchange_density(ConstPairPanel exchange,View weights,
