@@ -3,6 +3,7 @@
 #include <iostream>
 #include <memory>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 #include <Eigen/Core>
@@ -166,7 +167,7 @@ void check_selected_transport() {
        "selected metric GPU solve differs from exact selected Gram");
   xmvb::cuda::Matrix<double> dgram(context,3,3);
   xmvb::cuda::copy_to_device(context,dgram.view(),gram);
-  auto shared_metric=std::make_shared<xmvb::cuda::SelectedMetric>(context,dgram.view());
+  auto shared_metric=std::make_shared<xmvb::cuda::SelectedMetric>(context,std::move(dgram));
   const auto before_cached_solve=action.version();
   xmvb::linalg::MetricSolveStats cached_stats;
   overlap.solve_metric(dt.view(),dx.view(),dout.view(),{},&cached_stats,
@@ -210,7 +211,7 @@ void check_selected_transport() {
       xmvb::cuda::Matrix<double> device_gram(context,3,3);
       xmvb::cuda::copy_to_device(context,device_gram.view(),selected_gram);
       selected_metric=std::make_shared<xmvb::cuda::SelectedMetric>(
-          context,device_gram.view());
+          context,std::move(device_gram));
     }
     xmvb::cuda::copy_to_device(context,dt.view(),frame);
     xmvb::cuda::copy_to_device(context,dd.view(),origin_direction);
@@ -235,8 +236,10 @@ void check_selected_transport() {
   const auto model=evaluate(0.035,-0.023);
   const Matrix repeated_frame=f.r0+0.035*d;
   const Matrix repeated_gram=reference.apply(repeated_frame,repeated_frame,identity);
-  xmvb::cuda::copy_to_device(context,dgram.view(),repeated_gram);
-  auto repeated_metric=std::make_shared<xmvb::cuda::SelectedMetric>(context,dgram.view());
+  xmvb::cuda::Matrix<double> repeated_device_gram(context,3,3);
+  xmvb::cuda::copy_to_device(context,repeated_device_gram.view(),repeated_gram);
+  auto repeated_metric=std::make_shared<xmvb::cuda::SelectedMetric>(
+      context,std::move(repeated_device_gram));
   const auto repeated_a=evaluate(0.035,-0.023,repeated_metric);
   const auto repeated_b=evaluate(0.035,-0.023,repeated_metric);
   require(std::abs(repeated_a.energy-repeated_b.energy)<1e-12 &&

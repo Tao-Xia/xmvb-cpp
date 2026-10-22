@@ -12,6 +12,7 @@ namespace xmvb::cuda {
 
 class DirectCiSigma;
 class ExteriorTransform;
+class ProductContraction;
 
 /** Exact GPU H/M action in the original selected VB structure coordinates.
  * The sparse incidence and elementary orbital transformations are borrowed
@@ -62,6 +63,8 @@ class StructureAction {
   const ExteriorTransform& alpha_transform() const noexcept;
   const ExteriorTransform& beta_transform() const noexcept;
   const vb::StructureAction::OrthogonalView& orthogonal_view() const noexcept;
+  /** Independent numerical executor reusing this action's uploaded exact support. */
+  std::unique_ptr<ProductContraction> make_product_contraction() const;
   const std::int64_t* product_indices_data() const noexcept;
   const std::int64_t* term_offsets_data() const noexcept;
   const std::int64_t* term_structures_data() const noexcept;

@@ -21,7 +21,7 @@ class Cholesky;
  */
 class SelectedMetric {
  public:
-  SelectedMetric(Context& context,linalg::ConstMatrixView gram);
+  SelectedMetric(Context& context,Matrix<double> gram);
   ~SelectedMetric();
   int dimension() const noexcept { return static_cast<int>(gram_.rows()); }
   linalg::ConstMatrixView diagonal() const noexcept { return diagonal_.view(); }

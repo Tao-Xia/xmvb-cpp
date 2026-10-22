@@ -7,6 +7,7 @@
 #include <map>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <cusolverDn.h>
@@ -132,12 +133,9 @@ void check_panel(linalg::ConstMatrixView input,linalg::MatrixView output,int row
 
 }  // namespace
 
-SelectedMetric::SelectedMetric(Context& context,linalg::ConstMatrixView gram)
-    : context_(&context),gram_(context,selected_dimension(gram),gram.cols),
-      diagonal_(context,gram.rows,1) {
-  check_cuda(cudaMemcpy2DAsync(gram_.data(),gram_.rows()*sizeof(double),
-      gram.data,gram.ld*sizeof(double),gram.rows*sizeof(double),gram.cols,
-      cudaMemcpyDeviceToDevice,context.stream()),"copy selected point Gram");
+SelectedMetric::SelectedMetric(Context& context,Matrix<double> gram)
+    : context_(&context),gram_(std::move(gram)),
+      diagonal_(context,selected_dimension(gram_.view()),1) {
   selected_diagonal<<<(dimension()+255)/256,256,0,context.stream()>>>(
       gram_.view(),diagonal_.data());
   check_cuda(cudaGetLastError(),"selected point metric diagonal");

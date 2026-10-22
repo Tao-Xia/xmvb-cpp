@@ -78,6 +78,17 @@ unsigned int grid_size(std::int64_t count) {
   return static_cast<unsigned int>(blocks);
 }
 
+unsigned int tile_grid(std::int64_t tiles) {
+  if (tiles > std::numeric_limits<unsigned int>::max())
+    throw std::overflow_error("CUDA exterior tile grid is too large");
+  return static_cast<unsigned int>(tiles);
+}
+
+int left_tile_lanes(std::int64_t rhs,int dimension,int shared_values) {
+  return static_cast<int>(std::min<std::int64_t>(
+      {32,rhs,shared_values/dimension}));
+}
+
 // An elementary orbital shear has disjoint determinant source/target pairs.
 // Thus each updated element has one owner, while the complete ordered product
 // still follows the CPU factorization exactly.
@@ -139,16 +150,25 @@ __global__ void exterior_tile(linalg::MatrixView panel,const Edge* edges,
     const double* delta_scales=nullptr,const double* delta_coefficients=nullptr) {
   extern __shared__ double values[];
   const auto row_tiles=(panel.rows+lanes-1)/lanes;
-  const auto column=Right ? blockIdx.x/row_tiles*dimension:blockIdx.x;
+  const auto column=Right ? blockIdx.x/row_tiles*dimension:
+      (support_columns ? blockIdx.x%support_columns:blockIdx.x);
   const auto row_begin=Right ? blockIdx.x%row_tiles*lanes:0;
+  // Supported left panels are RHS-major: lane l owns support column
+  // `column` in a different RHS, so every lane uses the same edge mask.
+  const auto left_begin=support_columns ?
+      (static_cast<std::int64_t>(blockIdx.x)/support_columns*lanes)*support_columns+column:
+      static_cast<std::int64_t>(blockIdx.x)*lanes;
+  const int left_stride=support_columns ? support_columns:1;
   const int work=dimension*lanes;
   for (int k=threadIdx.x;k<work;k+=blockDim.x) {
     const int spin=k/lanes,lane=k%lanes;
     const auto row=Right ? row_begin+lane:spin;
-    const auto col=Right ? column+spin:column;
-    double v=row<panel.rows ? panel.data[row+panel.ld*col]:0.0;
+    const auto col=Right ? column+spin:
+        left_begin+static_cast<std::int64_t>(lane)*left_stride;
+    const bool valid=row<panel.rows && col<panel.cols;
+    double v=valid ? panel.data[row+panel.ld*col]:0.0;
     if constexpr (Tangent) {
-      double dv=row<panel.rows ? tangent.data[row+tangent.ld*col]:0.0;
+      double dv=valid ? tangent.data[row+tangent.ld*col]:0.0;
       if (!adjoint) dv=scales[spin]*dv+delta_scales[spin]*v;
       values[work+k]=dv;
     }
@@ -181,15 +201,16 @@ __global__ void exterior_tile(linalg::MatrixView panel,const Edge* edges,
   for (int k=threadIdx.x;k<work;k+=blockDim.x) {
     const int spin=k/lanes,lane=k%lanes;
     const auto row=Right ? row_begin+lane:spin;
-    const auto col=Right ? column+spin:column;
+    const auto col=Right ? column+spin:
+        left_begin+static_cast<std::int64_t>(lane)*left_stride;
     double v=values[k];
     if constexpr (Tangent) {
       double dv=values[work+k];
       if (adjoint) dv=scales[spin]*dv+delta_scales[spin]*v;
-      if (row<panel.rows) tangent.data[row+tangent.ld*col]=dv;
+      if (row<panel.rows && col<panel.cols) tangent.data[row+tangent.ld*col]=dv;
     }
     if (adjoint!=inverse) v*=scales[spin];
-    if (row<panel.rows) panel.data[row+panel.ld*col]=v;
+    if (row<panel.rows && col<panel.cols) panel.data[row+panel.ld*col]=v;
   }
 }
 
@@ -297,7 +318,7 @@ void ExteriorTransform::apply_left(linalg::MatrixView coefficients,
       coefficients.ld < coefficients.rows || coefficients.data == nullptr)
     throw std::invalid_argument("invalid CUDA exterior left panel");
   if (!topology_->shears.empty() && dimension_<=shared_values_) {
-    exterior_tile<false><<<grid_size(coefficients.cols*256),256,
+    exterior_tile<false><<<tile_grid(coefficients.cols),256,
         static_cast<std::size_t>(dimension_)*sizeof(double),context_->stream()>>>(
         coefficients,topology_->edges.data(),topology_->schedule.data(),topology_->shears.size(),shear_coefficients_.data(),
         inverse ? inverse_scales_.data():scales_.data(),dimension_,1,adjoint,inverse);
@@ -339,9 +360,13 @@ void ExteriorTransform::apply_supported_left(linalg::MatrixView panel,
     throw std::invalid_argument("invalid CUDA supported exterior pattern");
   const int words=(dimension_+63)/64;
   if (dimension_<=shared_values_) {
-    exterior_tile<false><<<grid_size(panel.cols*256),256,dimension_*sizeof(double),context_->stream()>>>(
+    const auto rhs=panel.cols/columns;
+    const int lanes=left_tile_lanes(rhs,dimension_,shared_values_);
+    const auto tiles=static_cast<std::int64_t>(columns)*((rhs-1)/lanes+1);
+    exterior_tile<false><<<tile_grid(tiles),256,
+        static_cast<std::size_t>(dimension_)*lanes*sizeof(double),context_->stream()>>>(
         panel,topology_->edges.data(),topology_->schedule.data(),topology_->shears.size(),shear_coefficients_.data(),scales_.data(),
-        dimension_,1,adjoint,false,allowed,columns,words);
+        dimension_,lanes,adjoint,false,allowed,columns,words);
   } else {
     restrict_columns<<<grid_size(panel.rows*panel.cols),256,0,context_->stream()>>>(panel,allowed,columns,words);
     const auto scale=[&] {

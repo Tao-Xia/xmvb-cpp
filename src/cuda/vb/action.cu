@@ -625,6 +625,9 @@ const DirectCiSigma& StructureAction::carrier_sigma() const noexcept { return im
 const ExteriorTransform& StructureAction::alpha_transform() const noexcept { return impl_->alpha_transform; }
 const ExteriorTransform& StructureAction::beta_transform() const noexcept { return *impl_->beta_transform; }
 const vb::StructureAction::OrthogonalView& StructureAction::orthogonal_view() const noexcept { return impl_->source_view; }
+std::unique_ptr<ProductContraction> StructureAction::make_product_contraction() const {
+  return impl_->selected_contraction().clone();
+}
 const std::int64_t* StructureAction::product_indices_data() const noexcept { return impl_->product_indices.data(); }
 const std::int64_t* StructureAction::term_offsets_data() const noexcept { return impl_->row_offsets.data(); }
 const std::int64_t* StructureAction::term_structures_data() const noexcept { return impl_->columns.data(); }
@@ -657,17 +660,10 @@ void StructureAction::apply_overlap(linalg::ConstMatrixView vectors,
   if (vectors.rows!=p.structures || overlap.rows!=p.structures || vectors.cols<=0 ||
       overlap.cols!=vectors.cols)
     throw std::invalid_argument("CUDA overlap block dimensions");
-  Matrix<double> unused_h;
-  try { unused_h=Matrix<double>(p.context,p.structures,1); }
-  catch (const std::runtime_error& error) {
-    if (!p.graph || !resource_error(error)) throw;
-    p.release_graph_for_selected();
-    unused_h=Matrix<double>(p.context,p.structures,1);
-  }
   for (std::int64_t rhs=0;rhs<vectors.cols;++rhs) {
     const auto run=[&] {
       p.selected_contraction().apply_selected(p.selected_incidence(),vectors.column(rhs),p.sigma,
-          unused_h.view(),overlap.column(rhs),p.available_bytes(),true);
+          {},overlap.column(rhs),p.available_bytes(),true);
     };
     try { run(); }
     catch (const std::runtime_error& error) {

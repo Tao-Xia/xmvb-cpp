@@ -2077,23 +2077,25 @@ void check_full_channel_image_layout() {
     kernel(i,j)=0.13*(i+1)-0.07*(j+2)+0.011*i*j;
     direction(i,j)=0.09*(j+1)+0.023*i-0.004*i*j;
   }
-  const std::vector<int> groups{0,1,5,0},diagonal_rows{1,3};
-  for (bool restricted:{false,true}) for (bool exchange:{false,true}) {
+  const std::vector<int> groups{0,1,5,0},zero_groups(count,0),diagonal_rows{1,3};
+  for (int scenario=0;scenario<3;++scenario) for (bool exchange:{false,true}) {
+    const bool restricted=scenario!=0;
+    const auto& selected_groups=scenario==2 ? zero_groups:groups;
     const ChannelProduct basis(kernel,3,restricted),derivative(direction,3,restricted);
     ChannelLayout layout;
-    layout.reset(basis,restricted ? std::span<const int>(groups):std::span<const int>{},count,width);
+    layout.reset(basis,restricted ? std::span<const int>(selected_groups):std::span<const int>{},count,width);
     std::vector<double> source(layout.entries()),image(count*width*pairs,-1.0);
     for (std::size_t i=0;i<source.size();++i) source[i]=0.02*(i+1)-0.17;
     Eigen::MatrixXd expected=Eigen::MatrixXd::Zero(count*width,pairs);
     const auto accumulate=[&](const Eigen::MatrixXd& k,bool add) {
       for (int row=0;row<count*width;++row) {
-        const int group=restricted ? groups[row%count]:0;
+        const int group=restricted ? selected_groups[row%count]:0;
         const bool diagonal=std::find(diagonal_rows.begin(),diagonal_rows.end(),row%count)!=diagonal_rows.end();
         const double scale=exchange ? (diagonal ? 1.0:2.0):1.0;
         for (int pair=0;pair<pairs;++pair) {
           double value=0.0;
           for (int channel=0;channel<basis.channels(group);++channel)
-            value+=source[layout.packed(row)+channel]*k(pair,basis.global(group,channel));
+            value+=source[layout.packed(row,group)+channel]*k(pair,basis.global(group,channel));
           if (add) expected(layout.image(row),pair)+=scale*value;
           else expected(layout.image(row),pair)=scale*value;
         }
@@ -3473,7 +3475,10 @@ void benchmark_temporal12() {
 
 int main(int argc, char** argv) {
   try {
-    if (argc == 2 && std::string(argv[1]) == "--benchmark12") {
+    if (argc == 2 && std::string(argv[1]) == "--channel-layout") {
+      check_full_channel_image_layout();
+      std::cout << "channel layout: PASS\n";
+    } else if (argc == 2 && std::string(argv[1]) == "--benchmark12") {
       benchmark12(true);
     } else if (argc == 2 && std::string(argv[1]) == "--temporal12") {
       benchmark_temporal12();
@@ -3602,7 +3607,7 @@ int main(int argc, char** argv) {
       std::cout << "structure tiles: PASS\n";
     } else {
       throw std::invalid_argument(
-          "usage: test_structure_tiles [--benchmark12|--benchmark12-no-reference|--temporal12|"
+          "usage: test_structure_tiles [--channel-layout|--benchmark12|--benchmark12-no-reference|--temporal12|"
           "--selected12 N|--selected12-parity N|--sources12 N|--paths12 N|--gram12 N|"
           "--structure-response12 N|--structure-response12-reference N|"
           "--structure-response14 N|--structure-response14-reference N|"

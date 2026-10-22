@@ -1,6 +1,7 @@
 #include "cuda/vb/columns.hpp"
 
 #include <algorithm>
+#include <list>
 #include <stdexcept>
 
 namespace xmvb::cuda {
@@ -44,11 +45,14 @@ __global__ void project_exchange_columns(const DeviceProductPanel* panels,
 struct DeviceColumnRead {
   const int* rows;
   const double* values;
+  std::int64_t offset;
+  std::int64_t ld;
   int size;
+  int width;
 };
 
 __global__ void gather_product_columns(const DeviceColumnRead* columns,
-    const int* requested,int count,linalg::MatrixView output) {
+    const int* requested,int count,int lane,linalg::MatrixView output) {
   const int col=blockIdx.x;
   const auto source=columns[col];
   for (int r=blockIdx.y*blockDim.x+threadIdx.x;r<count;
@@ -57,18 +61,60 @@ __global__ void gather_product_columns(const DeviceColumnRead* columns,
     double value=0.0;
     if (source.values) {
       if (!source.rows) {
-        if (a>=0 && a<source.size) value=source.values[a];
+        if (a>=0 && a<source.size)
+          value=source.values[source.offset+source.ld*lane+a];
       } else {
         int lo=0,hi=source.size;
         while (lo<hi) {
           const int mid=lo+(hi-lo)/2;
           if (source.rows[mid]<a) lo=mid+1;else hi=mid;
         }
-        if (lo<source.size && source.rows[lo]==a) value=source.values[lo];
+        if (lo<source.size && source.rows[lo]==a)
+          value=source.values[source.offset+source.ld*lane+lo];
       }
     }
     output.data[r+output.ld*col]=value;
   }
+}
+
+DeviceColumnRead column_source(std::span<const ProductColumns* const> panels,
+    int extent,int lane,int beta) {
+  if (beta<0 || static_cast<std::size_t>(beta/extent)>=panels.size())
+    throw std::out_of_range("compact beta column read");
+  const auto* panel=panels[beta/extent];
+  if (!panel) return {};
+  const int local=beta%extent;
+  if (local>=panel->patterns.size() || lane>=panel->values.cols())
+    throw std::out_of_range("compact product lane or column read");
+  const auto& pattern=*panel->patterns[local];
+  return {pattern.full ? nullptr:pattern.device_rows.data(),panel->values.data(),
+      panel->offsets[local],panel->values.rows(),pattern.size,
+      static_cast<int>(panel->values.cols())};
+}
+
+bool same_source(const DeviceColumnRead& a,const DeviceColumnRead& b) {
+  return a.rows==b.rows && a.values==b.values && a.offset==b.offset &&
+      a.ld==b.ld && a.size==b.size && a.width==b.width;
+}
+
+std::uint64_t read_key(std::span<const int> betas,std::span<const int> rows) {
+  std::uint64_t hash=14695981039346656037ULL;
+  const auto append=[&](std::uint64_t value) {
+    hash=(hash^value)*1099511628211ULL;
+  };
+  append(betas.size());append(rows.size());
+  for (int b:betas) append(static_cast<std::uint32_t>(b));
+  for (int r:rows) append(static_cast<std::uint32_t>(r));
+  return hash;
+}
+
+void check_column_read(std::span<const ProductColumns* const> panels,int extent,int lane,
+    std::span<const int> betas,std::span<const int> rows,linalg::MatrixView destination) {
+  if (panels.empty() || extent<=0 || lane<0 ||
+      destination.rows!=rows.size() || destination.cols!=betas.size() ||
+      destination.ld<destination.rows ||
+      (!destination.data && destination.rows*destination.cols))
+    throw std::invalid_argument("invalid compact column read");
 }
 
 __global__ void pack_columns(const ProductColumnMap* maps,
@@ -152,27 +198,11 @@ void read_product_columns(Context& context,
     std::span<const ProductColumns* const> panels,int extent,int lane,
     std::span<const int> betas,std::span<const int> rows,
     linalg::MatrixView destination) {
-  if (panels.empty() || extent<=0 || lane<0 ||
-      destination.rows!=rows.size() || destination.cols!=betas.size() ||
-      destination.ld<destination.rows ||
-      (!destination.data && destination.rows*destination.cols))
-    throw std::invalid_argument("invalid compact column read");
+  check_column_read(panels,extent,lane,betas,rows,destination);
   if (betas.empty() || rows.empty()) return;
   std::vector<DeviceColumnRead> sources(betas.size());
-  for (std::size_t j=0;j<betas.size();++j) {
-    const int b=betas[j];
-    if (b<0 || static_cast<std::size_t>(b/extent)>=panels.size())
-      throw std::out_of_range("compact beta column read");
-    const auto* panel=panels[b/extent];
-    if (!panel) continue;
-    const int local=b%extent;
-    if (local>=panel->patterns.size() || lane>=panel->values.cols())
-      throw std::out_of_range("compact product lane or column read");
-    const auto& pattern=*panel->patterns[local];
-    sources[j]={pattern.full ? nullptr:pattern.device_rows.data(),
-        panel->values.data()+panel->offsets[local]+panel->values.rows()*lane,
-        pattern.size};
-  }
+  for (std::size_t j=0;j<betas.size();++j)
+    sources[j]=column_source(panels,extent,lane,betas[j]);
   Buffer<DeviceColumnRead> device_sources(context,sources.size());
   Buffer<int> device_rows(context,rows.size());
   context.copy_to_device(device_sources.data(),sources.data(),
@@ -180,9 +210,109 @@ void read_product_columns(Context& context,
   context.copy_to_device(device_rows.data(),rows.data(),rows.size_bytes());
   const auto blocks=std::min<std::size_t>(65535,(rows.size()+255)/256);
   gather_product_columns<<<dim3(betas.size(),blocks),256,0,context.stream()>>>(
-      device_sources.data(),device_rows.data(),rows.size(),destination);
+      device_sources.data(),device_rows.data(),rows.size(),lane,destination);
   check_cuda(cudaGetLastError(),"read compact product columns");
 }
+
+struct ProductColumnReadCache::Impl {
+  struct Plan {
+    std::uint64_t key=0;
+    std::vector<int> betas,rows;
+    std::vector<DeviceColumnRead> sources;
+    Buffer<DeviceColumnRead> device_sources;
+    Buffer<int> device_rows;
+
+    std::size_t bytes() const noexcept {
+      return (betas.size()+2*rows.size())*sizeof(int)+
+          2*sources.size()*sizeof(DeviceColumnRead);
+    }
+  };
+
+  Context& context;
+  std::vector<const ProductColumns*> panels;
+  int extent;
+  std::size_t budget,current=0,peak=0;
+  std::list<Plan> plans;
+
+  Impl(Context& c,std::span<const ProductColumns* const> p,int e,std::size_t b)
+      :context(c),panels(p.begin(),p.end()),extent(e),budget(b) {
+    if (panels.empty() || extent<=0)
+      throw std::invalid_argument("invalid compact column cache source");
+  }
+
+  void read(int lane,std::span<const int> betas,std::span<const int> rows,
+      linalg::MatrixView destination) {
+    const std::span<const ProductColumns* const> sources{panels.data(),panels.size()};
+    check_column_read(sources,extent,lane,betas,rows,destination);
+    if (betas.empty() || rows.empty()) return;
+    const auto key=read_key(betas,rows);
+    const auto matches=[&](const Plan& plan) {
+      return plan.key==key && plan.betas.size()==betas.size() && plan.rows.size()==rows.size() &&
+          std::equal(plan.betas.begin(),plan.betas.end(),betas.begin()) &&
+          std::equal(plan.rows.begin(),plan.rows.end(),rows.begin());
+    };
+    auto found=std::find_if(plans.begin(),plans.end(),matches);
+    if (found==plans.end()) {
+      const std::size_t needed=(betas.size()+2*rows.size())*sizeof(int)+
+          2*betas.size()*sizeof(DeviceColumnRead);
+      if (needed>budget) {
+        read_product_columns(context,sources,extent,lane,betas,rows,destination);
+        return;
+      }
+      while (current>budget-needed) {
+        current-=plans.back().bytes();
+        plans.pop_back();
+      }
+      Plan plan;
+      plan.key=key;
+      plan.betas.assign(betas.begin(),betas.end());
+      plan.rows.assign(rows.begin(),rows.end());
+      plan.sources.reserve(betas.size());
+      for (int b:betas) plan.sources.push_back(column_source(sources,extent,lane,b));
+      plan.device_sources=Buffer<DeviceColumnRead>(context,betas.size());
+      plan.device_rows=Buffer<int>(context,rows.size());
+      // Context synchronizes each upload while these temporary host arrays live.
+      context.copy_to_device(plan.device_sources.data(),plan.sources.data(),
+          plan.sources.size()*sizeof(DeviceColumnRead));
+      context.copy_to_device(plan.device_rows.data(),plan.rows.data(),
+          plan.rows.size()*sizeof(int));
+      current+=plan.bytes();peak=std::max(peak,current);
+      plans.push_front(std::move(plan));found=plans.begin();
+    } else {
+      // Borrowed panels can replace their numerical storage or exact pattern.
+      // Revalidate every source before consuming a cached device descriptor.
+      bool changed=false;
+      for (std::size_t j=0;j<betas.size();++j) {
+        const auto source=column_source(sources,extent,lane,betas[j]);
+        if (!same_source(source,found->sources[j])) {
+          found->sources[j]=source;changed=true;
+        }
+      }
+      if (changed) context.copy_to_device(found->device_sources.data(),
+          found->sources.data(),found->sources.size()*sizeof(DeviceColumnRead));
+      plans.splice(plans.begin(),plans,found);
+      found=plans.begin();
+    }
+    const auto blocks=std::min<std::size_t>(65535,(rows.size()+255)/256);
+    gather_product_columns<<<dim3(betas.size(),blocks),256,0,context.stream()>>>(
+        found->device_sources.data(),found->device_rows.data(),rows.size(),lane,destination);
+    check_cuda(cudaGetLastError(),"read cached compact product columns");
+  }
+};
+
+ProductColumnReadCache::ProductColumnReadCache(Context& context,
+    std::span<const ProductColumns* const> panels,int extent,std::size_t metadata_budget)
+    :impl_(std::make_unique<Impl>(context,panels,extent,metadata_budget)) {}
+
+ProductColumnReadCache::~ProductColumnReadCache()=default;
+
+void ProductColumnReadCache::read(int lane,std::span<const int> betas,
+    std::span<const int> rows,linalg::MatrixView destination) {
+  impl_->read(lane,betas,rows,destination);
+}
+
+std::size_t ProductColumnReadCache::bytes() const noexcept {return impl_->current;}
+std::size_t ProductColumnReadCache::peak_bytes() const noexcept {return impl_->peak;}
 
 ProductColumns::ProductColumns(Context& context,
     std::vector<std::shared_ptr<const ProductColumnPattern>> columns,int width)

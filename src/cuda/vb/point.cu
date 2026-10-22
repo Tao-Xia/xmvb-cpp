@@ -100,8 +100,7 @@ VbPoint::VbPoint(Context& context,const vb::OrbitalPreparationInput& input,
       pair_(context,input.n_active_orbitals*(input.n_active_orbitals+1)/2,
                     input.n_active_orbitals*(input.n_active_orbitals+1)/2),
       endpoint_{Matrix<double>(context,action.size(),1)},
-      products_(std::make_unique<ProductContraction>(context,action.orthogonal_view(),
-          action.alpha_transform(),action.beta_transform(),action.orthogonal_view().support)),
+      products_(action.make_product_contraction()),
       selected_gradient_(context,action.size(),1),
       one_adjoint_(context,one_.rows(),one_.cols()),
       pair_adjoint_(context,pair_.rows(),pair_.cols()),
@@ -132,6 +131,7 @@ void VbPoint::prepare(View raw) {
   ready_=false;
   prepared_=false;
   products_->update_frame();
+  endpoint_.readers.reset();
   endpoint_.images.reset();
   exchange_products_={};
   inactive_response_={};active_response_={};overlap_core_={};core_basis_={};core_to_dual_={};
@@ -183,6 +183,7 @@ double VbPoint::evaluate_coefficients(View coefficients) {
   check_structure(coefficients,action_->size());
   ready_=false;
   auto& c=*context_;
+  endpoint_.readers.reset();
   endpoint_.images.reset();
   select_frame();
   // The completed CI action may still own large channel slabs. Release them

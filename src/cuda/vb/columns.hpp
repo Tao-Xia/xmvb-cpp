@@ -61,6 +61,28 @@ void read_product_columns(Context& context,
     std::span<const int> betas,std::span<const int> rows,
     linalg::MatrixView destination);
 
+/** Bounded metadata cache for repeated reads of borrowed compact panels.
+ * Requests with identical beta/row indices share device descriptors across
+ * numerical lanes. Source panels must outlive this reader; its pointer list
+ * is copied, and changed value buffers or row maps are detected before reuse. No
+ * numerical carrier is retained, and temporary host uploads remain synced.
+ */
+class ProductColumnReadCache {
+ public:
+  ProductColumnReadCache(Context&,std::span<const ProductColumns* const> panels,
+      int extent,std::size_t metadata_budget);
+  ~ProductColumnReadCache();
+  ProductColumnReadCache(const ProductColumnReadCache&)=delete;
+  ProductColumnReadCache& operator=(const ProductColumnReadCache&)=delete;
+  void read(int lane,std::span<const int> betas,std::span<const int> rows,
+      linalg::MatrixView destination);
+  std::size_t bytes() const noexcept;
+  std::size_t peak_bytes() const noexcept;
+ private:
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
+};
+
 /** CPU ProductImages retention rule: a complete accepted Y/(H-E)Y endpoint
  * must fit its payload allowance. Partial endpoints are not valid readers.
  * When it does not fit, callers keep their source representation and use the

@@ -4,6 +4,7 @@
 #include <iostream>
 #include <memory>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 #include <Eigen/Core>
@@ -109,11 +110,100 @@ void check_reject_asymmetric() {
   catch (const std::invalid_argument&) { rejected=true; }
   if (!rejected) throw std::runtime_error("asymmetric exact support was accepted");
 }
+
+void check_read_cache() {
+  xmvb::cuda::Context context(16ULL*1024*1024);
+  const std::array<std::vector<int>,4> rows{{
+      {0,2},{1,3},{0,1},{2,3}}};
+  std::vector<std::shared_ptr<const xmvb::cuda::ProductColumnPattern>> patterns;
+  for (const auto& selected:rows) patterns.push_back(pattern(context,selected));
+  std::vector<xmvb::cuda::ProductColumns> blocks;
+  blocks.emplace_back(context,std::vector{patterns[0],patterns[1]},2);
+  blocks.emplace_back(context,std::vector{patterns[2],patterns[3]},2);
+  std::array<Matrix,2> original{Matrix::Zero(4,4),Matrix::Zero(4,4)};
+  for (int panel=0;panel<2;++panel) {
+    Matrix packed(blocks[panel].values.rows(),2);
+    for (int local=0;local<2;++local) {
+      const int b=2*panel+local;
+      for (int i=0;i<static_cast<int>(rows[b].size());++i)
+        for (int lane=0;lane<2;++lane) {
+          const int a=rows[b][i];
+          const double value=10.0*lane+b+0.1*a;
+          packed(blocks[panel].offsets[local]+i,lane)=value;
+          original[lane](a,b)=value;
+        }
+    }
+    xmvb::cuda::copy_to_device(context,blocks[panel].values.view(),packed);
+  }
+  const std::array<const xmvb::cuda::ProductColumns*,2> panels{&blocks[0],&blocks[1]};
+  const std::array<int,3> betas{3,1,0},selected_rows{3,0,2};
+  xmvb::cuda::Matrix<double> device_result(context,3,3);
+  const auto expected=[&](int lane) {
+    Matrix result(3,3);
+    for (int j=0;j<3;++j) for (int i=0;i<3;++i)
+      result(i,j)=original[lane](selected_rows[i],betas[j]);
+    return result;
+  };
+  const auto verify=[&](const char* message,int lane) {
+    Matrix actual(3,3);
+    xmvb::cuda::copy_to_host(context,actual,device_result.view());
+    near(actual,expected(lane),message);
+  };
+  xmvb::cuda::ProductColumnReadCache cache(context,panels,2,4096);
+  const auto before=context.counters().host_to_device_bytes;
+  cache.read(0,betas,selected_rows,device_result.view());
+  const auto first=context.counters().host_to_device_bytes;
+  if (first<=before || cache.bytes()==0 || cache.peak_bytes()!=cache.bytes())
+    throw std::runtime_error("compact read cache did not retain first metadata plan");
+  verify("compact cached first lane differs from source",0);
+  cache.read(1,betas,selected_rows,device_result.view());
+  if (context.counters().host_to_device_bytes!=first)
+    throw std::runtime_error("compact read cache uploaded duplicate second-lane metadata");
+  verify("compact cached second lane differs from source",1);
+  cache.read(0,betas,selected_rows,device_result.view());
+  if (context.counters().host_to_device_bytes!=first)
+    throw std::runtime_error("compact read cache missed repeated beta/row key");
+  verify("compact cached repeated key differs from source",0);
+
+  // Allocate the replacement before releasing the original so the borrowed
+  // numerical pointer must change; the cached row plan remains the same.
+  xmvb::cuda::Matrix<double> replacement(context,blocks[0].values.rows(),2);
+  Matrix packed(replacement.rows(),replacement.cols());
+  for (int local=0;local<2;++local) {
+    const int b=local;
+    for (int i=0;i<static_cast<int>(rows[b].size());++i)
+      for (int lane=0;lane<2;++lane) {
+        const int a=rows[b][i];
+        const double value=100.0+10.0*lane+b+0.1*a;
+        packed(blocks[0].offsets[local]+i,lane)=value;
+        original[lane](a,b)=value;
+      }
+  }
+  xmvb::cuda::copy_to_device(context,replacement.view(),packed);
+  blocks[0].values=std::move(replacement);
+  const auto before_rebind=context.counters().host_to_device_bytes;
+  cache.read(0,betas,selected_rows,device_result.view());
+  if (context.counters().host_to_device_bytes<=before_rebind)
+    throw std::runtime_error("compact read cache kept stale replaced-panel descriptor");
+  verify("compact cached replacement differs from source",0);
+  const auto after_rebind=context.counters().host_to_device_bytes;
+  cache.read(0,betas,selected_rows,device_result.view());
+  if (context.counters().host_to_device_bytes!=after_rebind)
+    throw std::runtime_error("compact read cache repeatedly uploaded unchanged replacement");
+
+  xmvb::cuda::ProductColumnReadCache streamed(context,panels,2,0);
+  const auto before_stream=context.counters().host_to_device_bytes;
+  streamed.read(1,betas,selected_rows,device_result.view());
+  if (streamed.bytes()!=0 || streamed.peak_bytes()!=0 ||
+      context.counters().host_to_device_bytes<=before_stream)
+    throw std::runtime_error("over-budget compact read retained metadata");
+  verify("over-budget compact read differs from streamed source",1);
+}
 } // namespace
 
 int main() {
   try {
-    check(1);check(-1);check_reject_asymmetric();
+    check(1);check(-1);check_reject_asymmetric();check_read_cache();
     std::cout<<"compact product column tests passed\n";
   } catch (const std::exception& error) {
     std::cerr<<error.what()<<'\n';return 1;

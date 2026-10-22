@@ -358,7 +358,7 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
       const auto scatter = [&](int row,double* values) {
         const int local = row % count, v = row / count;
         const int channel_group=channel_groups.empty() ? 0:channel_groups[local];
-        double* target=values+channel_layout.packed(row);
+        double* target=values+channel_layout.packed(row,channel_group);
         std::fill_n(target,channel_product.channels(channel_group),0.0);
         const int a=active[local],g=group_index[local],beta=groups[g].beta;
         const int h=identity_halo ? a:halo_index[a];

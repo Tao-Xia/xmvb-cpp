@@ -138,7 +138,7 @@ void StructureCi::refresh() {
   if (selected_mode_) {
     Matrix<double> metric(*context_,action_->size(),action_->size());
     action_->build_selected_metric(metric.view());
-    point->metric=std::make_shared<SelectedMetric>(*context_,metric.view());
+    point->metric=std::make_shared<SelectedMetric>(*context_,std::move(metric));
     ++metric_builds_;
     // The exact metric and the self-product Jacobi overlap are different
     // objects. CIAH uses the latter, as does the CPU structure adapter.

@@ -59,8 +59,8 @@ public:
  * copied to rearrange rows. Unrestricted tiles use implicit identity maps.
  */
 class ChannelLayout {
-  std::vector<int> offsets_,image_rows_;
-  std::vector<std::size_t> packed_offsets_,packed_rows_;
+  std::vector<int> offsets_,image_rows_,channels_;
+  std::vector<std::size_t> packed_offsets_;
   bool identity_=true;
   int pairs_=0;
 public:
@@ -68,29 +68,32 @@ public:
     pairs_=basis.channels(0);
     offsets_.assign(basis.groups()+1,0);
     packed_offsets_.assign(basis.groups()+1,0);
+    channels_.resize(basis.groups());
     identity_=groups.empty() || std::all_of(groups.begin(),groups.end(),[](int g) { return g==0; });
     if (identity_) offsets_[1]=count*width;
     else for (const int group:groups) offsets_[group+1]+=width;
     for (int group=0;group<basis.groups();++group) {
       offsets_[group+1]+=offsets_[group];
+      channels_[group]=basis.channels(group);
       packed_offsets_[group+1]=packed_offsets_[group]+
-          static_cast<std::size_t>(offsets_[group+1]-offsets_[group])*basis.channels(group);
+          static_cast<std::size_t>(offsets_[group+1]-offsets_[group])*channels_[group];
     }
-    if (identity_) { image_rows_.clear(); packed_rows_.clear(); return; }
-    image_rows_.resize(count*width); packed_rows_.resize(count*width);
+    if (identity_) { image_rows_.clear(); return; }
+    image_rows_.resize(count*width);
     auto position=offsets_;
     for (int row=0;row<count*width;++row) {
       const int group=groups[row%count],image=position[group]++;
       image_rows_[row]=image;
-      packed_rows_[row]=packed_offsets_[group]+
-          static_cast<std::size_t>(image-offsets_[group])*basis.channels(group);
     }
   }
   int begin(int group) const noexcept { return offsets_[group]; }
   int size(int group) const noexcept { return offsets_[group+1]-offsets_[group]; }
   std::size_t offset(int group) const noexcept { return packed_offsets_[group]; }
   std::size_t entries() const noexcept { return packed_offsets_.back(); }
-  std::size_t packed(int row) const noexcept { return identity_ ? static_cast<std::size_t>(row)*pairs_:packed_rows_[row]; }
+  std::size_t packed(int row,int group) const noexcept {
+    return identity_ ? static_cast<std::size_t>(row)*pairs_:
+        packed_offsets_[group]+static_cast<std::size_t>(image_rows_[row]-offsets_[group])*channels_[group];
+  }
   int image(int row) const noexcept { return identity_ ? row:image_rows_[row]; }
 };
 

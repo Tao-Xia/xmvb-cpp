@@ -26,6 +26,8 @@ struct ProductJet {
 struct ProductEndpoint {
   Matrix<double> coefficients;
   std::unique_ptr<ProductImages> images;
+  // Symbolic readers borrow the retained images and die before those owners.
+  std::unique_ptr<ProductColumnReadCache> readers;
   int extent=0;
   double energy=0.0;
 };
@@ -41,6 +43,8 @@ public:
       const ExteriorTransform& alpha,const ExteriorTransform& beta,
       const mcscf::ProductSupport* support);
   ~ProductContraction();
+  /** Independent numerical executor sharing this action's immutable product support. */
+  std::unique_ptr<ProductContraction> clone() const;
   void update_frame();
   /** Finish the accepted CPU-style Y/(H-E)Y panels after Rayleigh evaluation. */
   void accept(ProductEndpoint&,double energy) const;
@@ -64,6 +68,7 @@ public:
       linalg::ConstMatrixView relative_direction={}) const;
 private:
   struct Impl;
+  explicit ProductContraction(std::unique_ptr<Impl>);
   std::unique_ptr<Impl> impl_;
 };
 

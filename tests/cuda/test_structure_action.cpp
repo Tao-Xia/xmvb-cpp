@@ -43,8 +43,11 @@ void check_packed_blocks(const xmvb::vb::StructureAction& source,const Eigen::Ma
   const auto view=source.orthogonal_view();
   xmvb::cuda::Context context(64ULL*1024*1024);
   const xmvb::cuda::StructureAction action(context,source);
-  xmvb::cuda::ProductContraction product(context,view,action.alpha_transform(),
-      action.beta_transform(),view.support);
+  auto product=action.make_product_contraction();
+  const auto uploaded=context.counters().host_to_device_bytes;
+  auto sibling=action.make_product_contraction();
+  require(context.counters().host_to_device_bytes==uploaded,
+      "second product executor reuploaded immutable support");
   const xmvb::cuda::DirectCiSigma sigma(context,view.sigma,1,view.exchange_parity);
   const xmvb::cuda::ProductIncidence incidence{action.term_offsets_data(),
       action.term_structures_data(),action.term_weights_data(),source.n_structures()};
@@ -58,12 +61,21 @@ void check_packed_blocks(const xmvb::vb::StructureAction& source,const Eigen::Ma
       xmvb::cuda::copy_to_host(context,result,device.view());return result;
     };
     for (std::size_t budget:{std::size_t{3200},std::size_t{1024*1024}}) {
-      product.apply_selected(incidence,x.view(),sigma,h.view(),m.view(),budget);
+      product->apply_selected(incidence,x.view(),sigma,h.view(),m.view(),budget);
       require((host(h)-expected.hamiltonian).norm()<2e-10,
           "packed product H block differs from selected CPU action");
       require((host(m)-expected.overlap).norm()<2e-10,
           "packed product overlap block differs from selected CPU action");
-      product.apply_selected(incidence,x.view(),sigma,h.view(),m.view(),budget,true);
+      if (width==1 && budget==3200) {
+        const auto first_factor_upload=context.counters().host_to_device_bytes;
+        sibling->apply_selected(incidence,x.view(),sigma,h.view(),m.view(),budget);
+        require(context.counters().host_to_device_bytes>first_factor_upload,
+            "product executors incorrectly shared orbital factor cache");
+        require((host(h)-expected.hamiltonian).norm()<2e-10 &&
+            (host(m)-expected.overlap).norm()<2e-10,
+            "shared-support product executor changed selected H/M");
+      }
+      product->apply_selected(incidence,x.view(),sigma,{},m.view(),budget,true);
       require((host(m)-expected.overlap).norm()<2e-10,
           "packed overlap-only block changed the selected-space projection");
     }
@@ -127,9 +139,7 @@ void check_product_jet(const xmvb::vb::StructureAction& source,
   };
   const Oracle base=reference(c,upper);
   const double energy=(c.transpose()*base.h)(0,0)/(c.transpose()*base.m)(0,0);
-  const auto support=view.support ? std::make_shared<xmvb::mcscf::ProductSupport>(*view.support):nullptr;
-  xmvb::cuda::ProductContraction product(context,view,action.alpha_transform(),
-      action.beta_transform(),support.get());
+  auto product=action.make_product_contraction();
   const xmvb::cuda::ProductIncidence incidence{action.term_offsets_data(),
       action.term_structures_data(),action.term_weights_data(),count};
   xmvb::cuda::Matrix<double> dc(context,count,1),dq(context,count,1),r(context,upper.rows(),upper.cols()),
@@ -144,7 +154,7 @@ void check_product_jet(const xmvb::vb::StructureAction& source,
   xmvb::cuda::ProductEndpoint accepted{xmvb::cuda::Matrix<double>(context,count,1)};
   xmvb::cuda::copy_to_device(context,accepted.coefficients.view(),c);
   const std::size_t budget=8ULL*1024*1024;
-  const auto primal=product.jet(incidence,sigma,accepted,r.view(),{},{},nullptr,budget);
+  const auto primal=product->jet(incidence,sigma,accepted,r.view(),{},{},nullptr,budget);
   const auto host=[&](const auto& device) {
     Eigen::MatrixXd result(device.rows(),device.cols());
     xmvb::cuda::copy_to_host(context,result,device.view());return result;
@@ -161,7 +171,7 @@ void check_product_jet(const xmvb::vb::StructureAction& source,
     for (int i=0;i<=j;++i)
       require(std::abs(primal_generator(i,j)-base.generator(i,j))<2e-10,
           "product jet primal generator differs from CPU carrier");
-  product.accept(accepted,energy);
+  product->accept(accepted,energy);
   require(accepted.images && accepted.images->complete(),
       "product jet test did not retain accepted compact cache");
   const double step=2e-6;
@@ -203,14 +213,14 @@ void check_product_jet(const xmvb::vb::StructureAction& source,
             "independent CI jet generator includes orbital direction");
   };
   xmvb::cuda::ProductJet cached_ci;
-  const auto cached=product.jet(incidence,sigma,accepted,r.view(),dq.view(),dr.view(),nullptr,
+  const auto cached=product->jet(incidence,sigma,accepted,r.view(),dq.view(),dr.view(),nullptr,
       budget,&cached_ci,rel.view());
   compare(cached,cached_ci,plus,minus);
   xmvb::cuda::ProductEndpoint uncached{xmvb::cuda::Matrix<double>(context,count,1)};
   xmvb::cuda::copy_to_device(context,uncached.coefficients.view(),c);
   uncached.energy=energy;
   xmvb::cuda::ProductJet uncached_ci;
-  const auto fresh=product.jet(incidence,sigma,uncached,r.view(),dq.view(),dr.view(),nullptr,
+  const auto fresh=product->jet(incidence,sigma,uncached,r.view(),dq.view(),dr.view(),nullptr,
       budget,&uncached_ci,rel.view());
   compare(fresh,uncached_ci,plus,minus);
   // At 3200 bytes, the joint three-lane full-support output panels cannot
@@ -219,7 +229,7 @@ void check_product_jet(const xmvb::vb::StructureAction& source,
   xmvb::cuda::copy_to_device(context,streaming.coefficients.view(),c);
   streaming.energy=energy;
   xmvb::cuda::ProductJet streaming_ci;
-  const auto evicted=product.jet(incidence,sigma,streaming,r.view(),dq.view(),dr.view(),
+  const auto evicted=product->jet(incidence,sigma,streaming,r.view(),dq.view(),dr.view(),
       nullptr,3200,&streaming_ci,rel.view());
   compare(evicted,streaming_ci,plus,minus);
   if (view.exchange_parity) {
@@ -232,11 +242,11 @@ void check_product_jet(const xmvb::vb::StructureAction& source,
     const Oracle coupled_plus=reference(c+step*q,upper+step*du,step);
     const Oracle coupled_minus=reference(c-step*q,upper-step*du,-step);
     xmvb::cuda::ProductJet coupled_ci;
-    const auto coupled=product.jet(incidence,sigma,accepted,r.view(),dq.view(),dr.view(),
+    const auto coupled=product->jet(incidence,sigma,accepted,r.view(),dq.view(),dr.view(),
         &delta_gpu,budget,&coupled_ci,rel.view());
     compare(coupled,coupled_ci,coupled_plus,coupled_minus);
     xmvb::cuda::ProductJet coupled_fresh_ci;
-    const auto coupled_fresh=product.jet(incidence,sigma,uncached,r.view(),dq.view(),dr.view(),
+    const auto coupled_fresh=product->jet(incidence,sigma,uncached,r.view(),dq.view(),dr.view(),
         &delta_gpu,budget,&coupled_fresh_ci,rel.view());
     compare(coupled_fresh,coupled_fresh_ci,coupled_plus,coupled_minus);
   }

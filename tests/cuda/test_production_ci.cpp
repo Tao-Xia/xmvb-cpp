@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <iostream>
 #include <stdexcept>
 #include <vector>
@@ -852,6 +853,39 @@ void check_exterior(int rhs_count,int n=4,int nalpha=2,int nbeta=1) {
   xmvb::cuda::Context context(64ULL * 1024ULL * 1024ULL);
   const xmvb::cuda::ExteriorTransform gpu_alpha(context, cpu_alpha);
   xmvb::cuda::ExteriorTransform gpu_beta(context, cpu_beta);
+  if (rhs_count >= 2 && n == 4) {
+    const int alpha_dim=static_cast<int>(alpha.size());
+    const int columns=static_cast<int>(beta.size());
+    const int words=(alpha_dim+63)/64;
+    std::vector<int> offsets{0},supported_rows;
+    std::vector<std::uint64_t> masks(static_cast<std::size_t>(columns)*words,0);
+    for (int b=0;b<columns;++b) {
+      for (int a=0;a<alpha_dim;++a) if ((a+b)%3!=0) {
+        supported_rows.push_back(a);
+        masks[static_cast<std::size_t>(b)*words+a/64]|=
+            std::uint64_t{1}<<(a%64);
+      }
+      offsets.push_back(static_cast<int>(supported_rows.size()));
+    }
+    xmvb::cuda::Buffer<std::uint64_t> device_masks(context,masks.size());
+    context.copy_to_device(device_masks.data(),masks.data(),
+        masks.size()*sizeof(std::uint64_t));
+    const Matrix initial=values(alpha.size(),columns*rhs_count,0.48);
+    xmvb::cuda::Matrix<double> padded(context,initial.rows()+2,initial.cols());
+    for (bool adjoint:{false,true}) {
+      Matrix expected=initial;
+      cpu_alpha.apply_supported_left(&expected,offsets,supported_rows,adjoint);
+      Matrix input=Matrix::Constant(padded.rows(),padded.cols(),-7.0);
+      input.topRows(initial.rows())=initial;
+      xmvb::cuda::copy_to_device(context,padded.view(),input);
+      gpu_alpha.apply_supported_left(
+          {padded.data(),initial.rows(),initial.cols(),padded.rows()},
+          device_masks.data(),columns,adjoint);
+      input.topRows(initial.rows())=expected;
+      near(download(context,padded),input,2e-11,
+          "multi-RHS supported CUDA exterior transform differs from CPU");
+    }
+  }
   {
     const std::vector<int> requested{static_cast<int>(beta.size())-1,0};
     xmvb::cuda::Matrix<double> d_upper(context,n,n),rows(context,beta.size(),requested.size());

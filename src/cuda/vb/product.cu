@@ -8,6 +8,7 @@
 #include <vector>
 #include <array>
 #include <cmath>
+#include <initializer_list>
 #include <cusparse.h>
 #include <nvtx3/nvtx3.hpp>
 
@@ -85,15 +86,48 @@ __global__ void generate_selected(const int* starts,const int* raw_beta,
     }
 }
 
+/** CPU source-group sweep: primal, beta-direction and independent CI lanes
+ * share their incidence sum and fixed beta-factor traversal. */
+__global__ void generate_selected_jet(const int* starts,const int* raw_beta,
+    ProductIncidence incidence,linalg::ConstMatrixView coefficients,
+    linalg::ConstMatrixView response,const int* offsets,const int* columns,
+    const double* factors,const int* delta_offsets,const int* delta_columns,
+    const double* delta_factors,int width,bool joint,linalg::MatrixView output) {
+  for (auto a=static_cast<std::size_t>(blockIdx.x)*blockDim.x+threadIdx.x;
+       a<output.rows;a+=static_cast<std::size_t>(gridDim.x)*blockDim.x)
+    for (int g=starts[a];g<starts[a+1];++g) {
+      double value=0.0,direction=0.0;
+      for (auto t=incidence.offsets[g];t<incidence.offsets[g+1];++t) {
+        const auto index=incidence.structures[t];
+        value+=incidence.weights[t]*coefficients.data[index];
+        if (response.data) direction+=incidence.weights[t]*response.data[index];
+      }
+      const int b=raw_beta[g];
+      for (int p=offsets[b];p<offsets[b+1];++p) {
+        const auto index=a+output.ld*columns[p];
+        output.data[index]+=value*factors[p];
+        output.data[index+output.ld*width]+=direction*factors[p];
+        if (joint) output.data[index+2*output.ld*width]+=direction*factors[p];
+      }
+      if (delta_offsets) for (int p=delta_offsets[b];p<delta_offsets[b+1];++p)
+        output.data[a+output.ld*(width+delta_columns[p])]+=value*delta_factors[p];
+    }
+}
+
 __global__ void project_groups(const int* raw_alpha,const int* raw_beta,int count,
     const int* offsets,const int* columns,const double* factors,
-    linalg::ConstMatrixView image,double* output) {
+    linalg::ConstMatrixView image,int width,int lanes,int target0,int target1,
+    linalg::MatrixView output) {
   for (auto g=static_cast<std::size_t>(blockIdx.x)*blockDim.x+threadIdx.x;
        g<count;g+=static_cast<std::size_t>(gridDim.x)*blockDim.x) {
-    const int b=raw_beta[g];double value=0.0;
-    for (int p=offsets[b];p<offsets[b+1];++p)
-      value+=image.data[raw_alpha[g]+image.ld*columns[p]]*factors[p];
-    output[g]+=value;
+    const int b=raw_beta[g];double first=0.0,second=0.0;
+    for (int p=offsets[b];p<offsets[b+1];++p) {
+      const auto index=raw_alpha[g]+image.ld*columns[p];
+      first+=image.data[index]*factors[p];
+      if (lanes==2) second+=image.data[index+image.ld*width]*factors[p];
+    }
+    output.data[g+output.ld*target0]+=first;
+    if (lanes==2) output.data[g+output.ld*target1]+=second;
   }
 }
 
@@ -181,26 +215,22 @@ struct SupportMask {
 };
 } // namespace
 
-struct ProductContraction::Impl {
+/** Orbital-frame-independent data uploaded once per StructureAction. The
+ * numerical beta factors and extent-dependent masks stay with each executor.
+ */
+struct ProductSymbolic {
   Context& c;
-  const ExteriorTransform& alpha_transform;
-  const ExteriorTransform& beta_transform;
-  int alpha,beta,groups,factor_extent=0,mask_extent=0;
-  std::size_t beta_shears;
+  int alpha,beta,groups;
   const mcscf::ProductSupport* support;
   Buffer<int> starts,raw_alpha,raw_beta;
-  cusparseHandle_t sparse=nullptr;
   std::vector<int> reachable;
   std::vector<std::weak_ptr<const ProductColumnPattern>> patterns;
   std::shared_ptr<const ProductColumnPattern> full_pattern;
   std::unique_ptr<mcscf::ColumnCache<RetainedPattern>> pattern_cache;
-  std::unique_ptr<mcscf::ColumnCache<Factors>> factor_cache;
-  std::unique_ptr<mcscf::ColumnCache<SupportMask>> mask_cache;
 
-  Impl(Context& ctx,const vb::StructureAction::OrthogonalView& view,
-      const ExteriorTransform& a,const ExteriorTransform& b,const mcscf::ProductSupport* exact_support)
-      :c(ctx),alpha_transform(a),beta_transform(b),alpha(a.dimension()),beta(b.dimension()),
-       groups(view.products.size()),beta_shears(view.beta.shear_pair_count()),
+  ProductSymbolic(Context& ctx,const vb::StructureAction::OrthogonalView& view,
+      int alpha_dimension,int beta_dimension,const mcscf::ProductSupport* exact_support)
+      :c(ctx),alpha(alpha_dimension),beta(beta_dimension),groups(view.products.size()),
        support(exact_support),patterns(beta) {
     if (support) reachable=support->columns();
     else {reachable.resize(beta);std::iota(reachable.begin(),reachable.end(),0);}
@@ -210,10 +240,12 @@ struct ProductContraction::Impl {
     }
     std::partial_sum(offsets.begin(),offsets.end(),offsets.begin());
     starts=upload<int>(c,offsets);raw_alpha=upload<int>(c,aa);raw_beta=upload<int>(c,bb);
-    sparse_check(cusparseCreate(&sparse),"create product contraction sparse handle");
-    sparse_check(cusparseSetStream(sparse,c.stream()),"set product contraction stream");
   }
-  ~Impl() {if (sparse) cusparseDestroy(sparse);}
+
+  void prepare_patterns(std::size_t budget) {
+    if (!pattern_cache) pattern_cache=std::make_unique<mcscf::ColumnCache<RetainedPattern>>(budget,
+        [](int)->RetainedPattern {throw std::logic_error("exact product pattern not generated");});
+  }
 
   std::shared_ptr<const ProductColumnPattern> pattern(int b) {
     const bool full=!support || support->full();
@@ -228,12 +260,56 @@ struct ProductContraction::Impl {
     if (!full) pattern_cache->insert(b,{result});else full_pattern=result;
     return result;
   }
+};
+
+struct ProductContraction::Impl {
+  Context& c;
+  const ExteriorTransform& alpha_transform;
+  const ExteriorTransform& beta_transform;
+  int alpha,beta,groups,factor_extent=0,mask_extent=0;
+  std::size_t beta_shears;
+  const mcscf::ProductSupport* support;
+  std::shared_ptr<ProductSymbolic> symbolic;
+  cusparseHandle_t sparse=nullptr;
+  std::unique_ptr<mcscf::ColumnCache<Factors>> factor_cache;
+  std::unique_ptr<mcscf::ColumnCache<SupportMask>> mask_cache;
+
+  Impl(Context& ctx,const vb::StructureAction::OrthogonalView& view,
+      const ExteriorTransform& a,const ExteriorTransform& b,const mcscf::ProductSupport* exact_support)
+      :Impl(ctx,a,b,std::make_shared<ProductSymbolic>(ctx,view,a.dimension(),b.dimension(),exact_support),
+          view.beta.shear_pair_count()) {}
+
+  Impl(Context& ctx,const ExteriorTransform& a,const ExteriorTransform& b,
+      std::shared_ptr<ProductSymbolic> shared,std::size_t shears)
+      :c(ctx),alpha_transform(a),beta_transform(b),alpha(shared->alpha),beta(shared->beta),
+       groups(shared->groups),beta_shears(shears),support(shared->support),symbolic(std::move(shared)) {
+    if (&symbolic->c!=&c || a.dimension()!=alpha || b.dimension()!=beta)
+      throw std::invalid_argument("product symbolic support does not match executor frame");
+    sparse_check(cusparseCreate(&sparse),"create product contraction sparse handle");
+    sparse_check(cusparseSetStream(sparse,c.stream()),"set product contraction stream");
+  }
+  ~Impl() {if (sparse) cusparseDestroy(sparse);}
+
+  std::shared_ptr<const ProductColumnPattern> pattern(int b) {
+    return symbolic->pattern(b);
+  }
 
   ProductColumns allocate(std::span<const int> keys,int width) {
     std::vector<std::shared_ptr<const ProductColumnPattern>> columns;
     columns.reserve(keys.size());
     for (int key:keys) columns.push_back(pattern(key));
     return ProductColumns(c,std::move(columns),width);
+  }
+
+  /** Full rows already have dense column-major layout. Borrow their owner
+   * rather than allocate, pack, and retain a second numerical panel. */
+  linalg::MatrixView dense_panel(ProductColumns& block,Matrix<double>& scratch) {
+    if (std::all_of(block.patterns.begin(),block.patterns.end(),
+        [&](const auto& pattern) {return pattern->full && pattern->size==alpha;}))
+      return {block.values.data(),alpha,
+          static_cast<std::int64_t>(block.patterns.size())*block.values.cols(),alpha};
+    scratch=Matrix<double>(c,alpha,block.patterns.size()*block.values.cols());
+    return scratch.view();
   }
 
   void transform(linalg::MatrixView values,int first,int columns,bool adjoint) {
@@ -271,7 +347,7 @@ struct ProductContraction::Impl {
   void generate_source(ProductIncidence incidence,linalg::ConstMatrixView source,
       const Factors& f,linalg::MatrixView values) {
     clear(c,values);
-    if (source.data) generate_selected<<<grid(alpha),256,0,c.stream()>>>(starts.data(),raw_beta.data(),
+    if (source.data) generate_selected<<<grid(alpha),256,0,c.stream()>>>(symbolic->starts.data(),symbolic->raw_beta.data(),
         incidence,source,f.offsets.data(),f.indices.data(),f.values.data(),values);
   }
 
@@ -292,7 +368,7 @@ struct ProductContraction::Impl {
       throw std::invalid_argument("invalid selected product jet source");
     const int n=sigma.n_orbitals(),d=sigma.n_channels();
     const auto make_result=[&] {
-      ProductJet result{Matrix<double>(c,incidence.size,1),Matrix<double>(c,incidence.size,1),
+      ProductJet result{overlap_only ? Matrix<double>{}:Matrix<double>(c,incidence.size,1),Matrix<double>(c,incidence.size,1),
           selected_only ? Matrix<double>{}:Matrix<double>(c,n,n),
           selected_only ? Matrix<double>{}:Matrix<double>(c,d,d),
           selected_only ? Matrix<double>{}:Matrix<double>(c,n,n)};
@@ -315,13 +391,12 @@ struct ProductContraction::Impl {
       return std::span<const int>{all_beta}.subspan(id*extent,std::min(extent,beta-id*extent));
     };
     std::vector<bool> reachable_panel(panels,false);
-    for (int b:reachable) reachable_panel[b/extent]=true;
+    for (int b:symbolic->reachable) reachable_panel[b/extent]=true;
     int sampled_beta=0;
     for (int id=0;id<panels;++id) if (reachable_panel[id]) sampled_beta+=selected(id).size();
     const bool ordered_beta=vb::detail::prefer_ordered_beta(groups,alpha,beta,beta_shears,sampled_beta);
     const auto products=static_cast<std::size_t>(alpha)*beta;
-    if (!pattern_cache) pattern_cache=std::make_unique<mcscf::ColumnCache<RetainedPattern>>(quarter/4,
-        [](int)->RetainedPattern {throw std::logic_error("exact product pattern not generated");});
+    symbolic->prepare_patterns(quarter/4);
     // The fixed-point beta rows and the directional beta rows follow exactly
     // the CPU ColumnPanels lifetime; no product-sized factor is introduced.
     prepare_factors(extent,quarter/4);
@@ -349,7 +424,7 @@ struct ProductContraction::Impl {
     const auto expand=[&](linalg::ConstMatrixView source,Matrix<double>& image) {
       image=Matrix<double>(c,alpha,beta);clear(c,image.view());
       if (source.data) ordered_products<<<grid(groups),256,0,c.stream()>>>(
-          incidence,raw_alpha.data(),raw_beta.data(),groups,source,image.view(),false);
+          incidence,symbolic->raw_alpha.data(),symbolic->raw_beta.data(),groups,source,image.view(),false);
     };
     if (resident_input) {
       if (!cached) {
@@ -380,54 +455,62 @@ struct ProductContraction::Impl {
         alpha_transform.apply_left(resident_q.view());beta_transform.apply_right(resident_q.view());
       }
     }
-    std::vector<const ProductColumns*> accepted(panels,nullptr);
-    if (cached) for (int id=0;id<panels;++id)
-      if (reachable_panel[id]) accepted[id]=&endpoint.images->at(id);
+    if (cached && !endpoint.readers) {
+      std::vector<const ProductColumns*> accepted(panels,nullptr);
+      for (int id=0;id<panels;++id)
+        if (reachable_panel[id]) accepted[id]=&endpoint.images->at(id);
+      endpoint.readers=std::make_unique<ProductColumnReadCache>(c,accepted,extent,quarter/8);
+    }
     const CiTileReader accepted_y=[&](auto betas,auto rows,linalg::MatrixView values) {
-      read_product_columns(c,accepted,extent,0,betas,rows,values);
+      endpoint.readers->read(0,betas,rows,values);
     };
     const CiTileReader accepted_r=[&](auto betas,auto rows,linalg::MatrixView values) {
-      read_product_columns(c,accepted,extent,1,betas,rows,values);
+      endpoint.readers->read(1,betas,rows,values);
     };
     mcscf::ColumnCache<ProductColumns> input(resident_input ? quarter/2:quarter,[&](int id) {
       const auto keys=selected(id);const int count=keys.size();
       auto block=allocate(keys,input_width);
-      Matrix<double> values(c,alpha,count*input_width);
+      Matrix<double> scratch;
+      const auto values=dense_panel(block,scratch);
       if (cached) {
-        auto dy=values.view().columns(0,count);
+        auto dy=values.columns(0,count);
         if (resident_input) copy_panel(dy,resident_q.view().columns(id*extent,count));
         else {generate(response,factors.get(id),dy);transform(dy,id*extent,count,false);}
-        if (joint) copy_panel(values.view().columns(count,count),dy);
+        if (joint) copy_panel(values.columns(count,count),dy);
         if (delta_upper.data) {
           Matrix<double> orbital(c,alpha,count);
           sigma.apply_one_body_generator_columns(id*extent,count,accepted_y,
               relative_direction,orbital.view());
           add(c,dy,orbital.view());
         }
-        block.pack(c,values.view(),false);return block;
+        if (scratch.data()) block.pack(c,values,false);
+        return block;
       }
       if (resident_input) {
-        copy_panel(values.view().columns(0,count),resident_y.view().columns(id*extent,count));
-        if (tangent) copy_panel(values.view().columns(count,count),resident_dy.view().columns(id*extent,count));
-        if (joint) copy_panel(values.view().columns(2*count,count),resident_q.view().columns(id*extent,count));
-        block.pack(c,values.view(),false);return block;
+        copy_panel(values.columns(0,count),resident_y.view().columns(id*extent,count));
+        if (tangent) copy_panel(values.columns(count,count),resident_dy.view().columns(id*extent,count));
+        if (joint) copy_panel(values.columns(2*count,count),resident_q.view().columns(id*extent,count));
+        if (scratch.data()) block.pack(c,values,false);
+        return block;
       }
-      auto y=values.view().columns(0,count);
-      generate(endpoint.coefficients.view(),factors.get(id),y);
+      auto y=values.columns(0,count);
       if (tangent) {
-        auto dy=values.view().columns(count,count);
-        if (delta_upper.data) generate(endpoint.coefficients.view(),delta_factors.get(id),dy);
-        else clear(c,dy);
-        if (response.data) {
-          Matrix<double> q(c,alpha,count);
-          generate(response,factors.get(id),q.view());add(c,dy,q.view());
-          if (joint) copy_panel(values.view().columns(2*count,count),q.view());
-        }
-        if (delta_upper.data) alpha_transform.apply_directional_left(da,y,dy);
-        else {transform(y,id*extent,count,false);transform(dy,id*extent,count,false);}
-        if (joint) transform(values.view().columns(2*count,count),id*extent,count,false);
-      } else transform(y,id*extent,count,false);
-      block.pack(c,values.view(),false);return block;
+        auto dy=values.columns(count,count);
+        const auto& f=factors.get(id);
+        const auto* df=delta_upper.data ? &delta_factors.get(id):nullptr;
+        clear(c,values);
+        generate_selected_jet<<<grid(alpha),256,0,c.stream()>>>(symbolic->starts.data(),symbolic->raw_beta.data(),
+            incidence,endpoint.coefficients.view(),response,f.offsets.data(),f.indices.data(),f.values.data(),
+            df ? df->offsets.data():nullptr,df ? df->indices.data():nullptr,df ? df->values.data():nullptr,
+            count,joint,values);
+        check_cuda(cudaGetLastError(),"generate fused product source lanes");
+        if (delta_upper.data) {
+          alpha_transform.apply_directional_left(da,y,dy);
+          if (joint) transform(values.columns(2*count,count),id*extent,count,false);
+        } else transform(values,id*extent,count,false);
+      } else {generate(endpoint.coefficients.view(),factors.get(id),y);transform(y,id*extent,count,false);}
+      if (scratch.data()) block.pack(c,values,false);
+      return block;
     });
     const auto reader=[&](int lane) -> CiTileReader {
       if (cached && lane==0) return accepted_y;
@@ -465,15 +548,22 @@ struct ProductContraction::Impl {
       Matrix<double> values;
       std::size_t bytes() const {return values.rows()*values.cols()*sizeof(double);}
     };
-    mcscf::ColumnCache<Projection> projections(quarter/4,[&](int id) {
+    // Share the reverse-metadata allowance with the persistent reader plans.
+    mcscf::ColumnCache<Projection> projections(quarter/(cached ? 8:4),[&](int id) {
       Projection value{Matrix<double>(c,std::min<std::int64_t>(group_extent,groups-id*group_extent),targets)};
       clear(c,value.values.view());return value;
     },[&](int id,Projection& tile) {
-      for (int k=0;k<targets;++k) contract_groups<<<grid(tile.values.rows()),256,0,c.stream()>>>(incidence,
-          id*group_extent,tile.values.rows(),tile.values.view().column(k).data,destinations[k].data);
+      for (int k=0;k<targets;++k) if (destinations[k].data)
+        contract_groups<<<grid(tile.values.rows()),256,0,c.stream()>>>(incidence,
+            id*group_extent,tile.values.rows(),tile.values.view().column(k).data,destinations[k].data);
     });
-    const auto project_panel=[&](int id,linalg::MatrixView values,int destination,bool differentiate) {
+    // Match the CPU product jet: independent RHS share one alpha transform
+    // and one beta-row traversal, then accumulate into distinct targets.
+    const auto project_panel=[&](int id,linalg::MatrixView values,
+        std::initializer_list<int> destinations,bool differentiate) {
       const auto keys=selected(id);const int count=keys.size();
+      const int lanes=destinations.size();
+      const std::array<int,2> target{*destinations.begin(),lanes==2 ? *(destinations.begin()+1):0};
       Matrix<double> delta;
       if (differentiate) {
         delta=Matrix<double>(c,values.rows,values.cols);clear(c,delta.view());
@@ -483,30 +573,33 @@ struct ProductContraction::Impl {
         transform(values,id*extent,count,true);
       }
       if (resident_projection) {
-        if (!projected[destination].data()) {
-          projected[destination]=Matrix<double>(c,alpha,beta);clear(c,projected[destination].view());
-        }
-        add(c,projected[destination].view().columns(id*extent,count),
-            differentiate ? delta.view():static_cast<linalg::ConstMatrixView>(values));
-        if (differentiate) {
-          if (!left_projected[destination].data()) {
-            left_projected[destination]=Matrix<double>(c,alpha,beta);clear(c,left_projected[destination].view());
+        for (int lane=0;lane<lanes;++lane) {
+          const int destination=target[lane];
+          if (!projected[destination].data()) {
+            projected[destination]=Matrix<double>(c,alpha,beta);clear(c,projected[destination].view());
           }
-          add(c,left_projected[destination].view().columns(id*extent,count),values);
+          add(c,projected[destination].view().columns(id*extent,count),
+              (differentiate ? delta.view():values).columns(lane*count,count));
+          if (differentiate) {
+            if (!left_projected[destination].data()) {
+              left_projected[destination]=Matrix<double>(c,alpha,beta);clear(c,left_projected[destination].view());
+            }
+            add(c,left_projected[destination].view().columns(id*extent,count),values.columns(lane*count,count));
+          }
         }
         return;
       }
       const auto& f=factors.get(id);
       for (std::int64_t begin=0;begin<groups;begin+=group_extent) {
         auto& tile=projections.get(begin/group_extent);
-        project_groups<<<grid(tile.values.rows()),256,0,c.stream()>>>(raw_alpha.data()+begin,raw_beta.data()+begin,
+        project_groups<<<grid(tile.values.rows()),256,0,c.stream()>>>(symbolic->raw_alpha.data()+begin,symbolic->raw_beta.data()+begin,
             tile.values.rows(),f.offsets.data(),f.indices.data(),f.values.data(),
-            differentiate ? delta.view():values,tile.values.view().column(destination).data);
+            differentiate ? delta.view():values,count,lanes,target[0],target[1],tile.values.view());
         if (differentiate) {
           const auto& df=delta_factors.get(id);
-          project_groups<<<grid(tile.values.rows()),256,0,c.stream()>>>(raw_alpha.data()+begin,raw_beta.data()+begin,
+          project_groups<<<grid(tile.values.rows()),256,0,c.stream()>>>(symbolic->raw_alpha.data()+begin,symbolic->raw_beta.data()+begin,
               tile.values.rows(),df.offsets.data(),df.indices.data(),df.values.data(),values,
-              tile.values.view().column(destination).data);
+              count,lanes,target[0],target[1],tile.values.view());
         }
       }
     };
@@ -515,8 +608,10 @@ struct ProductContraction::Impl {
       auto block=allocate(selected(id),input_width);clear(c,block.values.view());return block;
     },[&](int id,ProductColumns& block) {
       const int count=selected(id).size(),first=id*extent;
-      Matrix<double> values(c,alpha,count*input_width);clear(c,values.view());block.pack(c,values.view(),true);
-      const auto hy=values.view().columns(0,count);
+      Matrix<double> scratch;
+      const auto values=dense_panel(block,scratch);
+      if (scratch.data()) {clear(c,values);block.pack(c,values,true);}
+      const auto hy=values.columns(0,count);
       if (!tangent) {
         if (retain && retaining) {
           auto& source=input.get(id);
@@ -530,11 +625,11 @@ struct ProductContraction::Impl {
         const std::array moments{result.generator.view()};
         if (!selected_only)
           sigma.generator_adjoint_streamed(first,lefts,requests,moments,false,exchange_reduced,true);
-        project_panel(id,hy,0,false);
+        project_panel(id,hy,{0},false);
       } else {
         const int z=cached ? 0:count,qs=cached ? count:2*count;
-        const std::array lefts{static_cast<linalg::ConstMatrixView>(values.view().columns(z,count)),
-            joint ? static_cast<linalg::ConstMatrixView>(values.view().columns(qs,count)):linalg::ConstMatrixView{}};
+        const std::array lefts{static_cast<linalg::ConstMatrixView>(values.columns(z,count)),
+            joint ? static_cast<linalg::ConstMatrixView>(values.columns(qs,count)):linalg::ConstMatrixView{}};
         const std::array moments{result.generator.view(),joint ? ci->generator.view():linalg::MatrixView{}};
         const std::array requests{CiStreamedGeneratorRequest{y}};
         sigma.generator_adjoint_streamed(first,{lefts.data(),joint ? 2U:1U},requests,
@@ -548,9 +643,9 @@ struct ProductContraction::Impl {
             sigma.generator_adjoint_streamed(first,hleft,qrequests,{moments.data()+1,1},false,exchange_reduced,true);
           }
         }
-        project_panel(id,values.view().columns(z,count),0,false);
-        if (joint) project_panel(id,values.view().columns(qs,count),2,false);
-        if (delta_upper.data && !cached) project_panel(id,hy,0,true);
+        project_panel(id,values.columns(z,(joint ? 2:1)*count),
+            joint ? std::initializer_list<int>{0,2}:std::initializer_list<int>{0},false);
+        if (delta_upper.data && !cached) project_panel(id,hy,{0},true);
       }
     });
     const auto writer=[&](int lane) -> CiTileWriter {
@@ -586,6 +681,7 @@ struct ProductContraction::Impl {
       }
     }
     if (!selected_only && !tangent && !output.evictions) {
+      endpoint.readers.reset();
       endpoint.extent=extent;endpoint.images=std::make_unique<ProductImages>(quarter);
       endpoint.images->begin(panels);
       for (int id=0;id<panels;++id) if (!reachable_panel[id]) endpoint.images->retain(id,{});
@@ -602,41 +698,39 @@ struct ProductContraction::Impl {
           relative_direction.ld,transpose.data(),n),"product relative direction transpose");
     }
     for (int id=0;id<panels;++id) if (reachable_panel[id]) {
-      const int count=selected(id).size();Matrix<double> values(c,alpha,count);
-      if (!tangent) {y(selected(id),all_rows,values.view());project_panel(id,values.view(),1,false);}
+      const int count=selected(id).size();
+      Matrix<double> values(c,alpha,(tangent && joint ? 2:1)*count);
+      auto dv=values.view().columns(0,count);
+      auto dq=joint ? values.view().columns(count,count):linalg::MatrixView{};
+      if (!tangent) {y(selected(id),all_rows,dv);project_panel(id,dv,{1},false);}
       else {
-        dy(selected(id),all_rows,values.view());
+        dy(selected(id),all_rows,dv);
+        if (joint) q(selected(id),all_rows,dq);
         if (cached) {
-          Matrix<double> q_values;
-          if (joint) {q_values=Matrix<double>(c,alpha,count);q(selected(id),all_rows,q_values.view());}
-          const std::array lefts{static_cast<linalg::ConstMatrixView>(values.view()),
-              static_cast<linalg::ConstMatrixView>(q_values.view())};
+          const std::array lefts{static_cast<linalg::ConstMatrixView>(dv),
+              static_cast<linalg::ConstMatrixView>(dq)};
           const std::array requests{CiStreamedGeneratorRequest{accepted_y,-endpoint.energy,false},
               CiStreamedGeneratorRequest{accepted_r,1.0,true}};
           const std::array moments{result.generator.view(),joint ? ci->generator.view():linalg::MatrixView{}};
           sigma.generator_adjoint_streamed(id*extent,{lefts.data(),joint ? 2U:1U},requests,
               {moments.data(),joint ? 2U:1U},false,sigma.exchange_parity()!=0,true);
-          if (joint) project_panel(id,q_values.view(),3,false);
-        } else if (joint) {
-          Matrix<double> q_values(c,alpha,count);q(selected(id),all_rows,q_values.view());
-          project_panel(id,q_values.view(),3,false);
         }
-        project_panel(id,values.view(),1,false);
-        if (delta_upper.data && !cached) {y(selected(id),all_rows,values.view());project_panel(id,values.view(),1,true);}
+        project_panel(id,values.view(),joint ? std::initializer_list<int>{1,3}:
+            std::initializer_list<int>{1},false);
+        if (delta_upper.data && !cached) {y(selected(id),all_rows,dv);project_panel(id,dv,{1},true);}
         if (delta_upper.data && cached) {
-          sigma.apply_one_body_generator_columns(id*extent,count,accepted_y,transpose.view(),values.view(),
+          // G^T(HY) = G^T R + E G^T Y. Consume the two retained
+          // accepted lanes once, then share their final reverse transform.
+          values=Matrix<double>{};
+          Matrix<double> terminal(c,alpha,2*count);
+          auto gy=terminal.view().columns(0,count),gr=terminal.view().columns(count,count);
+          sigma.apply_one_body_generator_columns(id*extent,count,accepted_y,transpose.view(),gy,
               sigma.exchange_parity()!=0);
-          if (sigma.exchange_parity()) multiply(c,values.view(),2.0);
-          project_panel(id,values.view(),1,false);
-          const CiTileReader hy_reader=[&](auto betas,auto rows,linalg::MatrixView target) {
-            accepted_r(betas,rows,target);
-            Matrix<double> primal(c,target.rows,target.cols);accepted_y(betas,rows,primal.view());
-            add(c,target,primal.view(),endpoint.energy);
-          };
-          sigma.apply_one_body_generator_columns(id*extent,count,hy_reader,transpose.view(),values.view(),
+          sigma.apply_one_body_generator_columns(id*extent,count,accepted_r,transpose.view(),gr,
               sigma.exchange_parity()!=0);
-          if (sigma.exchange_parity()) multiply(c,values.view(),2.0);
-          project_panel(id,values.view(),0,false);
+          if (sigma.exchange_parity()) multiply(c,terminal.view(),2.0);
+          add(c,gr,gy,endpoint.energy);
+          project_panel(id,terminal.view(),{1,0},false);
         }
       }
     }
@@ -653,7 +747,7 @@ struct ProductContraction::Impl {
         beta_transform.apply_directional_left(db,x.view(),dx.view(),true);
         transpose(dx.view(),projected[k].view());
       } else beta_transform.apply_right(projected[k].view(),true);
-      ordered_products<<<grid(groups),256,0,c.stream()>>>(incidence,raw_alpha.data(),raw_beta.data(),
+      ordered_products<<<grid(groups),256,0,c.stream()>>>(incidence,symbolic->raw_alpha.data(),symbolic->raw_beta.data(),
           groups,projected[k].view(),destinations[k],true);
     }
     if (!selected_only) multiply(c,result.generator.view(),2.0);
@@ -673,15 +767,14 @@ struct ProductContraction::Impl {
     const auto allowance=std::max<std::size_t>(1,bytes/5);
     const auto row_bytes=sizeof(double)*(12ULL*alpha+8ULL*beta);
     const int extent=std::max<std::size_t>(1,std::min<std::size_t>(beta,allowance/row_bytes));
-    if (!pattern_cache) pattern_cache=std::make_unique<mcscf::ColumnCache<RetainedPattern>>(allowance/4,
-        [](int)->RetainedPattern {throw std::logic_error("exact product pattern not generated");});
+    symbolic->prepare_patterns(allowance/4);
     prepare_factors(extent,allowance/4);
     prepare_masks(extent,allowance/4);
     double maximum=0.0;
     for (int first=0;first<beta;first+=extent) {
       const int count=std::min(extent,beta-first);
-      const auto touched=std::lower_bound(reachable.begin(),reachable.end(),first);
-      if (touched==reachable.end() || *touched>=first+count) continue;
+      const auto touched=std::lower_bound(symbolic->reachable.begin(),symbolic->reachable.end(),first);
+      if (touched==symbolic->reachable.end() || *touched>=first+count) continue;
       Matrix<double> values(c,alpha,count);
       generate_source(incidence,source,factor_cache->get(first/extent),values.view());
       transform(values.view(),first,count,false);
@@ -702,7 +795,12 @@ struct ProductContraction::Impl {
 ProductContraction::ProductContraction(Context& c,const vb::StructureAction::OrthogonalView& view,
     const ExteriorTransform& alpha,const ExteriorTransform& beta,const mcscf::ProductSupport* support)
     :impl_(std::make_unique<Impl>(c,view,alpha,beta,support)) {}
+ProductContraction::ProductContraction(std::unique_ptr<Impl> impl):impl_(std::move(impl)) {}
 ProductContraction::~ProductContraction()=default;
+std::unique_ptr<ProductContraction> ProductContraction::clone() const {
+  return std::unique_ptr<ProductContraction>(new ProductContraction(std::make_unique<Impl>(
+      impl_->c,impl_->alpha_transform,impl_->beta_transform,impl_->symbolic,impl_->beta_shears)));
+}
 void ProductContraction::update_frame() {impl_->factor_cache.reset();}
 void ProductContraction::accept(ProductEndpoint& endpoint,double energy) const {
   endpoint.energy=energy;
@@ -716,14 +814,15 @@ void ProductContraction::accept(ProductEndpoint& endpoint,double energy) const {
 void ProductContraction::apply_selected(ProductIncidence incidence,linalg::ConstMatrixView source,
     const DirectCiSigma& sigma,linalg::MatrixView h,linalg::MatrixView m,
     std::size_t bytes,bool overlap_only) const {
-  if (source.rows!=incidence.size || source.cols<=0 || h.rows!=source.rows || m.rows!=source.rows ||
-      h.cols!=source.cols || m.cols!=source.cols)
+  if (source.rows!=incidence.size || source.cols<=0 || m.rows!=source.rows ||
+      m.cols!=source.cols || (!overlap_only &&
+      (h.rows!=source.rows || h.cols!=source.cols || !h.data)))
     throw std::invalid_argument("invalid selected product action block");
   ProductEndpoint endpoint{Matrix<double>(impl_->c,incidence.size,1)};
   for (int rhs=0;rhs<source.cols;++rhs) {
     impl_->copy_panel(endpoint.coefficients.view(),source.column(rhs));
     auto result=impl_->jet(incidence,sigma,endpoint,{},{},{},nullptr,bytes,nullptr,{},true,overlap_only);
-    impl_->copy_panel(h.column(rhs),result.hamiltonian.view());
+    if (!overlap_only) impl_->copy_panel(h.column(rhs),result.hamiltonian.view());
     impl_->copy_panel(m.column(rhs),result.overlap.view());
   }
 }
