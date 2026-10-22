@@ -10,7 +10,6 @@
 #include "cuda/linalg/blas.hpp"
 #include "mcscf/ci/column_cache.hpp"
 #include "mcscf/ci/product_support.hpp"
-#include "parallel/openmp.hpp"
 
 namespace xmvb::cuda {
 namespace {
@@ -122,6 +121,10 @@ struct Pattern {
   std::vector<int> rows;
   Buffer<int> device_rows;
 };
+struct RetainedPattern {
+  std::shared_ptr<const Pattern> pattern;
+  std::size_t bytes() const {return 2*pattern->rows.size()*sizeof(int);}
+};
 struct Column {
   std::shared_ptr<const Pattern> pattern;
   Matrix<double> values;
@@ -144,6 +147,7 @@ struct ProductContraction::Impl {
   Buffer<int> starts,raw_alpha,raw_beta;
   cusparseHandle_t sparse=nullptr;
   std::vector<std::weak_ptr<const Pattern>> patterns;
+  std::unique_ptr<mcscf::ColumnCache<RetainedPattern>> pattern_cache;
   std::vector<unsigned char> column_support;
   mutable std::unique_ptr<mcscf::ColumnCache<FactorRow>> row_cache;
 
@@ -168,16 +172,20 @@ struct ProductContraction::Impl {
   ~Impl() {if (sparse) cusparseDestroy(sparse);}
 
   std::shared_ptr<const Pattern> pattern(int b) {
+    if (pattern_cache->contains(b)) return pattern_cache->get(b).pattern;
     if (auto found=patterns[b].lock()) return found;
     auto result=std::make_shared<Pattern>();result->full=!support;
     if (support) {
       support->append_column_rows(b,result->rows);
       result->size=result->rows.size();result->device_rows=upload<int>(c,result->rows);
     } else result->size=alpha;
-    patterns[b]=result;return result;
+    patterns[b]=result;
+    pattern_cache->insert(b,{result});
+    return result;
   }
 
-  Matrix<double> sample(std::span<const int> keys,linalg::ConstMatrixView upper) const {
+  Matrix<double> sample(std::span<const int> keys) const {
+    const nvtx3::scoped_range range{"vb.product_beta_rows"};
     Matrix<double> output(c,beta,keys.size());
     std::vector<int> missing,positions(keys.size(),-1),pending(beta,-1);
     for (int i=0;i<keys.size();++i) {
@@ -190,7 +198,7 @@ struct ProductContraction::Impl {
     }
     if (!missing.empty()) {
       Matrix<double> generated(c,beta,missing.size());
-      beta_transform.generate_rows(upper,missing,generated.view());
+      beta_transform.sample_rows(missing,generated.view());
       for (int i=0;i<keys.size();++i) if (positions[i]>=0)
         check_cuda(cudaMemcpyAsync(output.view().column(i).data,generated.view().column(positions[i]).data,
             beta*sizeof(double),cudaMemcpyDeviceToDevice,c.stream()),"stage requested beta factor");
@@ -205,6 +213,7 @@ struct ProductContraction::Impl {
   }
 
   void transform(linalg::MatrixView values,const std::vector<std::shared_ptr<const Pattern>>& columns,bool adjoint) {
+    const nvtx3::scoped_range range{adjoint ? "vb.product_alpha_adjoint":"vb.product_alpha"};
     if (!support) {alpha_transform.apply_left(values,adjoint);return;}
     std::vector<int> offsets{0},rows;
     for (const auto& column:columns) {
@@ -213,7 +222,7 @@ struct ProductContraction::Impl {
     alpha_transform.apply_supported_left(values,offsets,rows,adjoint);
   }
 
-  void apply(linalg::ConstMatrixView coefficients,linalg::ConstMatrixView upper,
+  void apply(linalg::ConstMatrixView coefficients,
       const DirectCiSigma& sigma,linalg::MatrixView h,linalg::MatrixView m,std::size_t bytes,bool overlap_only) {
     const nvtx3::scoped_range range{"vb.product_tiles"};
     if (coefficients.rows!=groups || coefficients.cols<=0 || h.rows!=groups || m.rows!=groups ||
@@ -221,9 +230,18 @@ struct ProductContraction::Impl {
       throw std::invalid_argument("invalid product contraction coordinates");
     const int width=blas_int(coefficients.cols);
     const auto quarter=std::max<std::size_t>(1,bytes/4);
+    // Exact support depends on selected structures, not orbitals or the CI
+    // vector. Retain its uploaded sparse rows across actions, within the same
+    // workspace quarter as the factor rows. No global U_alpha*U_beta map.
+    if (!pattern_cache) pattern_cache=std::make_unique<mcscf::ColumnCache<RetainedPattern>>(quarter/4,
+        [](int)->RetainedPattern {throw std::logic_error("support rows require exact generation");});
     const auto row_bytes=sizeof(double)*(static_cast<std::size_t>(alpha)*width+beta);
-    const auto parallel_extent=static_cast<std::size_t>(cooperative_openmp_thread_count())*8;
-    const int extent=std::min<std::size_t>(beta,std::max<std::size_t>(1,std::min(parallel_extent,quarter/(8*row_bytes))));
+    // The CPU cap is task granularity, not a contraction identity. CUDA
+    // translation units do not enable OpenMP, so copying that cap split every
+    // panel into eight columns, repeating CSR conversion, support uploads and
+    // exterior actions. Admit the actual temporary payload within the same
+    // workspace quarter; do not tie device batches to a host worker count.
+    const int extent=std::min<std::size_t>(beta,std::max<std::size_t>(1,quarter/(8*row_bytes)));
     if (!row_cache) row_cache=std::make_unique<mcscf::ColumnCache<FactorRow>>(quarter/2,
         [](int)->FactorRow {throw std::logic_error("beta factors require batched generation");});
     clear(c,h);clear(c,m);
@@ -236,9 +254,10 @@ struct ProductContraction::Impl {
           factors.offsets.data(),factors.indices.data(),factors.values.data(),keys.size(),image,target);
     };
     const auto build=[&](std::span<const int> keys) {
+      const nvtx3::scoped_range range{"vb.product_generate"};
       std::vector<std::shared_ptr<const Pattern>> columns;
       for (int key:keys) columns.push_back(pattern(key));
-      auto sampled=sample(keys,upper);Factors factors(c,sparse,sampled.view());
+      auto sampled=sample(keys);Factors factors(c,sparse,sampled.view());
       Matrix<double> values(c,alpha,keys.size()*width);clear(c,values.view());
       generate<<<grid(static_cast<std::size_t>(alpha)*width),256,0,c.stream()>>>(starts.data(),raw_beta.data(),coefficients,
           factors.offsets.data(),factors.indices.data(),factors.values.data(),keys.size(),values.view());
@@ -265,6 +284,7 @@ struct ProductContraction::Impl {
     std::vector<Column> completed_images;
     const auto flush=[&] {
       if (completed.empty()) return;
+      const nvtx3::scoped_range range{"vb.product_project"};
       const int count=completed.size();
       Matrix<double> image(c,alpha,count*width);clear(c,image.view());
       std::vector<std::shared_ptr<const Pattern>> columns;
@@ -273,7 +293,7 @@ struct ProductContraction::Impl {
         if (p->size) pack_column<<<grid(static_cast<std::size_t>(p->size)*width),256,0,c.stream()>>>(
             p->device_rows.data(),p->size,b,count,image.view(),completed_images[b].values.view(),true);
       }
-      auto sampled=sample(completed,upper);Factors factors(c,sparse,sampled.view());
+      auto sampled=sample(completed);Factors factors(c,sparse,sampled.view());
       project_panel(completed,columns,image.view(),factors,h);
       completed.clear();completed_images.clear();
     };
@@ -317,8 +337,8 @@ struct ProductContraction::Impl {
         auto& column=output.get(betas[j]);
         if (p->full) {
           std::vector<int> all(alpha);std::iota(all.begin(),all.end(),0);
-          gather(j,all,column.values.view(),true);
-        } else gather(j,p->rows,column.values.view(),true);
+          gather(j,all,column.values.view(),true,nullptr);
+        } else gather(j,p->rows,column.values.view(),true,p->device_rows.data());
       }
     };
     if (!overlap_only) {
@@ -351,9 +371,9 @@ ProductContraction::ProductContraction(Context& c,const vb::StructureAction::Ort
     :impl_(std::make_unique<Impl>(c,view,alpha,beta,std::move(support))) {}
 ProductContraction::~ProductContraction()=default;
 void ProductContraction::update_frame() {impl_->row_cache.reset();}
-void ProductContraction::apply(linalg::ConstMatrixView coefficients,linalg::ConstMatrixView upper,
+void ProductContraction::apply(linalg::ConstMatrixView coefficients,
     const DirectCiSigma& sigma,linalg::MatrixView h,linalg::MatrixView m,std::size_t bytes,bool overlap_only) const {
-  impl_->apply(coefficients,upper,sigma,h,m,bytes,overlap_only);
+  impl_->apply(coefficients,sigma,h,m,bytes,overlap_only);
 }
 
 } // namespace xmvb::cuda

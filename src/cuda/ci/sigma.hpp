@@ -21,9 +21,11 @@ using CiTileReader=std::function<void(std::span<const int>,std::span<const int>,
 /** Gather directly into a consumer-owned panel, optionally adding to it.
  * Source -1 denotes all beta columns, otherwise one tile-local beta column.
  * An empty row span denotes the halo; otherwise rows are sorted distinct
- * global alpha indices. No accumulator may outlive its writer callback.
+ * global alpha indices. The final pointer can borrow their existing device
+ * representation, avoiding a repeated upload. No accumulator may outlive its
+ * writer callback.
  */
-using CiTileGather=std::function<void(int,std::span<const int>,linalg::MatrixView,bool)>;
+using CiTileGather=std::function<void(int,std::span<const int>,linalg::MatrixView,bool,const int*)>;
 using CiTileWriter=std::function<void(std::span<const int>,std::span<const int>,const CiTileGather&)>;
 using CiColumnRelease=std::function<void(std::span<const int>)>;
 
@@ -33,6 +35,9 @@ struct CiTileRequest {
   CiTileWriter image;
   const DirectCiSigma* direction=nullptr;
   linalg::MatrixView one_adjoint{},pair_adjoint{};
+  /** Optional resident endpoint: consume signed links directly, without
+   * gathering and copying one temporary halo column at a time. */
+  linalg::MatrixView carrier_image{};
 };
 
 /** Borrowed resident endpoints for consumers not yet storing compact columns.

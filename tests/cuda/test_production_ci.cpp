@@ -204,7 +204,7 @@ void check_product_tiles(int parity,bool covalent,std::size_t budget) {
         context.stream()),"clear tile oracle");
     return [&,destination](auto betas,auto rows,const xmvb::cuda::CiTileGather& gather) {
       xmvb::cuda::Matrix<double> tile(context,rows.size(),betas.size()*width);
-      gather(-1,{},tile.view(),false);
+      gather(-1,{},tile.view(),false,nullptr);
       const double one=1;
       for (int b=0;b<betas.size();++b) for (int v=0;v<width;++v) for (int a=0;a<rows.size();++a)
         xmvb::cuda::check_cublas(cublasDaxpy(context.blas(),1,&one,tile.data()+a+tile.rows()*(b*width+v),1,
@@ -766,14 +766,24 @@ void check_exterior(int rhs_count,int n=4,int nalpha=2,int nbeta=1) {
   const xmvb::vb::ExteriorOrbitalTransform cpu_beta(beta, upper);
   xmvb::cuda::Context context(64ULL * 1024ULL * 1024ULL);
   const xmvb::cuda::ExteriorTransform gpu_alpha(context, cpu_alpha);
-  const xmvb::cuda::ExteriorTransform gpu_beta(context, cpu_beta);
+  xmvb::cuda::ExteriorTransform gpu_beta(context, cpu_beta);
   {
     const std::vector<int> requested{static_cast<int>(beta.size())-1,0};
     xmvb::cuda::Matrix<double> d_upper(context,n,n),rows(context,beta.size(),requested.size());
     xmvb::cuda::copy_to_device(context,d_upper.view(),upper);
-    gpu_beta.generate_rows(d_upper.view(),requested,rows.view());
+    gpu_beta.sample_rows(requested,rows.view());
     near(download(context,rows).transpose(),Matrix(cpu_beta.generate_rows(requested)),
         2e-11,"device requested rows differ from the shared CPU row recursion");
+    Matrix changed=upper;
+    changed(0,n-1)+=0.07;
+    const xmvb::vb::ExteriorOrbitalTransform cpu_changed(beta,changed);
+    xmvb::cuda::copy_to_device(context,d_upper.view(),changed);
+    gpu_beta.update_upper(d_upper.view());
+    gpu_beta.sample_rows(requested,rows.view());
+    near(download(context,rows).transpose(),Matrix(cpu_changed.generate_rows(requested)),
+        2e-11,"device requested rows did not follow the updated orbital frame");
+    xmvb::cuda::copy_to_device(context,d_upper.view(),upper);
+    gpu_beta.update_upper(d_upper.view());
   }
   const Matrix seed = values(alpha.size(), beta.size() * rhs_count, 0.34);
   xmvb::cuda::Matrix<double> device(context, seed.rows(), seed.cols());

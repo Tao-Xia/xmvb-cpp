@@ -355,7 +355,7 @@ struct StructureAction::Impl {
           context.device_byte_budget()-context.counters().current_device_bytes);
       for (std::int64_t rhs=0;rhs<vectors.cols;++rhs) {
         spmm(false,vectors.column(rhs),support.view());
-        product_contraction->apply(support.view(),model_upper.view(),sigma,
+        product_contraction->apply(support.view(),sigma,
             h_products.view(),m_products.view(),bytes);
         spmm(true,h_products.view(),h.column(rhs));
         spmm(true,m_products.view(),m.column(rhs));
@@ -590,7 +590,7 @@ void StructureAction::apply_overlap(linalg::ConstMatrixView vectors,
         p.context.device_byte_budget()-p.context.counters().current_device_bytes);
     for (std::int64_t rhs=0;rhs<vectors.cols;++rhs) {
       p.spmm(false,vectors.column(rhs),p.support.view());
-      p.product_contraction->apply(p.support.view(),p.model_upper.view(),p.sigma,
+      p.product_contraction->apply(p.support.view(),p.sigma,
           h_products.view(),m_products.view(),bytes,true);
       p.spmm(true,m_products.view(),overlap.column(rhs));
     }

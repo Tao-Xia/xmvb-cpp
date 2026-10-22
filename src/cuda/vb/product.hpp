@@ -19,7 +19,7 @@ public:
       std::shared_ptr<const mcscf::ProductSupport> support);
   ~ProductContraction();
   void update_frame();
-  void apply(linalg::ConstMatrixView coefficients,linalg::ConstMatrixView upper,
+  void apply(linalg::ConstMatrixView coefficients,
       const DirectCiSigma&,linalg::MatrixView hamiltonian,linalg::MatrixView overlap,
       std::size_t workspace_bytes,bool overlap_only=false) const;
 private:

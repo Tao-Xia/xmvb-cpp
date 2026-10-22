@@ -6,28 +6,15 @@
 #include <stdexcept>
 
 #include "cuda/linalg/blas.hpp"
-#include "mcscf/ci/exterior_row.hpp"
-#include "vbscf/structures/orthogonal_ci/exterior_rows.hpp"
 
 namespace xmvb::cuda {
 namespace {
 
 using Edge = vb::ExteriorOrbitalTransform::ShearEdge;
 
-__global__ void requested_rows(mcscf::detail::ExteriorRowTopology plan,
-    linalg::ConstMatrixView upper,const std::uint64_t* masks,const int* rows,
-    int first,int count,double* scratch,linalg::MatrixView output) {
+__global__ void selected_identity(const int* rows,int count,linalg::MatrixView output) {
   const int row=blockIdx.x*blockDim.x+threadIdx.x;
-  if (row>=count) return;
-  int occupied[63],indices[63];
-  auto mask=masks[rows[first+row]];
-  for (int k=0;mask;++k) {
-    occupied[k]=__ffsll(static_cast<long long>(mask))-1;
-    mask&=mask-1;
-  }
-  double* previous=scratch+2LL*plan.dimension*row;
-  mcscf::detail::exterior_row(plan,upper.data,upper.ld,occupied,indices,
-      previous,previous+plan.dimension,output.data+(first+row)*output.ld);
+  if (row<count) output.data[rows[row]+output.ld*row]=1.0;
 }
 
 // The ordered elementary-factor coefficients are a small triangular problem,
@@ -183,20 +170,13 @@ __global__ void restrict_columns(linalg::MatrixView panel,const std::uint64_t* a
 ExteriorTransform::ExteriorTransform(
     Context& context, const vb::ExteriorOrbitalTransform& source)
     : context_(&context), dimension_(source.dimension()),n_orbitals_(source.n_orbitals()),
-      electrons_(source.n_electrons()),
       scales_(context, static_cast<std::size_t>(source.dimension())),
       inverse_scales_(context, static_cast<std::size_t>(source.dimension())),
       shear_coefficients_(context,source.shear_count()),
       occupations_(context,source.occupations().size()),
-      binomial_(context,source.row_plan().binomial().size()),
-      column_ranks_(context,source.row_plan().column_ranks().size()),
       unit_upper_(context,source.n_orbitals(),source.n_orbitals()) {
   if (dimension_ <= 0 || source.determinant_scales().size() != dimension_)
     throw std::invalid_argument("invalid CUDA exterior transform dimensions");
-  context.copy_to_device(binomial_.data(),source.row_plan().binomial().data(),
-      binomial_.size()*sizeof(std::uint64_t));
-  context.copy_to_device(column_ranks_.data(),source.row_plan().column_ranks().data(),
-      column_ranks_.size()*sizeof(int));
   int device=0,shared_bytes=0;
   check_cuda(cudaGetDevice(&device),"query exterior device");
   check_cuda(cudaDeviceGetAttribute(&shared_bytes,cudaDevAttrMaxSharedMemoryPerBlock,device),
@@ -369,32 +349,22 @@ void ExteriorTransform::apply_right(linalg::MatrixView coefficients,
   }
 }
 
-void ExteriorTransform::generate_rows(linalg::ConstMatrixView upper,
-    std::span<const int> rows,linalg::MatrixView output) const {
-  if (upper.rows!=n_orbitals_ || upper.cols!=n_orbitals_ ||
-      upper.ld<upper.rows || !upper.data || output.rows!=dimension_ ||
+void ExteriorTransform::sample_rows(std::span<const int> rows,linalg::MatrixView output) const {
+  if (output.rows!=dimension_ ||
       output.cols!=static_cast<std::int64_t>(rows.size()) || output.ld<output.rows)
     throw std::invalid_argument("requested exterior-row dimensions");
   if (rows.empty()) return;
-  if (!output.data || output.data==upper.data ||
+  if (!output.data ||
       std::any_of(rows.begin(),rows.end(),[&](int row) { return row<0 || row>=dimension_; }))
     throw std::invalid_argument("invalid requested exterior rows");
   auto& c=*context_;
   Buffer<int> selected(c,rows.size());
   c.copy_to_device(selected.data(),rows.data(),rows.size_bytes());
-  const auto available=c.device_byte_budget()-c.counters().current_device_bytes;
-  const int tile=static_cast<int>(std::min<std::size_t>(rows.size(),
-      available/(2ULL*dimension_*sizeof(double))));
-  if (!tile) throw std::runtime_error("exterior recursion cannot fit one single-spin row");
-  Buffer<double> scratch(c,2ULL*dimension_*tile);
-  const mcscf::detail::ExteriorRowTopology plan{
-      n_orbitals_,electrons_,dimension_,binomial_.data(),column_ranks_.data()};
-  for (int first=0;first<static_cast<int>(rows.size());first+=tile) {
-    const int count=std::min(tile,static_cast<int>(rows.size())-first);
-    requested_rows<<<grid_size(count),256,0,c.stream()>>>(plan,upper,occupations_.data(),
-        selected.data(),first,count,scratch.data(),output);
-    check_cuda(cudaGetLastError(),"shared CPU exterior-row recursion");
-  }
+  check_cuda(cudaMemset2DAsync(output.data,output.ld*sizeof(double),0,
+      output.rows*sizeof(double),output.cols,c.stream()),"clear selected identity columns");
+  selected_identity<<<grid_size(rows.size()),256,0,c.stream()>>>(selected.data(),rows.size(),output);
+  check_cuda(cudaGetLastError(),"selected exterior identity columns");
+  apply_left(output,true);
 }
 
 }  // namespace xmvb::cuda
