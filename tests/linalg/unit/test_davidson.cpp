@@ -194,6 +194,7 @@ bool run_case(
             << " eigenvector_error=" << eigenvector_error
             << " s_orthonormality_error=" << orthonormality_error
             << " overlap_image_error=" << overlap_image_error
+            << " hamiltonian_image_error=" << hamiltonian_image_error
             << " residual=" << max_residual
             << (passed ? " PASS\n" : " FAIL\n");
   return passed;
@@ -365,6 +366,38 @@ bool run_residual_preconditioner_case() {
   return passed;
 }
 
+bool run_projected_correction_scale_case() {
+  Eigen::Matrix3d h = Eigen::Matrix3d::Zero();
+  h(0, 1) = h(1, 0) = 1.0;
+  h(2, 2) = 2.0;
+  const Eigen::Vector3d ones = Eigen::Vector3d::Ones();
+  for (bool identity : {false, true}) {
+    for (double scale : {1.0e-4, 1.0, 1.0e4}) {
+      const xmvb::linalg::GeneralizedEigenAction action =
+          [&](const Eigen::Ref<const Eigen::MatrixXd>& x) {
+            return xmvb::linalg::GeneralizedEigenActionResult{
+                h * x, identity ? Eigen::MatrixXd{} : x.eval()};
+          };
+      Eigen::MatrixXd seed = Eigen::MatrixXd::Zero(3, 1);
+      seed(0, 0) = 1.0;
+      auto options = xmvb::linalg::make_davidson_options(3, 1, 1e-7, 1e-3, 1e-7);
+      options.identity_overlap = identity;
+      options.residual_preconditioner = [scale](const Eigen::VectorXd& r, double) {
+        Eigen::Matrix3d inverse = Eigen::Matrix3d::Zero();
+        inverse << 1e16, 1e8, 0, 1e8, 2, 0, 0, 0, 1;
+        return Eigen::VectorXd(scale * inverse * r);
+      };
+      const auto result = xmvb::linalg::GeneralizedEigensolver{}.solve_davidson(
+          action, h.diagonal(), ones, seed, options);
+      if (std::abs(result.eigenpairs.eigenvalues[0] + 1.0) > 1e-12 ||
+          result.stationarity_residual_norms[0] > 1e-12 ||
+          result.block_actions != 2) return false;
+    }
+  }
+  std::cout << "projected correction scale PASS\n";
+  return true;
+}
+
 bool run_invalid_residual_preconditioner_cases() {
   constexpr int dimension = 8;
   const DenseProblem problem = make_tridiagonal_problem(dimension);
@@ -404,23 +437,30 @@ bool run_invalid_residual_preconditioner_cases() {
   });
   // A zero correction cannot extend the basis. Preserve its residual and
   // rank scalars in the exception rather than reporting only "dependent".
-  options.residual_preconditioner=[](const Eigen::VectorXd&,double) {
-    return Eigen::VectorXd(Eigen::VectorXd::Zero(dimension));
-  };
-  bool diagnosed=false;
-  try {
+  bool diagnosed=true;
+  for (bool nonzero : {false, true}) {
+    options.residual_preconditioner=[nonzero](const Eigen::VectorXd&,double) {
+      Eigen::VectorXd p = Eigen::VectorXd::Zero(dimension);
+      if (nonzero) p[0] = 1.0;
+      return p;
+    };
+    bool rejected=false;
+    try {
     solver.solve_davidson(action,problem.hamiltonian.diagonal(),
         problem.overlap.diagonal(),initial,options);
-  } catch (const std::runtime_error& error) {
+    } catch (const std::runtime_error& error) {
     const std::string message=error.what();
     const std::string metric_key="projected metric norm squared=";
     const auto metric_begin=message.find(metric_key);
-    diagnosed=message.find("linearly dependent before convergence")!=std::string::npos &&
+    rejected=message.find("linearly dependent before convergence")!=std::string::npos &&
         message.find("max stationarity residual=")!=std::string::npos &&
         metric_begin!=std::string::npos &&
         std::stod(message.substr(metric_begin+metric_key.size()))==0.0 &&
-        message.find("dependence threshold=")!=std::string::npos;
-    if (!diagnosed) std::cerr<<"dependent correction diagnostic: "<<message<<'\n';
+        message.find("dependence threshold=")!=std::string::npos &&
+        message.find("preprojection roundoff bound=")!=std::string::npos;
+    if (!rejected) std::cerr<<"dependent correction diagnostic: "<<message<<'\n';
+    }
+    diagnosed = diagnosed && rejected;
   }
   const bool passed = wrong_size && nonfinite && diagnosed;
   std::cout << "invalid callback inverse"
@@ -653,6 +693,7 @@ int main() {
         roots,1.0e-5,true) && passed;
   passed = run_residual_preconditioner_case() && passed;
   passed = run_invalid_residual_preconditioner_cases() && passed;
+  passed = run_projected_correction_scale_case() && passed;
   passed = run_outer_accuracy_case() && passed;
   passed = run_physical_residual_case() && passed;
   passed = run_bounded_multiroot_restart_case() && passed;

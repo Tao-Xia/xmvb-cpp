@@ -18,6 +18,7 @@
 #include "linalg/eigensolver.hpp"
 #include "action_benchmark.hpp"
 #include "point_benchmark.hpp"
+#include "frozen_ci.hpp"
 
 namespace {
 
@@ -72,6 +73,12 @@ void report_device(const xmvb::cuda::Context& context) {
 
 int main(int argc, char** argv) {
   try {
+    if (argc == 4 && std::string(argv[1]) == "--frozen-ci") {
+      std::cout << std::unitbuf << std::setprecision(17);
+      xmvb::cuda::test::C12Fixture fixture(argv[2]);
+      xmvb::cuda::test::check_frozen_ci(fixture, argv[3]);
+      return 0;
+    }
     if (argc != 3 || (std::string(argv[1]) != "--gpu" &&
                       std::string(argv[1]) != "--action" &&
                       std::string(argv[1]) != "--point" &&

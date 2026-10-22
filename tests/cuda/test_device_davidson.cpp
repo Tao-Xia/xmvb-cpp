@@ -127,12 +127,56 @@ void check_case(bool identity_overlap) {
   }
 }
 
+void check_projected_correction_scale() {
+  using namespace xmvb;
+  cuda::Context context(64ULL * 1024 * 1024);
+  Eigen::Matrix3d h = Eigen::Matrix3d::Zero();
+  h(0, 1) = h(1, 0) = 1.0;
+  h(2, 2) = 2.0;
+  Eigen::Matrix3d inverse;
+  inverse << 1e16, 1e8, 0, 1e8, 2, 0, 0, 0, 1;
+  Eigen::MatrixXd seed = Eigen::MatrixXd::Zero(3, 1);
+  seed(0, 0) = 1.0;
+  cuda::Matrix<double> dh(context, 3, 3), dp(context, 3, 3), initial(context, 3, 1);
+  cuda::copy_to_device(context, dh.view(), h);
+  cuda::copy_to_device(context, dp.view(), inverse);
+  cuda::copy_to_device(context, initial.view(), seed);
+  for (bool identity : {false, true}) {
+    const cuda::DeviceEigenAction action = [&](linalg::ConstMatrixView x,
+        linalg::MatrixView hx, linalg::MatrixView mx) {
+      cuda::gemm(context, hx, dh.view(), x);
+      if (!identity) cuda::check_cuda(cudaMemcpyAsync(mx.data, x.data,
+          3 * sizeof(double), cudaMemcpyDeviceToDevice, context.stream()),
+          "copy identity overlap image");
+    };
+    for (double scale : {1e-4, 1.0, 1e4}) {
+      const Eigen::MatrixXd scaled = scale * inverse;
+      cuda::copy_to_device(context, dp.view(), scaled);
+      const cuda::DeviceEigenPreconditioner precondition =
+          [&](linalg::ConstMatrixView r, double, linalg::MatrixView p) {
+            cuda::gemm(context, p, dp.view(), r);
+          };
+      auto options = linalg::make_davidson_options(3, 1, 1e-7, 1e-3, 1e-7);
+      options.identity_overlap = identity;
+      const auto result = cuda::solve_device_davidson(context, action,
+          Eigen::VectorXd(h.diagonal()), Eigen::VectorXd::Ones(3),
+          initial.view(), options, precondition);
+      require(std::abs(result.eigenpairs.eigenvalues[0] + 1.0) < 1e-12 &&
+              result.stationarity_residual_norms[0] < 1e-12 &&
+              result.block_actions == 2,
+          "independent correction rejected after removing large basis component");
+    }
+  }
+  std::cout << "CUDA projected correction scale: PASS\n";
+}
+
 }  // namespace
 
 int main() {
   try {
     check_case(false);
     check_case(true);
+    check_projected_correction_scale();
     std::cout << "CUDA device-output Davidson parity: PASS\n";
   } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';

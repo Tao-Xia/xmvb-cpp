@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
@@ -82,14 +83,27 @@ struct DavidsonRankInfo {
   double initial_scale=0.0,metric_norm_squared=0.0,final_scale=0.0,threshold=0.0;
 };
 
+struct DavidsonProjectionInfo {
+  double raw_norm = 0.0;
+  double projected_norm = 0.0;
+  double roundoff_bound = 0.0;
+};
+
+/** Standard floating-point accumulation bound gamma_n = nu/(1-nu). */
+inline double rounding_bound(std::ptrdiff_t operations) {
+  const double nu = operations * std::numeric_limits<double>::epsilon();
+  return nu < 1.0 ? nu / (1.0 - nu) :
+                   std::numeric_limits<double>::infinity();
+}
+
 template <class Backend>
 int append_s_orthonormal_block(
     Backend& backend, ConstMatrixView candidates,
     ConstMatrixView hamiltonian_candidates, ConstMatrixView overlap_candidates,
     MatrixView basis, MatrixView hamiltonian_basis, MatrixView overlap_basis,
-    int active_dimension, bool identity_overlap, DavidsonRankInfo* rank_info=nullptr) {
-  const double dependence_floor =
-      64.0 * std::numeric_limits<double>::epsilon();
+    int active_dimension, bool identity_overlap, Eigen::VectorXd& basis_norms,
+    DavidsonRankInfo* rank_info=nullptr) {
+  const double dependence_floor = 64.0 * std::numeric_limits<double>::epsilon();
   auto vector_storage = backend.make(candidates.rows, 1);
   auto hamiltonian_storage = backend.make(candidates.rows, 1);
   auto overlap_storage = identity_overlap
@@ -126,9 +140,10 @@ int append_s_orthonormal_block(
       }
     }
     const double metric_norm_squared = backend.dot(vector, overlap_image);
-    const double scale = backend.norm(vector) * backend.norm(overlap_image);
-    const double threshold=dependence_floor*
-        std::max(initial_metric_scale,std::numeric_limits<double>::min());
+    const double vector_norm = backend.norm(vector);
+    const double scale = vector_norm * backend.norm(overlap_image);
+    const double threshold = dependence_floor *
+        std::max(initial_metric_scale, std::numeric_limits<double>::min());
     if (rank_info) *rank_info={initial_metric_scale,metric_norm_squared,scale,threshold};
     if (!std::isfinite(metric_norm_squared) ||
         metric_norm_squared <= threshold ||
@@ -136,6 +151,7 @@ int append_s_orthonormal_block(
       continue;
     }
     const double inverse_metric_norm = 1.0 / std::sqrt(metric_norm_squared);
+    basis_norms[active_dimension] = vector_norm * inverse_metric_norm;
     backend.copy(basis.column(active_dimension), vector);
     backend.scal(basis.column(active_dimension), inverse_metric_norm);
     backend.copy(hamiltonian_basis.column(active_dimension), hamiltonian_image);
@@ -147,6 +163,40 @@ int append_s_orthonormal_block(
     ++active_dimension;
   }
   return active_dimension;
+}
+
+/** Remove redundant components BEFORE forming fresh H/M images.
+ * By symmetry V^T M p = (MV)^T p, so this needs no new operator action.
+ * Euclidean QR within the correction block preserves its joint span and
+ * prevents cancellation against newly appended roots after the action too.
+ */
+template <class Backend>
+DavidsonProjectionInfo project_davidson_corrections(Backend& backend, MatrixView corrections,
+    ConstMatrixView basis, ConstMatrixView overlap_basis,
+    const Eigen::VectorXd& basis_norms) {
+  DavidsonProjectionInfo info;
+  for (int column = 0; column < corrections.cols; ++column) {
+    auto p = corrections.column(column);
+    const double initial_norm = backend.norm(p);
+    const Eigen::MatrixXd coefficients = backend.project(overlap_basis, p);
+    const double terms = coefficients.col(0).cwiseAbs().dot(
+        basis_norms.head(basis.cols));
+    double error = rounding_bound(2 * basis.cols + 1) * (initial_norm + terms);
+    backend.subtract_projection(p, basis, coefficients);
+    for (int pass = 0; column > 0 && pass < 2; ++pass) {
+      const auto previous = corrections.columns(0, column);
+      const Eigen::MatrixXd weights = backend.project(previous, p);
+      // Previous nonzero columns have Euclidean norm one. Zero columns
+      // contribute no coefficient and need no separate packing or action.
+      error += rounding_bound(2 * column + 1) *
+          (backend.norm(p) + weights.cwiseAbs().sum());
+      backend.subtract_projection(p, previous, weights);
+    }
+    const double projected_norm = backend.norm(p);
+    info = {initial_norm, projected_norm, error};
+    backend.scal(p, projected_norm <= error ? 0.0 : 1.0 / projected_norm);
+  }
+  return info;
 }
 
 template <class Backend>
@@ -249,6 +299,7 @@ Result solve_davidson(
   }
 
   const int max_subspace = options.max_subspace_dimension;
+  Eigen::VectorXd basis_norms = Eigen::VectorXd::Zero(max_subspace);
   auto basis = backend.make(dimension, max_subspace);
   auto hamiltonian_basis = backend.make(dimension, max_subspace);
   auto overlap_basis = backend.make(
@@ -271,7 +322,7 @@ Result solve_davidson(
         backend, backend.cview(candidate), backend.cview(hamiltonian_candidate),
         backend.cview(overlap_candidate), backend.view(basis),
         backend.view(hamiltonian_basis), backend.view(overlap_basis), 0,
-        options.identity_overlap);
+        options.identity_overlap, basis_norms);
   }
   if (active_dimension < options.n_roots) {
     throw std::runtime_error(
@@ -470,17 +521,6 @@ Result solve_davidson(
       throw std::runtime_error(message.str());
     }
 
-    auto correction_images = backend.make(dimension, n_corrections);
-    auto overlap_correction_images = backend.make(
-        dimension, options.identity_overlap ? 0 : n_corrections);
-    backend.apply(backend.cview(corrections).columns(0, n_corrections),
-                  backend.view(correction_images),
-                  backend.view(overlap_correction_images));
-    validate_images(backend, backend.cview(correction_images),
-                    backend.cview(overlap_correction_images), dimension,
-                    n_corrections, options.identity_overlap);
-    ++result.block_actions;
-
     if (active_dimension + n_corrections > max_subspace) {
       const int n_keep = std::min(
           active_dimension, std::max(options.n_roots, max_subspace / 2));
@@ -512,7 +552,28 @@ Result solve_davidson(
       projected_hamiltonian.topLeftCorner(n_keep, n_keep) =
           projected_eigenvalues.head(n_keep).asDiagonal();
       active_dimension = n_keep;
+      // Restart forms new columns. Refresh only their scalar norm metadata;
+      // ordinary extensions reuse norms already measured before normalization.
+      for (int column = 0; column < n_keep; ++column) {
+        basis_norms[column] = backend.norm(backend.cview(basis).column(column));
+      }
     }
+
+    const auto old_basis = backend.cview(basis).columns(0, active_dimension);
+    const auto projection_info = project_davidson_corrections(backend,
+        backend.view(corrections).columns(0, n_corrections), old_basis,
+        options.identity_overlap ? old_basis :
+            backend.cview(overlap_basis).columns(0, active_dimension), basis_norms);
+    auto correction_images = backend.make(dimension, n_corrections);
+    auto overlap_correction_images = backend.make(
+        dimension, options.identity_overlap ? 0 : n_corrections);
+    backend.apply(backend.cview(corrections).columns(0, n_corrections),
+                  backend.view(correction_images),
+                  backend.view(overlap_correction_images));
+    validate_images(backend, backend.cview(correction_images),
+                    backend.cview(overlap_correction_images), dimension,
+                    n_corrections, options.identity_overlap);
+    ++result.block_actions;
 
     const int previous_dimension = active_dimension;
     DavidsonRankInfo rank_info;
@@ -521,7 +582,7 @@ Result solve_davidson(
         backend.cview(correction_images),
         backend.cview(overlap_correction_images), backend.view(basis),
         backend.view(hamiltonian_basis), backend.view(overlap_basis),
-        active_dimension, options.identity_overlap,&rank_info);
+        active_dimension, options.identity_overlap,basis_norms,&rank_info);
     update_projected_hamiltonian(
         backend, backend.cview(basis), backend.cview(hamiltonian_basis),
         previous_dimension, active_dimension, projected_hamiltonian);
@@ -540,7 +601,10 @@ Result solve_davidson(
           <<"; last correction initial scale="<<rank_info.initial_scale
           <<"; projected metric norm squared="<<rank_info.metric_norm_squared
           <<"; projected scale="<<rank_info.final_scale
-          <<"; dependence threshold="<<rank_info.threshold;
+          <<"; dependence threshold="<<rank_info.threshold
+          <<"; raw correction norm="<<projection_info.raw_norm
+          <<"; preprojected correction norm="<<projection_info.projected_norm
+          <<"; preprojection roundoff bound="<<projection_info.roundoff_bound;
       throw std::runtime_error(message.str());
     }
   }
