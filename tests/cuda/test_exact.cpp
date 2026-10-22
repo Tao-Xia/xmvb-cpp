@@ -190,10 +190,20 @@ Matrix reference_jk(const Fixture& fixture, const Matrix& density,
   return result;
 }
 
-void check_packed_exchange_blocks() {
+void check_packed_exchange_blocks(bool sparse) {
   // 1035 AO pairs cross both the 512-wide packed-tile boundary and multiple
   // 256-thread source iterations, unlike the tiny integral oracle fixtures.
-  const Fixture fixture(false,45);
+  Fixture fixture(false,45);
+  // Keep the input layout dense so the planner still chooses packed tiles,
+  // but make whole columns and scattered lanes exactly zero. This exercises
+  // the bitmap, padding and canonical-pair boundary without any cutoff.
+  for (std::size_t e=0;e<fixture.unique_values.size();++e) {
+    const int p=fixture.unique_left[e],q=fixture.unique_right[e];
+    if (sparse && (q%3 || (p+q)%5)) {
+      fixture.unique_values[e]=0.0;
+      fixture.pair_kernel(p,q)=fixture.pair_kernel(q,p)=0.0;
+    }
+  }
   xmvb::cuda::Context context(128ULL*1024ULL*1024ULL);
   const xmvb::cuda::ExactAoPairOperator gpu(context,fixture.graph(false),fixture.n_bf);
   DeviceMatrix density(context,fixture.n_bf,fixture.n_bf),out(context,fixture.n_bf,fixture.n_bf);
@@ -1103,7 +1113,8 @@ int main() {
       check_graph_and_pair(3,true,sparse,true);
       check_one_electron_and_core(true,sparse,true);
     }
-    check_packed_exchange_blocks();
+    check_packed_exchange_blocks(false);
+    check_packed_exchange_blocks(true);
     check_exchange_row_graph();
     check_empty_unique();
     check_symmetric_tiles();

@@ -22,6 +22,7 @@ class PackedAoPairMatrix {
     std::int64_t pairs = 0;
     std::int64_t blocks = 0;
     int edge = 0;
+    const std::uint32_t* nonzero = nullptr;
 
 #ifdef __CUDACC__
     /** Both indices must be valid physical pair indices. */
@@ -45,7 +46,7 @@ class PackedAoPairMatrix {
 #endif
   };
 
-  /** Padded tile payload in bytes; SIZE_MAX denotes invalid/overflowing pairs. */
+  /** Padded tile values and exact nonzero bitmap; SIZE_MAX on overflow. */
   [[nodiscard]] static std::size_t storage_bytes(std::int64_t pairs) noexcept;
 
   /** Validated symmetric CSR or unique stream; input is staged in bounded chunks. */
@@ -55,7 +56,7 @@ class PackedAoPairMatrix {
   ~PackedAoPairMatrix() = default;
 
   [[nodiscard]] DeviceView view() const noexcept {
-    return {values_.data(), n_pairs_, n_blocks_, edge_};
+    return {values_.data(), n_pairs_, n_blocks_, edge_, nonzero_.data()};
   }
 
   /** Peak temporary bytes for apply; one padded output tile only when the
@@ -84,6 +85,8 @@ class PackedAoPairMatrix {
   std::int64_t n_pairs_ = 0;
   std::int64_t n_blocks_ = 0;
   Buffer<double> values_;
+  Buffer<std::uint32_t> nonzero_;
+  void prepare_nonzero();
 };
 
 }  // namespace xmvb::cuda

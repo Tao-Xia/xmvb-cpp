@@ -15,6 +15,17 @@ namespace {
 
 constexpr int kMaxEdge = 512;
 
+/** Exact-zero metadata only: duplicate input records have already been added. */
+__global__ void mark_nonzero(const double* values,std::size_t count,std::uint32_t* words) {
+  const auto lane=threadIdx.x&31;
+  for (auto word=(static_cast<std::size_t>(blockIdx.x)*blockDim.x+threadIdx.x)/32;
+       word<(count+31)/32;word+=static_cast<std::size_t>(gridDim.x)*blockDim.x/32) {
+    const auto index=word*32+lane;
+    const auto mask=__ballot_sync(0xffffffff,index<count && values[index]!=0.0);
+    if (!lane) words[word]=mask;
+  }
+}
+
 unsigned int grid(std::int64_t work) {
   return static_cast<unsigned int>(
       std::min<std::int64_t>(65535, (work - 1) / 256 + 1));
@@ -176,7 +187,16 @@ std::size_t PackedAoPairMatrix::storage_bytes(std::int64_t pairs) noexcept {
   if (blocks > limit / (blocks + 1)) return limit;
   const auto tiles = blocks * (blocks + 1) / 2;
   if (tiles > limit / edge / edge / sizeof(double)) return limit;
-  return static_cast<std::size_t>(tiles * edge * edge * sizeof(double));
+  const auto count=tiles*edge*edge;
+  const auto payload=count*sizeof(double),mask=((count+31)/32)*sizeof(std::uint32_t);
+  return mask>limit-payload ? limit:static_cast<std::size_t>(payload+mask);
+}
+
+void PackedAoPairMatrix::prepare_nonzero() {
+  nonzero_=Buffer<std::uint32_t>(*context_,(values_.size()+31)/32);
+  mark_nonzero<<<grid(values_.size()),256,0,context_->stream()>>>(
+      values_.data(),values_.size(),nonzero_.data());
+  check_cuda(cudaGetLastError(),"mark exact packed ERI nonzeros");
 }
 
 PackedAoPairMatrix::PackedAoPairMatrix(
@@ -205,12 +225,13 @@ PackedAoPairMatrix::PackedAoPairMatrix(
   if (bytes == std::numeric_limits<std::size_t>::max())
     throw std::overflow_error("packed AO-pair storage size overflow");
   AllocationPhase phase(context, "packed AO-pair matrix construction");
-  values_ = Buffer<double>(context, bytes / sizeof(double));
-  check_cuda(cudaMemsetAsync(values_.data(), 0, bytes, context.stream()),
+  const auto entries=static_cast<std::size_t>(n_blocks_)*(n_blocks_+1)/2*edge_*edge_;
+  values_ = Buffer<double>(context, entries);
+  check_cuda(cudaMemsetAsync(values_.data(), 0, entries*sizeof(double), context.stream()),
              "zero packed AO-pair tiles");
 
   if (unique) {
-    if (graph.integral_count()==0) return;
+    if (graph.integral_count()==0) {prepare_nonzero();return;}
     std::size_t free=0,total=0;
     check_cuda(cudaMemGetInfo(&free,&total),"CUDA unique ERI staging capacity");
     const auto available=std::min(free,context.device_byte_budget()-
@@ -236,6 +257,8 @@ PackedAoPairMatrix::PackedAoPairMatrix(
         check_cuda(cudaGetLastError(),"CUDA unique ERI tile packing");
       }
     });
+    rows={};columns={};staging={};
+    prepare_nonzero();
     return;
   }
 
@@ -274,6 +297,7 @@ PackedAoPairMatrix::PackedAoPairMatrix(
     }
     begin = end;
   }
+  prepare_nonzero();
 }
 
 std::size_t PackedAoPairMatrix::workspace_bytes(

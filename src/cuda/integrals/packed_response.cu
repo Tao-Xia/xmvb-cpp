@@ -4,6 +4,7 @@
 #include <stdexcept>
 
 #include <nvtx3/nvtx3.hpp>
+#include <cub/warp/warp_reduce.cuh>
 
 #include "cuda/integrals/packed.hpp"
 #include "cuda/linalg/blas.hpp"
@@ -13,6 +14,86 @@ namespace {
 
 unsigned int grid(std::int64_t work) {
   return static_cast<unsigned int>(std::min<std::int64_t>(65535,(work+255)/256));
+}
+
+struct ExchangeTerms {
+  double a,b,c,d;
+  __device__ ExchangeTerms operator+(ExchangeTerms other) const {
+    return {a+other.a,b+other.b,c+other.c,d+other.d};
+  }
+};
+using ExchangeReduce=cub::WarpReduce<ExchangeTerms>;
+
+/** One canonical integral column owns four output panels, as in CPU unique
+ * contraction. Packed columns are contiguous, so each retained value is read
+ * once, not rediscovered through four-index exchange queries. The nonzero
+ * bitmap skips exact zeros without storing another integral/index stream.
+ * Both density orientations remain independent. Global atomics merge only
+ * completed AO panels; per-integral additions stay in block shared memory.
+ */
+__global__ void exchange_packed_columns(PackedAoPairMatrix::DeviceView eri,
+    const int* first,const int* second,linalg::ConstMatrixView density,
+    linalg::MatrixView output,double weight,int column_width) {
+  extern __shared__ double sums[];
+  __shared__ ExchangeReduce::TempStorage reduction[8];
+  const int q=blockIdx.x,i=first[q],j=second[q];
+  const int begin=blockIdx.y*column_width,count=min(column_width,static_cast<int>(output.rows)-begin);
+  for (int k=threadIdx.x;k<4*count;k+=blockDim.x) sums[k]=0.0;
+  __syncthreads();
+  const std::int64_t qb=q/eri.edge;
+  const int local=q%eri.edge;
+  for (auto pb=qb;pb<eri.blocks;++pb) {
+    const auto d=pb-qb,tile=d*eri.blocks-d*(d-1)/2+qb;
+    const auto base=tile*eri.edge*eri.edge+static_cast<std::int64_t>(local)*eri.edge;
+    for (int start=0;start<eri.edge;start+=blockDim.x) {
+      const int row=start+threadIdx.x;
+      const auto p=pb*eri.edge+row,index=base+row;
+      const bool physical=row<eri.edge && p<eri.pairs;
+      const bool nonzero=physical && p>=q && (eri.nonzero[index/32]&(1u<<(index%32)));
+      const double value=nonzero ? weight*eri.values[index]:0.0;
+      const int k=physical ? first[p]:-1,l=physical ? second[p]:-1;
+      ExchangeTerms terms{0,0,0,0};
+      if (value!=0.0) {
+        terms.a=value*density.data[j+density.ld*l];
+        if (i!=j) terms.b=value*density.data[i+density.ld*l];
+        if (p!=q) {
+          terms.c=value*density.data[l+density.ld*j];
+          if (i!=j) terms.d=value*density.data[l+density.ld*i];
+        }
+      }
+      const int lane=threadIdx.x&31;
+      const int previous=__shfl_up_sync(0xffffffff,k,1);
+      const bool head=lane==0 || previous!=k;
+      const auto reduced=ExchangeReduce(reduction[threadIdx.x/32]).HeadSegmentedSum(terms,head);
+      if (head && k>=begin && k<begin+count) {
+        const int col=k-begin;
+        if (reduced.a!=0.0) atomicAdd(sums+col,reduced.a);
+        if (reduced.b!=0.0) atomicAdd(sums+count+col,reduced.b);
+        if (reduced.c!=0.0) atomicAdd(sums+2*count+col,reduced.c);
+        if (reduced.d!=0.0) atomicAdd(sums+3*count+col,reduced.d);
+      }
+      const auto add=[&](int target,int partner) {
+        if (target<begin || target>=begin+count) return;
+        const int col=target-begin;
+        atomicAdd(sums+col,value*density.data[j+density.ld*partner]);
+        if (i!=j) atomicAdd(sums+count+col,value*density.data[i+density.ld*partner]);
+        if (p!=q) {
+          atomicAdd(sums+2*count+col,value*density.data[partner+density.ld*j]);
+          if (i!=j) atomicAdd(sums+3*count+col,value*density.data[partner+density.ld*i]);
+        }
+      };
+      if (value!=0.0 && k!=l) add(l,k);
+      __syncwarp();
+    }
+  }
+  __syncthreads();
+  for (int k=threadIdx.x;k<4*count;k+=blockDim.x) {
+    const double value=sums[k];
+    if (value==0.0) continue;
+    const int segment=k/count,column=begin+k%count,ao=(segment&1) ? j:i;
+    atomicAdd(segment<2 ? output.data+ao+output.ld*column:
+        output.data+column+output.ld*ao,value);
+  }
 }
 
 // D(l,c,nu)=P(nu,l;c), not P(l,nu;c). Retain the existing K convention
@@ -44,6 +125,15 @@ __global__ void reduce_exchange(linalg::ConstMatrixView partial,linalg::MatrixVi
 void ExactAoPairOperator::packed_exchange(linalg::ConstMatrixView density,
     linalg::MatrixView output,double weight,int channels) const {
   const nvtx3::scoped_range range{"ao.packed_exchange"};
+  if (channels==1) {
+    const int width=std::min<std::size_t>(n_bf_,
+        (exchange_shared_values_*sizeof(double)-8*sizeof(ExchangeReduce::TempStorage))/(4*sizeof(double)));
+    const dim3 blocks(blas_int(n_pairs_),(n_bf_+width-1)/width);
+    exchange_packed_columns<<<blocks,256,4*width*sizeof(double),context_->stream()>>>(
+        packed_->view(),pair_first_.data(),pair_second_.data(),density,output,weight,width);
+    check_cuda(cudaGetLastError(),"CUDA packed integral-column exchange");
+    return;
+  }
   const auto available=response_capacity()/sizeof(double);
   const auto n=static_cast<std::int64_t>(n_bf_),square=n*n;
   if (available<square+n)

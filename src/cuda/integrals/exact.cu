@@ -394,49 +394,6 @@ void launch_exchange_rows(Context& context,const Index* offsets,const Index* col
         density,output,weight,channels,column_width,channel_width);
 }
 
-struct ExchangeSum {
-  double forward,reverse;
-};
-
-struct AddExchange {
-  __device__ ExchangeSum operator()(ExchangeSum a,ExchangeSum b) const {
-    return {a.forward+b.forward,a.reverse+b.reverse};
-  }
-};
-
-__device__ std::int64_t ao_pair(int a,int b) {
-  const auto high=max(a,b),low=min(a,b);
-  return static_cast<std::int64_t>(high)*(high+1)/2+low;
-}
-
-// One output AO pair owns both orientations. Summing unordered source pairs
-// needs no scatter or atomics and preserves nonsymmetric density inputs too:
-// K_mu,nu=sum_kl (mu k|nu l) D_kl, K_nu,mu uses the transposed D.
-__global__ void exchange_pair_gather(PackedAoPairMatrix::DeviceView eri,
-    const int* first,const int* second,linalg::ConstMatrixView density,
-    linalg::MatrixView output,double weight) {
-  using Reduce=cub::BlockReduce<ExchangeSum,256>;
-  __shared__ typename Reduce::TempStorage temporary;
-  const int mu=first[blockIdx.x],nu=second[blockIdx.x];
-  ExchangeSum sum{0.0,0.0};
-  for (std::int64_t q=threadIdx.x;q<eri.pairs;q+=blockDim.x) {
-    const int k=first[q],l=second[q];
-    const double a=eri.value(ao_pair(mu,k),ao_pair(nu,l));
-    const double d=density.data[k+density.ld*l],dt=density.data[l+density.ld*k];
-    sum.forward+=a*d;
-    sum.reverse+=a*dt;
-    if (k!=l) {
-      const double b=eri.value(ao_pair(mu,l),ao_pair(nu,k));
-      sum.forward+=b*dt;
-      sum.reverse+=b*d;
-    }
-  }
-  const auto value=Reduce(temporary).Reduce(sum,AddExchange{});
-  if (threadIdx.x==0) {
-    output.data[mu+output.ld*nu]=weight*value.forward;
-    if (mu!=nu) output.data[nu+output.ld*mu]=weight*value.reverse;
-  }
-}
 
 __global__ void finish_jk_batch(const double* image,linalg::MatrixView output,
     double weight,std::int64_t work,int channels) {
@@ -1238,9 +1195,7 @@ void ExactAoPairOperator::contract_jk(linalg::ConstMatrixView density,
     throw std::invalid_argument("invalid CUDA separate Coulomb output");
   zero_matrix(*context_, output);
   if (exchange != 0.0 && n_integrals_ != 0) {
-    if (packed_)
-      exchange_pair_gather<<<blas_int(n_pairs_),256,0,context_->stream()>>>(
-          packed_->view(),pair_first_.data(),pair_second_.data(),density,output,exchange);
+    if (packed_) packed_exchange(density,output,exchange,1);
     else if (compact_)
       unique_exchange(density,output,exchange,1);
     else
