@@ -7,9 +7,6 @@
 #include <cub/block/block_reduce.cuh>
 #include <nvtx3/nvtx3.hpp>
 
-#include "cuda/linalg/blas.hpp"
-#include "cuda/integrals/packed.hpp"
-
 namespace xmvb::cuda {
 namespace {
 
@@ -23,16 +20,6 @@ struct PairExchange {
   ConstPairPanel image;
   __device__ double operator()(std::int64_t pair,int,int,int c) const {
     return image.data[pair*image.ld+c];
-  }
-};
-
-struct DenseExchange {
-  linalg::ConstMatrixView image;
-  __device__ double operator()(std::int64_t,int i,int j,int c) const {
-    const auto shift=static_cast<std::int64_t>(c)*image.rows;
-    const double value=image.data[i+image.ld*(j+shift)];
-    if (i==j) return value;
-    return 0.5*(value+image.data[j+image.ld*(i+shift)]);
   }
 };
 
@@ -74,15 +61,12 @@ bool ExactAoPairOperator::core_diagonal(linalg::ConstMatrixView mo,int ncore,
 bool ExactAoPairOperator::unique_core_diagonal(linalg::ConstMatrixView mo,int ncore,
     linalg::MatrixView coulomb,linalg::MatrixView response) const {
   const nvtx3::scoped_range range{"ao.rank_one_core_diagonal"};
-  const auto square=static_cast<std::int64_t>(n_bf_)*n_bf_;
-  const auto per_core=static_cast<std::size_t>(2*n_pairs_+square)*sizeof(double);
+  const auto per_core=static_cast<std::size_t>(2*n_pairs_)*sizeof(double);
   int width=static_cast<int>(std::min<std::size_t>(ncore,response_capacity()/per_core));
   Buffer<double> features,products;
-  Matrix<double> exchange;
   for (;width>0;width/=2) {
     features=Buffer<double>(*context_,n_pairs_*width);
     products=Buffer<double>(*context_,n_pairs_*width);
-    exchange=Matrix<double>(*context_,n_bf_,static_cast<std::int64_t>(n_bf_)*width);
     const auto scratch=[&](int count) {
       return apply_workspace({features.data(),n_pairs_,count,width},
           {products.data(),n_pairs_,count,width});
@@ -90,7 +74,7 @@ bool ExactAoPairOperator::unique_core_diagonal(linalg::ConstMatrixView mo,int nc
     const int remainder=ncore%width;
     if (std::max(scratch(width),remainder ? scratch(remainder):std::size_t{0})<=
         response_capacity()) break;
-    features={};products={};exchange={};
+    features={};products={};
   }
   if (!width) return false;
   for (int begin=0;begin<ncore;begin+=width) {
@@ -100,12 +84,15 @@ bool ExactAoPairOperator::unique_core_diagonal(linalg::ConstMatrixView mo,int nc
     const PairPanel image{products.data(),n_pairs_,count,width};
     density_features(factors,0,source);
     apply({source.data,source.rows,source.cols,source.ld},image);
-    const auto k=exchange.view().columns(0,static_cast<std::int64_t>(n_bf_)*count);
+    // J has consumed the source. Its storage now holds only the independent
+    // AO triangle of symmetric K(C_i C_i^T), with channels contiguous.
+    const linalg::MatrixView k{features.data(),count,n_pairs_,width};
     rank_one_exchange(factors,k);
     const auto cells=static_cast<std::int64_t>(n_bf_)*count;
     project_core<<<static_cast<unsigned int>(std::min<std::int64_t>(65535,cells)),
         256,0,context_->stream()>>>(mo,pair_first_.data(),pair_second_.data(),
-            ConstPairPanel{image.data,image.rows,image.cols,image.ld},DenseExchange{k},
+            ConstPairPanel{image.data,image.rows,image.cols,image.ld},
+            PairExchange{{k.data,n_pairs_,count,k.ld}},
             coulomb,response,begin);
     check_cuda(cudaGetLastError(),"CUDA rank-one core diagonal projection");
   }

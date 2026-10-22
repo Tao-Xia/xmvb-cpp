@@ -265,6 +265,11 @@ __device__ void add_oriented_exchange(int u,int v,double value,
     const int a = swap_u ? uj : ui, b = swap_u ? ui : uj;
     for (int swap_v = 0; swap_v < (vi == vj ? 1 : 2); ++swap_v) {
       const int c = swap_v ? vj : vi, d = swap_v ? vi : vj;
+      // For distinct pair labels the reversed ERI orientation contributes
+      // only the mirrored output. Emit it once at the canonical destination;
+      // coincident output indices combine the two equal diagonal terms.
+      if constexpr (RankOne) { if (u==v && a<c) continue; }
+      const double oriented_value=RankOne && u!=v && a==c ? 2.0*value:value;
       for (int channel=0;channel<channels;++channel) {
         double source;
         if constexpr (RankOne)
@@ -272,8 +277,14 @@ __device__ void add_oriented_exchange(int u,int v,double value,
         else source=density.data[b+density.ld*(d+channel*density.rows)];
         // Literal zero support is exact; do not issue an atomic add of zero.
         // No magnitude threshold or screening approximation is introduced.
-        if (source!=0.0)
-          atomic_add_double(output.data+a+output.ld*(c+channel*output.rows),value*source);
+        if (source!=0.0) {
+          double* target;
+          if constexpr (RankOne) {
+            const int high=max(a,c),low=min(a,c);
+            target=output.data+channel+output.ld*(static_cast<std::int64_t>(high)*(high+1)/2+low);
+          } else target=output.data+a+output.ld*(c+channel*output.rows);
+          atomic_add_double(target,oriented_value*source);
+        }
       }
     }
   }
@@ -303,8 +314,10 @@ __global__ void exchange_unique(const Index* offsets,const Index* columns,
     const int right=static_cast<int>(columns[p]);
     const double value=weight*values[p];
     add_oriented_exchange<RankOne>(left,right,value,first,second,density,output,channels);
-    if (left!=right)
-      add_oriented_exchange<RankOne>(right,left,value,first,second,density,output,channels);
+    if constexpr (!RankOne) {
+      if (left!=right)
+        add_oriented_exchange(right,left,value,first,second,density,output,channels);
+    }
   }
 }
 

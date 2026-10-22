@@ -190,6 +190,7 @@ class ExactAoPairOperator {
   std::size_t apply_workspace(ConstPairPanel,PairPanel) const;
   void upload_unique(const integrals::AoPairGraph&);
   void unique_exchange(linalg::ConstMatrixView,linalg::MatrixView,double,int) const;
+  /** Symmetric rank-one exchange, stored as channels-by-packed-AO-pair. */
   void rank_one_exchange(linalg::ConstMatrixView,linalg::MatrixView) const;
   void unique_half(linalg::ConstMatrixView,int,int,double*) const;
   bool unique_core_diagonal(linalg::ConstMatrixView,int,linalg::MatrixView,

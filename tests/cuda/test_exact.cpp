@@ -423,6 +423,40 @@ void check_graph_and_pair(int active, bool compact,bool sparse=false,bool chunke
   }
 }
 
+void check_core_symmetry_orientations() {
+  constexpr int n=4,ncore=3;
+  const Matrix mo=values(n,n,0.33);
+  const std::vector<std::pair<int,int>> cases{
+      {pair_index(3,2),pair_index(1,0)},
+      {pair_index(3,1),pair_index(3,0)},
+      {pair_index(3,1),pair_index(3,1)},
+      {pair_index(2,2),pair_index(2,2)},
+      {pair_index(3,3),pair_index(3,0)},
+      {pair_index(3,3),pair_index(1,1)}};
+  for (const auto [u,v]:cases) {
+    Fixture fixture(true,n);
+    fixture.pair_kernel.setZero();
+    fixture.pair_kernel(u,v)=fixture.pair_kernel(v,u)=0.17;
+    fixture.unique_left={u};fixture.unique_right={v};fixture.unique_values={0.17};
+    xmvb::cuda::Context context(128ULL*1024*1024);
+    const xmvb::cuda::ExactAoPairOperator gpu(context,fixture.graph(true),n);
+    DeviceMatrix c(context,n,n),j(context,n,ncore),r(context,n,ncore);
+    upload(context,c,mo);
+    require(gpu.core_diagonal(c.view(),ncore,j.view(),r.view()),
+        "CUDA isolated-ERI core projection was not prepared");
+    Matrix expected_j(n,ncore),expected_r(n,ncore);
+    for (int core=0;core<ncore;++core) {
+      const Matrix density=mo.col(core)*mo.col(core).transpose();
+      const Matrix cj=reference_jk(fixture,density,1.0,0.0);
+      const Matrix cr=reference_jk(fixture,density);
+      expected_j.col(core)=(mo.transpose()*cj*mo).diagonal();
+      expected_r.col(core)=(mo.transpose()*cr*mo).diagonal();
+    }
+    near(download(context,j),expected_j,"CUDA canonical core Coulomb orientation differs");
+    near(download(context,r),expected_r,"CUDA canonical exchange symmetry multiplicity differs");
+  }
+}
+
 void check_unique_half_tiles() {
   constexpr int n=12,active=3;
   const Fixture fixture(true,n);
@@ -1020,6 +1054,7 @@ void check_unique_csr_library() {
 
 int main() {
   try {
+    check_core_symmetry_orientations();
     check_unique_half_tiles();
     check_unique_csr_library<int>();
     check_unique_csr_library<std::int64_t>();
