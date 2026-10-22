@@ -1,6 +1,5 @@
 #include "cuda/vb/point.hpp"
 
-#include <algorithm>
 #include <array>
 #include <cmath>
 #include <stdexcept>
@@ -212,11 +211,9 @@ double VbPoint::evaluate_coefficients(View coefficients) {
   action_->expand_spin(coefficients,state_.view());
   action_->apply_orbital_transform(state_.view());
   // Clones share stream-local scratch; the CI graph tracks its generation.
-  if (const auto* support=action_->product_support()) {
-    const CiCarrierRequest request{state_.view(),image_.view(),nullptr,one_adjoint_.view(),pair_adjoint_.view()};
-    sigma_.apply_supported_responses({&request,1},state_.view(),*support,std::min(workspace::available(),
-        c.device_byte_budget()-c.counters().current_device_bytes)/4);
-  } else sigma_.apply_with_adjoint(state_.view(),state_.view(),image_.view(),
+  // These endpoints already reside on device. Preserve the baseline's fused,
+  // budgeted channel sweep; rebuilding a support halo adds no memory saving.
+  sigma_.apply_with_adjoint(state_.view(),state_.view(),image_.view(),
       one_adjoint_.view(),pair_adjoint_.view());
   // All retained results are point-owned; subsequent AO pullbacks may reuse
   // the consumed channel storage through Context's stream-ordered pool.
@@ -350,13 +347,7 @@ void VbPoint::hessian(View orbital,View structure,Out orbital_image,Out structur
   hvp_coefficients<<<1,1,0,c.stream()>>>(coefficients.data(),norm_,active_energy_);
   check_cuda(cudaGetLastError(),"point HVP normalization coefficients");
   Matrix<double> dha(c,one_.rows(),one_.cols()),dga(c,pair_.rows(),pair_.cols());
-  if (const auto* support=action_->product_support()) {
-    const std::array<CiCarrierRequest,2> requests{{
-        {dy,dhy,&direction_sigma_,dha.view(),dga.view()},
-        {ci_dy.view(),ci_dhy.view(),nullptr,ci_dha.view(),ci_dga.view()}}};
-    sigma_.apply_supported_responses({requests.data(),split ? 2U:1U},state_.view(),*support,
-        std::min(workspace::available(),c.device_byte_budget()-c.counters().current_device_bytes)/4);
-  } else sigma_.apply_direction_with_adjoint(dy,state_.view(),direction_sigma_,
+  sigma_.apply_direction_with_adjoint(dy,state_.view(),direction_sigma_,
       dhy,dha.view(),dga.view(),ci_dy.view(),ci_dhy.view(),ci_dha.view(),ci_dga.view());
   sigma_.reset_workspace();
   device_scalars(c,[&] {
