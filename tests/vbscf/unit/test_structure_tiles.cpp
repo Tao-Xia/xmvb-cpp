@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <chrono>
 #include <cmath>
 #include <iomanip>
@@ -2264,9 +2265,10 @@ void check_symbolic_replay() {
             boundary.full_beta==expected.boundary.full_beta,
         "symbolic replay changed boundary certificate");
   };
-  const auto check=[&](const ProductSupport* support,int parity,
+  const auto check=[&](const SpinConnections& alpha,const SpinConnections& beta,
+                       const ProductSupport* support,int parity,
                        SigmaTileBudget budget,bool release,bool large) {
-    SigmaTilePlan reference(graph,graph,support,parity,budget,release);
+    SigmaTilePlan reference(alpha,beta,support,parity,budget,release);
     std::vector<Snapshot> snapshots;
     while (reference.next()) {
       check_sigma_payload(reference,budget,n);
@@ -2277,7 +2279,7 @@ void check_symbolic_replay() {
     require(!snapshots.empty(),"symbolic replay fixture generated no tiles");
     require(large ? snapshots.size()==1 : snapshots.size()>2,
         "symbolic replay did not exercise requested tile size");
-    SigmaTilePlan replay(graph,graph,support,parity,budget,release);
+    SigmaTilePlan replay(alpha,beta,support,parity,budget,release);
     for (const auto& snapshot:snapshots) {
       require(replay.next_known(snapshot.boundary),"symbolic replay lost a tile");
       compare(replay,snapshot);
@@ -2288,7 +2290,7 @@ void check_symbolic_replay() {
     // allowance. Changing free bytes alone must not change its target stream.
     auto roomy_budget=budget;
     roomy_budget.bytes+=4096;
-    SigmaTilePlan roomy(graph,graph,support,parity,roomy_budget,release);
+    SigmaTilePlan roomy(alpha,beta,support,parity,roomy_budget,release);
     for (const auto& snapshot:snapshots) {
       require(roomy.next_known(snapshot.boundary),"budget change lost a reusable tile");
       compare(roomy,snapshot);
@@ -2298,7 +2300,7 @@ void check_symbolic_replay() {
     // Emulate a small scalar boundary cache: replay only its first one or two
     // entries, then resume ordinary admission without rewinding the cursor.
     for (int prefix:{1,2}) {
-      SigmaTilePlan mixed(graph,graph,support,parity,budget,release);
+      SigmaTilePlan mixed(alpha,beta,support,parity,budget,release);
       for (int i=0;i<prefix;++i) {
         require(mixed.next_known(snapshots[i].boundary),
             "symbolic replay lost a cached prefix tile");
@@ -2315,11 +2317,37 @@ void check_symbolic_replay() {
   for (int width:{1,2,3}) for (int parity:{0,1,-1})
     for (bool release:{false,true}) for (std::size_t bytes:{4096U,4U*1024U*1024U}) {
       const bool large=bytes>4096;
-      check(nullptr,parity,{width,pairs,2,bytes},release,large);
-      check(&selected,parity,{width,pairs,2,bytes},release,large);
+      check(graph,graph,nullptr,parity,{width,pairs,2,bytes},release,large);
+      check(graph,graph,&selected,parity,{width,pairs,2,bytes},release,large);
       for (int packed:{0,1,2})
-        check(&covalent,parity,{width,pairs,packed+1,bytes,packed},release,large);
+        check(graph,graph,&covalent,parity,{width,pairs,packed+1,bytes,packed},release,large);
     }
+  // Larger, unequal spin sectors and a permuted caller ordering exercise the
+  // current-column cursor independently of exchange symmetry or COV closure.
+  const auto sector=[](int electrons,bool reverse) {
+    auto strings=complete_strings(12,electrons);
+    if (reverse) std::reverse(strings.begin(),strings.end());
+    std::vector<std::uint64_t> masks;
+    SpinConnections result;
+    result.strings=strings.size();result.degree=electrons*(12-electrons);
+    result.occupations.resize(electrons,result.strings);
+    for (int a=0;a<result.strings;++a) {
+      masks.push_back(occupation_mask(strings[a]));
+      for (int i=0;i<electrons;++i) result.occupations(i,a)=strings[a][i];
+    }
+    for (int a=0;a<result.strings;++a) for (int b=0;b<result.strings;++b)
+      if (std::popcount(masks[a]^masks[b])==2)
+        result.links.push_back({b,0,0,0,1.0});
+    return std::pair{std::move(result),std::move(masks)};
+  };
+  const auto [a12,am12]=sector(6,false);
+  for (bool reverse:{false,true}) {
+    const auto [b12,bm12]=sector(5,reverse);
+    const ProductSupport restricted(12,am12,bm12,{0,17*b12.strings+412});
+    for (const auto* support:{static_cast<const ProductSupport*>(nullptr),&restricted})
+      for (bool release:{false,true})
+        check(a12,b12,support,0,{1,78,2,8U*1024U*1024U},release,false);
+  }
 }
 
 void check_supported_sigma(int n, int n_alpha, int n_beta_electrons, int width,

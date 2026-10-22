@@ -51,6 +51,8 @@ public:
 
 private:
   struct Node { int alpha,beta; bool supported; int group,channels; };
+  bool prepare_column();
+  Node column_node(int row) const;
   bool pull(Node& node);
   void reset_tile();
   void append_node(const Node& node,bool new_group,bool expand_alpha);
@@ -62,8 +64,9 @@ private:
   SigmaTileBudget budget_;
   std::vector<int> beta_targets_,seen_alpha_,new_alpha_,new_beta_,last_use_,release_order_;
   std::vector<int> column_rows_;
+  std::vector<unsigned char> column_support_;
+  bool column_ready_=false;
   std::vector<unsigned char> alpha_seen_;
-  std::optional<ProductSupport::Cursor> cursor_;
   std::optional<Node> pending_;
   std::size_t next_beta_=0,next_release_=0;
   // Byte admission is integer arithmetic. A rejected candidate may exceed

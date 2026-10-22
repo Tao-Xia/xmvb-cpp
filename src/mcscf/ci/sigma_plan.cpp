@@ -66,43 +66,50 @@ SigmaTileBoundary SigmaTilePlan::boundary() const noexcept {
       columns.size()==static_cast<std::size_t>(beta_.n_strings())};
 }
 
-bool SigmaTilePlan::pull(Node& node) {
-  if (pending_) { node=*pending_; pending_.reset(); return true; }
+bool SigmaTilePlan::prepare_column() {
   while (next_beta_<beta_targets_.size()) {
     const int b=beta_targets_[next_beta_];
-    if (support_ && support_->has_channel_envelopes()) {
-      if (column_rows_.empty()) {
+    if (!column_ready_) {
+      if (support_ && support_->has_channel_envelopes()) {
         const int upper=parity_ ? b+(parity_>0):alpha_.n_strings();
         support_->append_column_rows(b,column_rows_,1,upper);
+      } else if (support_) {
+        auto cursor=support_->column(b,1);
+        int a,ignored; bool label;
+        while (cursor.next(a,ignored,label)) {
+          if (parity_ && (a>b || (a==b && parity_<0))) continue;
+          column_rows_.push_back(a);column_support_.push_back(label);
+        }
       }
-      while (next_alpha_<static_cast<int>(column_rows_.size())) {
-        const int a=column_rows_[next_alpha_++];
-        if (budget_.packed_slabs) {
-          // One prefix certificate supplies both membership and its envelope.
-          const auto [first,last]=support_->channel_envelope(a,b);
-          node={a,b,first<0,first<0 ? 0:1+first*support_->n_orbitals()+last,
-              first<0 ? budget_.pairs:(first+1)*(support_->n_orbitals()-1-last)};
-        } else node={a,b,support_->contains(a,b),0,budget_.pairs};
-        return true;
-      }
-    } else if (support_) {
-      if (!cursor_) cursor_.emplace(support_->column(b,1));
-      int a,ignored; bool label;
-      while (cursor_->next(a,ignored,label)) {
-        if (parity_ && (a>b || (a==b && parity_<0))) continue;
-        node={a,b,label,0,budget_.pairs};
-        return true;
-      }
-    } else {
-      const int limit=parity_ ? b+(parity_>0):alpha_.n_strings();
-      if (next_alpha_<limit) {
-        node={next_alpha_++,b,true,0,budget_.pairs};
-        return true;
-      }
+      column_ready_=true;
     }
-    cursor_.reset(); column_rows_.clear(); next_alpha_=0; ++next_beta_;
+    const int size=support_ ? static_cast<int>(column_rows_.size()):
+        parity_ ? b+(parity_>0):alpha_.n_strings();
+    if (next_alpha_<size) return true;
+    column_rows_.clear();column_support_.clear();column_ready_=false;
+    next_alpha_=0;++next_beta_;
   }
   return false;
+}
+
+SigmaTilePlan::Node SigmaTilePlan::column_node(int row) const {
+  const int b=beta_targets_[next_beta_],a=support_ ? column_rows_[row]:row;
+  if (support_ && support_->has_channel_envelopes()) {
+    if (budget_.packed_slabs) {
+      const auto [first,last]=support_->channel_envelope(a,b);
+      return {a,b,first<0,first<0 ? 0:1+first*support_->n_orbitals()+last,
+          first<0 ? budget_.pairs:(first+1)*(support_->n_orbitals()-1-last)};
+    }
+    return {a,b,support_->contains(a,b),0,budget_.pairs};
+  }
+  return {a,b,!support_ || column_support_[row]!=0,0,budget_.pairs};
+}
+
+bool SigmaTilePlan::pull(Node& node) {
+  if (pending_) { node=*pending_; pending_.reset(); return true; }
+  if (!prepare_column()) return false;
+  node=column_node(next_alpha_++);
+  return true;
 }
 
 void SigmaTilePlan::reset_tile() {
@@ -183,29 +190,55 @@ bool SigmaTilePlan::next() {
 bool SigmaTilePlan::next_known(const SigmaTileBoundary& boundary) {
   if (boundary.targets<=0) throw std::invalid_argument("invalid sigma tile boundary");
   reset_tile();
-  Node node;
-  for (int target=0;target<boundary.targets;++target) {
-    if (!pull(node)) throw std::invalid_argument("sigma tile boundary exceeds target stream");
-    new_alpha_.clear(); new_beta_.clear();
-    const bool new_group=groups.empty() || groups.back().beta!=node.beta;
-    const bool expand_alpha=!boundary.full_alpha &&
-        halo.size()<static_cast<std::size_t>(alpha_.n_strings()) && !alpha_seen_[node.alpha];
-    if (expand_alpha) {
-      const auto include=[&](int id) { if (halo_index[id]<0) new_alpha_.push_back(id); };
-      include(node.alpha);
-      for (const auto& edge:alpha_.singles(node.alpha)) include(edge.source);
+  // A rejected/lookahead node is the last row read from the current column.
+  // Rewind that one scalar cursor, not the support traversal or a product plan.
+  if (pending_) { --next_alpha_;pending_.reset(); }
+  active.reserve(boundary.targets);group_index.reserve(boundary.targets);
+  active_support.reserve(boundary.targets);
+  if (budget_.packed_slabs) channel_groups.reserve(boundary.targets);
+  int remaining=boundary.targets;
+  while (remaining) {
+    if (!prepare_column()) throw std::invalid_argument("sigma tile boundary exceeds target stream");
+    const int b=beta_targets_[next_beta_];
+    const int size=support_ ? static_cast<int>(column_rows_.size()):
+        parity_ ? b+(parity_>0):alpha_.n_strings();
+    const int count=std::min(remaining,size-next_alpha_);
+    const int begin=active.size(),end=begin+count,group=groups.size();
+    // A tile's intersection with one beta column is one contiguous segment.
+    // Its group and beta-link neighborhood are constant across all targets.
+    groups.push_back({b,begin,end});
+    if (!boundary.full_beta && columns.size()<static_cast<std::size_t>(beta_.n_strings())) {
+      const auto include=[&](int id) {
+        if (column_index[id]<0) { column_index[id]=0;columns.push_back(id); }
+      };
+      include(b);
+      for (const auto& edge:beta_.singles(b)) include(edge.source);
     }
-    if (new_group && !boundary.full_beta &&
-        columns.size()<static_cast<std::size_t>(beta_.n_strings())) {
-      const auto include=[&](int id) { if (column_index[id]<0) new_beta_.push_back(id); };
-      include(node.beta);
-      for (const auto& edge:beta_.singles(node.beta)) include(edge.source);
+    active.resize(end);group_index.insert(group_index.end(),count,group);
+    active_support.resize(end);
+    if (budget_.packed_slabs) channel_groups.resize(end);
+    for (int i=begin;i<end;++i) {
+      const auto node=column_node(next_alpha_++);
+      active[i]=node.alpha;active_support[i]=node.supported;
+      unsupported_targets+=!node.supported;
+      if (budget_.packed_slabs) channel_groups[i]=node.group;
+      if (parity_ && node.alpha==b) diagonal_rows.push_back(i);
+      if (!boundary.full_alpha && halo.size()<static_cast<std::size_t>(alpha_.n_strings()) &&
+          !alpha_seen_[node.alpha]) {
+        alpha_seen_[node.alpha]=1;seen_alpha_.push_back(node.alpha);
+        const auto include=[&](int id) {
+          if (halo_index[id]<0) { halo_index[id]=0;halo.push_back(id); }
+        };
+        include(node.alpha);
+        for (const auto& edge:alpha_.singles(node.alpha)) include(edge.source);
+      }
     }
-    append_node(node,new_group,expand_alpha);
+    remaining-=count;
   }
   // Original next() pulls the first rejected target before finalizing a tile.
   // Reproduce that lookahead so both the pending node and beta release cursor
   // match, including when the target stream is exhausted.
+  Node node;
   if (pull(node)) pending_=node;
   payload_=boundary.payload;
   if (boundary.full_alpha) {
