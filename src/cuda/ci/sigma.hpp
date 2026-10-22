@@ -18,14 +18,19 @@ namespace xmvb::cuda {
  * (alpha_rows, beta_local*width+rhs); callbacks borrow the current tile only.
  */
 using CiTileReader=std::function<void(std::span<const int>,std::span<const int>,linalg::MatrixView)>;
-/** Gather directly into a consumer-owned panel, optionally adding to it.
- * Source -1 denotes all beta columns, otherwise one tile-local beta column.
- * An empty row span denotes the halo; otherwise rows are sorted distinct
- * global alpha indices. The final pointer can borrow their existing device
- * representation, avoiding a repeated upload. No accumulator may outlive its
- * writer callback.
+/** Borrowed compact output column. Source -1 denotes the whole halo panel;
+ * otherwise source is one tile-local beta column. A null rows pointer uses
+ * the tile halo; nonnull rows are the consumer's device-resident indices.
+ * Numerical columns can be views into the same packed allocation.
  */
-using CiTileGather=std::function<void(int,std::span<const int>,linalg::MatrixView,bool,const int*)>;
+struct CiTileColumn {
+  int source;
+  const int* rows;
+  linalg::MatrixView values;
+};
+/** Contract a batch into consumer-owned views with one launch. No view or
+ * index pointer may outlive the writer callback. */
+using CiTileGather=std::function<void(std::span<const CiTileColumn>,bool)>;
 using CiTileWriter=std::function<void(std::span<const int>,std::span<const int>,const CiTileGather&)>;
 using CiColumnRelease=std::function<void(std::span<const int>)>;
 

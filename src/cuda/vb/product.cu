@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <map>
 #include <numeric>
 #include <vector>
 #include <cusparse.h>
@@ -22,13 +23,13 @@ template<class T> Buffer<T> upload(Context& c,std::span<const T> values) {
   Buffer<T> result(c,values.size());c.copy_to_device(result.data(),values.data(),values.size_bytes());return result;
 }
 void clear(Context& c,linalg::MatrixView panel) {
+  if (!panel.rows || !panel.cols) return;
   check_cuda(cudaMemset2DAsync(panel.data,panel.ld*sizeof(double),0,panel.rows*sizeof(double),panel.cols,c.stream()),
       "clear product tile");
 }
 
-/** Official exact-zero dense-to-CSR conversion. Rows are raw beta strings;
- * columns are requested transformed beta rows. No cutoff or numerical host
- * staging is used. The temporary dense factor is a single-spin panel only.
+/** Exact-zero vendor conversion of one requested beta-factor block. The CSR
+ * is reused at the orbital point; the dense single-spin panel is then dead.
  */
 struct Factors {
   Buffer<int> offsets,indices;
@@ -56,23 +57,23 @@ struct Factors {
       sparse_check(cusparseDenseToSparse_convert(handle,input,output,CUSPARSE_DENSETOSPARSE_ALG_DEFAULT,scratch.data()),
           "pack beta-factor exact nonzeros");
     } catch (...) {
-      if (input) cusparseDestroyDnMat(input);if (output) cusparseDestroySpMat(output);throw;
+      if (input) cusparseDestroyDnMat(input);
+      if (output) cusparseDestroySpMat(output);
+      throw;
     }
     cusparseDestroyDnMat(input);cusparseDestroySpMat(output);
   }
+  std::size_t bytes() const {return (offsets.size()+indices.size())*sizeof(int)+values.size()*sizeof(double);}
 };
 
 __global__ void generate(const int* starts,const int* raw_beta,linalg::ConstMatrixView coefficients,
     const int* offsets,const int* columns,const double* factors,int count,linalg::MatrixView output) {
-  // Same CPU ownership: one raw alpha/RHS row walks its sparse beta factors.
-  // Each output has one owner; no atomics, determinant vector or raw product grid.
   for (auto i=static_cast<std::size_t>(blockIdx.x)*blockDim.x+threadIdx.x;
        i<static_cast<std::size_t>(output.rows)*coefficients.cols;i+=static_cast<std::size_t>(gridDim.x)*blockDim.x) {
     const int a=i%output.rows,v=i/output.rows;
     for (int group=starts[a];group<starts[a+1];++group) {
       const double value=coefficients.data[group+coefficients.ld*v];
-      const int b=raw_beta[group];
-      for (int p=offsets[b];p<offsets[b+1];++p)
+      for (int p=offsets[raw_beta[group]];p<offsets[raw_beta[group]+1];++p)
         output.data[a+output.ld*(v*count+columns[p])]+=value*factors[p];
     }
   }
@@ -90,28 +91,36 @@ __global__ void project(const int* raw_alpha,const int* raw_beta,int groups,
   }
 }
 
-/** Copy one compact column to/from a multi-column full-row staging panel. */
-__global__ void pack_column(const int* rows,int size,int beta,int count,
-    linalg::MatrixView full,linalg::MatrixView compact,bool unpack) {
-  for (auto i=static_cast<std::size_t>(blockIdx.x)*blockDim.x+threadIdx.x;
-       i<static_cast<std::size_t>(size)*compact.cols;i+=static_cast<std::size_t>(gridDim.x)*blockDim.x) {
-    const int r=i%size,v=i/size,a=rows ? rows[r]:r;
-    auto& destination=unpack ? full.data[a+full.ld*(v*count+beta)]:compact.data[r+compact.ld*v];
-    destination=unpack ? compact.data[r+compact.ld*v]:full.data[a+full.ld*(v*count+beta)];
+struct ColumnMap { const int* rows; int size; std::int64_t offset; };
+
+/** One launch for a ragged batch. The packed allocation has one leading
+ * dimension for all RHSs; columns are views, not separately owned matrices.
+ */
+__global__ void pack_columns(const ColumnMap* maps,int count,linalg::MatrixView full,
+    linalg::MatrixView compact,bool unpack) {
+  const int b=blockIdx.x;const auto column=maps[b];
+  for (auto i=static_cast<std::size_t>(blockIdx.y)*blockDim.x+threadIdx.x;
+       i<static_cast<std::size_t>(column.size)*compact.cols;i+=static_cast<std::size_t>(gridDim.y)*blockDim.x) {
+    const int r=i%column.size,v=i/column.size,a=column.rows ? column.rows[r]:r;
+    auto& destination=unpack ? full.data[a+full.ld*(v*count+b)]:compact.data[column.offset+r+compact.ld*v];
+    destination=unpack ? compact.data[column.offset+r+compact.ld*v]:full.data[a+full.ld*(v*count+b)];
   }
 }
 
-__global__ void copy_halo(const int* source_rows,int size,const int* requested,int count,
-    int column,int width,linalg::ConstMatrixView source,linalg::MatrixView output) {
-  for (auto i=static_cast<std::size_t>(blockIdx.x)*blockDim.x+threadIdx.x;
-       i<static_cast<std::size_t>(count)*width;i+=static_cast<std::size_t>(gridDim.x)*blockDim.x) {
+struct ColumnRead { const int* rows; linalg::ConstMatrixView values; int destination; };
+
+__global__ void read_columns(const ColumnRead* columns,const int* requested,int count,
+    int width,linalg::MatrixView output) {
+  const auto source=columns[blockIdx.x];
+  for (auto i=static_cast<std::size_t>(blockIdx.y)*blockDim.x+threadIdx.x;
+       i<static_cast<std::size_t>(count)*width;i+=static_cast<std::size_t>(gridDim.y)*blockDim.x) {
     const int r=i%count,v=i/count,a=requested[r];int index=a;
-    if (source_rows) {
-      int first=0,last=size;
-      while (first<last) {const int mid=first+(last-first)/2;if (source_rows[mid]<a) first=mid+1;else last=mid;}
-      index=first<size && source_rows[first]==a ? first:-1;
+    if (source.rows) {
+      int first=0,last=source.values.rows;
+      while (first<last) {const int mid=first+(last-first)/2;if (source.rows[mid]<a) first=mid+1;else last=mid;}
+      index=first<source.values.rows && source.rows[first]==a ? first:-1;
     }
-    output.data[r+output.ld*(column*width+v)]=index<0 ? 0.0:source.data[index+source.ld*v];
+    output.data[r+output.ld*(source.destination*width+v)]=index<0 ? 0.0:source.values.data[index+source.values.ld*v];
   }
 }
 
@@ -125,16 +134,22 @@ struct RetainedPattern {
   std::shared_ptr<const Pattern> pattern;
   std::size_t bytes() const {return 2*pattern->rows.size()*sizeof(int);}
 };
-struct Column {
-  std::shared_ptr<const Pattern> pattern;
+struct Block {
+  std::vector<std::shared_ptr<const Pattern>> patterns;
+  std::vector<std::int64_t> offsets;
+  Buffer<ColumnMap> maps;
   Matrix<double> values;
+  int max_rows=0;
   std::size_t bytes() const {
-    return values.rows()*values.cols()*sizeof(double)+pattern->rows.size()*sizeof(int);
+    return values.rows()*values.cols()*sizeof(double)+maps.size()*sizeof(ColumnMap)+offsets.size()*sizeof(std::int64_t);
   }
-};
-struct FactorRow {
-  Matrix<double> values;
-  std::size_t bytes() const {return values.rows()*sizeof(double);}
+  linalg::MatrixView column(int b) {
+    return {values.data() ? values.data()+offsets[b]:nullptr,patterns[b]->size,values.cols(),values.rows()};
+  }
+  void pack(Context& c,linalg::MatrixView dense,bool unpack) {
+    if (max_rows) pack_columns<<<dim3(patterns.size(),grid(static_cast<std::size_t>(max_rows)*values.cols())),
+        256,0,c.stream()>>>(maps.data(),patterns.size(),dense,values.view(),unpack);
+  }
 };
 } // namespace
 
@@ -142,24 +157,23 @@ struct ProductContraction::Impl {
   Context& c;
   const ExteriorTransform& alpha_transform;
   const ExteriorTransform& beta_transform;
-  int alpha,beta,groups;
+  int alpha,beta,groups,factor_extent=0;
   std::shared_ptr<const mcscf::ProductSupport> support;
   Buffer<int> starts,raw_alpha,raw_beta;
   cusparseHandle_t sparse=nullptr;
+  std::vector<int> reachable,beta_positions;
   std::vector<std::weak_ptr<const Pattern>> patterns;
+  std::shared_ptr<const Pattern> full_pattern;
   std::unique_ptr<mcscf::ColumnCache<RetainedPattern>> pattern_cache;
-  std::vector<unsigned char> column_support;
-  mutable std::unique_ptr<mcscf::ColumnCache<FactorRow>> row_cache;
+  std::unique_ptr<mcscf::ColumnCache<Factors>> factor_cache;
 
   Impl(Context& ctx,const vb::StructureAction::OrthogonalView& view,
       const ExteriorTransform& a,const ExteriorTransform& b,std::shared_ptr<const mcscf::ProductSupport> exact_support)
       :c(ctx),alpha_transform(a),beta_transform(b),alpha(a.dimension()),beta(b.dimension()),
-       groups(view.products.size()),patterns(beta),column_support(beta,1) {
-    support=std::move(exact_support);
-    if (support) {
-      std::fill(column_support.begin(),column_support.end(),0);
-      for (int b:support->columns()) column_support[b]=1;
-    }
+       groups(view.products.size()),support(std::move(exact_support)),beta_positions(beta,-1),patterns(beta) {
+    if (support) reachable=support->columns();
+    else {reachable.resize(beta);std::iota(reachable.begin(),reachable.end(),0);}
+    for (int i=0;i<reachable.size();++i) beta_positions[reachable[i]]=i;
     std::vector<int> offsets(alpha+1,0),aa(groups),bb(groups);
     for (int g=0;g<groups;++g) {
       aa[g]=view.products[g]/beta;bb[g]=view.products[g]%beta;++offsets[aa[g]+1];
@@ -171,197 +185,158 @@ struct ProductContraction::Impl {
   }
   ~Impl() {if (sparse) cusparseDestroy(sparse);}
 
+  std::span<const int> keys(int block,int extent) const {
+    const std::size_t first=static_cast<std::size_t>(block)*extent;
+    return std::span<const int>{reachable}.subspan(first,std::min<std::size_t>(extent,reachable.size()-first));
+  }
+
   std::shared_ptr<const Pattern> pattern(int b) {
+    if (!support && full_pattern) return full_pattern;
     if (pattern_cache->contains(b)) return pattern_cache->get(b).pattern;
     if (auto found=patterns[b].lock()) return found;
     auto result=std::make_shared<Pattern>();result->full=!support;
-    if (support) {
-      support->append_column_rows(b,result->rows);
-      result->size=result->rows.size();result->device_rows=upload<int>(c,result->rows);
-    } else result->size=alpha;
+    if (support) support->append_column_rows(b,result->rows);
+    else {result->rows.resize(alpha);std::iota(result->rows.begin(),result->rows.end(),0);}
+    result->size=result->rows.size();result->device_rows=upload<int>(c,result->rows);
     patterns[b]=result;
-    pattern_cache->insert(b,{result});
+    if (support) pattern_cache->insert(b,{result});else full_pattern=result;
     return result;
   }
 
-  Matrix<double> sample(std::span<const int> keys) const {
-    const nvtx3::scoped_range range{"vb.product_beta_rows"};
-    Matrix<double> output(c,beta,keys.size());
-    std::vector<int> missing,positions(keys.size(),-1),pending(beta,-1);
-    for (int i=0;i<keys.size();++i) {
-      if (!row_cache->contains(keys[i])) {
-        if (pending[keys[i]]<0) {pending[keys[i]]=missing.size();missing.push_back(keys[i]);}
-        positions[i]=pending[keys[i]];continue;
-      }
-      check_cuda(cudaMemcpyAsync(output.view().column(i).data,row_cache->get(keys[i]).values.data(),
-          beta*sizeof(double),cudaMemcpyDeviceToDevice,c.stream()),"read retained beta factor");
+  Block allocate(std::span<const int> keys,int width) {
+    Block block;block.offsets.push_back(0);
+    std::vector<ColumnMap> maps;maps.reserve(keys.size());
+    for (int key:keys) {
+      auto p=pattern(key);
+      maps.push_back({p->full ? nullptr:p->device_rows.data(),p->size,block.offsets.back()});
+      block.offsets.push_back(block.offsets.back()+p->size);
+      block.max_rows=std::max(block.max_rows,p->size);block.patterns.push_back(std::move(p));
     }
-    if (!missing.empty()) {
-      Matrix<double> generated(c,beta,missing.size());
-      beta_transform.sample_rows(missing,generated.view());
-      for (int i=0;i<keys.size();++i) if (positions[i]>=0)
-        check_cuda(cudaMemcpyAsync(output.view().column(i).data,generated.view().column(positions[i]).data,
-            beta*sizeof(double),cudaMemcpyDeviceToDevice,c.stream()),"stage requested beta factor");
-      for (int j=0;j<missing.size();++j) {
-        FactorRow row{Matrix<double>(c,beta,1)};
-        check_cuda(cudaMemcpyAsync(row.values.data(),generated.view().column(j).data,
-            beta*sizeof(double),cudaMemcpyDeviceToDevice,c.stream()),"retain requested beta factor");
-        row_cache->insert(missing[j],std::move(row));
-      }
-    }
-    return output;
+    block.maps=upload<ColumnMap>(c,maps);
+    block.values=Matrix<double>(c,block.offsets.back(),width);
+    return block;
   }
 
-  void transform(linalg::MatrixView values,const std::vector<std::shared_ptr<const Pattern>>& columns,bool adjoint) {
+  void transform(linalg::MatrixView values,const Block& block,bool adjoint) {
     const nvtx3::scoped_range range{adjoint ? "vb.product_alpha_adjoint":"vb.product_alpha"};
     if (!support) {alpha_transform.apply_left(values,adjoint);return;}
     std::vector<int> offsets{0},rows;
-    for (const auto& column:columns) {
-      rows.insert(rows.end(),column->rows.begin(),column->rows.end());offsets.push_back(rows.size());
+    for (const auto& p:block.patterns) {
+      rows.insert(rows.end(),p->rows.begin(),p->rows.end());offsets.push_back(rows.size());
     }
     alpha_transform.apply_supported_left(values,offsets,rows,adjoint);
   }
 
-  void apply(linalg::ConstMatrixView coefficients,
-      const DirectCiSigma& sigma,linalg::MatrixView h,linalg::MatrixView m,std::size_t bytes,bool overlap_only) {
+  void apply(linalg::ConstMatrixView coefficients,const DirectCiSigma& sigma,
+      linalg::MatrixView h,linalg::MatrixView m,std::size_t bytes,bool overlap_only) {
     const nvtx3::scoped_range range{"vb.product_tiles"};
     if (coefficients.rows!=groups || coefficients.cols<=0 || h.rows!=groups || m.rows!=groups ||
         h.cols!=coefficients.cols || m.cols!=coefficients.cols)
       throw std::invalid_argument("invalid product contraction coordinates");
     const int width=blas_int(coefficients.cols);
     const auto quarter=std::max<std::size_t>(1,bytes/4);
-    // Exact support depends on selected structures, not orbitals or the CI
-    // vector. Retain its uploaded sparse rows across actions, within the same
-    // workspace quarter as the factor rows. No global U_alpha*U_beta map.
     if (!pattern_cache) pattern_cache=std::make_unique<mcscf::ColumnCache<RetainedPattern>>(quarter/4,
         [](int)->RetainedPattern {throw std::logic_error("support rows require exact generation");});
     const auto row_bytes=sizeof(double)*(static_cast<std::size_t>(alpha)*width+beta);
-    // The CPU cap is task granularity, not a contraction identity. CUDA
-    // translation units do not enable OpenMP, so copying that cap split every
-    // panel into eight columns, repeating CSR conversion, support uploads and
-    // exterior actions. Admit the actual temporary payload within the same
-    // workspace quarter; do not tie device batches to a host worker count.
-    const int extent=std::min<std::size_t>(beta,std::max<std::size_t>(1,quarter/(8*row_bytes)));
-    if (!row_cache) row_cache=std::make_unique<mcscf::ColumnCache<FactorRow>>(quarter/2,
-        [](int)->FactorRow {throw std::logic_error("beta factors require batched generation");});
+    const int extent=std::min<std::size_t>(reachable.size(),std::max<std::size_t>(1,quarter/(8*row_bytes)));
+    if (!extent) throw std::logic_error("empty reachable product support");
+    if (factor_extent!=extent) {factor_cache.reset();factor_extent=extent;}
+    if (!factor_cache) factor_cache=std::make_unique<mcscf::ColumnCache<Factors>>(quarter/2,[this](int block) {
+      const nvtx3::scoped_range range{"vb.product_beta_rows"};
+      const auto selected=keys(block,factor_extent);
+      Matrix<double> values(c,beta,selected.size());
+      beta_transform.sample_rows(selected,values.view());
+      return Factors(c,sparse,values.view());
+    });
     clear(c,h);clear(c,m);
-    std::vector<unsigned char> overlap_consumed(beta,0);
-    const auto project_panel=[&](std::span<const int> keys,
-        const std::vector<std::shared_ptr<const Pattern>>& columns,linalg::MatrixView image,
-        const Factors& factors,linalg::MatrixView target) {
-      transform(image,columns,true);
+    const int blocks=(reachable.size()+extent-1)/extent;
+    std::vector<unsigned char> overlap_consumed(blocks,0);
+    const auto project_block=[&](int id,Block& block,linalg::MatrixView image,linalg::MatrixView target) {
+      const auto& factors=factor_cache->get(id);
+      transform(image,block,true);
       project<<<grid(static_cast<std::size_t>(groups)*width),256,0,c.stream()>>>(raw_alpha.data(),raw_beta.data(),groups,
-          factors.offsets.data(),factors.indices.data(),factors.values.data(),keys.size(),image,target);
+          factors.offsets.data(),factors.indices.data(),factors.values.data(),block.patterns.size(),image,target);
     };
-    const auto build=[&](std::span<const int> keys) {
+    const auto build=[&](int id) {
       const nvtx3::scoped_range range{"vb.product_generate"};
-      std::vector<std::shared_ptr<const Pattern>> columns;
-      for (int key:keys) columns.push_back(pattern(key));
-      auto sampled=sample(keys);Factors factors(c,sparse,sampled.view());
-      Matrix<double> values(c,alpha,keys.size()*width);clear(c,values.view());
+      const auto selected=keys(id,extent);
+      auto block=allocate(selected,width);
+      const auto& factors=factor_cache->get(id);
+      Matrix<double> values(c,alpha,selected.size()*width);clear(c,values.view());
       generate<<<grid(static_cast<std::size_t>(alpha)*width),256,0,c.stream()>>>(starts.data(),raw_beta.data(),coefficients,
-          factors.offsets.data(),factors.indices.data(),factors.values.data(),keys.size(),values.view());
-      transform(values.view(),columns,false);
-      std::vector<Column> result;result.reserve(keys.size());
-      for (int b=0;b<keys.size();++b) {
-        const auto& p=columns[b];result.push_back({p,Matrix<double>(c,p->size,width)});
-        if (p->size) pack_column<<<grid(static_cast<std::size_t>(p->size)*width),256,0,c.stream()>>>(
-            p->device_rows.data(),p->size,b,keys.size(),values.view(),result.back().values.view(),false);
+          factors.offsets.data(),factors.indices.data(),factors.values.data(),selected.size(),values.view());
+      transform(values.view(),block,false);block.pack(c,values.view(),false);
+      if (!overlap_consumed[id]) {
+        project_block(id,block,values.view(),m);overlap_consumed[id]=1;
       }
-      // Consume overlap once per newly requested column. The raw panel is
-      // dead after compact packing; its storage becomes the overlap pullback.
-      if (std::any_of(keys.begin(),keys.end(),[&](int key) {return !overlap_consumed[key];})) {
-        for (int b=0;b<keys.size();++b) if (overlap_consumed[keys[b]])
-          for (int v=0;v<width;++v) clear(c,values.view().column(v*keys.size()+b));
-        project_panel(keys,columns,values.view(),factors,m);
-        for (int key:keys) overlap_consumed[key]=1;
+      return block;
+    };
+    mcscf::ColumnCache<Block> input(quarter,build);
+    mcscf::ColumnCache<Block> output(quarter,[&](int id) {
+      auto block=allocate(keys(id,extent),width);clear(c,block.values.view());return block;
+    },[&](int id,Block& block) {
+      const nvtx3::scoped_range range{"vb.product_project"};
+      Matrix<double> image(c,alpha,block.patterns.size()*width);clear(c,image.view());
+      block.pack(c,image.view(),true);project_block(id,block,image.view(),h);
+    });
+    // A batch has one owner and byte charge. Early column retirement only
+    // releases its block after the final member; LRU eviction may project a
+    // partial block earlier. Both are exact by linearity of the projection.
+    using Entries=std::vector<std::pair<int,int>>;
+    const auto partition=[&](std::span<const int> betas) {
+      std::map<int,Entries> result;
+      for (int j=0;j<betas.size();++j) {
+        const int pos=beta_positions[betas[j]];
+        if (pos>=0) result[pos/extent].emplace_back(pos%extent,j);
       }
       return result;
     };
-    mcscf::ColumnCache<Column> input(quarter,[](int)->Column {
-      throw std::logic_error("product inputs require exact-demand batches");});
-    std::vector<int> completed;
-    std::vector<Column> completed_images;
-    const auto flush=[&] {
-      if (completed.empty()) return;
-      const nvtx3::scoped_range range{"vb.product_project"};
-      const int count=completed.size();
-      Matrix<double> image(c,alpha,count*width);clear(c,image.view());
-      std::vector<std::shared_ptr<const Pattern>> columns;
-      for (int b=0;b<count;++b) {
-        const auto& p=completed_images[b].pattern;columns.push_back(p);
-        if (p->size) pack_column<<<grid(static_cast<std::size_t>(p->size)*width),256,0,c.stream()>>>(
-            p->device_rows.data(),p->size,b,count,image.view(),completed_images[b].values.view(),true);
-      }
-      auto sampled=sample(completed);Factors factors(c,sparse,sampled.view());
-      project_panel(completed,columns,image.view(),factors,h);
-      completed.clear();completed_images.clear();
-    };
-    mcscf::ColumnCache<Column> output(quarter,[&](int key) {
-      auto p=pattern(key);Column column{p,Matrix<double>(c,p->size,width)};
-      if (p->size) clear(c,column.values.view());return column;
-    },[&](int key,Column& column) {
-      completed.push_back(key);completed_images.push_back(std::move(column));
-      if (completed.size()==extent) flush();
-    });
-    const auto produce=[&](std::span<const int> missing,const auto& consume) {
-      for (std::size_t first=0;first<missing.size();first+=extent) {
-        const auto keys=missing.subspan(first,std::min<std::size_t>(extent,missing.size()-first));
-        auto tiles=build(keys);consume(keys,tiles);
-        for (int j=0;j<keys.size();++j) input.insert(keys[j],std::move(tiles[j]));
-      }
-    };
     const CiTileReader read=[&](auto betas,auto rows,linalg::MatrixView values) {
-      clear(c,values);
-      const auto device_rows=upload<int>(c,rows);
-      std::vector<int> missing,positions;
-      const auto copy=[&](int column,const Column& panel) {
-        copy_halo<<<grid(rows.size()*width),256,0,c.stream()>>>(panel.pattern->device_rows.data(),panel.pattern->size,
-            device_rows.data(),rows.size(),column,width,panel.values.view(),values);
+      clear(c,values);const auto device_rows=upload<int>(c,rows);
+      const auto partitions=partition(betas);
+      const auto copy=[&](Block& block,const Entries& entries) {
+        std::vector<ColumnRead> columns;columns.reserve(entries.size());
+        for (auto [pos,destination]:entries) {
+          const auto& p=block.patterns[pos];
+          columns.push_back({p->full ? nullptr:p->device_rows.data(),block.column(pos),destination});
+        }
+        const auto device_columns=upload<ColumnRead>(c,columns);
+        if (!rows.empty()) read_columns<<<dim3(columns.size(),grid(rows.size()*width)),256,0,c.stream()>>>(
+            device_columns.data(),device_rows.data(),rows.size(),width,values);
       };
-      // All hits are consumed before any insertion can evict a borrowed owner.
-      for (int j=0;j<betas.size();++j) {
-        if (!column_support[betas[j]]) continue;
-        if (input.contains(betas[j])) copy(j,input.get(betas[j]));
-        else {missing.push_back(betas[j]);positions.push_back(j);}
+      // Borrowed hits are consumed before any insertion can evict their block.
+      std::vector<int> missing;
+      for (const auto& [id,entries]:partitions) {
+        if (input.contains(id)) copy(input.get(id),entries);else missing.push_back(id);
       }
-      std::size_t cursor=0;
-      produce(missing,[&](auto keys,const auto& tiles) {
-        for (int j=0;j<keys.size();++j) copy(positions[cursor++],tiles[j]);
-      });
+      for (int id:missing) {
+        auto block=build(id);copy(block,partitions.at(id));input.insert(id,std::move(block));
+      }
     };
     const CiTileWriter write=[&](auto betas,auto,const CiTileGather& gather) {
-      for (int j=0;j<betas.size();++j) {
-        if (!column_support[betas[j]]) continue;
-        const auto p=pattern(betas[j]);if (!p->size) continue;
-        auto& column=output.get(betas[j]);
-        if (p->full) {
-          std::vector<int> all(alpha);std::iota(all.begin(),all.end(),0);
-          gather(j,all,column.values.view(),true,nullptr);
-        } else gather(j,p->rows,column.values.view(),true,p->device_rows.data());
+      for (const auto& [id,entries]:partition(betas)) {
+        auto& block=output.get(id);
+        std::vector<CiTileColumn> columns;columns.reserve(entries.size());
+        for (auto [pos,source]:entries) if (block.patterns[pos]->size)
+          columns.push_back({source,block.patterns[pos]->device_rows.data(),block.column(pos)});
+        gather(columns,true);
       }
     };
     if (!overlap_only) {
-      // Same CPU residency rule: generate a fitting input once, before sigma
-      // starts requesting halos. A larger input remains exact-demand tiled.
-      if (quarter/sizeof(double)/alpha/beta>=static_cast<std::size_t>(width)) {
-        std::vector<int> reachable;
-        if (support) reachable=support->columns();
-        else {reachable.resize(beta);std::iota(reachable.begin(),reachable.end(),0);}
-        produce(reachable,[](auto,const auto&) {});
-      }
+      if (quarter/sizeof(double)/alpha/beta>=static_cast<std::size_t>(width))
+        for (int id=0;id<blocks;++id) input.get(id);
+      std::vector<int> remaining(blocks);
+      for (int id=0;id<blocks;++id) remaining[id]=keys(id,extent).size();
       const CiTileRequest request{read,write};
-      sigma.apply_tiled_responses(width,{&request,1},{},support.get(),quarter,[&](auto keys) {
-        for (int key:keys) {input.release(key);output.release(key);}
+      sigma.apply_tiled_responses(width,{&request,1},{},support.get(),quarter,[&](auto columns) {
+        for (int b:columns) if (beta_positions[b]>=0) {
+          const int id=beta_positions[b]/extent;
+          if (!--remaining[id]) {input.release(id);output.release(id);}
+        }
       });
-      output.finish();flush();
+      output.finish();
     }
-    // Quotient sigma need not touch all columns of the full overlap action.
-    std::vector<int> remaining;
-    if (support) {
-      for (int key:support->columns()) if (!overlap_consumed[key]) remaining.push_back(key);
-    } else for (int key=0;key<beta;++key) if (!overlap_consumed[key]) remaining.push_back(key);
-    produce(remaining,[](auto,const auto&) {});
+    for (int id=0;id<blocks;++id) if (!overlap_consumed[id]) build(id);
     check_cuda(cudaGetLastError(),"broad-support product contraction");
   }
 };
@@ -370,7 +345,7 @@ ProductContraction::ProductContraction(Context& c,const vb::StructureAction::Ort
     const ExteriorTransform& alpha,const ExteriorTransform& beta,std::shared_ptr<const mcscf::ProductSupport> support)
     :impl_(std::make_unique<Impl>(c,view,alpha,beta,std::move(support))) {}
 ProductContraction::~ProductContraction()=default;
-void ProductContraction::update_frame() {impl_->row_cache.reset();}
+void ProductContraction::update_frame() {impl_->factor_cache.reset();}
 void ProductContraction::apply(linalg::ConstMatrixView coefficients,
     const DirectCiSigma& sigma,linalg::MatrixView h,linalg::MatrixView m,std::size_t bytes,bool overlap_only) const {
   impl_->apply(coefficients,sigma,h,m,bytes,overlap_only);

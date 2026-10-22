@@ -114,13 +114,17 @@ __global__ void scatter_image(TileMap map,const int* alpha,const int* beta,
 }
 
 /** A consumer now reads the already contracted halo; it never revisits E. */
-__global__ void gather(TileMap map,const int* rows,int nrows,
-    linalg::ConstMatrixView halo,linalg::MatrixView output,int selected,bool add) {
+__global__ void gather(TileMap map,const int* halo_rows,const CiTileColumn* columns,
+    linalg::ConstMatrixView halo,bool add) {
+  const auto target=columns[blockIdx.x];
+  const auto output=target.values;
+  const int nrows=output.rows;
   const auto work=static_cast<std::size_t>(nrows)*output.cols;
-  for (auto i=static_cast<std::size_t>(blockIdx.x)*blockDim.x+threadIdx.x;
-       i<work;i+=static_cast<std::size_t>(gridDim.x)*blockDim.x) {
+  for (auto i=static_cast<std::size_t>(blockIdx.y)*blockDim.x+threadIdx.x;
+       i<work;i+=static_cast<std::size_t>(gridDim.y)*blockDim.x) {
     const int r=i%nrows,column=i/nrows,v=column%map.width;
-    const int h=map.halo_index[rows[r]],b=selected<0 ? column/map.width:selected;
+    const int h=map.halo_index[(target.rows ? target.rows:halo_rows)[r]],
+        b=target.source<0 ? column/map.width:target.source;
     const double value=h<0 ? 0.0:halo.data[h+halo.ld*(b*map.width+v)];
     auto& target=output.data[r+output.ld*column];
     if (add) target+=value;else target=value;
@@ -370,24 +374,21 @@ void DirectCiSigma::apply_tiled_responses(int width,std::span<const CiTileReques
               request.carrier_image.data ? request.carrier_image:input,request.carrier_image.data!=nullptr);
         }
         if (!request.image) continue;
-        const CiTileGather gather_columns=[&](int source,std::span<const int> rows,
-            linalg::MatrixView output,bool add,const int* borrowed_rows) {
-          const bool whole=rows.empty();
-          if (whole) rows=plan.halo;
-          if (source < -1 || source>=columns || output.rows!=static_cast<std::int64_t>(rows.size()) ||
-              output.cols!=(source<0 ? columns:1)*width || output.ld<output.rows)
-            throw std::invalid_argument("invalid tiled sigma gather dimensions");
-          if (rows.empty()) return;
-          Buffer<int> device_rows;
-          if (!whole && !borrowed_rows) {
-            if (!std::is_sorted(rows.begin(),rows.end()) ||
-                std::adjacent_find(rows.begin(),rows.end())!=rows.end() || rows.front()<0 || rows.back()>=n_alpha_)
-              throw std::invalid_argument("tiled sigma gather requires sorted distinct alpha rows");
-            device_rows=upload<int>(ctx,rows);
+        const CiTileGather gather_columns=[&](std::span<const CiTileColumn> targets,bool add) {
+          if (targets.empty()) return;
+          std::size_t work=0;
+          for (const auto& target:targets) {
+            const auto& output=target.values;
+            if (target.source < -1 || target.source>=columns || output.rows<0 ||
+                (!target.rows && output.rows!=halo) ||
+                output.cols!=(target.source<0 ? columns:1)*width || output.ld<output.rows)
+              throw std::invalid_argument("invalid tiled sigma gather dimensions");
+            work=std::max(work,static_cast<std::size_t>(output.rows)*output.cols);
           }
-          gather<<<grid(output.rows*output.cols),256,0,ctx.stream()>>>(map,
-              whole ? ptr(halo_offset):borrowed_rows ? borrowed_rows:device_rows.data(),
-              rows.size(),input,output,source,add);
+          if (!work) return;
+          const auto device_targets=upload<CiTileColumn>(ctx,targets);
+          gather<<<dim3(targets.size(),grid(work)),256,0,ctx.stream()>>>(map,
+              ptr(halo_offset),device_targets.data(),input,add);
         };
         const nvtx3::scoped_range range{"ci.tile_backproject"};
         request.image(plan.columns,plan.halo,gather_columns);

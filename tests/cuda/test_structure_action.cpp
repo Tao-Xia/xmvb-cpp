@@ -13,8 +13,10 @@
 #include "cuda/linalg/davidson.hpp"
 #include "cuda/memory/context.hpp"
 #include "cuda/vb/action.hpp"
+#include "cuda/vb/product.hpp"
 #include "linalg/eigensolver.hpp"
 #include "mcscf/ci/sigma.hpp"
+#include "mcscf/ci/product_support.hpp"
 #include "mcscf/ci/strings.hpp"
 #include "vbscf/determinants/pairs/same_spin_cache.hpp"
 #include "vbscf/structures/assembly/action.hpp"
@@ -28,6 +30,48 @@ using Terms = std::vector<std::vector<xmvb::vb::StructureExpansionTerm>>;
 
 void require(bool ok, const char* message) {
   if (!ok) throw std::runtime_error(message);
+}
+
+/** Force small block lifetimes independently of the normal contraction-order
+ * planner. Compare after exact projection into the original selected space.
+ * Unequal spin sectors, COV and broad proper supports use the same test.
+ */
+void check_packed_blocks(const xmvb::vb::StructureAction& source,const Eigen::MatrixXd& vectors) {
+  const auto view=source.orthogonal_view();
+  xmvb::cuda::Context context(64ULL*1024*1024);
+  const xmvb::cuda::ExteriorTransform alpha(context,view.alpha),beta(context,view.beta);
+  const auto support=view.support ? std::make_shared<xmvb::mcscf::ProductSupport>(*view.support):nullptr;
+  xmvb::cuda::ProductContraction product(context,view,alpha,beta,support);
+  const xmvb::cuda::DirectCiSigma sigma(context,view.sigma,1,view.exchange_parity);
+  for (int width:{1,2}) {
+    Eigen::MatrixXd coefficients=Eigen::MatrixXd::Zero(view.products.size(),width);
+    for (int g=0;g<coefficients.rows();++g)
+      for (auto t=view.offsets[g];t<view.offsets[g+1];++t)
+        coefficients.row(g)+=view.terms[t].coefficient*vectors.row(view.terms[t].structure).head(width);
+    xmvb::cuda::Matrix<double> x(context,coefficients.rows(),width),h(context,coefficients.rows(),width),
+        m(context,coefficients.rows(),width);
+    xmvb::cuda::copy_to_device(context,x.view(),coefficients);
+    const auto expected=source.apply(vectors.leftCols(width));
+    const auto project=[&](const auto& device) {
+      Eigen::MatrixXd values(coefficients.rows(),width);
+      xmvb::cuda::copy_to_host(context,values,device.view());
+      Eigen::MatrixXd result=Eigen::MatrixXd::Zero(vectors.rows(),width);
+      for (int g=0;g<values.rows();++g)
+        for (auto t=view.offsets[g];t<view.offsets[g+1];++t)
+          result.row(view.terms[t].structure)+=view.terms[t].coefficient*values.row(g);
+      return result;
+    };
+    for (std::size_t budget:{std::size_t{3200},std::size_t{1024*1024}}) {
+      product.apply(x.view(),sigma,h.view(),m.view(),budget);
+      require((project(h)-expected.hamiltonian).norm()<2e-10,
+          "packed product H block differs from selected CPU action");
+      require((project(m)-expected.overlap).norm()<2e-10,
+          "packed product overlap block differs from selected CPU action");
+      product.apply(x.view(),sigma,h.view(),m.view(),budget,true);
+      require((project(m)-expected.overlap).norm()<2e-10,
+          "packed overlap-only block changed the selected-space projection");
+    }
+  }
 }
 
 void check_self_tile_budget(const xmvb::vb::StructureAction& source) {
@@ -176,6 +220,7 @@ void check_action(int count, bool transformed,bool covalent=false,bool broad=fal
     for (int i = 0; i < count; ++i)
       vectors(i,j) = std::sin(0.37*(i+1)*(j+2));
   const auto expected = cpu.apply(vectors);
+  check_packed_blocks(cpu,vectors);
   const auto actual = gpu.apply(vectors);
   const double h_error = (actual.hamiltonian-expected.hamiltonian).norm() /
       std::max(1.0,expected.hamiltonian.norm());

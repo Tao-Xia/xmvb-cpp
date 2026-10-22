@@ -204,7 +204,8 @@ void check_product_tiles(int parity,bool covalent,std::size_t budget) {
         context.stream()),"clear tile oracle");
     return [&,destination](auto betas,auto rows,const xmvb::cuda::CiTileGather& gather) {
       xmvb::cuda::Matrix<double> tile(context,rows.size(),betas.size()*width);
-      gather(-1,{},tile.view(),false,nullptr);
+      const xmvb::cuda::CiTileColumn target{-1,nullptr,tile.view()};
+      gather({&target,1},false);
       const double one=1;
       for (int b=0;b<betas.size();++b) for (int v=0;v<width;++v) for (int a=0;a<rows.size();++a)
         xmvb::cuda::check_cublas(cublasDaxpy(context.blas(),1,&one,tile.data()+a+tile.rows()*(b*width+v),1,
