@@ -9,13 +9,16 @@
 
 #include "core/pair_index.hpp"
 #include "cuda/ci/sigma.hpp"
+#include "cuda/ci/spin_self.hpp"
 #include "cuda/linalg/davidson.hpp"
 #include "cuda/memory/context.hpp"
 #include "cuda/vb/action.hpp"
 #include "linalg/eigensolver.hpp"
+#include "mcscf/ci/sigma.hpp"
 #include "vbscf/determinants/pairs/same_spin_cache.hpp"
 #include "vbscf/structures/assembly/action.hpp"
 #include "vbscf/structures/assembly/hamiltonian_overlap.hpp"
+#include "vbscf/structures/orthogonal_ci/exterior_transform.hpp"
 
 namespace {
 
@@ -24,6 +27,63 @@ using Terms = std::vector<std::vector<xmvb::vb::StructureExpansionTerm>>;
 
 void require(bool ok, const char* message) {
   if (!ok) throw std::runtime_error(message);
+}
+
+void check_self_tile_budget(const xmvb::vb::StructureAction& source) {
+  const auto view=source.orthogonal_view();
+  const auto& transform=view.alpha;
+  const auto& connections=view.sigma.alpha_connections();
+  const auto& kernel=view.sigma.channel_kernel();
+  const int n=transform.n_orbitals(),k=connections.n_occupied(),u=transform.dimension();
+  const int channels=static_cast<int>(kernel.rows());
+  const std::size_t persistent=(1ULL*n*n+1ULL*channels*channels+1ULL*u*channels+2ULL*u)*sizeof(double)+
+      (u*k+2*channels)*sizeof(int);
+  const std::size_t one_string=(2ULL*n*k+2ULL*k*k+1ULL*n*n)*sizeof(double)+
+      2*sizeof(double*)+(k+1)*sizeof(int);
+  xmvb::cuda::Context context(persistent+one_string);
+  xmvb::cuda::Matrix<double> frame(context,n,n),device_kernel(context,channels,channels);
+  xmvb::cuda::copy_to_device(context,frame.view(),transform.orbital_transform());
+  xmvb::cuda::copy_to_device(context,device_kernel.view(),kernel);
+  xmvb::cuda::SpinSelf model(context,n,transform.occupations());
+  model.update(frame.view(),device_kernel.view());
+
+  // Independent small exterior-space oracle; it never uses a Gram inverse.
+  Eigen::MatrixXd exterior=Eigen::MatrixXd::Identity(u,u);
+  transform.apply_left(&exterior);
+  std::vector<Eigen::MatrixXd> generators(channels,Eigen::MatrixXd::Zero(u,u));
+  for (int row=0;row<u;++row) {
+    for (int orbital:connections.occupied(row))
+      generators[orbital*(orbital+1)/2+orbital](row,row)=1.0;
+    for (const auto& link:connections.singles(row))
+      generators[link.pair](row,link.source)=link.sign;
+  }
+  Eigen::MatrixXd h=Eigen::MatrixXd::Zero(u,u);
+  for (int p=0;p<channels;++p) for (int q=0;q<channels;++q)
+    h.noalias()+=kernel(p,q)*generators[p]*generators[q];
+  Eigen::MatrixXd energy(u,1),overlap(u,1),means(u,channels);
+  xmvb::cuda::copy_to_host(context,energy,model.energy());
+  xmvb::cuda::copy_to_host(context,overlap,model.overlap());
+  xmvb::cuda::copy_to_host(context,means,model.moments());
+  for (int row=0;row<u;++row) {
+    const auto column=exterior.col(row);
+    const double norm=column.squaredNorm();
+    require(std::abs(overlap(row,0)-norm)<2e-11,"tiled spin-self norm differs from exterior oracle");
+    require(std::abs(energy(row,0)-column.dot(h*column)/norm)<2e-10,
+        "tiled spin-self energy differs from exterior oracle");
+    for (int p=0;p<channels;++p)
+      require(std::abs(means(row,p)-column.dot(generators[p]*column)/norm)<2e-10,
+          "tiled spin-self moment differs from exterior oracle");
+  }
+  require(context.counters().peak_device_bytes<=persistent+one_string,
+      "spin-self tile exceeded its exact one-string budget");
+  const std::vector<std::uint64_t> empty_spin{0};
+  xmvb::cuda::SpinSelf vacuum(context,n,empty_spin);
+  vacuum.update(frame.view(),device_kernel.view());
+  Eigen::MatrixXd vacuum_overlap(1,1),vacuum_energy(1,1);
+  xmvb::cuda::copy_to_host(context,vacuum_overlap,vacuum.overlap());
+  xmvb::cuda::copy_to_host(context,vacuum_energy,vacuum.energy());
+  require(vacuum_overlap(0,0)==1.0 && vacuum_energy(0,0)==0.0,
+      "empty spin self diagonal is not the vacuum");
 }
 
 void check_action(int count, bool transformed) {
@@ -74,11 +134,23 @@ void check_action(int count, bool transformed) {
       .build_davidson_jacobi_preconditioner(products_alpha,products_beta,terms,
           overlap,h,n,eri,count,topology);
   const xmvb::vb::StructureAction cpu(terms,count,topology,overlap,h,eri,n,&diagonal_model);
+  if (count==1 && transformed) check_self_tile_budget(cpu);
   xmvb::cuda::Context context(256ULL*1024ULL*1024ULL);
   const xmvb::cuda::StructureAction gpu(context,cpu);
   require(gpu.carrier_sigma().exchange_parity()==cpu.orthogonal_view().exchange_parity,
       "CUDA structure action lost the common spin-exchange certificate");
   require(gpu.graph_nodes()==0,"topology eagerly prepared numerical sigma workspace");
+  xmvb::cuda::Matrix<double> model_h(context,count,1),model_m(context,count,1);
+  gpu.diagonal_model(model_h.view(),model_m.view());
+  Eigen::MatrixXd self_h(count,1),self_m(count,1);
+  xmvb::cuda::copy_to_host(context,self_h,model_h.view());
+  xmvb::cuda::copy_to_host(context,self_m,model_m.view());
+  require((self_h.col(0)-diagonal_model.hamiltonian).norm()<
+      2e-10*std::max(1.0,diagonal_model.hamiltonian.norm()),
+      "GPU nonorthogonal self Hamiltonian model differs from CPU");
+  require((self_m.col(0)-diagonal_model.overlap).norm()<
+      2e-10*std::max(1.0,diagonal_model.overlap.norm()),
+      "GPU nonorthogonal self overlap model differs from CPU");
   Eigen::MatrixXd vectors(count,3);
   for (int j = 0; j < vectors.cols(); ++j)
     for (int i = 0; i < count; ++i)

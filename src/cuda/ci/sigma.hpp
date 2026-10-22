@@ -128,6 +128,10 @@ class DirectCiSigma {
   int n_beta_strings() const noexcept { return n_beta_; }
   int n_orbitals() const noexcept { return n_orbitals_; }
   int n_channels() const noexcept { return n_channels_; }
+  /** Same ordered E_P K_PQ E_Q kernel used by every sigma contraction. */
+  linalg::ConstMatrixView channel_kernel() const noexcept {
+    return {kernel_.data(),n_channels_,n_channels_,n_channels_};
+  }
   /** Topology-certified common transpose parity, zero if not restricted. */
   int exchange_parity() const noexcept { return exchange_parity_; }
   std::size_t resident_bytes() const noexcept;

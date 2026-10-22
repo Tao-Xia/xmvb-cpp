@@ -140,9 +140,8 @@ void StructureCi::refresh() {
     action_->build_selected_metric(metric.view());
     point->metric=std::make_shared<SelectedMetric>(*context_,metric.view());
     ++metric_builds_;
-    check_cuda(cudaMemcpyAsync(point->diagonal_m.data(),point->metric->diagonal().data,
-        action_->size()*sizeof(double),cudaMemcpyDeviceToDevice,context_->stream()),
-        "reuse selected point metric diagonal");
+    // The exact metric and the self-product Jacobi overlap are different
+    // objects. CIAH uses the latter, as does the CPU structure adapter.
   }
   point_=std::move(point);
   ++prepared_points_;

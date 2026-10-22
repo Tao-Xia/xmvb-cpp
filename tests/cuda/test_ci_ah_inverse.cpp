@@ -16,6 +16,7 @@
 #include "mcscf/ci/strings.hpp"
 #include "vbscf/determinants/pairs/same_spin_cache.hpp"
 #include "vbscf/structures/assembly/action.hpp"
+#include "vbscf/structures/assembly/hamiltonian_overlap.hpp"
 #include "vbscf/structures/orthogonal_ci/metric.hpp"
 #include "vbscf/structures/overlap/spin_metric.hpp"
 
@@ -69,6 +70,7 @@ DeviceMatrix upload(xmvb::cuda::Context& context,const Vector& host) {
 struct Fixture {
   Strings strings=xmvb::mcscf::SpinStrings(2,1).occupations();
   std::unique_ptr<xmvb::vb::StructureAction> source;
+  xmvb::vb::StructureDiagonal diagonal;
   explicit Fixture(bool complete) {
     constexpr double half_root=0.7071067811865475244;
     std::vector<std::vector<xmvb::vb::StructureExpansionTerm>> terms(4);
@@ -91,6 +93,9 @@ struct Fixture {
     packed.resize(xmvb::integrals::packed_active_two_electron_integral_count(2));
     for (std::size_t i=0;i<packed.size();++i)
       packed[i]=0.06*std::cos(0.41*(i+1));
+    diagonal=xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder{}
+        .build_davidson_jacobi_preconditioner(alpha,beta,terms,overlap_data,
+            one,2,eri,complete?3:2,topology);
     source=std::make_unique<xmvb::vb::StructureAction>(terms,complete?3:2,
         topology,overlap_data,one,eri,2,nullptr,
         xmvb::vb::StructureActionMode::ActionOnly);
@@ -116,14 +121,16 @@ void check(bool full,bool spin_model=false) {
   action.diagonal_model(dh.view(),dm.view());
   const Vector diagonal_h=download(context,dh.view()).col(0);
   Vector diagonal_m=download(context,dm.view()).col(0);
+  near(diagonal_h,fixture.diagonal.hamiltonian,branch,"CI self H differs from independent CPU model");
+  near(diagonal_m,fixture.diagonal.overlap,branch,"CI self M differs from independent CPU model");
   const auto dense=fixture.source->apply(Matrix::Identity(n,n));
   if (!full) {
-    // This bounded selected fixture uses StructureCi::selected_mode_. Its
-    // refresh replaces the action's carrier-Jacobi M diagonal with the exact
-    // selected metric diagonal; derive the oracle independently from CPU S.
     require(std::string(ci.preconditioner_name())=="selected_metric_inverse",
             "expected bounded selected metric inverse");
-    diagonal_m=dense.overlap.diagonal();
+    // Actual M includes coherent cross terms; the AH Jacobi diagonal does
+    // not. Never replace the independently constructed CPU model with M_II.
+    require((diagonal_m-dense.overlap.diagonal()).norm()>1e-5,
+        "CI fixture does not distinguish Jacobi and exact overlap diagonals");
   }
   Vector selected(n),rhs(n);
   for (int i=0;i<n;++i) {

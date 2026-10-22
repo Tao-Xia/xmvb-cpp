@@ -6,6 +6,7 @@ add_library(xmvb_cuda
   linalg/svd.cu
   ci/sigma.cu
   ci/moments.cu
+  ci/spin_self.cu
   integrals/exact.cu
   integrals/unique.cu
   integrals/packed.cu

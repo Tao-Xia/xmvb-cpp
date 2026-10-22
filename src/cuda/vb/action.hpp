@@ -40,9 +40,9 @@ class StructureAction {
    * diagonal_model() and must never use this after a frame/integral update.
    */
   const vb::StructureDiagonal& preconditioner_diagonal() const noexcept;
-  /** Dynamic, positive-overlap carrier Jacobi model (not exact H/M diagonals).
-   * W squared weights the current orthogonal carrier diagonal and the current
-   * exterior determinant scales. Outputs are device column vectors.
+  /** CPU-equivalent Jacobi model from nonorthogonal spin-product self H/M.
+   * Squared combined sparse expansion coefficients contract the self values.
+   * This is not the coherent selected-structure diagonal. Outputs stay on GPU.
    */
   void diagonal_model(linalg::MatrixView hamiltonian,
                       linalg::MatrixView overlap) const;

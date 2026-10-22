@@ -17,6 +17,7 @@
 #include <thrust/system/cuda/execution_policy.h>
 
 #include "cuda/ci/sigma.hpp"
+#include "cuda/ci/spin_self.hpp"
 #include "cuda/linalg/blas.hpp"
 #include "cuda/memory/buffer.hpp"
 #include "cuda/memory/graph.hpp"
@@ -39,19 +40,25 @@ __global__ void divide_diagonal(linalg::MatrixView carrier,
   carrier.data[row+column*carrier.ld]/=denominator;
 }
 
-__global__ void assemble_carrier_jacobi(const std::int64_t* row_offsets,
+__global__ void assemble_spin_self_model(const std::int64_t* row_offsets,
     const std::int64_t* products,const std::int64_t* columns,
-    const double* weights,const double* carrier_diagonal,
-    const double* alpha_scales,const double* beta_scales,
+    const double* weights,linalg::ConstMatrixView projected_alpha,
+    linalg::ConstMatrixView beta_moments,const int* alpha_ids,const int* beta_ids,
+    const double* alpha_energy,const double* beta_energy,
+    const double* alpha_overlap,const double* beta_overlap,
     double* hamiltonian,double* overlap,std::int64_t groups,
     int n_alpha,int n_beta) {
   const std::int64_t group=static_cast<std::int64_t>(blockIdx.x)*blockDim.x+threadIdx.x;
   if (group>=groups) return;
+  if (row_offsets[group]==row_offsets[group+1]) return;
   const auto product=products[group];
-  const int a=static_cast<int>(product%n_alpha);
-  const int b=static_cast<int>(product/n_alpha);
-  const double scaled=alpha_scales[a]*beta_scales[b];
-  const double energy=carrier_diagonal[product];
+  const int a=alpha_ids[product%n_alpha];
+  const int b=beta_ids[product/n_alpha];
+  const double norm=alpha_overlap[a]*beta_overlap[b];
+  double energy=alpha_energy[a]+beta_energy[b];
+  for (int channel=0;channel<projected_alpha.cols;++channel)
+    energy+=projected_alpha.data[a+projected_alpha.ld*channel]*
+        beta_moments.data[b+beta_moments.ld*channel];
   for (auto term=row_offsets[group];term<row_offsets[group+1];++term) {
     const auto structure=columns[term];
     bool first=true;
@@ -61,8 +68,7 @@ __global__ void assemble_carrier_jacobi(const std::int64_t* row_offsets,
     double combined=0.0;
     for (auto matching=term;matching<row_offsets[group+1];++matching)
       if (columns[matching]==structure) combined+=weights[matching];
-    const double coefficient=scaled*combined;
-    const double square=coefficient*coefficient;
+    const double square=norm*combined*combined;
     atomicAdd(hamiltonian+structure,square*energy);
     atomicAdd(overlap+structure,square);
   }
@@ -155,6 +161,12 @@ struct StructureAction::Impl {
   ExteriorTransform alpha_transform;
   std::unique_ptr<ExteriorTransform> beta_storage;
   const ExteriorTransform* beta_transform;
+  std::unique_ptr<SpinSelf> alpha_self;
+  std::unique_ptr<SpinSelf> beta_self_storage;
+  const SpinSelf* beta_self;
+  Buffer<int> alpha_self_ids,beta_self_ids;
+  Matrix<double> model_upper;
+  std::uint64_t model_version=std::numeric_limits<std::uint64_t>::max();
   Buffer<std::int64_t> row_offsets, product_indices, columns;
   Buffer<double> weights;
   cusparseHandle_t sparse = nullptr;
@@ -180,6 +192,8 @@ struct StructureAction::Impl {
         beta_storage(&source.orthogonal_view().alpha == &source.orthogonal_view().beta
             ? nullptr : std::make_unique<ExteriorTransform>(ctx, source.orthogonal_view().beta)),
         beta_transform(beta_storage ? beta_storage.get() : &alpha_transform),
+        beta_self(nullptr),alpha_self_ids(ctx,alpha),beta_self_ids(ctx,beta),
+        model_upper(ctx,source.orthogonal_view().alpha.n_orbitals(),source.orthogonal_view().alpha.n_orbitals()),
         row_offsets(ctx, groups+1), product_indices(ctx, groups),
         columns(ctx, source.orthogonal_view().terms.size()),
         weights(ctx, source.orthogonal_view().terms.size()),
@@ -187,6 +201,30 @@ struct StructureAction::Impl {
         coefficients(carriers.view().columns(0,beta)),image(carriers.view().columns(beta,beta)),
         input(ctx,structures,1),hamiltonian(ctx,structures,1),overlap(ctx,structures,1) {
     const auto view=source.orthogonal_view();
+    copy_to_device(context,model_upper.view(),view.alpha.orbital_transform());
+    std::vector<unsigned char> alpha_touched(alpha),beta_touched(beta);
+    for (std::size_t group=0;group<view.products.size();++group) {
+      if (view.offsets[group]==view.offsets[group+1]) continue;
+      alpha_touched[view.products[group]/beta]=1;
+      beta_touched[view.products[group]%beta]=1;
+    }
+    if (!beta_storage)
+      for (int i=0;i<alpha;++i) alpha_touched[i]=beta_touched[i]=alpha_touched[i]|beta_touched[i];
+    const auto make_self=[&](const auto& transform,const auto& touched,auto& device_ids) {
+      std::vector<std::uint64_t> masks;
+      std::vector<int> ids(touched.size(),-1);
+      for (std::size_t i=0;i<touched.size();++i) if (touched[i]) {
+        ids[i]=static_cast<int>(masks.size());masks.push_back(transform.occupations()[i]);
+      }
+      context.copy_to_device(device_ids.data(),ids.data(),ids.size()*sizeof(int));
+      return std::make_unique<SpinSelf>(ctx,transform.n_orbitals(),masks);
+    };
+    alpha_self=make_self(view.alpha,alpha_touched,alpha_self_ids);
+    if (beta_storage) beta_self_storage=make_self(view.beta,beta_touched,beta_self_ids);
+    if (!beta_storage)
+      check_cuda(cudaMemcpyAsync(beta_self_ids.data(),alpha_self_ids.data(),alpha*sizeof(int),
+          cudaMemcpyDeviceToDevice,context.stream()),"share spin-self row map");
+    beta_self=beta_self_storage ? beta_self_storage.get():alpha_self.get();
     std::vector<std::int64_t> offsets(view.offsets.begin(), view.offsets.end());
     std::vector<std::int64_t> addresses;
     addresses.reserve(groups);
@@ -341,10 +379,24 @@ void StructureAction::diagonal_model(linalg::MatrixView h,
   if (h.rows!=p.structures || m.rows!=p.structures || h.cols!=1 || m.cols!=1 ||
       h.ld<h.rows || m.ld<m.rows || !h.data || !m.data || h.data==m.data)
     throw std::invalid_argument("CUDA carrier Jacobi dimensions");
-  if (p.carrier_diagonal.rows()==0) {
-    p.carrier_diagonal=Matrix<double>(p.context,p.alpha,p.beta);
-    p.sigma.diagonal(p.carrier_diagonal.view());
+  const nvtx3::scoped_range range{"vb.nonorthogonal_jacobi"};
+  // Only supported spin rows are prepared. Cross-spin contractions are
+  // consumed at touched product groups, never expanded to a carrier grid.
+  p.sigma.reset_workspace();
+  const auto kernel=p.sigma.channel_kernel();
+  Matrix<double> symmetric(p.context,kernel.rows,kernel.cols),
+      projected(p.context,p.alpha_self->moments().rows,kernel.cols);
+  const double one=1.0;
+  check_cublas(cublasDgeam(p.context.blas(),CUBLAS_OP_N,CUBLAS_OP_T,
+      blas_int(kernel.rows),blas_int(kernel.cols),&one,kernel.data,blas_int(kernel.ld),
+      &one,kernel.data,blas_int(kernel.ld),symmetric.data(),blas_int(kernel.rows)),
+      "CUDA spin-self cross kernel");
+  if (p.model_version!=p.version) {
+    p.alpha_self->update(p.model_upper.view(),kernel);
+    if (p.beta_self_storage) p.beta_self_storage->update(p.model_upper.view(),kernel);
+    p.model_version=p.version;
   }
+  gemm(p.context,projected.view(),p.alpha_self->moments(),symmetric.view());
   check_cuda(cudaMemsetAsync(h.data,0,p.structures*sizeof(double),p.context.stream()),
       "clear carrier Jacobi H");
   check_cuda(cudaMemsetAsync(m.data,0,p.structures*sizeof(double),p.context.stream()),
@@ -352,10 +404,11 @@ void StructureAction::diagonal_model(linalg::MatrixView h,
   const auto blocks=(p.groups+255)/256;
   if (blocks>std::numeric_limits<unsigned int>::max())
     throw std::overflow_error("CUDA carrier Jacobi grid overflow");
-  assemble_carrier_jacobi<<<static_cast<unsigned int>(blocks),256,0,p.context.stream()>>>(
+  assemble_spin_self_model<<<static_cast<unsigned int>(blocks),256,0,p.context.stream()>>>(
       p.row_offsets.data(),p.product_indices.data(),p.columns.data(),
-      p.weights.data(),p.carrier_diagonal.data(),
-      p.alpha_transform.scale_data(),p.beta_transform->scale_data(),
+      p.weights.data(),projected.view(),p.beta_self->moments(),p.alpha_self_ids.data(),p.beta_self_ids.data(),
+      p.alpha_self->energy().data,p.beta_self->energy().data,
+      p.alpha_self->overlap().data,p.beta_self->overlap().data,
       h.data,m.data,p.groups,p.alpha,p.beta);
   check_cuda(cudaGetLastError(),"CUDA carrier Jacobi assembly");
 }
@@ -467,6 +520,12 @@ std::array<linalg::MatrixView,2> StructureAction::carrier_workspace() const noex
   return {impl_->coefficients,impl_->image};
 }
 void StructureAction::update_frame(linalg::ConstMatrixView upper) {
+  auto& p=*impl_;
+  if (upper.rows!=p.model_upper.rows() || upper.cols!=p.model_upper.cols() || upper.ld<upper.rows)
+    throw std::invalid_argument("CUDA spin-self orbital frame shape mismatch");
+  check_cuda(cudaMemcpy2DAsync(p.model_upper.data(),p.model_upper.rows()*sizeof(double),
+      upper.data,upper.ld*sizeof(double),upper.rows*sizeof(double),upper.cols,
+      cudaMemcpyDeviceToDevice,p.context.stream()),"CUDA spin-self frame update");
   impl_->alpha_transform.update_upper(upper);
   if (impl_->beta_storage) impl_->beta_storage->update_upper(upper);
   ++impl_->version;
