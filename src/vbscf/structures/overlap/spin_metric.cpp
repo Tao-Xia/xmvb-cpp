@@ -37,7 +37,7 @@ std::vector<std::vector<int>> SpinMetric::occupation_groups(
   std::vector<std::uint64_t> alpha_masks, beta_masks;
   for (const auto& string : alpha_strings) alpha_masks.push_back(occupation_mask(string));
   for (const auto& string : beta_strings) beta_masks.push_back(occupation_mask(string));
-  const auto pattern = [&](int spin_product) {
+  const auto pattern = [&](mcscf::ProductIndex spin_product) {
     const auto alpha = alpha_masks.at(spin_product / action.n_unique_beta_);
     const auto beta = beta_masks.at(spin_product % action.n_unique_beta_);
     return Pattern{alpha | beta, alpha & beta};
