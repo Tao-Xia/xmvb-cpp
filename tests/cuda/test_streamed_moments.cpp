@@ -82,14 +82,19 @@ void check_unequal() {
   xmvb::cuda::copy_to_device(context,d_other.view(),other);
   const std::array<xmvb::linalg::ConstMatrixView,2> lefts{d_left.view(),d_other.view()};
   const std::array<xmvb::linalg::MatrixView,2> outputs{d_out.view(),d_out_other.view()};
-  const std::array<xmvb::cuda::CiStreamedGeneratorRequest,2> requests{{
-      {reader(right_a),-0.37,false},{reader(right_b),0.61,true}}};
+  const std::array terms{xmvb::cuda::CiStreamedGeneratorTerm{lefts[0],0},
+      xmvb::cuda::CiStreamedGeneratorTerm{lefts[1],1}};
+  const std::array batches{
+      xmvb::cuda::CiStreamedGeneratorBatch{reader(right_a),
+          {terms.data(),terms.size()},-0.37,false},
+      xmvb::cuda::CiStreamedGeneratorBatch{reader(right_b),
+          {terms.data(),terms.size()},0.61,true}};
   bool rejected=false;
-  try { gpu.generator_adjoint_streamed(first,lefts,requests,outputs,false,true); }
+  try { gpu.generator_adjoint_streamed(first,batches,outputs,false,true); }
   catch (const std::invalid_argument&) { rejected=true; }
   if (!rejected) throw std::runtime_error("uncertified exchange reduction was accepted");
   for (const bool symmetric:{false,true}) {
-    gpu.generator_adjoint_streamed(first,lefts,requests,outputs,symmetric,false);
+    gpu.generator_adjoint_streamed(first,batches,outputs,symmetric,false);
     std::array<Matrix,2> expected;
     for (int k=0;k<2;++k) {
       Matrix padded=Matrix::Zero(na,nb);
@@ -101,11 +106,39 @@ void check_unequal() {
       near(download(context,k ? d_out_other:d_out),expected[k],
           "streamed generator adjoint differs from CPU");
     }
-    gpu.generator_adjoint_streamed(first,lefts,requests,outputs,symmetric,false,true);
+    gpu.generator_adjoint_streamed(first,batches,outputs,symmetric,false,true);
     for (int k=0;k<2;++k)
       near(download(context,k ? d_out_other:d_out),2*expected[k],
           "streamed generator adjoint add mode differs from CPU");
   }
+
+  // The right readers have different paired consumers. Both outputs receive
+  // both terms, but the second term crosses the left/output assignments.
+  const std::array a_terms{xmvb::cuda::CiStreamedGeneratorTerm{lefts[0],0},
+      xmvb::cuda::CiStreamedGeneratorTerm{lefts[1],1}};
+  const std::array b_terms{xmvb::cuda::CiStreamedGeneratorTerm{lefts[1],0},
+      xmvb::cuda::CiStreamedGeneratorTerm{lefts[0],1}};
+  const std::array paired_batches{
+      xmvb::cuda::CiStreamedGeneratorBatch{reader(right_a),
+          {a_terms.data(),a_terms.size()},-0.37,false},
+      xmvb::cuda::CiStreamedGeneratorBatch{reader(right_b),
+          {b_terms.data(),b_terms.size()},0.61,true}};
+  gpu.generator_adjoint_streamed(first,paired_batches,outputs);
+  std::array<Matrix,2> paired_expected;
+  for (int k=0;k<2;++k) {
+    Matrix a=Matrix::Zero(na,nb),b=Matrix::Zero(na,nb);
+    a.middleCols(first,count)=k ? other:left;
+    b.middleCols(first,count)=k ? left:other;
+    paired_expected[k]=-0.37*cpu.one_body_generator_adjoint(a,right_a)+
+        0.61*cpu.one_body_generator_adjoint(b,right_b).transpose();
+    paired_expected[k].triangularView<Eigen::StrictlyLower>().setZero();
+    near(download(context,k ? d_out_other:d_out),paired_expected[k],
+        "paired streamed generator adjoint differs from CPU");
+  }
+  gpu.generator_adjoint_streamed(first,paired_batches,outputs,false,false,true);
+  for (int k=0;k<2;++k)
+    near(download(context,k ? d_out_other:d_out),2*paired_expected[k],
+        "paired streamed generator add mode differs from CPU");
 }
 
 void check_exchange() {
@@ -129,8 +162,6 @@ void check_exchange() {
       for (int i=0;i<tile.rows();++i) tile(i,j)=right(rows[i],betas[j]);
     xmvb::cuda::copy_to_device(context,output,tile);
   };
-  const std::array<xmvb::cuda::CiStreamedGeneratorRequest,1> requests{{
-      {read,0.73,true}}};
   xmvb::cuda::Matrix<double> d_left(context,u,2),d_out(context,n,n);
   xmvb::cuda::check_cuda(cudaMemsetAsync(d_out.data(),0,n*n*sizeof(double),
       context.stream()),"clear exchange generator output");
@@ -138,16 +169,46 @@ void check_exchange() {
     const int count=std::min(2,u-first);
     xmvb::cuda::copy_to_device(context,d_left.view().columns(0,count),
         left.middleCols(first,count).eval());
-    const std::array<xmvb::linalg::ConstMatrixView,1> lefts{
-        d_left.view().columns(0,count)};
+    const std::array terms{xmvb::cuda::CiStreamedGeneratorTerm{
+        d_left.view().columns(0,count),0}};
+    const std::array batches{xmvb::cuda::CiStreamedGeneratorBatch{
+        read,{terms.data(),terms.size()},0.73,true}};
     const std::array<xmvb::linalg::MatrixView,1> outputs{d_out.view()};
-    gpu.generator_adjoint_streamed(first,lefts,requests,outputs,true,true,true);
+    gpu.generator_adjoint_streamed(first,batches,outputs,true,true,true);
   }
   Matrix expected=0.73*cpu.one_body_generator_adjoint(left,right).transpose();
   expected=(expected+expected.transpose()).eval();
   expected.triangularView<Eigen::StrictlyLower>().setZero();
   near(download(context,d_out),expected,
       "exchange-reduced streamed generator adjoint differs from CPU");
+
+  const Matrix other=parity_carrier(0.91);
+  xmvb::cuda::Matrix<double> d_other_left(context,u,2),d_other_out(context,n,n);
+  xmvb::cuda::check_cuda(cudaMemsetAsync(d_out.data(),0,n*n*sizeof(double),
+      context.stream()),"clear paired exchange generator output");
+  xmvb::cuda::check_cuda(cudaMemsetAsync(d_other_out.data(),0,n*n*sizeof(double),
+      context.stream()),"clear second paired exchange generator output");
+  for (int first=0;first<u;first+=2) {
+    const int count=std::min(2,u-first);
+    xmvb::cuda::copy_to_device(context,d_left.view().columns(0,count),
+        left.middleCols(first,count).eval());
+    xmvb::cuda::copy_to_device(context,d_other_left.view().columns(0,count),
+        other.middleCols(first,count).eval());
+    const std::array terms{
+        xmvb::cuda::CiStreamedGeneratorTerm{d_left.view().columns(0,count),0},
+        xmvb::cuda::CiStreamedGeneratorTerm{d_other_left.view().columns(0,count),1}};
+    const std::array batches{xmvb::cuda::CiStreamedGeneratorBatch{
+        read,{terms.data(),terms.size()},0.73,true}};
+    const std::array<xmvb::linalg::MatrixView,2> outputs{d_out.view(),d_other_out.view()};
+    gpu.generator_adjoint_streamed(first,batches,outputs,true,true,true);
+  }
+  Matrix other_expected=0.73*cpu.one_body_generator_adjoint(other,right).transpose();
+  other_expected=(other_expected+other_expected.transpose()).eval();
+  other_expected.triangularView<Eigen::StrictlyLower>().setZero();
+  near(download(context,d_out),expected,
+      "paired exchange generator first output differs from CPU");
+  near(download(context,d_other_out),other_expected,
+      "paired exchange generator second output differs from CPU");
 }
 } // namespace
 

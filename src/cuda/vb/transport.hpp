@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "cuda/memory/buffer.hpp"
+#include "cuda/vb/frame_identity.hpp"
 #include "linalg/metric_solve.hpp"
 #include "linalg/views.hpp"
 
@@ -46,7 +47,8 @@ class SelectedCrossOverlap {
   void apply(linalg::ConstMatrixView left_frame,
              linalg::ConstMatrixView right_frame,
              linalg::ConstMatrixView coefficients,
-             linalg::MatrixView image) const;
+             linalg::MatrixView image,
+             OrbitalFrameIdentity right_identity = {}) const;
 
   /** Direction of the two frames, with coefficients held fixed. */
   void apply_direction(linalg::ConstMatrixView left_frame,
@@ -54,7 +56,8 @@ class SelectedCrossOverlap {
                        linalg::ConstMatrixView left_direction,
                        linalg::ConstMatrixView right_direction,
                        linalg::ConstMatrixView coefficients,
-                       linalg::MatrixView image) const;
+                       linalg::MatrixView image,
+                       OrbitalFrameIdentity right_identity = {}) const;
 
   /** Exact upper-frame cotangents of left^T F(L)^T F(R) right. */
   void adjoint(linalg::ConstMatrixView left_frame,
@@ -62,12 +65,14 @@ class SelectedCrossOverlap {
                linalg::ConstMatrixView left_coefficients,
                linalg::ConstMatrixView right_coefficients,
                linalg::MatrixView left_gradient,
-               linalg::MatrixView right_gradient) const;
+               linalg::MatrixView right_gradient,
+               OrbitalFrameIdentity right_identity = {}) const;
 
   /** F(current)^T [F(origin) base + dF(origin)[direction] reference]. */
   void transport_image(linalg::ConstMatrixView current,linalg::ConstMatrixView origin,
       linalg::ConstMatrixView direction,linalg::ConstMatrixView base,
-      linalg::ConstMatrixView reference,linalg::MatrixView image) const;
+      linalg::ConstMatrixView reference,linalg::MatrixView image,
+      OrbitalFrameIdentity current_identity = {}) const;
 
   /** Contracted finite-transport pullback and F(origin)^T F(current) lambda.
    * reference and transported are selected-structure coefficients.
@@ -76,12 +81,14 @@ class SelectedCrossOverlap {
       linalg::ConstMatrixView direction,linalg::ConstMatrixView lambda,
       linalg::ConstMatrixView base,linalg::ConstMatrixView reference,
       linalg::ConstMatrixView transported,linalg::MatrixView current_gradient,
-      linalg::MatrixView origin_gradient,linalg::MatrixView image) const;
+      linalg::MatrixView origin_gradient,linalg::MatrixView image,
+      OrbitalFrameIdentity current_identity = {}) const;
 
   /** Matrix-free selected Gram action, never H sigma. */
   void apply_metric(linalg::ConstMatrixView frame,
                     linalg::ConstMatrixView coefficients,
-                    linalg::MatrixView image) const;
+                    linalg::MatrixView image,
+                    OrbitalFrameIdentity frame_identity = {}) const;
 
   /** Selected SPD inverse with the CPU metric solver's certified true-residual
    * and stagnation rules. A supplied immutable point metric uses its factor and
@@ -93,7 +100,8 @@ class SelectedCrossOverlap {
                     linalg::ConstMatrixView rhs, linalg::MatrixView solution,
                     linalg::ConstMatrixView initial = {},
                     linalg::MetricSolveStats* stats = nullptr,
-                    const SelectedMetric* metric = nullptr) const;
+                    const SelectedMetric* metric = nullptr,
+                    OrbitalFrameIdentity frame_identity = {}) const;
 
  private:
   void check_frame(linalg::ConstMatrixView frame) const;
@@ -133,9 +141,12 @@ class SelectedCrossOverlap {
   MetricPreconditioner preconditioner_;
 };
 
-/** One immutable selected-space retraction at a trial frame. */
+/** One immutable selected-space retraction at a trial frame. Its identity also
+ * identifies the unchanged frame held by the owning VbPoint, if supplied.
+ */
 struct SingleStateCiTransportPoint {
   Matrix<double> frame;
+  OrbitalFrameIdentity frame_identity;
   Matrix<double> origin_direction;
   Matrix<double> base_coefficients;
   Matrix<double> coefficients;
@@ -173,11 +184,15 @@ class SingleStateCiTransport {
       double normalized_weight,
       linalg::ConstMatrixView physical_origin_coefficient_gradient = {});
 
+  /** trial_identity may identify the copied trial frame when its owner keeps
+   * the source immutable. Otherwise a fresh identity is assigned to the copy.
+   */
   SingleStateCiTransportPoint retract(
       linalg::ConstMatrixView trial_frame,
       linalg::ConstMatrixView origin_frame_direction,
       linalg::ConstMatrixView base_coefficients,
-      std::shared_ptr<const SelectedMetric> selected_metric = {}) const;
+      std::shared_ptr<const SelectedMetric> selected_metric = {},
+      OrbitalFrameIdentity trial_identity = {}) const;
 
   /** Physical coefficient gradient must include normalized_weight. */
   SingleStateCiTransportModel evaluate_model(

@@ -488,11 +488,12 @@ void SelectedCrossOverlap::accumulate_moment(const ExteriorTransform& transform,
 
 void SelectedCrossOverlap::apply(linalg::ConstMatrixView left_frame,
     linalg::ConstMatrixView right_frame,
-    linalg::ConstMatrixView coefficients, linalg::MatrixView image) const {
+    linalg::ConstMatrixView coefficients, linalg::MatrixView image,
+    OrbitalFrameIdentity right_identity) const {
   check_frame(left_frame);check_frame(right_frame);
   check_structure(coefficients);check_structure(image);
   zero(*context_,image);
-  action_->update_frame(right_frame);
+  action_->update_frame(right_frame,right_identity);
   FramePair left(*context_,*action_);
   left.update(left_frame);
   if (use_product_overlap(1)) {
@@ -521,12 +522,13 @@ void SelectedCrossOverlap::apply_direction(linalg::ConstMatrixView left_frame,
     linalg::ConstMatrixView right_frame,
     linalg::ConstMatrixView left_direction,
     linalg::ConstMatrixView right_direction,
-    linalg::ConstMatrixView coefficients, linalg::MatrixView image) const {
+    linalg::ConstMatrixView coefficients, linalg::MatrixView image,
+    OrbitalFrameIdentity right_identity) const {
   check_frame(left_frame);check_frame(right_frame);
   check_frame(left_direction);check_frame(right_direction);
   check_structure(coefficients);check_structure(image);
   zero(*context_,image);
-  action_->update_frame(right_frame);
+  action_->update_frame(right_frame,right_identity);
   FramePair left(*context_,*action_);
   left.update(left_frame);
   auto ra=action_->alpha_transform().direction(right_frame,right_direction);
@@ -581,13 +583,14 @@ void SelectedCrossOverlap::adjoint(linalg::ConstMatrixView left_frame,
     linalg::ConstMatrixView left_coefficients,
     linalg::ConstMatrixView right_coefficients,
     linalg::MatrixView left_gradient,
-    linalg::MatrixView right_gradient) const {
+    linalg::MatrixView right_gradient,
+    OrbitalFrameIdentity right_identity) const {
   check_frame(left_frame);check_frame(right_frame);
   check_structure(left_coefficients);check_structure(right_coefficients);
   check_gradient(left_gradient);check_gradient(right_gradient);
   Matrix<double> ml(*context_,active_,active_),mr(*context_,active_,active_);
   zero(*context_,ml.view());zero(*context_,mr.view());
-  action_->update_frame(right_frame);
+  action_->update_frame(right_frame,right_identity);
   FramePair left(*context_,*action_);
   left.update(left_frame);
   if (use_product_overlap(2,true)) {
@@ -628,11 +631,11 @@ void SelectedCrossOverlap::adjoint(linalg::ConstMatrixView left_frame,
 void SelectedCrossOverlap::transport_image(linalg::ConstMatrixView current,
     linalg::ConstMatrixView origin,linalg::ConstMatrixView direction,
     linalg::ConstMatrixView base,linalg::ConstMatrixView reference,
-    linalg::MatrixView image) const {
+    linalg::MatrixView image,OrbitalFrameIdentity current_identity) const {
   check_frame(current);check_frame(origin);check_frame(direction);
   check_structure(base);check_structure(reference);check_structure(image);
   zero(*context_,image);
-  action_->update_frame(current);
+  action_->update_frame(current,current_identity);
   FramePair oa(*context_,*action_);
   oa.update(origin);
   auto da=oa.alpha.direction(origin,direction);
@@ -686,7 +689,7 @@ void SelectedCrossOverlap::transport_gradient(linalg::ConstMatrixView current,
     linalg::ConstMatrixView lambda,linalg::ConstMatrixView base,
     linalg::ConstMatrixView reference,linalg::ConstMatrixView transported,
     linalg::MatrixView current_gradient,linalg::MatrixView origin_gradient,
-    linalg::MatrixView image) const {
+    linalg::MatrixView image,OrbitalFrameIdentity current_identity) const {
   const nvtx3::scoped_range range{"transport.contracted_pullback"};
   check_frame(current);check_frame(origin);check_frame(direction);
   check_structure(lambda);check_structure(base);check_structure(reference);
@@ -695,7 +698,7 @@ void SelectedCrossOverlap::transport_gradient(linalg::ConstMatrixView current,
   zero(*context_,image);
   Matrix<double> mc(*context_,active_,active_),mo(*context_,active_,active_);
   zero(*context_,mc.view());zero(*context_,mo.view());
-  action_->update_frame(current);
+  action_->update_frame(current,current_identity);
   FramePair oa(*context_,*action_);
   oa.update(origin);
   auto da=oa.alpha.direction(origin,direction);
@@ -792,18 +795,19 @@ void SelectedCrossOverlap::transport_gradient(linalg::ConstMatrixView current,
 }
 
 void SelectedCrossOverlap::apply_metric(linalg::ConstMatrixView frame,
-    linalg::ConstMatrixView coefficients, linalg::MatrixView image) const {
+    linalg::ConstMatrixView coefficients, linalg::MatrixView image,
+    OrbitalFrameIdentity frame_identity) const {
   check_frame(frame);
   check_structure(coefficients);
   check_structure(image);
-  action_->update_frame(frame);
+  action_->update_frame(frame,frame_identity);
   action_->apply_overlap(coefficients,image);
 }
 
 void SelectedCrossOverlap::solve_metric(linalg::ConstMatrixView frame,
     linalg::ConstMatrixView rhs, linalg::MatrixView solution,
     linalg::ConstMatrixView initial, linalg::MetricSolveStats* stats,
-    const SelectedMetric* metric) const {
+    const SelectedMetric* metric,OrbitalFrameIdentity frame_identity) const {
   const nvtx3::scoped_range range{"transport.metric_inverse"};
   check_frame(frame);
   check_structure(rhs);
@@ -843,7 +847,7 @@ void SelectedCrossOverlap::solve_metric(linalg::ConstMatrixView frame,
   Matrix<double> r(*context_,structures_,1),z(*context_,structures_,1);
   Matrix<double> p(*context_,structures_,1),ap(*context_,structures_,1);
   Matrix<double> image(*context_,structures_,1);
-  action_->update_frame(frame);
+  action_->update_frame(frame,frame_identity);
   const auto apply=[&](linalg::ConstMatrixView input,linalg::MatrixView output) {
     ++stats->actions;
     action_->apply_overlap(input,output);
@@ -1015,7 +1019,8 @@ SingleStateCiTransportPoint SingleStateCiTransport::retract(
     linalg::ConstMatrixView trial_frame,
     linalg::ConstMatrixView origin_frame_direction,
     linalg::ConstMatrixView base_coefficients,
-    std::shared_ptr<const SelectedMetric> selected_metric) const {
+    std::shared_ptr<const SelectedMetric> selected_metric,
+    OrbitalFrameIdentity trial_identity) const {
   if (trial_frame.rows!=active_ || trial_frame.cols!=active_ ||
       trial_frame.ld<active_ || !trial_frame.data ||
       origin_frame_direction.rows!=active_ ||
@@ -1026,6 +1031,7 @@ SingleStateCiTransportPoint SingleStateCiTransport::retract(
     throw std::invalid_argument("invalid CI transport retraction inputs");
   SingleStateCiTransportPoint point{
       Matrix<double>(*context_,active_,active_),
+      trial_identity ? trial_identity : OrbitalFrameIdentity::fresh(),
       Matrix<double>(*context_,active_,active_),
       Matrix<double>(*context_,structures_,1),
       Matrix<double>(*context_,structures_,1),
@@ -1036,11 +1042,11 @@ SingleStateCiTransportPoint SingleStateCiTransport::retract(
   Matrix<double> rhs(*context_,structures_,1);
   overlap_->transport_image(point.frame.view(),origin_frame_.view(),
       point.origin_direction.view(),point.base_coefficients.view(),
-      origin_coefficients_.view(),rhs.view());
+      origin_coefficients_.view(),rhs.view(),point.frame_identity);
   overlap_->solve_metric(point.frame.view(),rhs.view(),
                          point.coefficients.view(),
                          point.base_coefficients.view(),nullptr,
-                         point.selected_metric.get());
+                         point.selected_metric.get(),point.frame_identity);
   return point;
 }
 
@@ -1063,13 +1069,13 @@ SingleStateCiTransportModel SingleStateCiTransport::evaluate_model(
   copy(*context_,rhs.view(),physical_coefficient_gradient);
   axpy(*context_,rhs.view(),-1.0,origin_gradient_.view());
   overlap_->solve_metric(point.frame.view(),rhs.view(),lambda.view(),{},nullptr,
-                         point.selected_metric.get());
+                         point.selected_metric.get(),point.frame_identity);
 
   overlap_->transport_gradient(point.frame.view(),origin_frame_.view(),
       point.origin_direction.view(),lambda.view(),point.base_coefficients.view(),
       origin_coefficients_.view(),point.coefficients.view(),
       model.current_upper.view(),model.origin_upper.view(),
-      model.structure_covector.view());
+      model.structure_covector.view(),point.frame_identity);
   axpy(*context_,model.structure_covector.view(),1.0,origin_gradient_.view());
   const double inverse_scale=1.0/coordinate_scale_;
   check_cublas(cublasDscal(context_->blas(),structures_,&inverse_scale,

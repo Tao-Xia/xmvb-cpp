@@ -53,6 +53,7 @@ class VbPoint {
   linalg::ConstMatrixView pair_kernel_adjoint() const noexcept { return pair_adjoint_.view(); }
   linalg::ConstMatrixView one_electron() const noexcept { return one_.view(); }
   linalg::ConstMatrixView pair_kernel() const noexcept { return pair_.view(); }
+  OrbitalFrameIdentity frame_identity() const noexcept { return frame_identity_; }
   ConstPairPanel pair_products() const noexcept {
     return pair_products_.empty() ? ConstPairPanel{}:
         ConstPairPanel{pair_products_.data(),integrals_->pair_count(),pair_.rows(),pair_.rows()};
@@ -79,12 +80,14 @@ class VbPoint {
   mutable ProductEndpoint endpoint_;
   std::unique_ptr<ProductContraction> products_;
   Matrix<double> selected_h_,selected_m_,selected_gradient_;
+  mutable Matrix<double> normalization_;
   Matrix<double> one_adjoint_,pair_adjoint_,frame_gradient_,frame_moment_;
   Matrix<double> active_gradient_,density_gradient_;
   Buffer<double> pair_products_,exchange_products_;
   Buffer<double> inactive_response_;
   Matrix<double> active_response_,overlap_core_,core_basis_,core_to_dual_;
   mutable std::uint64_t selected_action_version_=0;
+  OrbitalFrameIdentity frame_identity_;
   bool ready_=false,prepared_=false;
   double core_energy_=0.0;
 };

@@ -325,6 +325,11 @@ void check_case(bool inactive,int structures) {
     point.hessian(dorbital.view(),dstructure.view(),
                   out_raw.view(),out_ci.view(),ci_raw.view(),ci_image.view(),
                   pure_ci_overlap.view());
+    cublasPointerMode_t pointer_mode;
+    xmvb::cuda::check_cublas(cublasGetPointerMode(context.blas(),&pointer_mode),
+        "point test scalar mode");
+    require(pointer_mode==CUBLAS_POINTER_MODE_HOST,
+        "device normalization leaked cuBLAS scalar mode");
     near(download(context,pure_ci_overlap.view()),action.apply(structure).overlap,2e-10,
         "joint pure CI overlap image");
     const auto direct_raw=download(context,out_raw.view());

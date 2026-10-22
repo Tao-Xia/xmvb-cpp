@@ -15,6 +15,29 @@ namespace {
 using View=linalg::ConstMatrixView;
 using Out=linalg::MatrixView;
 
+template<class Emit>
+void device_scalars(Context& c,Emit emit) {
+  check_cublas(cublasSetPointerMode(c.blas(),CUBLAS_POINTER_MODE_DEVICE),
+      "point device scalar mode");
+  try { emit(); }
+  catch (...) { cublasSetPointerMode(c.blas(),CUBLAS_POINTER_MODE_HOST);throw; }
+  check_cublas(cublasSetPointerMode(c.blas(),CUBLAS_POINTER_MODE_HOST),
+      "point restore scalar mode");
+}
+
+/** Convert shared and lane-specific selected-space dots to normalization
+ * coefficients. Retain both terms of dN and dE at finite CI residual.
+ */
+__global__ void normalization_coefficients(double* values,int lanes,double norm,double energy) {
+  const int lane=threadIdx.x;
+  if (lane>=lanes) return;
+  double* out=values+2+8*lane;
+  const double dn=values[0]+out[0];
+  const double de=(values[1]+out[1]-energy*dn)/norm;
+  out[2]=2.0/norm;out[3]=-dn/norm;out[4]=1.0/norm;
+  out[5]=-2.0*de;out[6]=-de;out[7]=-energy;
+}
+
 void copy(Context& context,Out out,View in) {
   if (out.rows!=in.rows || out.cols!=in.cols)
     throw std::invalid_argument("CUDA point copy dimensions");
@@ -103,6 +126,7 @@ VbPoint::VbPoint(Context& context,const vb::OrbitalPreparationInput& input,
       endpoint_{Matrix<double>(context,action.size(),1)},
       products_(action.make_product_contraction()),
       selected_gradient_(context,action.size(),1),
+      normalization_(context,18,1),
       one_adjoint_(context,one_.rows(),one_.cols()),
       pair_adjoint_(context,pair_.rows(),pair_.cols()),
       frame_gradient_(context,one_.rows(),one_.cols()),
@@ -118,7 +142,8 @@ void VbPoint::select_frame() const {
   // An accepted point is immutable between prepare() calls. Only a different
   // point/transport frame invalidates its binding to the shared action.
   if (prepared_ && selected_action_version_==action_->version()) return;
-  action_->update_integrals(one_.view(),pair_.view(),geometry_.frame_transform());
+  action_->update_integrals(one_.view(),pair_.view(),geometry_.frame_transform(),
+                            frame_identity_);
   selected_action_version_=action_->version();
 }
 
@@ -148,6 +173,7 @@ void VbPoint::prepare(View raw) {
       pair_products_.empty() ? PairPanel{}:
           PairPanel{pair_products_.data(),integrals_->pair_count(),pair_.rows(),pair_.rows()});
   sigma_.update_integrals(one_.view(),pair_.view());
+  frame_identity_=OrbitalFrameIdentity::fresh();
   select_frame();
   c.copy_to_host(&core_energy_,core_energy.data(),sizeof(double));
   prepared_=true;
@@ -295,22 +321,55 @@ void VbPoint::hessian(View orbital,View structure,Out orbital_image,Out structur
   auto jet=products_->jet(incidence,sigma_,endpoint_,geometry_.frame_transform(),structure,
       d.frame_transform.view(),&direction_sigma_,product_workspace_bytes(),split ? &ci_jet:nullptr,generator.view());
   if (ci_overlap_image.data) copy(c,ci_overlap_image,ci_jet.overlap.view());
-  const auto normalize=[&](ProductJet& value,Out selected) {
-    const double dn=dot(c,structure,selected_m_.view())+
-        dot(c,endpoint_.coefficients.view(),value.overlap.view());
-    const double de=(dot(c,structure,selected_h_.view())+
-        dot(c,endpoint_.coefficients.view(),value.hamiltonian.view())-active_energy_*dn)/norm_;
-    scale(c,value.one.view(),2.0/norm_);add(c,value.one.view(),one_adjoint_.view(),-dn/norm_);
-    scale(c,value.pair.view(),2.0/norm_);add(c,value.pair.view(),pair_adjoint_.view(),-dn/norm_);
-    scale(c,value.generator.view(),1.0/norm_);
-    add(c,value.generator.view(),frame_moment_.view(),-dn/norm_);
-    add_upper(c,value.generator.view(),one_adjoint_.view(),-2.0*de);
-    copy(c,selected,value.hamiltonian.view());add(c,selected,value.overlap.view(),-active_energy_);
-    add(c,selected,selected_m_.view(),-de);scale(c,selected,2.0/norm_);
-    add(c,selected,selected_gradient_.view(),-dn/norm_);
-  };
-  normalize(jet,structure_image);
-  if (split) normalize(ci_jet,ci_structure_image);
+  device_scalars(c,[&] {
+    const auto inner=[&](View a,View b,int slot) {
+      check_cublas(cublasDdot(c.blas(),blas_int(a.rows),a.data,1,b.data,1,
+          normalization_.data()+slot),"point selected device dot");
+    };
+    inner(structure,selected_m_.view(),0);
+    inner(structure,selected_h_.view(),1);
+    inner(endpoint_.coefficients.view(),jet.overlap.view(),2);
+    inner(endpoint_.coefficients.view(),jet.hamiltonian.view(),3);
+    if (split) {
+      inner(endpoint_.coefficients.view(),ci_jet.overlap.view(),10);
+      inner(endpoint_.coefficients.view(),ci_jet.hamiltonian.view(),11);
+    }
+    normalization_coefficients<<<1,2,0,c.stream()>>>(
+        normalization_.data(),split ? 2:1,norm_,active_energy_);
+    check_cuda(cudaGetLastError(),"point normalization coefficients");
+    const auto normalize=[&](ProductJet& value,Out selected,int lane) {
+      const double* coefficients=normalization_.data()+2+8*lane;
+      const auto scaled=[&](Out out,int slot) {
+        if (out.ld==out.rows) {
+          check_cublas(cublasDscal(c.blas(),blas_int(out.rows*out.cols),coefficients+slot,
+              out.data,1),"point device scale");
+          return;
+        }
+        for (std::int64_t j=0;j<out.cols;++j)
+          check_cublas(cublasDscal(c.blas(),blas_int(out.rows),coefficients+slot,
+              out.column(j).data,1),"point device scale");
+      };
+      const auto added=[&](Out out,View in,int slot) {
+        if (out.ld==out.rows && in.ld==in.rows) {
+          check_cublas(cublasDaxpy(c.blas(),blas_int(out.rows*out.cols),coefficients+slot,
+              in.data,1,out.data,1),"point device sum");
+          return;
+        }
+        for (std::int64_t j=0;j<out.cols;++j)
+          check_cublas(cublasDaxpy(c.blas(),blas_int(out.rows),coefficients+slot,
+              in.column(j).data,1,out.column(j).data,1),"point device sum");
+      };
+      scaled(value.one.view(),2);added(value.one.view(),one_adjoint_.view(),3);
+      scaled(value.pair.view(),2);added(value.pair.view(),pair_adjoint_.view(),3);
+      scaled(value.generator.view(),4);added(value.generator.view(),frame_moment_.view(),3);
+      add_upper_device(c,value.generator.view(),one_adjoint_.view(),coefficients+5);
+      copy(c,selected,value.hamiltonian.view());added(selected,value.overlap.view(),7);
+      added(selected,selected_m_.view(),6);scaled(selected,2);
+      added(selected,selected_gradient_.view(),3);
+    };
+    normalize(jet,structure_image,0);
+    if (split) normalize(ci_jet,ci_structure_image,1);
+  });
   auto dha=std::move(jet.one),dga=std::move(jet.pair),moment=std::move(jet.generator);
   auto ci_dha=std::move(ci_jet.one),ci_dga=std::move(ci_jet.pair);
   Matrix<double> ci_frame;

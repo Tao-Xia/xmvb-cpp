@@ -1,6 +1,7 @@
 #include "cuda/vb/action.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <chrono>
@@ -27,6 +28,16 @@
 #include "cuda/vb/transform.hpp"
 
 namespace xmvb::cuda {
+OrbitalFrameIdentity OrbitalFrameIdentity::fresh() {
+  static std::atomic<std::uint64_t> next{1};
+  auto value=next.load(std::memory_order_relaxed);
+  do {
+    if (value==std::numeric_limits<std::uint64_t>::max())
+      throw std::overflow_error("CUDA orbital frame identity exhausted");
+  } while (!next.compare_exchange_weak(value,value+1,std::memory_order_relaxed));
+  return OrbitalFrameIdentity(value);
+}
+
 namespace {
 
 __global__ void divide_diagonal(linalg::MatrixView carrier,
@@ -220,6 +231,7 @@ struct StructureAction::Impl {
   mutable double graph_seconds=0;
   mutable std::uint64_t graph_workspace_generation=0;
   std::uint64_t version=0;
+  OrbitalFrameIdentity frame_identity;
 
   Impl(Context& ctx, const vb::StructureAction& source)
       : context(ctx),source_view(source.orthogonal_view()),structures(source.n_structures()),
@@ -633,22 +645,30 @@ const std::int64_t* StructureAction::term_offsets_data() const noexcept { return
 const std::int64_t* StructureAction::term_structures_data() const noexcept { return impl_->columns.data(); }
 const double* StructureAction::term_weights_data() const noexcept { return impl_->weights.data(); }
 std::int64_t StructureAction::n_product_groups() const noexcept { return impl_->groups; }
-void StructureAction::update_frame(linalg::ConstMatrixView upper) {
+void StructureAction::update_frame(linalg::ConstMatrixView upper,
+    OrbitalFrameIdentity identity) {
   auto& p=*impl_;
-  if (upper.rows!=p.model_upper.rows() || upper.cols!=p.model_upper.cols() || upper.ld<upper.rows)
+  if (upper.rows!=p.model_upper.rows() || upper.cols!=p.model_upper.cols() ||
+      upper.ld<upper.rows || !upper.data)
     throw std::invalid_argument("CUDA spin-self orbital frame shape mismatch");
+  if (identity && identity==p.frame_identity) return;
   check_cuda(cudaMemcpy2DAsync(p.model_upper.data(),p.model_upper.rows()*sizeof(double),
       upper.data,upper.ld*sizeof(double),upper.rows*sizeof(double),upper.cols,
       cudaMemcpyDeviceToDevice,p.context.stream()),"CUDA spin-self frame update");
   impl_->alpha_transform.update_upper(upper);
   if (impl_->beta_storage) impl_->beta_storage->update_upper(upper);
   if (impl_->selected_product) impl_->selected_product->update_frame();
+  p.frame_identity=identity;
   ++impl_->version;
 }
 void StructureAction::update_integrals(linalg::ConstMatrixView h,
-    linalg::ConstMatrixView g,linalg::ConstMatrixView upper) {
+    linalg::ConstMatrixView g,linalg::ConstMatrixView upper,
+    OrbitalFrameIdentity identity) {
   impl_->sigma.update_integrals(h,g);
-  update_frame(upper);
+  const auto previous_version=impl_->version;
+  update_frame(upper,identity);
+  // Integral contents can change while the orbital frame remains identical.
+  if (impl_->version==previous_version) ++impl_->version;
   if (impl_->carrier_diagonal.rows()) impl_->sigma.diagonal(impl_->carrier_diagonal.view());
 }
 void StructureAction::apply(linalg::ConstMatrixView vectors,

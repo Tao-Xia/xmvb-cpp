@@ -18,9 +18,15 @@ namespace xmvb::cuda {
  * (alpha_rows, beta_local*width+rhs); callbacks borrow the current tile only.
  */
 using CiTileReader=std::function<void(std::span<const int>,std::span<const int>,linalg::MatrixView)>;
-/** A generated right carrier read into bounded dense device beta tiles. */
-struct CiStreamedGeneratorRequest {
+/** One left carrier contributes to one caller-owned orbital output. */
+struct CiStreamedGeneratorTerm {
+  linalg::ConstMatrixView left;
+  std::size_t output;
+};
+/** Terms sharing this reader consume each target and beta-neighbor tile once. */
+struct CiStreamedGeneratorBatch {
   CiTileReader read;
+  std::span<const CiStreamedGeneratorTerm> terms;
   double scale=1.0;
   bool transpose=false;
 };
@@ -70,6 +76,10 @@ struct CiTileRequest {
   /** Optional resident endpoint: consume signed links directly, without
    * gathering and copying one temporary halo column at a time. */
   linalg::MatrixView carrier_image{};
+  /** First response reader yields exactly the common state on every tile.
+   * Its channels occupy the state slab through all later requests; the caller
+   * must keep that source live through the sweep. */
+  bool response_is_state=false;
 };
 
 /** Borrowed resident endpoints for consumers not yet storing compact columns.
@@ -194,18 +204,17 @@ class DirectCiSigma {
   void generator_moments(std::span<const linalg::ConstMatrixView> left,
       linalg::ConstMatrixView right,std::span<const linalg::MatrixView> outputs) const;
 
-  /** CPU generator_adjoint_streamed counterpart. Every left is a device
-   * n_alpha by panel_count matrix, with one RHS. Readers fill requested beta
-   * columns and all alpha rows on device. Each orbital output is overwritten
-   * unless add is true; only the upper triangle is produced. symmetric_sum
-   * adds the transpose before restricting to that triangle. The exchange
-   * shortcut is valid only for full same-parity carriers accumulated across
-   * every beta panel, as certified by the constructor's exchange_parity.
-   * Dense numerical storage is bounded by one n_alpha by panel_count tile.
+  /** CPU generator_adjoint_streamed counterpart with explicit left/output
+   * pairs grouped by their common right reader. Every left is a device
+   * n_alpha by panel_count matrix with one RHS. Readers fill requested beta
+   * columns and all alpha rows. Outputs are overwritten unless add is true;
+   * only the upper triangle is produced. symmetric_sum adds the transpose.
+   * Exchange reduction requires full same-parity carriers across all panels.
+   * One right tile and beta event schedule serve each batch's terms; dense
+   * numerical storage is one carrier panel plus orbital-space reductions.
    */
   void generator_adjoint_streamed(int first,
-      std::span<const linalg::ConstMatrixView> lefts,
-      std::span<const CiStreamedGeneratorRequest> requests,
+      std::span<const CiStreamedGeneratorBatch> batches,
       std::span<const linalg::MatrixView> outputs,
       bool symmetric_sum=false,bool spin_exchange_reduced=false,bool add=false) const;
 

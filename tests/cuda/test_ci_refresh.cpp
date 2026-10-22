@@ -159,8 +159,13 @@ void check_case(bool full_space) {
         first.eigenpairs.eigenvalues.front(),-0.01,frozen_before.view(),origin_point.get());
 
   auto d_upper=upload(context,upper_frame(true));
-  action.update_frame(d_upper.view());
+  const auto frame_identity=xmvb::cuda::OrbitalFrameIdentity::fresh();
+  action.update_frame(d_upper.view(),frame_identity);
   require(action.version()!=0,"frame-only update did not invalidate CI model");
+  const auto frame_version=action.version();
+  action.update_frame(d_upper.view(),frame_identity);
+  require(action.version()==frame_version,
+      "unchanged frame identity invalidated the CI model");
   ci.refresh();
   action.diagonal_model(model_h.view(),model_m.view());
   require((download(context,model_m.view())-old_m).norm()>1e-3,
@@ -174,7 +179,9 @@ void check_case(bool full_space) {
 
   auto d_h=upload(context,one_electron(true));
   auto d_g=upload(context,pair_kernel(true));
-  action.update_integrals(d_h.view(),d_g.view(),d_upper.view());
+  action.update_integrals(d_h.view(),d_g.view(),d_upper.view(),frame_identity);
+  require(action.version()>frame_version,
+      "integral refresh did not invalidate the CI model at an unchanged frame");
   action.diagonal_model(model_h.view(),model_m.view());
   require((download(context,model_h.view())-old_h).norm()>1e-3,
       "integral update left carrier Hamiltonian model stale");

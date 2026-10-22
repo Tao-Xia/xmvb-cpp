@@ -372,7 +372,8 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,
         add(context,dc.view(),accepted.coefficients.view());
         frame.transport.emplace(transport->retract(frame.point->geometry().frame_transform(),
             direction.frame_transform.view(),dc.view(),
-            frame.ci_point ? frame.ci_point->metric:nullptr));
+            frame.ci_point ? frame.ci_point->metric:nullptr,
+            frame.point->frame_identity()));
       }
       cache.emplace(std::move(frame));return *cache;
     };

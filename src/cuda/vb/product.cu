@@ -736,28 +736,43 @@ struct ProductContraction::Impl {
             retaining=endpoint.images->retain(id,std::move(state));
           }
         }
-        const std::array lefts{static_cast<linalg::ConstMatrixView>(hy)};
-        const std::array requests{CiStreamedGeneratorRequest{y}};
+        const std::array terms{CiStreamedGeneratorTerm{
+            static_cast<linalg::ConstMatrixView>(hy),0}};
+        const std::array batches{CiStreamedGeneratorBatch{y,
+            {terms.data(),terms.size()}}};
         const std::array moments{result.generator.view()};
         if (!selected_only)
-          sigma.generator_adjoint_streamed(first,lefts,requests,moments,false,exchange_reduced,true);
+          sigma.generator_adjoint_streamed(first,batches,moments,false,
+              exchange_reduced,true);
         project_panel(id,hy,{0},false);
       } else {
         const int z=cached ? 0:count,qs=cached ? count:2*count;
         const std::array lefts{static_cast<linalg::ConstMatrixView>(values.columns(z,count)),
             joint ? static_cast<linalg::ConstMatrixView>(values.columns(qs,count)):linalg::ConstMatrixView{}};
         const std::array moments{result.generator.view(),joint ? ci->generator.view():linalg::MatrixView{}};
-        const std::array requests{CiStreamedGeneratorRequest{y}};
-        sigma.generator_adjoint_streamed(first,{lefts.data(),joint ? 2U:1U},requests,
-            {moments.data(),joint ? 2U:1U},false,exchange_reduced,true);
-        if (!cached) {
-          const std::array hleft{static_cast<linalg::ConstMatrixView>(hy)};
-          const std::array drequests{CiStreamedGeneratorRequest{dy}};
-          sigma.generator_adjoint_streamed(first,hleft,drequests,{moments.data(),1},false,exchange_reduced,true);
-          if (joint) {
-            const std::array qrequests{CiStreamedGeneratorRequest{q}};
-            sigma.generator_adjoint_streamed(first,hleft,qrequests,{moments.data()+1,1},false,exchange_reduced,true);
-          }
+        if (cached) {
+          const std::array terms{CiStreamedGeneratorTerm{lefts[0],0},
+              CiStreamedGeneratorTerm{lefts[1],1}};
+          const std::array batches{CiStreamedGeneratorBatch{y,
+              {terms.data(),joint ? 2U:1U}}};
+          sigma.generator_adjoint_streamed(first,batches,
+              {moments.data(),joint ? 2U:1U},false,exchange_reduced,true);
+        } else {
+          // Pair each right reader with precisely the left/output consumers
+          // that need it. The y pair shares its beta-neighbor tile and event
+          // traversal; dy and q add into distinct orbital outputs.
+          const auto hleft=static_cast<linalg::ConstMatrixView>(hy);
+          const std::array yterms{CiStreamedGeneratorTerm{lefts[0],0},
+              CiStreamedGeneratorTerm{lefts[1],1}};
+          const std::array dterms{CiStreamedGeneratorTerm{hleft,0}};
+          const std::array qterms{CiStreamedGeneratorTerm{hleft,1}};
+          const std::array batches{
+              CiStreamedGeneratorBatch{y,{yterms.data(),joint ? 2U:1U}},
+              CiStreamedGeneratorBatch{dy,{dterms.data(),dterms.size()}},
+              CiStreamedGeneratorBatch{q,{qterms.data(),qterms.size()}}};
+          sigma.generator_adjoint_streamed(first,
+              {batches.data(),joint ? 3U:2U},
+              {moments.data(),joint ? 2U:1U},false,exchange_reduced,true);
         }
         project_panel(id,values.columns(z,(joint ? 2:1)*count),
             joint ? std::initializer_list<int>{0,2}:std::initializer_list<int>{0},false);
@@ -781,7 +796,7 @@ struct ProductContraction::Impl {
     };
     std::vector<CiTileRequest> requests;
     if (!cached) requests.push_back({y,writer(0),nullptr,tangent ? linalg::MatrixView{}:result.one.view(),
-        tangent ? linalg::MatrixView{}:result.pair.view()});
+        tangent ? linalg::MatrixView{}:result.pair.view(),{},tangent});
     if (tangent) requests.push_back({dy,writer(1),delta_sigma,result.one.view(),result.pair.view()});
     if (joint) requests.push_back({q,writer(2),nullptr,ci->one.view(),ci->pair.view()});
     if (!overlap_only)
@@ -821,12 +836,16 @@ struct ProductContraction::Impl {
         dy(selected(id),all_rows,dv);
         if (joint) q(selected(id),all_rows,dq);
         if (cached) {
-          const std::array lefts{static_cast<linalg::ConstMatrixView>(dv),
-              static_cast<linalg::ConstMatrixView>(dq)};
-          const std::array requests{CiStreamedGeneratorRequest{accepted_y,-endpoint.energy,false},
-              CiStreamedGeneratorRequest{accepted_r,1.0,true}};
+          const std::array terms{CiStreamedGeneratorTerm{
+              static_cast<linalg::ConstMatrixView>(dv),0},
+              CiStreamedGeneratorTerm{static_cast<linalg::ConstMatrixView>(dq),1}};
+          const std::array batches{
+              CiStreamedGeneratorBatch{accepted_y,{terms.data(),joint ? 2U:1U},
+                  -endpoint.energy,false},
+              CiStreamedGeneratorBatch{accepted_r,{terms.data(),joint ? 2U:1U},
+                  1.0,true}};
           const std::array moments{result.generator.view(),joint ? ci->generator.view():linalg::MatrixView{}};
-          sigma.generator_adjoint_streamed(id*extent,{lefts.data(),joint ? 2U:1U},requests,
+          sigma.generator_adjoint_streamed(id*extent,batches,
               {moments.data(),joint ? 2U:1U},false,sigma.exchange_parity()!=0,true);
         }
         project_panel(id,values.view(),joint ? std::initializer_list<int>{1,3}:

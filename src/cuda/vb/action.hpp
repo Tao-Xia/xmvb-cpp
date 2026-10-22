@@ -5,6 +5,7 @@
 #include <Eigen/Core>
 
 #include "cuda/memory/context.hpp"
+#include "cuda/vb/frame_identity.hpp"
 #include "linalg/views.hpp"
 #include "vbscf/structures/assembly/action.hpp"
 
@@ -54,11 +55,16 @@ class StructureAction {
    */
   void build_selected_metric(linalg::MatrixView overlap) const;
   std::uint64_t version() const noexcept;
-  /** Change the orbital frame without modifying the current sigma kernel. */
-  void update_frame(linalg::ConstMatrixView upper);
+  /** Change the orbital frame without modifying the current sigma kernel.
+   * A nonempty identity certifies immutable frame contents and permits reuse.
+   * Without one, every call updates the frame conservatively.
+   */
+  void update_frame(linalg::ConstMatrixView upper,
+                    OrbitalFrameIdentity identity = {});
   /** @brief Replace only current numerical integrals/frame; topology is shared. */
   void update_integrals(linalg::ConstMatrixView one_electron,
-      linalg::ConstMatrixView pair_kernel,linalg::ConstMatrixView upper);
+      linalg::ConstMatrixView pair_kernel,linalg::ConstMatrixView upper,
+      OrbitalFrameIdentity identity = {});
   const DirectCiSigma& carrier_sigma() const noexcept;
   const ExteriorTransform& alpha_transform() const noexcept;
   const ExteriorTransform& beta_transform() const noexcept;

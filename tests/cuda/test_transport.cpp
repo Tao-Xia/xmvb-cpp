@@ -183,6 +183,21 @@ void check_selected_transport() {
   require(action.version()==before_cached_solve,
           "repeated point-owned metric solve changed action frame");
 
+  const auto trial_identity=xmvb::cuda::OrbitalFrameIdentity::fresh();
+  action.update_frame(dt.view(),trial_identity);
+  const auto bound_version=action.version();
+  action.update_frame(dt.view(),trial_identity);
+  require(action.version()==bound_version,
+          "same orbital-frame identity invalidated the action cache");
+  overlap.apply_metric(dt.view(),dx.view(),dout.view(),trial_identity);
+  near(download(context,dout.view()),gram*rhs,3e-9,
+       "same-identity selected metric action changed numerically");
+  require(action.version()==bound_version,
+          "same-identity selected metric rebound the orbital frame");
+  action.update_frame(dt.view(),xmvb::cuda::OrbitalFrameIdentity::fresh());
+  require(action.version()>bound_version,
+          "fresh identity did not invalidate reused frame storage");
+
   Vector c0(3); c0<<0.51,-0.36,0.28;
   const Matrix gram0=reference.apply(f.r0,f.r0,identity);
   c0/=std::sqrt(c0.dot(gram0*c0));
@@ -225,7 +240,10 @@ void check_selected_transport() {
     const double physical=gc0.dot(delta)+0.5*delta.dot(b*delta);
     const Vector coefficient_gradient=gc0+b*delta;
     xmvb::cuda::copy_to_device(context,dy.view(),coefficient_gradient);
+    const auto before_model=action.version();
     const auto model=transport.evaluate_model(point,physical,dy.view());
+    require(action.version()==before_model,
+            "transport model invalidated its unchanged trial frame");
     const Matrix current=download(context,model.current_upper.view());
     const Matrix origin=download(context,model.origin_upper.view());
     const Vector ci_covector=download(context,model.structure_covector.view());

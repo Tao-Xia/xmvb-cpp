@@ -444,12 +444,14 @@ void DirectCiSigma::apply_tiled_responses(int width,std::span<const CiTileReques
   const nvtx3::scoped_range sweep_range{"ci.tile_sweep"};
   if (width<=0 || requests.empty()) throw std::invalid_argument("invalid device sigma tile sequence");
   bool collect=false,has_direction=false;
-  for (const auto& request:requests) {
+  for (std::size_t r=0;r<requests.size();++r) {
+    const auto& request=requests[r];
     const bool adjoint=request.one_adjoint.data!=nullptr;
     if (!request.response || (request.image && request.carrier_image.data) ||
         (!request.image && !request.carrier_image.data && !adjoint) ||
         adjoint!=(request.pair_adjoint.data!=nullptr) ||
-        (request.direction && !state))
+        (request.direction && !state) ||
+        (request.response_is_state && (r!=0 || !state)))
       throw std::invalid_argument("invalid device sigma tile consumers");
     if (adjoint && (request.one_adjoint.rows!=n_orbitals_ ||
         request.one_adjoint.cols!=n_orbitals_ || request.pair_adjoint.rows!=n_channels_ ||
@@ -706,8 +708,15 @@ void DirectCiSigma::apply_tiled_responses(int width,std::span<const CiTileReques
     bool state_ready=false;
     for (std::size_t r=0;r<requests.size();++r) {
       const auto& request=requests[r];
-      do_scatter(request.response,response);
-      if (separate && !state_ready) {do_scatter(state,state_channels);state_ready=true;}
+      // The first response can be the common state. Keep its channels in the
+      // state slab and borrow that slab as this request's response operand.
+      // Later requests use the ordinary response scratch, leaving state live.
+      double* response_channels=separate && request.response_is_state ? state_channels:response;
+      do_scatter(request.response,response_channels);
+      if (separate && !state_ready) {
+        if (!request.response_is_state) do_scatter(state,state_channels);
+        state_ready=true;
+      }
       const auto multiply=[&](const DirectCiSigma& action,int kernel_id,const double* source,bool add) {
         const nvtx3::scoped_range range{"ci.tile_gemm"};
         if (grouped) {
@@ -739,7 +748,7 @@ void DirectCiSigma::apply_tiled_responses(int width,std::span<const CiTileReques
           const int begin=gram_ends[part],end=gram_ends[part+1];
           if (grouped && end-begin>1) {
             const nvtx3::scoped_range range{"ci.tile_gram"};
-            grouped_call(true,begin,end,response,gram_right,nullptr,gram_values,0.0);
+            grouped_call(true,begin,end,response_channels,gram_right,nullptr,gram_values,0.0);
             add_grouped_gram<<<grid(pairs*pairs),256,0,ctx.stream()>>>(
                 gram_values,adjoints[r].view(),symbols.batches(),
                 begin,end,device_local.data(),n_channels_);
@@ -747,7 +756,7 @@ void DirectCiSigma::apply_tiled_responses(int width,std::span<const CiTileReques
             const int g=live_groups[index].group;
             const int size=layout.size(g),k=selectors.channels(g);
             const nvtx3::scoped_range range{"ci.tile_gram"};
-            const linalg::ConstMatrixView left{response+layout.offset(g),k,size,k},
+            const linalg::ConstMatrixView left{response_channels+layout.offset(g),k,size,k},
                 right{gram_right+layout.offset(g),k,size,k};
             const linalg::MatrixView tile{gram_values,k,k,k};
             gemm(ctx,tile,left,right,exchange_parity_ ? 2.0:1.0,0.0,
@@ -757,7 +766,7 @@ void DirectCiSigma::apply_tiled_responses(int width,std::span<const CiTileReques
           }
         }
       if (request.image || request.carrier_image.data) {
-        multiply(*this,0,response,false);
+        multiply(*this,0,response_channels,false);
         if (request.direction) multiply(*request.direction,direction_ids[r],state_channels,true);
         if (exchange_parity_ && !plan.diagonal_rows.empty())
           correct_image<<<grid(plan.diagonal_rows.size()*width*pairs),256,0,ctx.stream()>>>(
