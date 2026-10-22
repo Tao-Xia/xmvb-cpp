@@ -8,7 +8,7 @@ namespace xmvb::cuda {
 namespace {
 
 struct DeviceProductPanel {
-  const ProductColumnMap* maps;
+  const CiColumnMap* maps;
   linalg::MatrixView values;
 };
 
@@ -117,7 +117,7 @@ void check_column_read(std::span<const ProductColumns* const> panels,int extent,
     throw std::invalid_argument("invalid compact column read");
 }
 
-__global__ void pack_columns(const ProductColumnMap* maps,
+__global__ void pack_columns(const CiColumnMap* maps,
     linalg::MatrixView full,linalg::MatrixView compact,bool unpack) {
   const int b=blockIdx.x;
   const auto column=maps[b];
@@ -319,7 +319,7 @@ ProductColumns::ProductColumns(Context& context,
     :patterns(std::move(columns)),offsets{0} {
   if (width<=0 || patterns.empty())
     throw std::invalid_argument("invalid compact product columns");
-  std::vector<ProductColumnMap> descriptors;
+  std::vector<CiColumnMap> descriptors;
   descriptors.reserve(patterns.size());
   for (const auto& pattern:patterns) {
     descriptors.push_back({pattern->full ? nullptr:pattern->device_rows.data(),
@@ -327,9 +327,9 @@ ProductColumns::ProductColumns(Context& context,
     offsets.push_back(offsets.back()+pattern->size);
     max_rows=std::max(max_rows,pattern->size);
   }
-  maps=Buffer<ProductColumnMap>(context,descriptors.size());
+  maps=Buffer<CiColumnMap>(context,descriptors.size());
   context.copy_to_device(maps.data(),descriptors.data(),
-      descriptors.size()*sizeof(ProductColumnMap));
+      descriptors.size()*sizeof(CiColumnMap));
   values=Matrix<double>(context,offsets.back(),width);
 }
 
@@ -340,7 +340,7 @@ std::size_t ProductColumns::bytes() const noexcept {
   // accounts its actual lifetime even when only a panel retains it. Offsets
   // are host metadata, not device workspace.
   return values.rows()*values.cols()*sizeof(double)+
-      maps.size()*sizeof(ProductColumnMap);
+      maps.size()*sizeof(CiColumnMap);
 }
 
 linalg::MatrixView ProductColumns::column(int beta) {

@@ -3,7 +3,6 @@
 
 #include <algorithm>
 #include <limits>
-#include <map>
 #include <numeric>
 #include <vector>
 #include <array>
@@ -182,24 +181,27 @@ void multiply(Context& c,linalg::MatrixView target,double scale) {
         target.data+target.ld*j,1),"product tile scaling");
 }
 
-struct ColumnRead { const int* rows; linalg::ConstMatrixView values; int destination; };
+struct ColumnReadIndex {int local,destination;};
 
-__global__ void read_columns(const ColumnRead* columns,const int* requested,int count,
-    int width,linalg::MatrixView output) {
-  const auto source=columns[blockIdx.x];
+__global__ void read_columns(const CiColumnMap* maps,linalg::ConstMatrixView packed,
+    const ColumnReadIndex* columns,const int* requested,int count,int lane,
+    linalg::MatrixView output) {
+  const auto column=columns[blockIdx.x];
+  const auto source=maps[column.local];
   for (auto i=static_cast<std::size_t>(blockIdx.y)*blockDim.x+threadIdx.x;
-       i<static_cast<std::size_t>(count)*width;i+=static_cast<std::size_t>(gridDim.y)*blockDim.x) {
-    const int r=i%count,v=i/count,a=requested[r];
+       i<static_cast<std::size_t>(count);i+=static_cast<std::size_t>(gridDim.y)*blockDim.x) {
+    const int r=i,a=requested[r];
     // A contiguous beta panel may include an exactly empty column. Its null
     // index pointer is not a full identity map and must never read the next
     // packed column (or the end of the allocation).
-    int index=a>=0 && a<source.values.rows ? a:-1;
+    int index=a>=0 && a<source.size ? a:-1;
     if (source.rows) {
-      int first=0,last=source.values.rows;
+      int first=0,last=source.size;
       while (first<last) {const int mid=first+(last-first)/2;if (source.rows[mid]<a) first=mid+1;else last=mid;}
-      index=first<source.values.rows && source.rows[first]==a ? first:-1;
+      index=first<source.size && source.rows[first]==a ? first:-1;
     }
-    output.data[r+output.ld*(source.destination*width+v)]=index<0 ? 0.0:source.values.data[index+source.values.ld*v];
+    output.data[r+output.ld*column.destination]=index<0 ? 0.0:
+        packed.data[source.offset+packed.ld*lane+index];
   }
 }
 
@@ -512,25 +514,54 @@ struct ProductContraction::Impl {
       if (scratch.data()) block.pack(c,values,false);
       return block;
     });
+    struct ReadGroup {int id,offset,count;};
+    struct ReadPlan {
+      std::vector<int> betas,rows;
+      std::vector<ReadGroup> groups;
+      Buffer<int> indices;
+      bool complete=false;
+    } read_plan;
     const auto reader=[&](int lane) -> CiTileReader {
       if (cached && lane==0) return accepted_y;
       const int input_lane=cached ? lane-1:lane;
       return [&,input_lane](auto betas,auto rows,linalg::MatrixView values) {
-        clear(c,values);auto indices=upload<int>(c,rows);
-        std::map<int,std::vector<std::pair<int,int>>> blocks;
-        for (int j=0;j<betas.size();++j)
-          if (reachable_panel[betas[j]/extent]) blocks[betas[j]/extent].emplace_back(betas[j]%extent,j);
-        for (const auto& [id,entries]:blocks) {
-          auto& block=input.get(id);
-          std::vector<ColumnRead> columns;
-          for (auto [b,destination]:entries) {
-            auto column=block.column(b);
-            const linalg::ConstMatrixView view{column.data+column.ld*input_lane,column.rows,1,column.ld};
-            columns.push_back({block.patterns[b]->full ? nullptr:block.patterns[b]->device_rows.data(),view,destination});
+        if (betas.empty() || rows.empty()) return;
+        if (read_plan.betas.size()!=betas.size() || read_plan.rows.size()!=rows.size() ||
+            !std::equal(read_plan.betas.begin(),read_plan.betas.end(),betas.begin()) ||
+            !std::equal(read_plan.rows.begin(),read_plan.rows.end(),rows.begin())) {
+          std::vector<int> indices(rows.begin(),rows.end());
+          read_plan.groups.clear();
+          read_plan.complete=true;
+          for (int j=0;j<betas.size();++j) {
+            const int b=betas[j];
+            if (b<0 || b>=beta) throw std::out_of_range("invalid product reader beta column");
+            const int id=b/extent;
+            if (!reachable_panel[id]) {read_plan.complete=false;continue;}
+            const int offset=(indices.size()-rows.size())/2;
+            if (read_plan.groups.empty() || read_plan.groups.back().id!=id)
+              read_plan.groups.push_back({id,offset,0});
+            ++read_plan.groups.back().count;
+            indices.push_back(b%extent);indices.push_back(j);
           }
-          auto metadata=upload<ColumnRead>(c,columns);
-          if (!rows.empty()) read_columns<<<dim3(columns.size(),grid(rows.size())),256,0,c.stream()>>>(
-              metadata.data(),indices.data(),rows.size(),1,values);
+          // Only symbolic request indices are retained. Input cache blocks may
+          // be evicted or rebuilt; their device maps and values are borrowed
+          // afresh below, immediately before each same-stream kernel launch.
+          read_plan.indices=Buffer<int>{};
+          read_plan.indices=upload<int>(c,indices);
+          read_plan.betas.assign(betas.begin(),betas.end());
+          read_plan.rows.assign(rows.begin(),rows.end());
+        }
+        // Every requested row is overwritten by the device gather. Clear only
+        // when an entire, unreachable beta panel has no reader at all.
+        if (!read_plan.complete) clear(c,values);
+        static_assert(sizeof(ColumnReadIndex)==2*sizeof(int) && alignof(ColumnReadIndex)==alignof(int));
+        const auto* columns=reinterpret_cast<const ColumnReadIndex*>(read_plan.indices.data()+rows.size());
+        for (const auto& group:read_plan.groups) {
+          auto& block=input.get(group.id);
+          read_columns<<<dim3(group.count,grid(rows.size())),256,0,c.stream()>>>(
+              block.maps.data(),block.values.view(),columns+group.offset,
+              read_plan.indices.data(),
+              rows.size(),input_lane,values);
         }
       };
     };
@@ -650,18 +681,16 @@ struct ProductContraction::Impl {
     });
     const auto writer=[&](int lane) -> CiTileWriter {
       return [&,lane](auto betas,auto,const CiTileGather& gather) {
-        std::map<int,std::vector<std::pair<int,int>>> blocks;
-        for (int j=0;j<betas.size();++j)
-          if (reachable_panel[betas[j]/extent]) blocks[betas[j]/extent].emplace_back(betas[j]%extent,j);
-        for (const auto& [id,entries]:blocks) {
-          auto& block=output.get(id);std::vector<CiTileColumn> columns;
-          for (auto [b,source]:entries) {
-            auto column=block.column(b);
-            const int slot=cached ? lane-1:lane;
-            if (column.rows) columns.push_back({source,block.patterns[b]->full ? nullptr:block.patterns[b]->device_rows.data(),
-                {column.data+column.ld*slot,column.rows,1,column.ld},block.patterns[b]->full});
-          }
-          gather(columns,true);
+        for (int begin=0;begin<betas.size();) {
+          const int id=betas[begin]/extent;
+          const int first=begin;
+          while (begin<betas.size() && betas[begin]/extent==id) ++begin;
+          if (!reachable_panel[id]) continue;
+          auto& block=output.get(id);
+          const int slot=cached ? lane-1:lane;
+          // Queue the consumer before the next get() can evict this panel.
+          gather.panel({.first_beta=id*extent,.source_begin=first,.count=begin-first,
+              .lane=slot,.max_rows=block.max_rows,.maps=block.maps.data(),.values=block.values.view()});
         }
       };
     };

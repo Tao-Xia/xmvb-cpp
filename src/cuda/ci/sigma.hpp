@@ -36,9 +36,28 @@ struct CiTileColumn {
   linalg::MatrixView values;
   bool full_rows=false;
 };
+/** Exact device-resident support of a compact column, shared by every lane. */
+struct CiColumnMap {
+  const int* rows;
+  int size;
+  std::int64_t offset;
+};
+/** Borrowed compact output panel. source_begin/count select consecutive
+ * columns in the current, sorted tile beta list; maps start at first_beta.
+ * lane is the first of width consecutive RHS slots in values. */
+struct CiTilePanel {
+  int first_beta,source_begin,count,lane,max_rows;
+  const CiColumnMap* maps;
+  linalg::MatrixView values;
+};
 /** Contract a batch into consumer-owned views with one launch. No view or
  * index pointer may outlive the writer callback. */
-using CiTileGather=std::function<void(std::span<const CiTileColumn>,bool)>;
+struct CiTileGather {
+  std::function<void(std::span<const CiTileColumn>,bool)> columns;
+  /** Reuse a compact panel's existing maps. Tile-local source columns are
+   * obtained from the shared beta index; absent columns are not touched. */
+  std::function<void(const CiTilePanel&)> panel;
+};
 using CiTileWriter=std::function<void(std::span<const int>,std::span<const int>,const CiTileGather&)>;
 using CiColumnRelease=std::function<void(std::span<const int>)>;
 

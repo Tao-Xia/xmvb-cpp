@@ -269,6 +269,27 @@ void check_product_tiles(int parity,bool covalent,std::size_t budget) {
       out(context,left.rows(),left.cols()),second(context,left.rows(),left.cols()),h2(context,n,n),g2(context,dg.rows(),dg.cols());
   xmvb::cuda::copy_to_device(context,dl.view(),left);
   xmvb::cuda::copy_to_device(context,dr.view(),right);
+  // Reuse pre-existing compact column maps for reverse sigma. Include a full
+  // column, genuinely sparse columns, and an empty column; use two RHS lanes.
+  std::vector<std::shared_ptr<const xmvb::cuda::ProductColumnPattern>> patterns;
+  Matrix compact_mask=Matrix::Zero(left.rows(),left.cols());
+  for (int b=0;b<bs.size();++b) {
+    auto pattern=std::make_shared<xmvb::cuda::ProductColumnPattern>();
+    pattern->full=b==0;
+    if (!pattern->full && b+1<bs.size())
+      for (int a=0;a<as.size();++a) if ((a+b)%2) pattern->rows.push_back(a);
+    pattern->size=pattern->full ? as.size():pattern->rows.size();
+    if (!pattern->rows.empty()) {
+      pattern->device_rows=xmvb::cuda::Buffer<int>(context,pattern->rows.size());
+      context.copy_to_device(pattern->device_rows.data(),pattern->rows.data(),pattern->rows.size()*sizeof(int));
+    }
+    for (int v=0;v<width;++v) for (int r=0;r<pattern->size;++r)
+      compact_mask(pattern->full ? r:pattern->rows[r],v*bs.size()+b)=1.0;
+    patterns.push_back(std::move(pattern));
+  }
+  xmvb::cuda::ProductColumns compact(context,std::move(patterns),width);
+  xmvb::cuda::check_cuda(cudaMemsetAsync(compact.values.data(),0,
+      compact.values.rows()*width*sizeof(double),context.stream()),"clear compact gather oracle");
   const auto device_reader=[&](xmvb::linalg::ConstMatrixView source) -> xmvb::cuda::CiTileReader {
     return [&,source](auto betas,auto rows,xmvb::linalg::MatrixView target) {
       for (int b=0;b<betas.size();++b) for (int v=0;v<width;++v) for (int a=0;a<rows.size();++a)
@@ -283,7 +304,10 @@ void check_product_tiles(int parity,bool covalent,std::size_t budget) {
     return [&,destination](auto betas,auto rows,const xmvb::cuda::CiTileGather& gather) {
       xmvb::cuda::Matrix<double> tile(context,rows.size(),betas.size()*width);
       const xmvb::cuda::CiTileColumn target{-1,nullptr,tile.view()};
-      gather({&target,1},false);
+      gather.columns({&target,1},false);
+      if (destination.data==second.data())
+        gather.panel({.first_beta=0,.source_begin=0,.count=static_cast<int>(betas.size()),
+            .lane=0,.max_rows=compact.max_rows,.maps=compact.maps.data(),.values=compact.values.view()});
       const double one=1;
       for (int b=0;b<betas.size();++b) for (int v=0;v<width;++v) for (int a=0;a<rows.size();++a)
         xmvb::cuda::check_cublas(cublasDaxpy(context.blas(),1,&one,tile.data()+a+tile.rows()*(b*width+v),1,
@@ -300,6 +324,12 @@ void check_product_tiles(int parity,bool covalent,std::size_t budget) {
   expected.setZero();
   cpu.apply_tiled(width,host_reader(left),host_writer,support.get(),parity,{},budget);
   near(download(context,second),expected,3e-10,"GPU second response lost the shared state scatter");
+  xmvb::cuda::Matrix<double> unpacked(context,left.rows(),left.cols());
+  xmvb::cuda::check_cuda(cudaMemsetAsync(unpacked.data(),0,
+      left.size()*sizeof(double),context.stream()),"clear compact unpack oracle");
+  compact.pack(context,unpacked.view(),true);
+  near(download(context,unpacked),(expected.array()*compact_mask.array()).matrix(),3e-10,
+      "device-map reverse sigma differs on sparse, empty or multi-RHS columns");
   near(download(context,h2),expected_adjoint.one_electron,3e-10,"GPU second response adjoint differs");
   near(download(context,g2),expected_adjoint.pair_kernel,3e-10,"GPU second response pair adjoint differs");
   const std::array<xmvb::cuda::CiCarrierRequest,2> carriers{{

@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "cuda/memory/buffer.hpp"
+#include "cuda/ci/sigma.hpp"
 
 namespace xmvb::cuda {
 
@@ -20,12 +21,6 @@ struct ProductColumnPattern {
   Buffer<int> device_rows;
 };
 
-struct ProductColumnMap {
-  const int* rows;
-  int size;
-  std::int64_t offset;
-};
-
 /** Device counterpart of CPU ColumnTile. One packed allocation stores all
  * RHS lanes on exact column support. Dense views exist only for the current
  * bounded transform panel, never for the complete spin-product space.
@@ -36,7 +31,7 @@ struct ProductColumns {
       int width);
   std::vector<std::shared_ptr<const ProductColumnPattern>> patterns;
   std::vector<std::int64_t> offsets;
-  Buffer<ProductColumnMap> maps;
+  Buffer<CiColumnMap> maps;
   Matrix<double> values;
   int max_rows=0;
 

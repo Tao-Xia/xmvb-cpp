@@ -234,6 +234,23 @@ __global__ void gather(TileMap map,const int* halo_rows,const CiTileColumn* colu
   }
 }
 
+/** Same E^T halo as gather(), using the consumer's existing compact maps.
+ * No host column descriptors, upload, or synchronization is needed. */
+__global__ void gather_panel(TileMap map,const int* betas,int first,int source_first,int lane,const CiColumnMap* columns,
+    linalg::MatrixView output,linalg::ConstMatrixView halo) {
+  const int source=source_first+blockIdx.x;
+  const auto column=columns[betas[source]-first];
+  const auto work=static_cast<std::size_t>(column.size)*map.width;
+  for (auto i=static_cast<std::size_t>(blockIdx.y)*blockDim.x+threadIdx.x;i<work;
+       i+=static_cast<std::size_t>(gridDim.y)*blockDim.x) {
+    const int r=i%column.size,v=i/column.size;
+    const int a=column.rows ? column.rows[r]:r;
+    const int h=map.halo_index[a];
+    if (h>=0) output.data[column.offset+r+output.ld*(lane+v)]+=
+        halo.data[h+halo.ld*(source*map.width+v)];
+  }
+}
+
 template<class T> Buffer<T> upload(Context& context,std::span<const T> values) {
   Buffer<T> result(context,values.size());
   context.copy_to_device(result.data(),values.data(),values.size_bytes());
@@ -526,6 +543,7 @@ void DirectCiSigma::apply_tiled_responses(int width,std::span<const CiTileReques
       const auto offset=metadata.size();metadata.insert(metadata.end(),values.begin(),values.end());return offset;
     };
     const auto active_offset=append(plan.active),halo_offset=append(plan.halo);
+    const auto columns_offset=append(plan.columns);
     const auto halo_index_offset=append(plan.halo_index),column_index_offset=append(plan.column_index);
     const bool identity=plan.channel_groups.empty() ||
         std::all_of(plan.channel_groups.begin(),plan.channel_groups.end(),
@@ -647,7 +665,7 @@ void DirectCiSigma::apply_tiled_responses(int width,std::span<const CiTileReques
               request.carrier_image.data ? request.carrier_image:input,request.carrier_image.data!=nullptr);
         }
         if (!request.image) continue;
-        const CiTileGather gather_columns=[&](std::span<const CiTileColumn> targets,bool add) {
+        const auto gather_columns=[&](std::span<const CiTileColumn> targets,bool add) {
           if (targets.empty()) return;
           std::size_t work=0;
           for (const auto& target:targets) {
@@ -664,8 +682,19 @@ void DirectCiSigma::apply_tiled_responses(int width,std::span<const CiTileReques
           gather<<<dim3(targets.size(),grid(work)),256,0,ctx.stream()>>>(map,
               ptr(halo_offset),device_targets.data(),input,add);
         };
+        const auto compact_panel=[&](const CiTilePanel& target) {
+          const auto [first,source_first,count,lane,max_rows,maps,output]=target;
+          if (first<0 || first>=n_beta_ || count<0 || source_first<0 || source_first+count>columns ||
+              lane<0 || lane+width>output.cols || max_rows<0 || max_rows>n_alpha_ ||
+              !maps || output.ld<output.rows)
+            throw std::invalid_argument("invalid compact sigma gather panel");
+          if (!count || !max_rows) return;
+          gather_panel<<<dim3(count,grid(static_cast<std::size_t>(max_rows)*width)),256,0,ctx.stream()>>>(
+              map,ptr(columns_offset),first,source_first,lane,maps,output,input);
+        };
+        const CiTileGather gather_target{gather_columns,compact_panel};
         const nvtx3::scoped_range range{"ci.tile_backproject"};
-        request.image(plan.columns,plan.halo,gather_columns);
+        request.image(plan.columns,plan.halo,gather_target);
       }
     }
     if (release && !plan.released.empty()) release(plan.released);
