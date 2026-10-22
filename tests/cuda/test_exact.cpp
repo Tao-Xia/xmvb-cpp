@@ -433,11 +433,16 @@ void check_core_symmetry_orientations() {
       {pair_index(2,2),pair_index(2,2)},
       {pair_index(3,3),pair_index(3,0)},
       {pair_index(3,3),pair_index(1,1)}};
-  for (const auto [u,v]:cases) {
+  for (const auto [u,v]:cases) for (int layout:{0,1,2}) {
     Fixture fixture(true,n);
     fixture.pair_kernel.setZero();
     fixture.pair_kernel(u,v)=fixture.pair_kernel(v,u)=0.17;
     fixture.unique_left={u};fixture.unique_right={v};fixture.unique_values={0.17};
+    if (layout==1) std::swap(fixture.unique_left,fixture.unique_right);
+    if (layout==2) {
+      fixture.unique_left={u,u};fixture.unique_right={v,v};
+      fixture.unique_values={0.05,0.12};
+    }
     xmvb::cuda::Context context(128ULL*1024*1024);
     const xmvb::cuda::ExactAoPairOperator gpu(context,fixture.graph(true),n);
     DeviceMatrix c(context,n,n),j(context,n,ncore),r(context,n,ncore);

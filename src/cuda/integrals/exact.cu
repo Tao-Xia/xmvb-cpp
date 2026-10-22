@@ -256,7 +256,6 @@ __global__ void pack_density_batch(linalg::ConstMatrixView densities,
   }
 }
 
-template<bool RankOne=false>
 __device__ void add_oriented_exchange(int u,int v,double value,
     const int* first,const int* second,linalg::ConstMatrixView density,
     linalg::MatrixView output,int channels) {
@@ -265,26 +264,12 @@ __device__ void add_oriented_exchange(int u,int v,double value,
     const int a = swap_u ? uj : ui, b = swap_u ? ui : uj;
     for (int swap_v = 0; swap_v < (vi == vj ? 1 : 2); ++swap_v) {
       const int c = swap_v ? vj : vi, d = swap_v ? vi : vj;
-      // For distinct pair labels the reversed ERI orientation contributes
-      // only the mirrored output. Emit it once at the canonical destination;
-      // coincident output indices combine the two equal diagonal terms.
-      if constexpr (RankOne) { if (u==v && a<c) continue; }
-      const double oriented_value=RankOne && u!=v && a==c ? 2.0*value:value;
       for (int channel=0;channel<channels;++channel) {
-        double source;
-        if constexpr (RankOne)
-          source=density.data[b+density.ld*channel]*density.data[d+density.ld*channel];
-        else source=density.data[b+density.ld*(d+channel*density.rows)];
+        const double source=density.data[b+density.ld*(d+channel*density.rows)];
         // Literal zero support is exact; do not issue an atomic add of zero.
         // No magnitude threshold or screening approximation is introduced.
-        if (source!=0.0) {
-          double* target;
-          if constexpr (RankOne) {
-            const int high=max(a,c),low=min(a,c);
-            target=output.data+channel+output.ld*(static_cast<std::int64_t>(high)*(high+1)/2+low);
-          } else target=output.data+a+output.ld*(c+channel*output.rows);
-          atomic_add_double(target,oriented_value*source);
-        }
+        if (source!=0.0)
+          atomic_add_double(output.data+a+output.ld*(c+channel*output.rows),value*source);
       }
     }
   }
@@ -298,7 +283,7 @@ __device__ int unique_row(const Index* offsets,int rows,std::int64_t edge,int be
 // Balance integral edges, not variably sized CSR rows. A warp finds its
 // first row once; only lanes crossing that row's end need another lookup.
 // Row offsets are small and shared; no full edge-to-row index is stored.
-template<class Index,bool RankOne=false>
+template<class Index>
 __global__ void exchange_unique(const Index* offsets,const Index* columns,
     const double* values,int rows,std::int64_t edges,const int* first,const int* second,
     linalg::ConstMatrixView density,linalg::MatrixView output,double weight,int channels) {
@@ -313,11 +298,9 @@ __global__ void exchange_unique(const Index* offsets,const Index* columns,
     if (p>=offsets[left+1]) left=unique_row(offsets,rows,p,left+1);
     const int right=static_cast<int>(columns[p]);
     const double value=weight*values[p];
-    add_oriented_exchange<RankOne>(left,right,value,first,second,density,output,channels);
-    if constexpr (!RankOne) {
-      if (left!=right)
-        add_oriented_exchange(right,left,value,first,second,density,output,channels);
-    }
+    add_oriented_exchange(left,right,value,first,second,density,output,channels);
+    if (left!=right)
+      add_oriented_exchange(right,left,value,first,second,density,output,channels);
   }
 }
 
@@ -1216,23 +1199,6 @@ void ExactAoPairOperator::unique_exchange(linalg::ConstMatrixView density,
     exchange_unique<<<blocks(n_integrals_),256,0,context_->stream()>>>(
         row_offsets_.data(),columns_.data(),values_.data(),blas_int(n_pairs_),
         n_integrals_,pair_first_.data(),pair_second_.data(),density,output,weight,channels);
-}
-
-void ExactAoPairOperator::rank_one_exchange(linalg::ConstMatrixView factors,
-    linalg::MatrixView output) const {
-  const nvtx3::scoped_range range{"ao.rank_one_exchange"};
-  zero_matrix(*context_,output);
-  if (!n_integrals_) return;
-  const auto channels=blas_int(factors.cols);
-  if (wide_)
-    exchange_unique<std::int64_t,true><<<blocks(n_integrals_),256,0,context_->stream()>>>(
-        wide_offsets_.data(),wide_columns_.data(),values_.data(),blas_int(n_pairs_),
-        n_integrals_,pair_first_.data(),pair_second_.data(),factors,output,1.0,channels);
-  else
-    exchange_unique<int,true><<<blocks(n_integrals_),256,0,context_->stream()>>>(
-        row_offsets_.data(),columns_.data(),values_.data(),blas_int(n_pairs_),
-        n_integrals_,pair_first_.data(),pair_second_.data(),factors,output,1.0,channels);
-  check_launch("CUDA rank-one exchange batch");
 }
 
 void ExactAoPairOperator::unique_half(linalg::ConstMatrixView c,int begin,int count,
