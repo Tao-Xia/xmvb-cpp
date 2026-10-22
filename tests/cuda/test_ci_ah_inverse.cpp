@@ -168,6 +168,8 @@ void check(bool full,bool spin_model=false) {
       (selected_energy+eigenvalue)*diagonal_m.array()).abs().max(1.0e-8)));
 
   auto d_selected=upload(context,selected);
+  DeviceMatrix d_hc(context,n,1),d_mc(context,n,1);
+  action.apply(d_selected.view(),d_hc.view(),d_mc.view());
   xmvb::cuda::SingleStateCiActions actions;
   actions.hamiltonian_metric=[&](xmvb::linalg::ConstMatrixView x,
       xmvb::linalg::MatrixView h,xmvb::linalg::MatrixView m) {
@@ -189,7 +191,7 @@ void check(bool full,bool spin_model=false) {
       (spin_model ? xmvb::cuda::CiInverseConstraint::Spin:
           xmvb::cuda::CiInverseConstraint::Diagonal);
   xmvb::cuda::SingleStateCiTangent tangent(context,n,d_selected.view(),
-                                            selected_energy,1.0,actions);
+      d_hc.view(),d_mc.view(),selected_energy,1.0,actions);
   DeviceMatrix d_z(context,n-1,1),d_ambient(context,n,1);
   Vector coordinates(n-1);
   for (int i=0;i<n-1;++i) coordinates[i]=0.14-0.09*i;

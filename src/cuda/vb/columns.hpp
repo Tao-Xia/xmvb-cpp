@@ -96,6 +96,8 @@ class ProductImages {
  public:
   explicit ProductImages(std::size_t budget):budget_(budget) {}
   void begin(int panels);
+  /** Check capacity and discard a partial endpoint before its next allocation. */
+  bool prepare(int panel,std::size_t bytes);
   bool retain(int panel,ProductColumns columns);
   void finish();
   bool complete() const noexcept { return complete_; }

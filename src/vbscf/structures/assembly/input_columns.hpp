@@ -17,15 +17,16 @@ namespace xmvb::vb::detail {
 class InputColumns {
 public:
   using Build=std::function<std::vector<ColumnTile>(std::span<const int>)>;
+  using Price=std::function<std::size_t(int)>;
 
   InputColumns(int n_alpha,int width,int extent,std::size_t bytes,
-      const std::vector<std::uint8_t>& support,Build build)
+      const std::vector<std::uint8_t>& support,Build build,Price price)
       : width_(width),extent_(extent),support_(support),
-        build_(std::move(build)),positions_(n_alpha,-1),columns_(support.size(),-1),
+        build_(std::move(build)),price_(std::move(price)),positions_(n_alpha,-1),columns_(support.size(),-1),
         cache_(bytes,[this](int beta) {
           auto tiles=build_({&beta,1});
           return std::move(tiles.front());
-        }) {}
+        },{},[this](int beta) {return price_(beta);}) {}
 
   InputColumns(const InputColumns&)=delete;
   InputColumns& operator=(const InputColumns&)=delete;
@@ -94,6 +95,9 @@ private:
   void produce(std::span<const int> missing,const Consume& consume) {
     for (std::size_t begin=0;begin<missing.size();begin+=extent_) {
       const auto keys=missing.subspan(begin,std::min<std::size_t>(extent_,missing.size()-begin));
+      std::size_t bytes=0;
+      for (int key:keys) bytes+=price_(key);
+      cache_.reserve(bytes);
       profiling::ScopedPhase generate(profiling::Phase::CiCacheGenerate);
       auto tiles=build_(keys);
       generate.stop();
@@ -106,6 +110,7 @@ private:
   int width_,extent_;
   const std::vector<std::uint8_t>& support_;
   Build build_;
+  Price price_;
   std::vector<int> positions_,columns_;
   ColumnPanels cache_;
 };

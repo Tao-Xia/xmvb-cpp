@@ -298,6 +298,9 @@ StructureResponseSweep StructureAction::contract_product_tiles(
             tiles[b].values(a,v)=values(tiles[b].pattern->full ? a:tiles[b].pattern->rows[a],v*cols+b);
       });
       return tiles;
+    },[&](int beta) {
+      const auto pattern=pattern_at(beta);
+      return pattern->bytes()+sizeof(double)*static_cast<std::size_t>(pattern->offsets[1])*width;
     });
     if (overlap_only) {
       if (!ordered) input.prepare(reachable_columns);
@@ -340,6 +343,9 @@ StructureResponseSweep StructureAction::contract_product_tiles(
       completed_betas.push_back(beta);
       completed_images.push_back(std::move(tile));
       if (completed_betas.size()==static_cast<std::size_t>(extent)) flush_output();
+    },[&](int beta) {
+      const auto pattern=pattern_at(beta);
+      return pattern->bytes()+sizeof(double)*static_cast<std::size_t>(pattern->offsets[1])*width;
     });
     const mcscf::DirectCiTileReader read =
         [&](const std::vector<int>& betas, const std::vector<int>& alpha_rows,

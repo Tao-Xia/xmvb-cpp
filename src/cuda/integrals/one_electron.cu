@@ -31,6 +31,19 @@ void validate_direction(linalg::ConstMatrixView direction,
     throw std::invalid_argument("invalid CUDA one-electron direction");
 }
 
+void validate_image(linalg::ConstMatrixView image) {
+  if (!image.data || image.rows <= 0 || image.cols <= 0 ||
+      image.ld < image.rows)
+    throw std::invalid_argument("invalid CUDA one-electron AO image");
+}
+
+void validate_output(linalg::MatrixView output, std::int64_t rows,
+                     std::int64_t cols) {
+  if (!output.data || output.rows != rows || output.cols != cols ||
+      output.ld < output.rows)
+    throw std::invalid_argument("invalid CUDA one-electron output");
+}
+
 void add_adjoint(Context& context, linalg::MatrixView output,
                  linalg::ConstMatrixView hc,
                  linalg::ConstMatrixView g, double beta) {
@@ -43,71 +56,62 @@ void add_adjoint(Context& context, linalg::MatrixView output,
 
 void transform_one_electron(Context& context, linalg::ConstMatrixView core,
                             linalg::ConstMatrixView coefficients,
-                            linalg::MatrixView active) {
+                            linalg::MatrixView active,
+                            linalg::MatrixView ao_image) {
   validate(core, coefficients, active);
   if (active.rows != coefficients.cols)
     throw std::invalid_argument("invalid CUDA active one-electron output");
-  Matrix<double> hc(context, core.rows, coefficients.cols);
-  gemm(context, hc.view(), core, coefficients);
-  gemm(context, active, coefficients, hc.view(), 1.0, 0.0,
+  validate_output(ao_image, core.rows, coefficients.cols);
+  gemm(context, ao_image, core, coefficients);
+  gemm(context, active, coefficients, ao_image, 1.0, 0.0,
        Operation::transpose);
 }
 
-void transform_one_electron_directional(Context& context,
-    linalg::ConstMatrixView core, linalg::ConstMatrixView coefficients,
-    linalg::ConstMatrixView direction, linalg::MatrixView active_direction) {
-  validate(core, coefficients, active_direction);
-  validate_direction(direction, coefficients);
-  if (active_direction.rows != coefficients.cols)
-    throw std::invalid_argument("invalid CUDA directional one-electron output");
-  Matrix<double> hc(context, core.rows, coefficients.cols);
-  Matrix<double> hd(context, core.rows, coefficients.cols);
-  gemm(context, hc.view(), core, coefficients);
-  gemm(context, hd.view(), core, direction);
-  gemm(context, active_direction, direction, hc.view(), 1.0, 0.0,
+void transform_one_electron_directional_from_image(Context& context,
+    linalg::ConstMatrixView ao_image, linalg::ConstMatrixView direction,
+    linalg::MatrixView active_direction) {
+  validate_image(ao_image);
+  validate_direction(direction, ao_image);
+  validate_output(active_direction, ao_image.cols, ao_image.cols);
+  gemm(context, active_direction, direction, ao_image, 1.0, 0.0,
        Operation::transpose);
-  gemm(context, active_direction, coefficients, hd.view(), 1.0, 1.0,
+  gemm(context, active_direction, ao_image, direction, 1.0, 1.0,
        Operation::transpose);
 }
 
-void transform_one_electron_adjoint(Context& context,
-    linalg::ConstMatrixView core, linalg::ConstMatrixView coefficients,
+void transform_one_electron_adjoint_from_image(Context& context,
+    linalg::ConstMatrixView ao_image,
     linalg::ConstMatrixView active_adjoint, linalg::MatrixView gradient) {
-  validate(core, coefficients, gradient);
-  if (gradient.rows != core.rows)
-    throw std::invalid_argument("invalid CUDA one-electron gradient");
-  validate_active(active_adjoint, coefficients.cols);
-  Matrix<double> hc(context, core.rows, coefficients.cols);
-  gemm(context, hc.view(), core, coefficients);
-  add_adjoint(context, gradient, hc.view(), active_adjoint, 0.0);
+  validate_image(ao_image);
+  validate_active(active_adjoint, ao_image.cols);
+  validate_output(gradient, ao_image.rows, ao_image.cols);
+  add_adjoint(context, gradient, ao_image, active_adjoint, 0.0);
 }
 
-void transform_one_electron_directional_adjoint(Context& context,
-    linalg::ConstMatrixView core, linalg::ConstMatrixView coefficients,
+void transform_one_electron_directional_adjoint_from_image(Context& context,
+    linalg::ConstMatrixView core, linalg::ConstMatrixView ao_image,
     linalg::ConstMatrixView direction,
     linalg::ConstMatrixView active_adjoint,
     linalg::ConstMatrixView active_adjoint_direction,
     linalg::MatrixView gradient_direction,
     linalg::ConstMatrixView component,linalg::MatrixView component_gradient) {
-  validate(core, coefficients, gradient_direction);
+  validate(core, ao_image, gradient_direction);
   if (gradient_direction.rows != core.rows)
     throw std::invalid_argument("invalid CUDA directional one-electron gradient");
-  validate_direction(direction, coefficients);
-  validate_active(active_adjoint, coefficients.cols);
-  validate_active(active_adjoint_direction, coefficients.cols);
-  Matrix<double> hc(context, core.rows, coefficients.cols);
-  Matrix<double> hd(context, core.rows, coefficients.cols);
-  gemm(context, hc.view(), core, coefficients);
+  validate_direction(direction, ao_image);
+  validate_active(active_adjoint, ao_image.cols);
+  validate_active(active_adjoint_direction, ao_image.cols);
+  Matrix<double> hd(context, core.rows, ao_image.cols);
   gemm(context, hd.view(), core, direction);
   add_adjoint(context, gradient_direction, hd.view(), active_adjoint, 0.0);
-  add_adjoint(context, gradient_direction, hc.view(),
+  add_adjoint(context, gradient_direction, ao_image,
               active_adjoint_direction, 1.0);
   if (component.data) {
-    validate_active(component,coefficients.cols);
-    validate(core,coefficients,component_gradient);
+    validate_active(component,ao_image.cols);
+    validate(core,ao_image,component_gradient);
     if (component_gradient.rows!=core.rows)
       throw std::invalid_argument("invalid CUDA component one-electron gradient");
-    add_adjoint(context,component_gradient,hc.view(),component,0.0);
+    add_adjoint(context,component_gradient,ao_image,component,0.0);
   }
 }
 

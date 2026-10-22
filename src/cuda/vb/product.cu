@@ -19,6 +19,17 @@
 namespace xmvb::cuda {
 namespace {
 unsigned grid(std::size_t n) {return static_cast<unsigned>(std::min<std::size_t>(65535,(n+255)/256));}
+template<class Tile>
+void free_cache_for_allocation(Context& c,mcscf::ColumnCache<Tile>& cache,std::size_t bytes) {
+  const auto available=[&] {
+    const auto resident=c.counters().current_device_bytes;
+    const auto budget=c.device_byte_budget();
+    // The shared allocator already accounts for live payload. Device-wide
+    // free memory excludes reusable pool storage and is not this budget.
+    return resident<=budget ? budget-resident:std::size_t{0};
+  };
+  while (bytes>available() && cache.evict_one()) {}
+}
 void sparse_check(cusparseStatus_t result,const char* operation) {
   if (result!=CUSPARSE_STATUS_SUCCESS)
     throw std::runtime_error(std::string(operation)+": "+cusparseGetErrorString(result));
@@ -38,7 +49,10 @@ void clear(Context& c,linalg::MatrixView panel) {
 struct Factors {
   Buffer<int> offsets,indices;
   Buffer<double> values;
-  Factors(Context& c,cusparseHandle_t handle,linalg::ConstMatrixView dense):offsets(c,dense.rows+1) {
+  template<class Reserve,class FreeForScratch>
+  Factors(Context& c,cusparseHandle_t handle,linalg::ConstMatrixView dense,
+      Reserve&& reserve,FreeForScratch&& free_for_scratch)
+      :offsets(c,dense.rows+1) {
     const nvtx3::scoped_range range{"vb.factor_build"};
     cusparseDnMatDescr_t input=nullptr;
     cusparseSpMatDescr_t output=nullptr;
@@ -50,6 +64,7 @@ struct Factors {
       std::size_t bytes=0;
       sparse_check(cusparseDenseToSparse_bufferSize(handle,input,output,CUSPARSE_DENSETOSPARSE_ALG_DEFAULT,&bytes),
           "query beta-factor CSR scratch");
+      free_for_scratch(bytes);
       Buffer<std::byte> scratch(c,bytes);
       sparse_check(cusparseDenseToSparse_analysis(handle,input,output,CUSPARSE_DENSETOSPARSE_ALG_DEFAULT,scratch.data()),
           "analyze beta-factor exact zeros");
@@ -57,6 +72,8 @@ struct Factors {
       std::int64_t rows,columns,nnz;
       sparse_check(cusparseSpMatGetSize(output,&rows,&columns,&nnz),"count beta-factor exact nonzeros");
       if (nnz>std::numeric_limits<int>::max()) throw std::overflow_error("beta-factor CSR exceeds integer range");
+      reserve(offsets.size()*sizeof(int)+static_cast<std::size_t>(nnz)*(sizeof(int)+sizeof(double)));
+      free_for_scratch(static_cast<std::size_t>(nnz)*(sizeof(int)+sizeof(double)));
       indices=Buffer<int>(c,nnz);values=Buffer<double>(c,nnz);
       sparse_check(cusparseCsrSetPointers(output,offsets.data(),indices.data(),values.data()),"set beta-factor CSR payload");
       sparse_check(cusparseDenseToSparse_convert(handle,input,output,CUSPARSE_DENSETOSPARSE_ALG_DEFAULT,scratch.data()),
@@ -281,6 +298,7 @@ struct ProductSymbolic {
     auto result=std::make_shared<ProductColumnPattern>();result->full=full;
     if (!full) support->append_column_rows(b,result->rows);
     result->size=full ? alpha:result->rows.size();
+    if (!full) pattern_cache->reserve(result->rows.size()*sizeof(int));
     if (!full) result->device_rows=upload<int>(c,result->rows);
     patterns[b]=result;
     if (!full) pattern_cache->insert(b,{result});else full_pattern=result;
@@ -327,6 +345,12 @@ struct ProductContraction::Impl {
     return ProductColumns(c,std::move(columns),width);
   }
 
+  std::size_t panel_bytes(std::span<const int> keys,int width) {
+    std::size_t rows=0;
+    for (int key:keys) rows+=pattern(key)->size;
+    return keys.size()*sizeof(CiColumnMap)+rows*width*sizeof(double);
+  }
+
   /** Full rows already have dense column-major layout. Borrow their owner
    * rather than allocate, pack, and retain a second numerical panel. */
   linalg::MatrixView dense_panel(ProductColumns& block,Matrix<double>& scratch) {
@@ -355,6 +379,9 @@ struct ProductContraction::Impl {
           bits[static_cast<std::size_t>(b)*words+row/64]|=std::uint64_t{1}<<(row%64);
       }
       return SupportMask{upload<std::uint64_t>(c,bits)};
+    },mcscf::ColumnCache<SupportMask>::Consume{},[this](int first) {
+      return static_cast<std::size_t>(std::min(mask_extent,beta-first))*
+          ((alpha+63)/64)*sizeof(std::uint64_t);
     });
   }
 
@@ -365,8 +392,15 @@ struct ProductContraction::Impl {
     if (!factor_cache) factor_cache=std::make_unique<mcscf::ColumnCache<Factors>>(budget,[this](int id) {
       const nvtx3::scoped_range range{"vb.factor_sample",nvtx3::payload{static_cast<std::uint64_t>(id)}};
       const int first=id*factor_extent,count=std::min(factor_extent,beta-first);
+      free_cache_for_allocation(c,*factor_cache,static_cast<std::size_t>(beta)*count*sizeof(double));
       Matrix<double> values(c,beta,count);
-      beta_transform.sample_rows(first,values.view());return Factors(c,sparse,values.view());
+      beta_transform.sample_rows(first,values.view());
+      free_cache_for_allocation(c,*factor_cache,(static_cast<std::size_t>(beta)+1)*sizeof(int));
+      return Factors(c,sparse,values.view(),
+          [this](std::size_t bytes) {factor_cache->reserve(bytes);},
+          [this](std::size_t bytes) {free_cache_for_allocation(c,*factor_cache,bytes);});
+    },mcscf::ColumnCache<Factors>::Consume{},[this](int id) {
+      return (static_cast<std::size_t>(beta)+1)*sizeof(int);
     });
   }
 
@@ -439,9 +473,16 @@ struct ProductContraction::Impl {
     }
     mcscf::ColumnCache<Factors> delta_factors(quarter/4,[&](int id) {
       const nvtx3::scoped_range range{"vb.factor_direction",nvtx3::payload{static_cast<std::uint64_t>(id)}};
-      auto keys=selected(id);Matrix<double> values(c,beta,keys.size()),delta(c,beta,keys.size());
+      auto keys=selected(id);
+      free_cache_for_allocation(c,delta_factors,2*static_cast<std::size_t>(beta)*keys.size()*sizeof(double));
+      Matrix<double> values(c,beta,keys.size()),delta(c,beta,keys.size());
       beta_transform.sample_directional_rows(db,id*extent,values.view(),delta.view());
-      return Factors(c,sparse,delta.view());
+      free_cache_for_allocation(c,delta_factors,(static_cast<std::size_t>(beta)+1)*sizeof(int));
+      return Factors(c,sparse,delta.view(),
+          [&](std::size_t bytes) {delta_factors.reserve(bytes);},
+          [&](std::size_t bytes) {free_cache_for_allocation(c,delta_factors,bytes);});
+    },{},[&](int id) {
+      return (static_cast<std::size_t>(beta)+1)*sizeof(int);
     });
     const auto generate=[&](linalg::ConstMatrixView source,const Factors& f,
         linalg::MatrixView values) {
@@ -546,7 +587,7 @@ struct ProductContraction::Impl {
       } else {generate(endpoint.coefficients.view(),factors.get(id),y);transform(y,id*extent,count,false);}
       if (scratch.data()) block.pack(c,values,false);
       return block;
-    });
+    },{},[&](int id) {return panel_bytes(selected(id),input_width);});
     struct ReadGroup {int id,offset,count;};
     struct ReadPlan {
       std::vector<int> betas,rows;
@@ -620,6 +661,9 @@ struct ProductContraction::Impl {
       for (int k=0;k<targets;++k) if (destinations[k].data)
         contract_groups<<<grid(tile.values.rows()),256,0,c.stream()>>>(incidence,
             id*group_extent,tile.values.rows(),tile.values.view().column(k).data,destinations[k].data);
+    },[&](int id) {
+      return static_cast<std::size_t>(std::min<std::int64_t>(group_extent,groups-id*group_extent))*
+          targets*sizeof(double);
     });
     // Match the CPU product jet: independent RHS share one alpha transform
     // and one beta-row traversal, then accumulate into distinct targets.
@@ -681,11 +725,16 @@ struct ProductContraction::Impl {
       const auto hy=values.columns(0,count);
       if (!tangent) {
         if (retain && retaining) {
-          auto& source=input.get(id);
-          ProductColumns state(c,block.patterns,2);
-          copy_panel(state.values.view().columns(0,1),source.values.view().columns(0,1));
-          copy_panel(state.values.view().columns(1,1),block.values.view().columns(0,1));
-          retaining=endpoint.images->retain(id,std::move(state));
+          const auto state_bytes=block.patterns.size()*sizeof(CiColumnMap)+
+              static_cast<std::size_t>(block.values.rows())*2*sizeof(double);
+          if (!endpoint.images->prepare(id,state_bytes)) retaining=false;
+          if (retaining) {
+            auto& source=input.get(id);
+            ProductColumns state(c,block.patterns,2);
+            copy_panel(state.values.view().columns(0,1),source.values.view().columns(0,1));
+            copy_panel(state.values.view().columns(1,1),block.values.view().columns(0,1));
+            retaining=endpoint.images->retain(id,std::move(state));
+          }
         }
         const std::array lefts{static_cast<linalg::ConstMatrixView>(hy)};
         const std::array requests{CiStreamedGeneratorRequest{y}};
@@ -714,7 +763,7 @@ struct ProductContraction::Impl {
             joint ? std::initializer_list<int>{0,2}:std::initializer_list<int>{0},false);
         if (delta_upper.data && !cached) project_panel(id,hy,{0},true);
       }
-    });
+    },[&](int id) {return panel_bytes(selected(id),input_width);});
     const auto writer=[&](int lane) -> CiTileWriter {
       return [&,lane](auto betas,auto,const CiTileGather& gather) {
         for (int begin=0;begin<betas.size();) {

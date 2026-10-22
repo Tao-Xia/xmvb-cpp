@@ -202,10 +202,14 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,
     context.set_allocation_phase("CI tangent and transport");
     std::unique_ptr<SingleStateCiTangent> tangent;
     if (nstr>1) tangent=std::make_unique<SingleStateCiTangent>(context,nstr,
-        accepted.coefficients.view(),accepted.ci.eigenpairs.eigenvalues.front(),1.0,
+        accepted.coefficients.view(),accepted.ci.hamiltonian_eigenvectors.view(),
+        accepted.ci.overlap_view(),accepted.ci.eigenpairs.eigenvalues.front(),1.0,
         SingleStateCiActions{
           [&](View x,Out h,Out m) { origin.activate();action.apply(x,h,m); },
-          [&](View x,Out m) { origin.activate();action.apply_overlap(x,m); },
+          [&](View x,Out m) {
+            if (accepted.ci_point->metric) accepted.ci_point->metric->apply(x,m);
+            else { origin.activate();action.apply_overlap(x,m); }
+          },
           [&](View x,double eigenvalue,Out y) {
             ci_solver.inverse_augmented_hessian_model(x,
                 accepted.ci.eigenpairs.eigenvalues.front(),eigenvalue,y,
@@ -272,8 +276,12 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,
       const nvtx3::scoped_range range{"scf.coupled_action"};
       AllocationPhase allocation(context,"coupled orbital-CI HVP");
       Matrix<double> dr(context,nb,norb),dc(context,nstr,1),hr(context,nb,norb),hc(context,nstr,1);
-      Matrix<double> qr,qc;
-      if (ns) { qr=Matrix<double>(context,nb,norb);qc=Matrix<double>(context,nstr,1); }
+      Matrix<double> qr,qc,mc;
+      if (ns) {
+        qr=Matrix<double>(context,nb,norb);
+        qc=Matrix<double>(context,nstr,1);
+        mc=Matrix<double>(context,nstr,1);
+      }
       {
         const nvtx3::scoped_range range{"coupled.expand"};
         chart.expand(segment(x,0,no),dr.view());
@@ -282,7 +290,7 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,
       if (!ns) check_cuda(cudaMemsetAsync(dc.data(),0,nstr*sizeof(double),context.stream()),"zero CI direction");
       {
         const nvtx3::scoped_range range{"coupled.physical"};
-        origin.hessian(dr.view(),dc.view(),hr.view(),hc.view(),qr.view(),qc.view());
+        origin.hessian(dr.view(),dc.view(),hr.view(),hc.view(),qr.view(),qc.view(),mc.view());
       }
       {
         const nvtx3::scoped_range range{"coupled.project"};
@@ -297,7 +305,12 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,
       }
       {
         const nvtx3::scoped_range range{"coupled.metric"};
-        metric(x,mx);
+        chart.physical_metric(segment(x,0,no),segment(mx,0,no));
+        if (ns) {
+          // dc=Q x_c/scale, so Q^T M Q x_c=scale Q^T(M dc).
+          tangent->project_coordinates(mc.view(),segment(mx,no,ns));
+          scale(context,segment(mx,no,ns),tangent->coordinate_scale());
+        }
       }
       copy(context,orbital_image.view(),hx);
       if (ns) add(context,orbital_image.view(),structure_image.view(),-1.0);

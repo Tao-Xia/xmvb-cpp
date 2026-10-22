@@ -34,12 +34,15 @@ class VbPoint {
   void gradient(linalg::MatrixView orbital,linalg::MatrixView structure = {}) const;
   /** Joint Hessian action, not a relaxed orbital response solve. Optional CI
    * images give H(0,q), reusing the same sigma, AO tiles and accepted responses;
-   * H(p,0) is the total minus this image. No additional full action is taken.
+   * H(p,0) is the total minus this image. The optional pure CI overlap image
+   * is M q in selected-structure coordinates, before orbital overlap response.
+   * No additional full action is taken.
    */
   void hessian(linalg::ConstMatrixView orbital,linalg::ConstMatrixView structure,
                linalg::MatrixView orbital_image,linalg::MatrixView structure_image,
                linalg::MatrixView ci_orbital_image = {},
-               linalg::MatrixView ci_structure_image = {}) const;
+               linalg::MatrixView ci_structure_image = {},
+               linalg::MatrixView ci_overlap_image = {}) const;
 
   const OrbitalGeometry& geometry() const noexcept { return geometry_; }
   linalg::ConstMatrixView effective_one_electron() const noexcept { return effective_.view(); }
@@ -72,7 +75,7 @@ class VbPoint {
   double nuclear_,active_energy_=0.0,total_energy_=0.0,norm_=0.0;
   OrbitalGeometry geometry_;
   mutable DirectCiSigma sigma_,direction_sigma_;
-  Matrix<double> effective_,one_,pair_;
+  Matrix<double> effective_,one_,one_image_,pair_;
   mutable ProductEndpoint endpoint_;
   std::unique_ptr<ProductContraction> products_;
   Matrix<double> selected_h_,selected_m_,selected_gradient_;

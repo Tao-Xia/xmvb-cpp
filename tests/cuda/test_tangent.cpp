@@ -43,6 +43,8 @@ void check_single_state_selected_space() {
   Vector selected(n);
   selected<<0.42,-0.31,0.18,0.51,-0.23;
   selected/=std::sqrt(selected.dot(s*selected));
+  require(((h-0.82*s)*selected).norm()>0.1,
+          "CI tangent fixture must retain a finite origin residual");
   const Vector constraint=s*selected;
   const auto horizontal=[&](const Vector& x) {
     return Vector(x-constraint*(constraint.dot(x)/constraint.squaredNorm()));
@@ -52,17 +54,23 @@ void check_single_state_selected_space() {
   const double scale=std::sqrt(2.0*weight);
   xmvb::cuda::Context context(8ULL*1024*1024);
   xmvb::cuda::Matrix<double> dh(context,n,n),ds(context,n,n),dc(context,n,1);
+  xmvb::cuda::Matrix<double> dhc(context,n,1),dmc(context,n,1);
   xmvb::cuda::copy_to_device(context,dh.view(),h);
   xmvb::cuda::copy_to_device(context,ds.view(),s);
   xmvb::cuda::copy_to_device(context,dc.view(),selected);
+  xmvb::cuda::copy_to_device(context,dhc.view(),Vector(h*selected));
+  xmvb::cuda::copy_to_device(context,dmc.view(),Vector(s*selected));
   xmvb::cuda::SingleStateCiActions actions;
+  int joint_actions=0,metric_actions=0;
   actions.hamiltonian_metric=[&](xmvb::linalg::ConstMatrixView x,
       xmvb::linalg::MatrixView hx,xmvb::linalg::MatrixView sx) {
+    ++joint_actions;
     xmvb::cuda::gemm(context,hx,dh.view(),x);
     xmvb::cuda::gemm(context,sx,ds.view(),x);
   };
   actions.metric=[&](xmvb::linalg::ConstMatrixView x,
                      xmvb::linalg::MatrixView sx) {
+    ++metric_actions;
     xmvb::cuda::gemm(context,sx,ds.view(),x);
   };
   Matrix inverse_model=Matrix::Identity(n,n);
@@ -76,8 +84,18 @@ void check_single_state_selected_space() {
     xmvb::cuda::gemm(context,result,dinverse.view(),x);
   };
   xmvb::cuda::SingleStateCiTangent tangent(
-      context,n,dc.view(),energy,weight,actions);
+      context,n,dc.view(),dhc.view(),dmc.view(),energy,weight,actions);
   require(tangent.tangent_size()==n-1,"CI tangent dimension changed");
+  require(joint_actions==0 && metric_actions==0,
+          "cached CI images unexpectedly launched an origin action");
+  xmvb::cuda::Matrix<double> origin(context,n-1,1),ambient_origin(context,n,1);
+  tangent.origin_gradient(origin.view());
+  require(joint_actions==0 && metric_actions==0,
+          "cached CI origin gradient unexpectedly launched an action");
+  tangent.expand_coordinates(origin.view(),ambient_origin.view());
+  near(download(context,ambient_origin),
+       horizontal(scale*(h-energy*s)*selected),
+       "CI tangent origin gradient differs");
 
   Vector arbitrary(n);
   arbitrary<<0.2,-0.7,0.5,0.11,-0.3;
@@ -117,12 +135,6 @@ void check_single_state_selected_space() {
   near(download(context,projected_metric),horizontal(s*ambient),
        "CI tangent joint metric differs from standalone metric");
 
-  xmvb::cuda::Matrix<double> origin(context,n-1,1),ambient_origin(context,n,1);
-  tangent.origin_gradient(origin.view());
-  tangent.expand_coordinates(origin.view(),ambient_origin.view());
-  near(download(context,ambient_origin),
-       horizontal(scale*(h-energy*s)*selected),
-       "CI tangent origin gradient differs");
   xmvb::cuda::Matrix<double> response(context,n,1);
   tangent.coefficient_response_coordinates(dz.view(),response.view());
   near(download(context,response),ambient/scale,
@@ -160,7 +172,7 @@ void check_single_state_selected_space() {
     return std::abs(value);
   };
   xmvb::cuda::SingleStateCiTangent clipped(
-      context,n,dc.view(),energy,weight,actions);
+      context,n,dc.view(),dhc.view(),dmc.view(),energy,weight,actions);
   const double carrier_maximum=
       clipped.maximum_coefficient_component_coordinates(dz.view());
   require(std::abs(carrier_maximum-

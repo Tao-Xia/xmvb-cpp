@@ -151,6 +151,7 @@ void check_compact_endpoints() {
   require(incomplete,"partial endpoint was exposed to readers");
   ProductColumns other(context,patterns,2);
   other.pack(context,dense.view(),false);
+  require(retained.prepare(1,bytes),"accepted endpoint preflight rejected exact budget");
   require(retained.retain(1,std::move(other)),"accepted endpoint rejected exact budget");
   retained.finish();
   require(retained.complete() && retained.bytes()==2*bytes,
@@ -163,8 +164,8 @@ void check_compact_endpoints() {
   bounded.begin(2);
   require(bounded.retain(0,ProductColumns(context,patterns,2)),
       "bounded endpoint rejected fitting first tile");
-  require(!bounded.retain(1,ProductColumns(context,patterns,2)),
-      "bounded endpoint exceeded its allowance");
+  require(!bounded.prepare(1,bytes) && bounded.bytes()==0,
+      "over-budget endpoint was not released before the next allocation");
   bounded.finish();
   require(!bounded.complete() && bounded.bytes()==0,
       "over-budget endpoint left partial accepted data resident");

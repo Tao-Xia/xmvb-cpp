@@ -139,6 +139,10 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
     p->full=true; p->offsets.resize(count+1);
     for (int b=0;b<=count;++b) p->offsets[b]=b*n_unique_beta_;
     return detail::pack_columns(dr.transpose(),p);
+  },{},[&](int panel) {
+    const auto count=std::min(extent,n_unique_beta_-panel*extent);
+    return sizeof(double)*static_cast<std::size_t>(count)*n_unique_beta_+
+        sizeof(int)*(count+1);
   });
   const bool capture=diagnostic && diagnostic->capture_connection;
   if (capture) diagnostic->connection=StructureConnectionDirection{
@@ -267,6 +271,10 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
       if (!tangent) return detail::pack_columns(std::move(primal),pattern);
       if (joint) return detail::pack_columns({&primal,&dy,&dq},pattern);
       return detail::pack_columns({&primal,&dy},pattern);
+    },{},[&](int panel) {
+      const auto pattern=pattern_at(panel);
+      return pattern->bytes()+sizeof(double)*
+          static_cast<std::size_t>(pattern->offsets[pattern->columns()])*(cached ? (joint ? 2:1):input_width);
     });
     if (anchored && spin_exchange_parity_) {
       // One component on the accepted two-component support fits the same
@@ -419,6 +427,10 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
             projection_targets[target][term.structure]+=term.coefficient*value;
           }
         }
+    },[&](int block) {
+      const auto begin=static_cast<std::size_t>(block)*group_extent;
+      return sizeof(double)*std::min(group_extent,spin_products_.size()-begin)*projection_count+
+          2*sizeof(int);
     });
     // Consume one or two independent output panels. Concatenated RHS blocks
     // share the beta rows, support traversal and mutable alpha transform.
@@ -567,6 +579,10 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
           state.product_images->bytes+=accepted.bytes();
           state.product_images->states[state_id][panel]=std::move(accepted);
         }
+      },[&](int panel) {
+        const auto pattern=pattern_at(panel);
+        return pattern->bytes()+sizeof(double)*
+            static_cast<std::size_t>(pattern->offsets[pattern->columns()])*output_width;
       });
       struct OutputColumn { detail::ColumnTile* tile; int source,beta; };
       std::vector<OutputColumn> output_columns;

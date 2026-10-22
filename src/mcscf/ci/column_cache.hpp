@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <functional>
 #include <list>
+#include <stdexcept>
 #include <unordered_map>
 #include <utility>
 
@@ -18,8 +19,10 @@ class ColumnCache {
 public:
   using Build=std::function<Tile(int)>;
   using Consume=std::function<void(int,Tile&)>;
-  ColumnCache(std::size_t bytes,Build build,Consume consume={})
-      :budget_(std::max<std::size_t>(1,bytes)),build_(std::move(build)),consume_(std::move(consume)) {}
+  using Price=std::function<std::size_t(int)>;
+  ColumnCache(std::size_t bytes,Build build,Consume consume={},Price price={})
+      :budget_(std::max<std::size_t>(1,bytes)),build_(std::move(build)),
+       consume_(std::move(consume)),price_(std::move(price)) {}
   bool contains(int key) const {return index_.contains(key);}
   Tile& get(int key) {
     const auto found=index_.find(key);
@@ -27,15 +30,24 @@ public:
       panels_.splice(panels_.begin(),panels_,found->second);
       return found->second->tile;
     }
+    if (!price_) throw std::logic_error("cache miss requires a prebuild tile price");
+    reserve(price_(key));
     return insert(key,build_(key));
+  }
+  /** Release old payload before a miss allocates. Oversize tiles evict all. */
+  void reserve(std::size_t bytes) {
+    while (!panels_.empty() && (bytes>budget_ || resident_>budget_-bytes)) evict_one();
+  }
+  bool evict_one() {
+    if (panels_.empty()) return false;
+    auto& last=panels_.back();resident_-=last.tile.bytes();
+    if (consume_) consume_(last.key,last.tile);
+    index_.erase(last.key);panels_.pop_back();++evictions;
+    return true;
   }
   Tile& insert(int key,Tile tile) {
     const auto bytes=tile.bytes();
-    while (!panels_.empty() && (bytes>budget_ || resident_>budget_-bytes)) {
-      auto& last=panels_.back();resident_-=last.tile.bytes();
-      if (consume_) consume_(last.key,last.tile);
-      index_.erase(last.key);panels_.pop_back();++evictions;
-    }
+    reserve(bytes);
     panels_.push_front({key,std::move(tile)});resident_+=bytes;
     peak_bytes=std::max(peak_bytes,resident_);index_[key]=panels_.begin();
     return panels_.front().tile;
@@ -55,7 +67,7 @@ public:
 private:
   struct Entry {int key;Tile tile;};
   std::size_t budget_,resident_=0;
-  Build build_;Consume consume_;
+  Build build_;Consume consume_;Price price_;
   std::list<Entry> panels_;
   std::unordered_map<int,typename std::list<Entry>::iterator> index_;
 };

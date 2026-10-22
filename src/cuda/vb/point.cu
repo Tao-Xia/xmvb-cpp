@@ -97,6 +97,7 @@ VbPoint::VbPoint(Context& context,const vb::OrbitalPreparationInput& input,
       direction_sigma_(context,sigma_),
       effective_(context,input.n_basis_functions,input.n_basis_functions),
       one_(context,input.n_active_orbitals,input.n_active_orbitals),
+      one_image_(context,input.n_basis_functions,input.n_active_orbitals),
       pair_(context,input.n_active_orbitals*(input.n_active_orbitals+1)/2,
                     input.n_active_orbitals*(input.n_active_orbitals+1)/2),
       endpoint_{Matrix<double>(context,action.size(),1)},
@@ -139,7 +140,8 @@ void VbPoint::prepare(View raw) {
   geometry_.set_raw(raw);geometry_.prepare();
   Matrix<double> core_energy(c,1,1);
   integrals_->core_energy(geometry_.inactive_density(),core_,effective_.view(),core_energy.data());
-  transform_one_electron(c,effective_.view(),geometry_.orthogonal_active(),one_.view());
+  transform_one_electron(c,effective_.view(),geometry_.orthogonal_active(),
+      one_.view(),one_image_.view());
   pair_products_={};
   pair_products_=integrals_->reserve_products(one_.rows());
   integrals_->forward(geometry_.orthogonal_active(),pair_.view(),
@@ -216,7 +218,7 @@ double VbPoint::evaluate_coefficients(View coefficients) {
   integrals_->adjoint(geometry_.orthogonal_active(),pair_adjoint_.view(),
       active_gradient_.view(),pair_products());
   Matrix<double> one_gradient(c,active_gradient_.rows(),active_gradient_.cols());
-  transform_one_electron_adjoint(c,effective_.view(),geometry_.orthogonal_active(),
+  transform_one_electron_adjoint_from_image(c,one_image_.view(),
       one_adjoint_.view(),one_gradient.view());
   add(c,active_gradient_.view(),one_gradient.view());
   integrals_->active_core_density_adjoint(geometry_.orthogonal_active(),
@@ -241,7 +243,7 @@ void VbPoint::gradient(Out orbital,Out structure) const {
 }
 
 void VbPoint::hessian(View orbital,View structure,Out orbital_image,Out structure_image,
-    Out ci_orbital_image,Out ci_structure_image) const {
+    Out ci_orbital_image,Out ci_structure_image,Out ci_overlap_image) const {
   const nvtx3::scoped_range range{"point.hvp"};
   if (!ready_) throw std::logic_error("CUDA point HVP requires evaluation");
   if (static_cast<bool>(ci_orbital_image.data)!=static_cast<bool>(ci_structure_image.data))
@@ -253,6 +255,8 @@ void VbPoint::hessian(View orbital,View structure,Out orbital_image,Out structur
   const auto d=geometry_.direction(orbital);
   auto generator=product(c,d.frame_transform.view(),geometry_.frame_inverse_transform());
   const bool split=ci_orbital_image.data && ci_structure_image.data;
+  if (ci_overlap_image.data && !split)
+    throw std::invalid_argument("pure CI overlap image requires split CI images");
   const int nc=geometry_.inactive_count(),na=geometry_.active_count(),nb=geometry_.basis_size();
   Matrix<double> dheff,dheff_active(c,nb,na),inactive_projection;
   if (inactive_response_.data()) {
@@ -278,7 +282,7 @@ void VbPoint::hessian(View orbital,View structure,Out orbital_image,Out structur
         "zero empty core response");
   }
   Matrix<double> dh(c,one_.rows(),one_.cols()),dg(c,pair_.rows(),pair_.cols());
-  transform_one_electron_directional(c,effective_.view(),geometry_.orthogonal_active(),
+  transform_one_electron_directional_from_image(c,one_image_.view(),
       d.orthogonal_active.view(),dh.view());
   gemm(c,dh.view(),geometry_.orthogonal_active(),dheff_active.view(),
       1.0,1.0,Operation::transpose);
@@ -290,6 +294,7 @@ void VbPoint::hessian(View orbital,View structure,Out orbital_image,Out structur
   ProductJet ci_jet;
   auto jet=products_->jet(incidence,sigma_,endpoint_,geometry_.frame_transform(),structure,
       d.frame_transform.view(),&direction_sigma_,product_workspace_bytes(),split ? &ci_jet:nullptr,generator.view());
+  if (ci_overlap_image.data) copy(c,ci_overlap_image,ci_jet.overlap.view());
   const auto normalize=[&](ProductJet& value,Out selected) {
     const double dn=dot(c,structure,selected_m_.view())+
         dot(c,endpoint_.coefficients.view(),value.overlap.view());
@@ -325,9 +330,9 @@ void VbPoint::hessian(View orbital,View structure,Out orbital_image,Out structur
   integrals_->directional_adjoint(geometry_.orthogonal_active(),d.orthogonal_active.view(),
       pair_adjoint_.view(),dga.view(),dfgrad.view(),pair_products(),exchange_products(),
       ci_dga.view(),ci_dfgrad.view());
-  transform_one_electron_directional_adjoint(c,effective_.view(),geometry_.orthogonal_active(),
-      d.orthogonal_active.view(),one_adjoint_.view(),dha.view(),one_extra.view(),
-      ci_dha.view(),ci_one.view());
+  transform_one_electron_directional_adjoint_from_image(c,effective_.view(),
+      one_image_.view(),d.orthogonal_active.view(),one_adjoint_.view(),
+      dha.view(),one_extra.view(),ci_dha.view(),ci_one.view());
   add(c,dfgrad.view(),one_extra.view());
   if (split) add(c,ci_dfgrad.view(),ci_one.view());
   gemm(c,one_extra.view(),dheff_active.view(),one_adjoint_.view());

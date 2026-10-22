@@ -33,8 +33,11 @@ struct SingleStateCiActions {
  */
 class SingleStateCiTangent {
 public:
+  /** The accepted images are borrowed and must outlive the tangent. */
   SingleStateCiTangent(Context& context, int structures,
                        linalg::ConstMatrixView selected_state,
+                       linalg::ConstMatrixView selected_hamiltonian_image,
+                       linalg::ConstMatrixView selected_metric_image,
                        double selected_energy, double normalized_weight,
                        SingleStateCiActions actions);
   SingleStateCiTangent(const SingleStateCiTangent&) = delete;
@@ -63,7 +66,7 @@ public:
   void apply_images_coordinates(linalg::ConstMatrixView coordinates,
                                 linalg::MatrixView hessian_image,
                                 linalg::MatrixView metric_image) const;
-  /** sqrt(2w) Q_perp^T(H-E S)c at the frozen origin. */
+  /** sqrt(2w) Q_perp^T(H-E S)c from accepted Hc/Mc, including finite residual. */
   void origin_gradient(linalg::MatrixView gradient) const;
   /** CPU single-state constrained inverse: Carrier uses P_L R P_R;
    * Spin uses the positive-model one-state Schur complement.
@@ -82,6 +85,7 @@ private:
   int structures_;
   double selected_energy_, coordinate_scale_, reflector_factor_, reflected_first_;
   SingleStateCiActions actions_;
+  linalg::ConstMatrixView selected_hamiltonian_image_,selected_metric_image_;
   Matrix<double> selected_, reflector_;
   mutable Matrix<double> ambient_, hessian_, metric_, work_;
 };

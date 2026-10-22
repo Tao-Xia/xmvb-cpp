@@ -321,8 +321,12 @@ void check_case(bool inactive,int structures) {
     DeviceMatrix out_raw(context,raw.rows(),raw.cols());
     DeviceMatrix out_ci(context,structures,1);
     DeviceMatrix ci_raw(context,raw.rows(),raw.cols()),ci_image(context,structures,1);
+    DeviceMatrix pure_ci_overlap(context,structures,1);
     point.hessian(dorbital.view(),dstructure.view(),
-                  out_raw.view(),out_ci.view(),ci_raw.view(),ci_image.view());
+                  out_raw.view(),out_ci.view(),ci_raw.view(),ci_image.view(),
+                  pure_ci_overlap.view());
+    near(download(context,pure_ci_overlap.view()),action.apply(structure).overlap,2e-10,
+        "joint pure CI overlap image");
     const auto direct_raw=download(context,out_raw.view());
     const auto direct_ci=download(context,out_ci.view());
     const auto split_raw=download(context,ci_raw.view()),split_ci=download(context,ci_image.view());
@@ -333,6 +337,10 @@ void check_case(bool inactive,int structures) {
     point.hessian(zero_raw.view(),dstructure.view(),out_raw.view(),out_ci.view());
     near(split_raw,download(context,out_raw.view()),2e-10,"split CI orbital image");
     near(split_ci,download(context,out_ci.view()),2e-10,"split CI structure image");
+    point.hessian(zero_raw.view(),dstructure.view(),out_raw.view(),out_ci.view(),
+        ci_raw.view(),ci_image.view(),pure_ci_overlap.view());
+    near(download(context,pure_ci_overlap.view()),action.apply(structure).overlap,2e-10,
+        "zero-orbital pure CI overlap image");
     point.hessian(dorbital.view(),zero_ci.view(),out_raw.view(),out_ci.view());
     near(direct_raw-split_raw,download(context,out_raw.view()),2e-10,"split orbital column");
     near(direct_ci-split_ci,download(context,out_ci.view()),2e-10,"split orbital structure forcing");

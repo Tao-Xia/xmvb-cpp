@@ -383,13 +383,12 @@ void ProductImages::begin(int panels) {
   bytes_=0;retained_=0;complete_=false;enabled_=budget_>0;
 }
 
-bool ProductImages::retain(int panel,ProductColumns columns) {
+bool ProductImages::prepare(int panel,std::size_t bytes) {
   if (panel<0 || panel>=static_cast<int>(panels_.size()))
     throw std::out_of_range("accepted product panel index");
   if (complete_ || present_[panel])
     throw std::logic_error("accepted product panel was already written");
   if (!enabled_) return false;
-  const auto bytes=columns.bytes();
   if (bytes>budget_ || bytes_>budget_-bytes) {
     // Exactly as CPU ProductImages: do not leave a partially valid endpoint
     // that would mix cached and regenerated accepted residuals.
@@ -398,6 +397,12 @@ bool ProductImages::retain(int panel,ProductColumns columns) {
     bytes_=0;retained_=0;enabled_=false;
     return false;
   }
+  return true;
+}
+
+bool ProductImages::retain(int panel,ProductColumns columns) {
+  const auto bytes=columns.bytes();
+  if (!prepare(panel,bytes)) return false;
   panels_[panel]=std::move(columns);present_[panel]=true;
   bytes_+=bytes;++retained_;
   return true;

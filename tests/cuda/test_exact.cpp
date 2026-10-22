@@ -591,36 +591,58 @@ void check_one_electron_and_core(bool compact,bool sparse=false,bool chunked=fal
   DeviceMatrix dh(context, fixture.n_bf, fixture.n_bf);
   DeviceMatrix da(context, active, active), dda(context, active, active);
   DeviceMatrix dactive(context, active, active), dgradient(context, fixture.n_bf, active);
+  DeviceMatrix dimage(context, fixture.n_bf, active);
+  DeviceMatrix dcomponent_gradient(context, fixture.n_bf, active);
   upload(context, dc, c);
   upload(context, dd, direction);
   upload(context, dh, core);
   upload(context, da, upstream);
   upload(context, dda, upstream_direction);
-  xmvb::cuda::transform_one_electron(context, dh.view(), dc.view(), dactive.view());
+  xmvb::cuda::transform_one_electron(
+      context, dh.view(), dc.view(), dactive.view(), dimage.view());
   near(download(context, dactive), c.transpose() * core * c,
        "CUDA one-electron transform differs from oracle");
-  xmvb::cuda::transform_one_electron_directional(
-      context, dh.view(), dc.view(), dd.view(), dactive.view());
+  near(download(context, dimage), core * c,
+       "CUDA one-electron AO image differs from oracle");
+  xmvb::cuda::transform_one_electron_directional_from_image(
+      context, dimage.view(), dd.view(), dactive.view());
   const Matrix expected_direction =
       direction.transpose() * core * c + c.transpose() * core * direction;
-  near(download(context, dactive), expected_direction,
+  const Matrix cached_direction = download(context, dactive);
+  near(cached_direction, expected_direction,
        "CUDA one-electron direction differs from oracle");
-  xmvb::cuda::transform_one_electron_adjoint(
-      context, dh.view(), dc.view(), da.view(), dgradient.view());
+  const Matrix core_direction = symmetric_values(fixture.n_bf, 2.31);
+  constexpr double step = 1e-5;
+  const Matrix plus_coefficients = c + step * direction;
+  const Matrix minus_coefficients = c - step * direction;
+  const Matrix plus_core = core + step * core_direction;
+  const Matrix minus_core = core - step * core_direction;
+  const Matrix finite_difference =
+      (plus_coefficients.transpose() * plus_core * plus_coefficients -
+       minus_coefficients.transpose() * minus_core * minus_coefficients) /
+      (2.0 * step);
+  const Matrix full_direction = cached_direction + c.transpose() * core_direction * c;
+  near(finite_difference, full_direction,
+       "CUDA one-electron direction lost changing AO core contribution", 2e-8);
+  xmvb::cuda::transform_one_electron_adjoint_from_image(
+      context, dimage.view(), da.view(), dgradient.view());
   const Matrix expected_gradient = core * c * (upstream + upstream.transpose());
   near(download(context, dgradient), expected_gradient,
        "CUDA one-electron adjoint differs from oracle");
   near_scalar((expected_gradient.array() * direction.array()).sum(),
               (upstream.array() * expected_direction.array()).sum(),
               "CUDA one-electron adjoint fails dot test");
-  xmvb::cuda::transform_one_electron_directional_adjoint(
-      context, dh.view(), dc.view(), dd.view(), da.view(), dda.view(),
-      dgradient.view());
+  xmvb::cuda::transform_one_electron_directional_adjoint_from_image(
+      context, dh.view(), dimage.view(), dd.view(), da.view(), dda.view(),
+      dgradient.view(), dda.view(), dcomponent_gradient.view());
   const Matrix expected_hvp = core * direction *
           (upstream + upstream.transpose()) +
       core * c * (upstream_direction + upstream_direction.transpose());
   near(download(context, dgradient), expected_hvp,
        "CUDA one-electron changing adjoint differs from oracle");
+  near(download(context, dcomponent_gradient),
+       core * c * (upstream_direction + upstream_direction.transpose()),
+       "CUDA cached one-electron component adjoint differs from oracle");
 
   const Matrix density = symmetric_values(fixture.n_bf, 1.37);
   const Matrix density_direction = symmetric_values(fixture.n_bf, 1.93);

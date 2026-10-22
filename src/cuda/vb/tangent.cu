@@ -29,6 +29,8 @@ void device_copy(Context& context, double* destination, const double* source,
 
 SingleStateCiTangent::SingleStateCiTangent(
     Context& context, int structures, linalg::ConstMatrixView selected_state,
+    linalg::ConstMatrixView selected_hamiltonian_image,
+    linalg::ConstMatrixView selected_metric_image,
     double selected_energy, double normalized_weight,
     SingleStateCiActions actions)
     : context_(&context), structures_(structures),
@@ -36,6 +38,8 @@ SingleStateCiTangent::SingleStateCiTangent(
       coordinate_scale_(std::sqrt(2.0*normalized_weight)),
       reflector_factor_(0.0), reflected_first_(0.0),
       actions_(std::move(actions)),
+      selected_hamiltonian_image_(selected_hamiltonian_image),
+      selected_metric_image_(selected_metric_image),
       selected_(context,structures,1), reflector_(context,structures,1),
       ambient_(context,structures,1), hessian_(context,structures,1),
       metric_(context,structures,1), work_(context,structures,1) {
@@ -45,10 +49,12 @@ SingleStateCiTangent::SingleStateCiTangent(
       !actions_.hamiltonian_metric || !actions_.metric)
     throw std::invalid_argument("invalid single-state CI tangent inputs");
   check_ambient(selected_state);
+  check_ambient(selected_hamiltonian_image_);
+  check_ambient(selected_metric_image_);
   check_cublas(cublasSetPointerMode(context.blas(), CUBLAS_POINTER_MODE_HOST),
                "CI tangent cublasSetPointerMode");
   device_copy(context,selected_.data(),selected_state.data,structures_);
-  actions_.metric(selected_.view(),metric_.view());
+  device_copy(context,metric_.data(),selected_metric_image_.data,structures_);
   double selected_norm=0.0;
   check_cublas(cublasDdot(context.blas(),structures_,selected_.data(),1,
                          metric_.data(),1,&selected_norm),
@@ -247,10 +253,10 @@ void SingleStateCiTangent::apply_images_coordinates(
 void SingleStateCiTangent::origin_gradient(
     linalg::MatrixView gradient) const {
   check_coordinates(gradient);
-  actions_.hamiltonian_metric(selected_.view(),hessian_.view(),metric_.view());
+  device_copy(*context_,hessian_.data(),selected_hamiltonian_image_.data,structures_);
   const double minus_energy=-selected_energy_;
   check_cublas(cublasDaxpy(context_->blas(),structures_,&minus_energy,
-                          metric_.data(),1,hessian_.data(),1),
+                          selected_metric_image_.data,1,hessian_.data(),1),
                "CI tangent origin residual");
   const double scale=coordinate_scale_;
   check_cublas(cublasDscal(context_->blas(),structures_,&scale,

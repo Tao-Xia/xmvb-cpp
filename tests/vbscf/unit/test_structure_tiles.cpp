@@ -1363,6 +1363,31 @@ void check_mixed_exchange_space() {
   check_images(action.apply_streamed(vectors,16*1024),reference);
 }
 
+void check_column_cache_allocation_order() {
+  struct Tile {
+    std::size_t size=0;
+    std::size_t* live=nullptr;
+    Tile(std::size_t bytes,std::size_t& counter):size(bytes),live(&counter) {counter+=bytes;}
+    Tile(Tile&& other) noexcept:size(std::exchange(other.size,0)),live(other.live) {}
+    Tile(const Tile&)=delete;
+    Tile& operator=(const Tile&)=delete;
+    ~Tile() {if (live) *live-=size;}
+    std::size_t bytes() const {return size;}
+  };
+  std::size_t live=0;
+  std::vector<int> events;
+  xmvb::mcscf::ColumnCache<Tile> cache(64,[&](int key) {
+    require(live<=32,"new cache tile was built before old storage was released");
+    events.push_back(key);
+    return Tile(32,live);
+  },[&](int key,Tile&) {events.push_back(-key);},[](int) {return std::size_t{32};});
+  cache.get(1);cache.get(2);cache.get(3);
+  require(events==std::vector<int>({1,2,-1,3}) && live==64 && cache.evictions==1,
+      "cache miss did not consume and evict before building");
+  cache.finish();
+  require(live==0,"cache finish retained a tile payload");
+}
+
 void check_input_columns() {
   constexpr int n_alpha=7,width=2;
   const std::vector<std::uint8_t> support{1,1,1,1,1,1,0,1,1,1};
@@ -1384,7 +1409,7 @@ void check_input_columns() {
       result.push_back({std::move(p),std::move(values)});
     }
     return result;
-  });
+  },[&](int) {return 2*width*sizeof(double)+4*sizeof(int);});
   const std::vector<int> betas{0,3,6,9},rows{0,1,3,5,6};
   Eigen::MatrixXd actual(rows.size(),betas.size()*width);
   const auto read=[&] { input.read(betas,rows,actual); };
@@ -3631,6 +3656,11 @@ int main(int argc, char** argv) {
     if (argc == 2 && std::string(argv[1]) == "--channel-layout") {
       check_full_channel_image_layout();
       std::cout << "channel layout: PASS\n";
+    } else if (argc == 2 && std::string(argv[1]) == "--cache-order") {
+      check_column_cache_allocation_order();
+      check_input_columns();
+      check_product_response(0,true);
+      std::cout << "cache order: PASS\n";
     } else if (argc == 2 && std::string(argv[1]) == "--symbolic-replay") {
       check_symbolic_replay();
       std::cout << "symbolic replay: PASS\n";
@@ -3737,6 +3767,7 @@ int main(int argc, char** argv) {
       check_factor_state_average();
       check_complete_unequal_spin_case();
       check_mixed_exchange_space();
+      check_column_cache_allocation_order();
       check_input_columns();
       check_exterior_team();
       check_sigma_columns(make_fixture(5, 2, 1), 3);
