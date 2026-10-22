@@ -227,9 +227,9 @@ void check_directional_derivative(
  * out-of-support halo targets, exchange weights and two fused response lanes.
  * Full carriers are test oracles only; tile callbacks move device values.
  */
-void check_product_tiles(int parity,bool covalent,std::size_t budget) {
-  constexpr int n=4,width=2;
-  const xmvb::mcscf::SpinStrings as(n,2),bs(n,parity || covalent ? 2:1);
+void check_product_tiles(int parity,bool covalent,std::size_t budget,int n=4) {
+  constexpr int width=2;
+  const xmvb::mcscf::SpinStrings as(n,n/2),bs(n,parity || covalent ? n/2:n/2-1);
   const auto base=active_integrals(n,false),delta=active_integrals(n,true);
   const xmvb::mcscf::DirectCiSigmaAction cpu(as.occupations(),bs.occupations(),base);
   const xmvb::mcscf::DirectCiSigmaAction change(cpu,delta);
@@ -1205,6 +1205,10 @@ int main() {
     for (int parity:{0,1,-1}) for (std::size_t budget:{std::size_t{4096},std::size_t{1024*1024}})
       check_product_tiles(parity,parity!=0,budget);
     check_product_tiles(0,true,1024*1024);
+    // One wide tile with several covalent channel groups fits all Grams in
+    // its dead halo. No standalone Gram is ever allocated; final integral
+    // pullback must also borrow consumed numerical scratch, not a null owner.
+    check_product_tiles(1,true,64ULL*1024*1024,8);
     for (bool rotated : {false, true})
       for (int rhs_count : {1, 3}) {
         check_sigma(rhs_count,rotated);

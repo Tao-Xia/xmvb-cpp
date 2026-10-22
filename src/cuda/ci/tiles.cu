@@ -524,7 +524,7 @@ void DirectCiSigma::apply_tiled_responses(int width,std::span<const CiTileReques
       check_cuda(cudaMemsetAsync(adjoints.back().data(),0,pairs*pairs*sizeof(double),ctx.stream()),
           "clear tiled channel cotangent");
   }
-  Matrix<double> gram(ctx,collect ? n_channels_:0,collect ? n_channels_:0);
+  Matrix<double> gram;
   std::vector<Matrix<double>> kernels;
   kernels.reserve(1+directions);
   // Reuse the same numerical device kernels. Host selectors contain no integral values.
@@ -576,23 +576,13 @@ void DirectCiSigma::apply_tiled_responses(int width,std::span<const CiTileReques
     double* state_channels=separate ? response+packed_size:response;
     double* transformed=response+(separate ? 2:1)*packed_size;
     std::vector<GroupTile> live_groups;
-    std::vector<int> gram_ends{0};
-    std::size_t gram_used=0;
-    const auto gram_capacity=static_cast<std::size_t>(n_channels_)*n_channels_;
     for (int g=0;g<selectors.groups();++g) {
       const int size=layout.size(g),k=selectors.channels(g);
       if (!size) continue;
-      const auto area=static_cast<std::size_t>(k)*k;
-      if (gram_used+area>gram_capacity) {
-        gram_ends.push_back(static_cast<int>(live_groups.size()));
-        gram_used=0;
-      }
-      live_groups.push_back({layout.offset(g),gram_used,g,layout.begin(g),size,
+      live_groups.push_back({layout.offset(g),0,g,layout.begin(g),size,
           g ? static_cast<std::size_t>(pairs)*
               (selector_offsets[g]-static_cast<int>(pairs)):0,k});
-      gram_used+=area;
     }
-    gram_ends.push_back(static_cast<int>(live_groups.size()));
     static_assert(sizeof(void*)==sizeof(double));
     const bool grouped=allow_grouping && live_groups.size()>1 &&
         input_size>=3*live_groups.size();
@@ -604,6 +594,40 @@ void DirectCiSigma::apply_tiled_responses(int width,std::span<const CiTileReques
       right_ptrs=left_ptrs+live_groups.size();
       result_ptrs=reinterpret_cast<double**>(input.data+2*live_groups.size());
     }
+    // After the forward scatters, response/state channels own every live
+    // operand. The halo is dead until link backprojection, so its tail can
+    // hold independent group Grams after the three GEMM pointer arrays.
+    // Preserve increasing group order and use only already allocated bytes.
+    std::size_t gram_capacity=static_cast<std::size_t>(pairs)*pairs;
+    double* gram_values=nullptr;
+    if (collect) {
+      std::size_t largest=0;
+      for (const auto& group:live_groups)
+        largest=std::max(largest,static_cast<std::size_t>(group.channels)*group.channels);
+      const auto pointers=3*live_groups.size();
+      if (grouped && input_size-pointers>=largest) {
+        gram_capacity=input_size-pointers;
+        gram_values=input.data+pointers;
+      } else {
+        if (!gram.data()) gram=Matrix<double>(ctx,n_channels_,n_channels_);
+        gram_values=gram.data();
+      }
+    }
+    std::vector<int> gram_ends{0};
+    std::size_t gram_used=0;
+    for (int i=0;i<static_cast<int>(live_groups.size());++i) {
+      auto& group=live_groups[i];
+      const auto area=static_cast<std::size_t>(group.channels)*group.channels;
+      // Group zero is the unrestricted, full-channel product. Preserve its
+      // ordinary cuBLAS GEMM (including split-K selection); batch only the
+      // independent restricted channel envelopes in the borrowed tail.
+      const bool after_full=i>0 && live_groups[i-1].group==0;
+      if (gram_used && (after_full || gram_used+area>gram_capacity)) {
+        gram_ends.push_back(i);gram_used=0;
+      }
+      group.scratch=gram_used;gram_used+=area;
+    }
+    gram_ends.push_back(static_cast<int>(live_groups.size()));
     std::vector<int> metadata;
     const auto append=[&](std::span<const int> values) {
       const auto offset=metadata.size();metadata.insert(metadata.end(),values.begin(),values.end());return offset;
@@ -715,9 +739,9 @@ void DirectCiSigma::apply_tiled_responses(int width,std::span<const CiTileReques
           const int begin=gram_ends[part],end=gram_ends[part+1];
           if (grouped && end-begin>1) {
             const nvtx3::scoped_range range{"ci.tile_gram"};
-            grouped_call(true,begin,end,response,gram_right,nullptr,gram.data(),0.0);
-            add_grouped_gram<<<grid(gram_capacity),256,0,ctx.stream()>>>(
-                gram.data(),adjoints[r].view(),symbols.batches(),
+            grouped_call(true,begin,end,response,gram_right,nullptr,gram_values,0.0);
+            add_grouped_gram<<<grid(pairs*pairs),256,0,ctx.stream()>>>(
+                gram_values,adjoints[r].view(),symbols.batches(),
                 begin,end,device_local.data(),n_channels_);
           } else for (int index=begin;index<end;++index) {
             const int g=live_groups[index].group;
@@ -725,7 +749,7 @@ void DirectCiSigma::apply_tiled_responses(int width,std::span<const CiTileReques
             const nvtx3::scoped_range range{"ci.tile_gram"};
             const linalg::ConstMatrixView left{response+layout.offset(g),k,size,k},
                 right{gram_right+layout.offset(g),k,size,k};
-            const linalg::MatrixView tile{gram.data(),k,k,n_channels_};
+            const linalg::MatrixView tile{gram_values,k,k,k};
             gemm(ctx,tile,left,right,exchange_parity_ ? 2.0:1.0,0.0,
                 Operation::none,Operation::transpose);
             add_gram<<<grid(static_cast<std::size_t>(k)*k),256,0,ctx.stream()>>>(
@@ -793,8 +817,12 @@ void DirectCiSigma::apply_tiled_responses(int width,std::span<const CiTileReques
     }
     first=false;
   }
+  // The complete sweep has consumed every numerical slab. Integral pullback
+  // needs only K scratch values, not the former standalone K-by-K Gram.
+  if (collect && numerical.size()<pairs && !gram.data()) gram=Matrix<double>(ctx,n_channels_,1);
+  double* absorbed=numerical.size()>=pairs ? numerical.data():gram.data();
   for (std::size_t r=0;r<requests.size();++r) if (requests[r].one_adjoint.data)
-    pullback_channel_kernel(adjoints[r].view(),requests[r].one_adjoint,requests[r].pair_adjoint,gram.data());
+    pullback_channel_kernel(adjoints[r].view(),requests[r].one_adjoint,requests[r].pair_adjoint,absorbed);
 }
 
 } // namespace xmvb::cuda
