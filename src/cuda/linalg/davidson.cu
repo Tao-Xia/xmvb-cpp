@@ -16,6 +16,18 @@
 namespace xmvb::cuda {
 namespace {
 
+__global__ void sign_seeds(linalg::MatrixView vectors,int first) {
+  if (blockIdx.x || threadIdx.x) return;
+  std::uint64_t state=0x9e3779b97f4a7c15ULL;
+  for (int column=first;column<vectors.cols;++column)
+    for (int row=0;row<vectors.rows;++row) {
+      state^=state<<13;
+      state^=state>>7;
+      state^=state<<17;
+      vectors.data[row+column*vectors.ld]=(state&1ULL) ? 1.0:-1.0;
+    }
+}
+
 __global__ void jacobi_correction_kernel(
     double* correction, const double* residual, const double* diagonal_h,
     const double* diagonal_s, std::int64_t dimension, double lambda) {
@@ -271,6 +283,16 @@ struct DeviceBackend {
 };
 
 }  // namespace
+
+void fill_davidson_sign_seeds(Context& context,linalg::MatrixView vectors,
+    int first_column) {
+  if (!vectors.data || vectors.rows<=0 || vectors.ld<vectors.rows ||
+      first_column<0 || first_column>vectors.cols)
+    throw std::invalid_argument("invalid Davidson sign seed dimensions");
+  if (first_column==vectors.cols) return;
+  sign_seeds<<<1,1,0,context.stream()>>>(vectors,first_column);
+  check_cuda(cudaGetLastError(),"Davidson fixed sign seeds");
+}
 
 linalg::DavidsonResult solve_davidson(
     Context& context, const DeviceEigenAction& action,

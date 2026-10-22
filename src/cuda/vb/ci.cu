@@ -277,11 +277,12 @@ DeviceDavidsonResult StructureCi::solve_device(const linalg::DavidsonOptions& op
   Buffer<int> selected(*context_,count);
   check_cuda(cudaMemsetAsync(seed.data(),0,static_cast<std::size_t>(seed.rows())*
       seed.cols()*sizeof(double),context_->stream()),"CUDA structure CI clear seed");
-  for (int column=0;column<count;++column) {
+  for (int column=0;column<count/2;++column) {
     select_jacobi_seed<<<1,256,0,context_->stream()>>>(seed.view(),
         point_->diagonal_h.data(),point_->diagonal_m.data(),selected.data(),action_->size(),column);
     check_cuda(cudaGetLastError(),"CUDA structure CI select Jacobi seed");
   }
+  fill_davidson_sign_seeds(*context_,seed.view(),count/2);
   return solve_device(seed.view(),options);
 }
 

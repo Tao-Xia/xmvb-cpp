@@ -43,6 +43,17 @@ void check_case(bool identity_overlap) {
   options.identity_overlap = identity_overlap;
 
   xmvb::cuda::Context context(64ULL * 1024ULL * 1024ULL);
+  for (int count:{1,2,4,5}) {
+    const Eigen::MatrixXd expected=xmvb::linalg::make_davidson_initial_vectors(
+        h_diagonal,s_diagonal,count);
+    Eigen::MatrixXd prefix=expected;
+    prefix.rightCols(count-count/2).setZero();
+    xmvb::cuda::Matrix<double> seeds(context,n,count);
+    xmvb::cuda::copy_to_device(context,seeds.view(),prefix);
+    xmvb::cuda::fill_davidson_sign_seeds(context,seeds.view(),count/2);
+    require((download(context,seeds.view())-expected).norm()==0.0,
+        "device Davidson sign sequence differs from CPU initial subspace");
+  }
   xmvb::cuda::Matrix<double> device_h(context, n, n);
   xmvb::cuda::Matrix<double> device_s(context, n, n);
   xmvb::cuda::copy_to_device(context, device_h.view(), h);

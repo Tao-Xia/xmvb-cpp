@@ -12,6 +12,12 @@
 
 namespace xmvb::cuda {
 
+/** Fill the trailing initial columns with the CPU Davidson's fixed sign
+ * sequence. Small serial setup, no host vector or random-state workspace.
+ */
+void fill_davidson_sign_seeds(Context& context,linalg::MatrixView vectors,
+                              int first_column);
+
 /**
  * Apply H and S to a block already on the device. The output views have the
  * same shape as the input. For identity_overlap, overlap_images is empty and
