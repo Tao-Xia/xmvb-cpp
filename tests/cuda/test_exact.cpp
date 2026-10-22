@@ -462,6 +462,38 @@ void check_core_symmetry_orientations() {
   }
 }
 
+void check_core_row_budget() {
+  constexpr int n=25,ncore=3;
+  const Fixture fixture(true,n);
+  const Matrix mo=values(n,n,0.33);
+  Matrix expected_j(n,ncore),expected_r(n,ncore);
+  for (int core=0;core<ncore;++core) {
+    const Matrix density=mo.col(core)*mo.col(core).transpose();
+    expected_j.col(core)=(mo.transpose()*reference_jk(fixture,density,1.0,0.0)*mo).diagonal();
+    expected_r.col(core)=(mo.transpose()*reference_jk(fixture,density)*mo).diagonal();
+  }
+  for (int rows:{1,2}) for (int channels:{2,3}) {
+    xmvb::cuda::Context context(16ULL*1024*1024);
+    const xmvb::cuda::ExactAoPairOperator gpu(context,fixture.graph(true),n);
+    DeviceMatrix c(context,n,n),j(context,n,ncore),r(context,n,ncore);
+    upload(context,c,mo);
+    // Hold the rest of the budget: only this source-channel panel and
+    // one/two exchange rows fit. Odd pair count tests a partial final tile;
+    // two source channels force a padded final one-channel core batch.
+    const std::size_t allowance=(2*fixture.ao_pairs*channels+
+        rows*n*(n+channels))*sizeof(double);
+    const auto available=context.device_byte_budget()-context.counters().current_device_bytes;
+    require(available>allowance,"CUDA core row test has no padding allowance");
+    xmvb::cuda::Buffer<unsigned char> held(context,available-allowance);
+    require(gpu.core_diagonal(c.view(),ncore,j.view(),r.view()),
+        "CUDA core row/channel partition was not prepared");
+    near(download(context,j),expected_j,"CUDA budgeted core row Coulomb differs");
+    near(download(context,r),expected_r,"CUDA budgeted core row exchange differs");
+    require(context.counters().peak_device_bytes<=context.device_byte_budget(),
+        "CUDA core row/channel partition exceeded its budget");
+  }
+}
+
 void check_unique_half_tiles() {
   constexpr int n=12,active=3;
   const Fixture fixture(true,n);
@@ -1059,6 +1091,7 @@ void check_unique_csr_library() {
 
 int main() {
   try {
+    check_core_row_budget();
     check_core_symmetry_orientations();
     check_unique_half_tiles();
     check_unique_csr_library<int>();
