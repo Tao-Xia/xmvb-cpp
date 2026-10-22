@@ -402,7 +402,27 @@ bool run_invalid_residual_preconditioner_cases() {
     result[0] = std::numeric_limits<double>::quiet_NaN();
     return result;
   });
-  const bool passed = wrong_size && nonfinite;
+  // A zero correction cannot extend the basis. Preserve its residual and
+  // rank scalars in the exception rather than reporting only "dependent".
+  options.residual_preconditioner=[](const Eigen::VectorXd&,double) {
+    return Eigen::VectorXd(Eigen::VectorXd::Zero(dimension));
+  };
+  bool diagnosed=false;
+  try {
+    solver.solve_davidson(action,problem.hamiltonian.diagonal(),
+        problem.overlap.diagonal(),initial,options);
+  } catch (const std::runtime_error& error) {
+    const std::string message=error.what();
+    const std::string metric_key="projected metric norm squared=";
+    const auto metric_begin=message.find(metric_key);
+    diagnosed=message.find("linearly dependent before convergence")!=std::string::npos &&
+        message.find("max stationarity residual=")!=std::string::npos &&
+        metric_begin!=std::string::npos &&
+        std::stod(message.substr(metric_begin+metric_key.size()))==0.0 &&
+        message.find("dependence threshold=")!=std::string::npos;
+    if (!diagnosed) std::cerr<<"dependent correction diagnostic: "<<message<<'\n';
+  }
+  const bool passed = wrong_size && nonfinite && diagnosed;
   std::cout << "invalid callback inverse"
             << (passed ? " PASS\n" : " FAIL\n");
   return passed;

@@ -77,12 +77,17 @@ inline void validate_davidson_diagonals(
   }
 }
 
+/** Existing orthogonalization scalars, retained only for failure reporting. */
+struct DavidsonRankInfo {
+  double initial_scale=0.0,metric_norm_squared=0.0,final_scale=0.0,threshold=0.0;
+};
+
 template <class Backend>
 int append_s_orthonormal_block(
     Backend& backend, ConstMatrixView candidates,
     ConstMatrixView hamiltonian_candidates, ConstMatrixView overlap_candidates,
     MatrixView basis, MatrixView hamiltonian_basis, MatrixView overlap_basis,
-    int active_dimension, bool identity_overlap) {
+    int active_dimension, bool identity_overlap, DavidsonRankInfo* rank_info=nullptr) {
   const double dependence_floor =
       64.0 * std::numeric_limits<double>::epsilon();
   auto vector_storage = backend.make(candidates.rows, 1);
@@ -122,11 +127,11 @@ int append_s_orthonormal_block(
     }
     const double metric_norm_squared = backend.dot(vector, overlap_image);
     const double scale = backend.norm(vector) * backend.norm(overlap_image);
+    const double threshold=dependence_floor*
+        std::max(initial_metric_scale,std::numeric_limits<double>::min());
+    if (rank_info) *rank_info={initial_metric_scale,metric_norm_squared,scale,threshold};
     if (!std::isfinite(metric_norm_squared) ||
-        metric_norm_squared <=
-            dependence_floor *
-                std::max(initial_metric_scale,
-                         std::numeric_limits<double>::min()) ||
+        metric_norm_squared <= threshold ||
         metric_norm_squared <= 0.0 || !std::isfinite(scale)) {
       continue;
     }
@@ -510,18 +515,33 @@ Result solve_davidson(
     }
 
     const int previous_dimension = active_dimension;
+    DavidsonRankInfo rank_info;
     active_dimension = append_s_orthonormal_block(
         backend, backend.cview(corrections).columns(0, n_corrections),
         backend.cview(correction_images),
         backend.cview(overlap_correction_images), backend.view(basis),
         backend.view(hamiltonian_basis), backend.view(overlap_basis),
-        active_dimension, options.identity_overlap);
+        active_dimension, options.identity_overlap,&rank_info);
     update_projected_hamiltonian(
         backend, backend.cview(basis), backend.cview(hamiltonian_basis),
         previous_dimension, active_dimension, projected_hamiltonian);
     if (active_dimension == previous_dimension) {
-      throw std::runtime_error(
-          "Davidson correction space became linearly dependent before convergence");
+      std::ostringstream message;
+      message.precision(17);
+      message<<"Davidson correction space became linearly dependent before convergence"
+          <<"; iteration="<<iteration<<"; subspace="<<active_dimension
+          <<"; corrections="<<n_corrections
+          <<"; max relative residual="
+          <<*std::max_element(result.relative_residual_norms.begin(),result.relative_residual_norms.end())
+          <<" (requested "<<options.residual_tolerance<<')'
+          <<"; max stationarity residual="
+          <<*std::max_element(result.stationarity_residual_norms.begin(),result.stationarity_residual_norms.end())
+          <<" (requested "<<options.stationarity_tolerance<<')'
+          <<"; last correction initial scale="<<rank_info.initial_scale
+          <<"; projected metric norm squared="<<rank_info.metric_norm_squared
+          <<"; projected scale="<<rank_info.final_scale
+          <<"; dependence threshold="<<rank_info.threshold;
+      throw std::runtime_error(message.str());
     }
   }
   std::ostringstream message;
