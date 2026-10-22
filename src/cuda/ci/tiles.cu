@@ -1,6 +1,7 @@
 #include "cuda/ci/sigma.hpp"
 
 #include <algorithm>
+#include <array>
 #include <limits>
 #include <stdexcept>
 #include <vector>
@@ -287,6 +288,28 @@ struct CarrierIndices {
  * Multi-tile sweeps replace this slot rather than accumulating all halos.
  */
 struct DirectCiSigma::TileWorkspace {
+  /** Only scalar boundaries, never target rows, halos or channel layouts.
+   * Keep one stream per algebraic source layout (primal, transition,
+   * directional), each capped by the single-spin dimensions. */
+  struct Boundaries {
+    std::shared_ptr<const char> support;
+    mcscf::detail::SigmaTileBudget budget{};
+    bool release=false;
+    std::vector<mcscf::detail::SigmaTileBoundary> entries;
+    std::size_t workspace_peak=0,first_numeric=0;
+
+    void clear() { entries.clear();workspace_peak=0;first_numeric=0; }
+
+    void bind(const mcscf::ProductSupport* next_support,
+        mcscf::detail::SigmaTileBudget next,bool next_release) {
+      const auto identity=next_support ? next_support->identity():nullptr;
+      if (support==identity && release==next_release && budget.width==next.width &&
+          budget.pairs==next.pairs && budget.slabs==next.slabs &&
+          budget.packed_slabs==next.packed_slabs) return;
+      support=identity;budget=next;release=next_release;clear();
+    }
+  };
+  std::array<Boundaries,3> boundaries;
   mcscf::detail::ChannelSelectors selectors;
   bool restricted;
   std::vector<int> global,local,offsets,metadata;
@@ -437,6 +460,22 @@ void DirectCiSigma::apply_tiled_responses(int width,std::span<const CiTileReques
   const int slabs=separate ? 3:2,packed_slabs=restricted ? (separate ? 2:1):0;
   const mcscf::detail::SigmaTileBudget budget{width,n_channels_,slabs,workspace_bytes,packed_slabs};
   const bool replay=symbols.matches(support,budget,static_cast<bool>(release));
+  auto& boundaries=symbols.boundaries[has_direction ? 2:separate ? 1:0];
+  boundaries.bind(support,budget,static_cast<bool>(release));
+  // Context residency changes as CIAH vectors grow. Reuse need not reproduce
+  // a new greedy partition: the old target partition is exact whenever its
+  // actual device storage still fits. The CPU admission estimate also prices
+  // gather tables that this executor does not allocate. Never reuse that
+  // estimate as a physical device-allocation certificate.
+  const auto cotangent_bytes=sizeof(double)*pairs*pairs*(collect+
+      std::count_if(requests.begin(),requests.end(),
+          [](const auto& request) {return request.one_adjoint.data!=nullptr;}));
+  const auto packed_index_bytes=static_cast<std::size_t>(selectors.groups())*sizeof(PackedGroup);
+  const auto old_index_bytes=symbols.device.size()*sizeof(int)+packed_index_bytes;
+  if (!boundaries.entries.empty() &&
+      (boundaries.workspace_peak+cotangent_bytes>budget.bytes ||
+       boundaries.first_numeric+old_index_bytes+cotangent_bytes>budget.bytes))
+    boundaries.clear();
   std::unique_ptr<mcscf::detail::SigmaTilePlan> iterator;
   if (!replay) {
     const nvtx3::scoped_range range{"ci.tile_plan"};
@@ -479,11 +518,23 @@ void DirectCiSigma::apply_tiled_responses(int width,std::span<const CiTileReques
   Buffer<double> numerical;
   GroupedGemm grouped_gemm;
   bool first=true;
+  std::size_t ordinal=0;
+  const auto boundary_limit=static_cast<std::size_t>(n_alpha_)+n_beta_;
   const auto next=[&] {
     const nvtx3::scoped_range range{"ci.tile_plan_next"};
-    return replay ? first:iterator->next();
+    if (replay) return first;
+    if (ordinal<boundaries.entries.size()) {
+      const nvtx3::scoped_range known{"ci.tile_boundary_replay"};
+      iterator->next_known(boundaries.entries[ordinal++]);
+      return true;
+    }
+    if (!iterator->next()) return false;
+    if (ordinal<boundary_limit) boundaries.entries.push_back(iterator->boundary());
+    ++ordinal;
+    return true;
   };
   while (next()) {
+    const auto previous_index_bytes=symbols.device.size()*sizeof(int)+packed_index_bytes;
     const auto& plan=replay ? *symbols.prepared:static_cast<const mcscf::detail::SigmaTile&>(*iterator);
     const nvtx3::scoped_range tile_range{"ci.tile"};
     const int count=plan.active.size(),halo=plan.halo.size(),columns=plan.columns.size();
@@ -563,6 +614,15 @@ void DirectCiSigma::apply_tiled_responses(int width,std::span<const CiTileReques
     const auto image_offset=append(images);
     const auto diagonal_offset=append(plan.diagonal_rows);
     symbols.bind(ctx,std::move(metadata),std::move(packed_groups));
+    if (!replay) {
+      const auto numeric_bytes=numerical.size()*sizeof(double);
+      const auto index_bytes=symbols.device.size()*sizeof(int)+packed_index_bytes;
+      // The numerical slab only grows within a sweep. Include the preceding
+      // indices, still live when that slab grows, and both packed-map states.
+      boundaries.workspace_peak=std::max(boundaries.workspace_peak,
+          numeric_bytes+std::max(previous_index_bytes,index_bytes));
+      if (ordinal==1) boundaries.first_numeric=numeric_bytes;
+    }
     const auto& device=symbols.device;
     const auto ptr=[&](std::size_t offset) {return device.data()+offset;};
     const TileMap map{ptr(active_offset),ptr(betas_offset),

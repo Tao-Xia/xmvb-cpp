@@ -2197,6 +2197,131 @@ void check_packed_sigma_tile_plan() {
     }
 }
 
+/** @brief Test-only full snapshots certify bounded symbolic boundary replay. */
+void check_symbolic_replay() {
+  using namespace xmvb::mcscf;
+  using namespace xmvb::mcscf::detail;
+  constexpr int n=6,strings=20,pairs=n*(n+1)/2;
+  std::vector<std::uint64_t> masks;
+  SpinConnections graph;
+  graph.strings=strings; graph.degree=9;
+  graph.occupations.resize(3,strings);
+  const auto occupations=complete_strings(n,3);
+  require(occupations.size()==strings,"symbolic replay fixture has wrong string count");
+  for (int a=0;a<strings;++a) {
+    masks.push_back(occupation_mask(occupations[a]));
+    for (int i=0;i<3;++i) graph.occupations(i,a)=occupations[a][i];
+  }
+  for (int a=0;a<strings;++a) for (int b=0;b<strings;++b)
+    if (__builtin_popcountll(masks[a]^masks[b])==2)
+      graph.links.push_back({b,0,0,0,1.0});
+  require(graph.links.size()==static_cast<std::size_t>(strings*graph.degree),
+      "symbolic replay fixture has wrong link degree");
+  const auto index=[&](std::uint64_t mask) {
+    const auto found=std::find(masks.begin(),masks.end(),mask);
+    require(found!=masks.end(),"symbolic replay seed is absent");
+    return static_cast<int>(found-masks.begin());
+  };
+  // One covalent and one ionic seed have overlapping but incomplete beta
+  // neighborhoods. No final product is seeded, so empty columns remain.
+  const ProductSupport selected(n,masks,masks,
+      {index(7)*strings+index(56),index(21)*strings+index(41)});
+  const ProductSupport covalent(n,masks,masks);
+
+  struct Snapshot {
+    SigmaTile tile;
+    SigmaTileBoundary boundary;
+    std::size_t payload;
+    bool exhausted;
+  };
+  const auto compare=[](const SigmaTilePlan& actual,const Snapshot& expected) {
+    const auto& tile=static_cast<const SigmaTile&>(actual);
+    require(tile.groups.size()==expected.tile.groups.size(),
+        "symbolic replay changed target group count");
+    for (std::size_t i=0;i<tile.groups.size();++i) {
+      const auto& lhs=tile.groups[i],&rhs=expected.tile.groups[i];
+      require(lhs.beta==rhs.beta && lhs.begin==rhs.begin && lhs.end==rhs.end &&
+              lhs.column==rhs.column,"symbolic replay changed target group");
+    }
+    require(tile.active==expected.tile.active &&
+            tile.group_index==expected.tile.group_index &&
+            tile.halo==expected.tile.halo && tile.columns==expected.tile.columns &&
+            tile.halo_index==expected.tile.halo_index &&
+            tile.column_index==expected.tile.column_index &&
+            tile.released==expected.tile.released &&
+            tile.active_support==expected.tile.active_support &&
+            tile.channel_groups==expected.tile.channel_groups &&
+            tile.diagonal_rows==expected.tile.diagonal_rows &&
+            tile.unsupported_targets==expected.tile.unsupported_targets,
+        "symbolic replay changed tile metadata");
+    require(actual.payload_bytes()==expected.payload &&
+            actual.exhausted()==expected.exhausted,
+        "symbolic replay changed payload or exhausted state");
+    const auto boundary=actual.boundary();
+    require(boundary.targets==expected.boundary.targets &&
+            boundary.payload==expected.boundary.payload &&
+            boundary.full_alpha==expected.boundary.full_alpha &&
+            boundary.full_beta==expected.boundary.full_beta,
+        "symbolic replay changed boundary certificate");
+  };
+  const auto check=[&](const ProductSupport* support,int parity,
+                       SigmaTileBudget budget,bool release,bool large) {
+    SigmaTilePlan reference(graph,graph,support,parity,budget,release);
+    std::vector<Snapshot> snapshots;
+    while (reference.next()) {
+      check_sigma_payload(reference,budget,n);
+      check_sigma_metadata(reference,parity);
+      snapshots.push_back({static_cast<const SigmaTile&>(reference),
+          reference.boundary(),reference.payload_bytes(),reference.exhausted()});
+    }
+    require(!snapshots.empty(),"symbolic replay fixture generated no tiles");
+    require(large ? snapshots.size()==1 : snapshots.size()>2,
+        "symbolic replay did not exercise requested tile size");
+    SigmaTilePlan replay(graph,graph,support,parity,budget,release);
+    for (const auto& snapshot:snapshots) {
+      require(replay.next_known(snapshot.boundary),"symbolic replay lost a tile");
+      compare(replay,snapshot);
+    }
+    require(!replay.next() && replay.exhausted(),
+        "symbolic replay did not finish at the same target boundary");
+    // A feasible old partition need not be the greedy partition of a new
+    // allowance. Changing free bytes alone must not change its target stream.
+    auto roomy_budget=budget;
+    roomy_budget.bytes+=4096;
+    SigmaTilePlan roomy(graph,graph,support,parity,roomy_budget,release);
+    for (const auto& snapshot:snapshots) {
+      require(roomy.next_known(snapshot.boundary),"budget change lost a reusable tile");
+      compare(roomy,snapshot);
+    }
+    require(!roomy.next(),"budget change duplicated a reusable target");
+    if (large) return;
+    // Emulate a small scalar boundary cache: replay only its first one or two
+    // entries, then resume ordinary admission without rewinding the cursor.
+    for (int prefix:{1,2}) {
+      SigmaTilePlan mixed(graph,graph,support,parity,budget,release);
+      for (int i=0;i<prefix;++i) {
+        require(mixed.next_known(snapshots[i].boundary),
+            "symbolic replay lost a cached prefix tile");
+        compare(mixed,snapshots[i]);
+      }
+      for (std::size_t i=prefix;i<snapshots.size();++i) {
+        require(mixed.next(),"symbolic replay lost an uncached tail tile");
+        compare(mixed,snapshots[i]);
+      }
+      require(!mixed.next() && mixed.exhausted(),
+          "symbolic replay left an uncached tail target");
+    }
+  };
+  for (int width:{1,2,3}) for (int parity:{0,1,-1})
+    for (bool release:{false,true}) for (std::size_t bytes:{4096U,4U*1024U*1024U}) {
+      const bool large=bytes>4096;
+      check(nullptr,parity,{width,pairs,2,bytes},release,large);
+      check(&selected,parity,{width,pairs,2,bytes},release,large);
+      for (int packed:{0,1,2})
+        check(&covalent,parity,{width,pairs,packed+1,bytes,packed},release,large);
+    }
+}
+
 void check_supported_sigma(int n, int n_alpha, int n_beta_electrons, int width,
                            const std::vector<xmvb::mcscf::ProductIndex>& products = {}) {
   const auto fixture = make_fixture(n, n_alpha, n_beta_electrons);
@@ -3478,6 +3603,9 @@ int main(int argc, char** argv) {
     if (argc == 2 && std::string(argv[1]) == "--channel-layout") {
       check_full_channel_image_layout();
       std::cout << "channel layout: PASS\n";
+    } else if (argc == 2 && std::string(argv[1]) == "--symbolic-replay") {
+      check_symbolic_replay();
+      std::cout << "symbolic replay: PASS\n";
     } else if (argc == 2 && std::string(argv[1]) == "--benchmark12") {
       benchmark12(true);
     } else if (argc == 2 && std::string(argv[1]) == "--temporal12") {
@@ -3589,6 +3717,7 @@ int main(int argc, char** argv) {
       check_sigma_columns(make_fixture(4, 4, 1), 2);
       check_sigma_columns(make_fixture(10, 5, 4), 2);
       check_sigma_tile_plan();
+      check_symbolic_replay();
       check_full_channel_image_layout();
       check_sparse_beta_gather();
       check_packed_sigma_tile_plan();
@@ -3607,7 +3736,7 @@ int main(int argc, char** argv) {
       std::cout << "structure tiles: PASS\n";
     } else {
       throw std::invalid_argument(
-          "usage: test_structure_tiles [--channel-layout|--benchmark12|--benchmark12-no-reference|--temporal12|"
+          "usage: test_structure_tiles [--channel-layout|--symbolic-replay|--benchmark12|--benchmark12-no-reference|--temporal12|"
           "--selected12 N|--selected12-parity N|--sources12 N|--paths12 N|--gram12 N|"
           "--structure-response12 N|--structure-response12-reference N|"
           "--structure-response14 N|--structure-response14-reference N|"

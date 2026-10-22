@@ -16,6 +16,14 @@ struct SigmaTileBudget {
   int packed_slabs=0;
 };
 
+/** Exact target boundary for the same support, links and source layout.
+ * Callers certify that the replayed tile fits their current storage budget. */
+struct SigmaTileBoundary {
+  int targets;
+  std::size_t payload;
+  bool full_alpha,full_beta;
+};
+
 struct SigmaTargetGroup { int beta,begin,end,column=0; };
 
 /** Current bounded tile only; contains no cursors or borrowed support objects. */
@@ -36,12 +44,17 @@ public:
   SigmaTilePlan(const SpinConnections& alpha,const SpinConnections& beta,
       const ProductSupport* support,int parity,SigmaTileBudget budget,bool release);
   bool next();
+  bool next_known(const SigmaTileBoundary& boundary);
+  SigmaTileBoundary boundary() const noexcept;
   std::size_t payload_bytes() const;
   bool exhausted() const noexcept { return !pending_ && next_beta_==beta_targets_.size(); }
 
 private:
   struct Node { int alpha,beta; bool supported; int group,channels; };
   bool pull(Node& node);
+  void reset_tile();
+  void append_node(const Node& node,bool new_group,bool expand_alpha);
+  bool finish_tile(bool sorted_halo=false,bool sorted_columns=false);
   const SpinConnections& alpha_;
   const SpinConnections& beta_;
   const ProductSupport* support_;

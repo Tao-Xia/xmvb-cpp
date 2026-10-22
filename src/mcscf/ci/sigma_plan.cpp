@@ -60,6 +60,12 @@ std::size_t SigmaTilePlan::payload_bytes() const {
   return static_cast<std::size_t>(payload_);
 }
 
+SigmaTileBoundary SigmaTilePlan::boundary() const noexcept {
+  return {static_cast<int>(active.size()),payload_bytes(),
+      halo.size()==static_cast<std::size_t>(alpha_.n_strings()),
+      columns.size()==static_cast<std::size_t>(beta_.n_strings())};
+}
+
 bool SigmaTilePlan::pull(Node& node) {
   if (pending_) { node=*pending_; pending_.reset(); return true; }
   while (next_beta_<beta_targets_.size()) {
@@ -99,13 +105,42 @@ bool SigmaTilePlan::pull(Node& node) {
   return false;
 }
 
-bool SigmaTilePlan::next() {
+void SigmaTilePlan::reset_tile() {
   for (const int a:halo) halo_index[a]=-1;
   for (const int b:columns) column_index[b]=-1;
   for (const int a:seen_alpha_) alpha_seen_[a]=0;
   groups.clear(); active.clear(); group_index.clear(); halo.clear(); columns.clear();
   active_support.clear(); seen_alpha_.clear(); released.clear(); channel_groups.clear(); payload_=0;
   diagonal_rows.clear(); unsupported_targets=0;
+}
+
+void SigmaTilePlan::append_node(const Node& node,bool new_group,bool expand_alpha) {
+  if (expand_alpha) { alpha_seen_[node.alpha]=1; seen_alpha_.push_back(node.alpha); }
+  for (const int a:new_alpha_) { halo_index[a]=0; halo.push_back(a); }
+  for (const int b:new_beta_) { column_index[b]=0; columns.push_back(b); }
+  if (new_group) groups.push_back({node.beta,static_cast<int>(active.size()),static_cast<int>(active.size())});
+  if (parity_ && node.alpha==node.beta) diagonal_rows.push_back(active.size());
+  unsupported_targets+=!node.supported;
+  active.push_back(node.alpha);
+  active_support.push_back(node.supported);
+  if (budget_.packed_slabs) channel_groups.push_back(node.group);
+  group_index.push_back(groups.size()-1);
+  groups.back().end=active.size();
+}
+
+bool SigmaTilePlan::finish_tile(bool sorted_halo,bool sorted_columns) {
+  while (next_release_<release_order_.size() &&
+      last_use_[release_order_[next_release_]]<static_cast<int>(next_beta_))
+    released.push_back(release_order_[next_release_++]);
+  if (!sorted_halo) std::sort(halo.begin(),halo.end());
+  if (!sorted_columns) std::sort(columns.begin(),columns.end());
+  for (int i=0;i<static_cast<int>(halo.size());++i) halo_index[halo[i]]=i;
+  for (int i=0;i<static_cast<int>(columns.size());++i) column_index[columns[i]]=i;
+  return !active.empty();
+}
+
+bool SigmaTilePlan::next() {
+  reset_tile();
   Node node;
   while (pull(node)) {
     new_alpha_.clear(); new_beta_.clear();
@@ -139,27 +174,49 @@ bool SigmaTilePlan::next() {
       pending_=node;
       break;
     }
-    if (expand_alpha) { alpha_seen_[node.alpha]=1; seen_alpha_.push_back(node.alpha); }
-    for (const int a:new_alpha_) { halo_index[a]=0; halo.push_back(a); }
-    for (const int b:new_beta_) { column_index[b]=0; columns.push_back(b); }
-    if (new_group) groups.push_back({node.beta,static_cast<int>(active.size()),static_cast<int>(active.size())});
-    if (parity_ && node.alpha==node.beta) diagonal_rows.push_back(active.size());
-    unsupported_targets+=!node.supported;
-    active.push_back(node.alpha);
-    active_support.push_back(node.supported);
+    append_node(node,new_group,expand_alpha);
     payload_=bytes;
-    if (budget_.packed_slabs) channel_groups.push_back(node.group);
-    group_index.push_back(groups.size()-1);
-    groups.back().end=active.size();
   }
-  while (next_release_<release_order_.size() &&
-      last_use_[release_order_[next_release_]]<static_cast<int>(next_beta_))
-    released.push_back(release_order_[next_release_++]);
-  std::sort(halo.begin(),halo.end());
-  std::sort(columns.begin(),columns.end());
-  for (int i=0;i<static_cast<int>(halo.size());++i) halo_index[halo[i]]=i;
-  for (int i=0;i<static_cast<int>(columns.size());++i) column_index[columns[i]]=i;
-  return !active.empty();
+  return finish_tile();
+}
+
+bool SigmaTilePlan::next_known(const SigmaTileBoundary& boundary) {
+  if (boundary.targets<=0) throw std::invalid_argument("invalid sigma tile boundary");
+  reset_tile();
+  Node node;
+  for (int target=0;target<boundary.targets;++target) {
+    if (!pull(node)) throw std::invalid_argument("sigma tile boundary exceeds target stream");
+    new_alpha_.clear(); new_beta_.clear();
+    const bool new_group=groups.empty() || groups.back().beta!=node.beta;
+    const bool expand_alpha=!boundary.full_alpha &&
+        halo.size()<static_cast<std::size_t>(alpha_.n_strings()) && !alpha_seen_[node.alpha];
+    if (expand_alpha) {
+      const auto include=[&](int id) { if (halo_index[id]<0) new_alpha_.push_back(id); };
+      include(node.alpha);
+      for (const auto& edge:alpha_.singles(node.alpha)) include(edge.source);
+    }
+    if (new_group && !boundary.full_beta &&
+        columns.size()<static_cast<std::size_t>(beta_.n_strings())) {
+      const auto include=[&](int id) { if (column_index[id]<0) new_beta_.push_back(id); };
+      include(node.beta);
+      for (const auto& edge:beta_.singles(node.beta)) include(edge.source);
+    }
+    append_node(node,new_group,expand_alpha);
+  }
+  // Original next() pulls the first rejected target before finalizing a tile.
+  // Reproduce that lookahead so both the pending node and beta release cursor
+  // match, including when the target stream is exhausted.
+  if (pull(node)) pending_=node;
+  payload_=boundary.payload;
+  if (boundary.full_alpha) {
+    halo.resize(alpha_.n_strings());
+    std::iota(halo.begin(),halo.end(),0);
+  }
+  if (boundary.full_beta) {
+    columns.resize(beta_.n_strings());
+    std::iota(columns.begin(),columns.end(),0);
+  }
+  return finish_tile(boundary.full_alpha,boundary.full_beta);
 }
 
 } // namespace xmvb::mcscf::detail
