@@ -297,7 +297,7 @@ std::int64_t source_tile_rows(Context& context,std::int64_t products,
 
 DirectCiSigma::SpinGraph::SpinGraph(
     Context& context,const mcscf::SpinConnections& source,int channels)
-    : sources(context,static_cast<std::size_t>(source.n_strings())*channels) {
+    : topology(source),sources(context,static_cast<std::size_t>(source.n_strings())*channels) {
   std::vector<int> indices(sources.size(),0);
   const auto insert=[&](int channel,int row,int address,double sign) {
     if (channel<0 || channel>=channels || address<0 || address>=source.n_strings() ||
@@ -525,10 +525,9 @@ void DirectCiSigma::contract_adjoint(linalg::ConstMatrixView left,
 void DirectCiSigma::pullback_channel_kernel(
     linalg::ConstMatrixView channel_kernel_adjoint,
     linalg::MatrixView one_electron_adjoint,
-    linalg::MatrixView pair_kernel_adjoint) const {
-  // The right scatter has no remaining consumers after the K contraction.
-  // Reuse its first n_channels slots for the small orbital pullback vector.
-  auto* absorbed=right_scattered_.data();
+    linalg::MatrixView pair_kernel_adjoint,double* absorbed) const {
+  // Each executor lends n_channels consumed scratch entries. Do not implicitly
+  // depend on the resident-carrier executor's workspace or allocate another slab.
   absorbed_one_adjoint<<<grid_size(n_channels_),256,0,context_->stream()>>>(
       channel_kernel_adjoint,absorbed,n_orbitals_,n_channels_);
   check_cuda(cudaGetLastError(),"CUDA direct-CI absorbed-one pullback");
@@ -567,7 +566,7 @@ void DirectCiSigma::integral_adjoint(linalg::ConstMatrixView left,
   prepare_adjoint(block_width,false,true);
   contract_adjoint(left,right,nullptr,channel_adjoint_.view());
   pullback_channel_kernel(channel_adjoint_.view(),
-      one_electron_adjoint,pair_kernel_adjoint);
+      one_electron_adjoint,pair_kernel_adjoint,right_scattered_.data());
 }
 
 void DirectCiSigma::apply_with_adjoint(linalg::ConstMatrixView response,
@@ -590,7 +589,7 @@ void DirectCiSigma::apply_with_adjoint(linalg::ConstMatrixView response,
   prepare_adjoint(block_width,false,true);
   contract_adjoint(response,state,&image,channel_adjoint_.view());
   pullback_channel_kernel(channel_adjoint_.view(),
-      one_electron_adjoint,pair_kernel_adjoint);
+      one_electron_adjoint,pair_kernel_adjoint,right_scattered_.data());
 }
 
 void DirectCiSigma::apply_direction_with_adjoint(
@@ -688,10 +687,11 @@ void DirectCiSigma::apply_direction_with_adjoint(
   }
   complete_exchange(combined_image,true);
   pullback_channel_kernel(channel_adjoint_.view(),
-      one_electron_adjoint,pair_kernel_adjoint);
+      one_electron_adjoint,pair_kernel_adjoint,right_scattered_.data());
   if (component.data) {
     complete_exchange(component_image,true);
-    pullback_channel_kernel(component_kernel.view(),component_one_adjoint,component_pair_adjoint);
+    pullback_channel_kernel(component_kernel.view(),component_one_adjoint,component_pair_adjoint,
+        right_scattered_.data());
   }
 }
 

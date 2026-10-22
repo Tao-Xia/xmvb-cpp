@@ -20,6 +20,7 @@
 #include "integrals/active/two_electron.hpp"
 #include "mcscf/ci/integrals.hpp"
 #include "mcscf/ci/sigma.hpp"
+#include "mcscf/ci/product_support.hpp"
 #include "mcscf/ci/strings.hpp"
 #include "vbscf/determinants/pairs/same_spin_cache.hpp"
 #include "vbscf/structures/assembly/action.hpp"
@@ -142,6 +143,103 @@ void check_directional_derivative(
                 3.0e-7 * std::max(1.0, std::abs(finite_difference)),
             "CUDA pair-kernel adjoint fails a full-H finite difference");
   }
+}
+
+/** Exercise the production tile executor against the CPU tile chain, including
+ * out-of-support halo targets, exchange weights and two fused response lanes.
+ * Full carriers are test oracles only; tile callbacks move device values.
+ */
+void check_product_tiles(int parity,bool covalent,std::size_t budget) {
+  constexpr int n=4,width=2;
+  const xmvb::mcscf::SpinStrings as(n,2),bs(n,parity || covalent ? 2:1);
+  const auto base=active_integrals(n,false),delta=active_integrals(n,true);
+  const xmvb::mcscf::DirectCiSigmaAction cpu(as.occupations(),bs.occupations(),base);
+  const xmvb::mcscf::DirectCiSigmaAction change(cpu,delta);
+  std::unique_ptr<xmvb::mcscf::ProductSupport> support;
+  if (covalent) support=std::make_unique<xmvb::mcscf::ProductSupport>(n,as.masks(),bs.masks());
+  else support=std::make_unique<xmvb::mcscf::ProductSupport>(n,as.masks(),bs.masks(),
+      std::vector<xmvb::mcscf::ProductIndex>{0,static_cast<xmvb::mcscf::ProductIndex>(bs.size()+1)});
+  Matrix left=values(as.size(),bs.size()*width,0.28),right=values(as.size(),bs.size()*width,0.71);
+  for (Matrix* values:{&left,&right}) for (int v=0;v<width;++v) {
+    if (parity) {
+      const Matrix block=values->middleCols(v*bs.size(),bs.size());
+      values->middleCols(v*bs.size(),bs.size())=(0.5*(block+parity*block.transpose())).eval();
+    }
+    for (int b=0;b<bs.size();++b) for (int a=0;a<as.size();++a)
+      if (!support->contains(a,b)) (*values)(a,v*bs.size()+b)=0.0;
+  }
+  const auto host_reader=[&](const Matrix& values) -> xmvb::mcscf::DirectCiTileReader {
+    return [&,source=&values](auto betas,auto rows,Eigen::Ref<Matrix> target) {
+      for (int b=0;b<betas.size();++b) for (int v=0;v<width;++v) for (int a=0;a<rows.size();++a)
+        target(a,b*width+v)=(*source)(rows[a],v*bs.size()+betas[b]);
+    };
+  };
+  Matrix expected=Matrix::Zero(left.rows(),left.cols());
+  const xmvb::mcscf::DirectCiTileWriter host_writer=[&](auto betas,auto rows,const auto& accumulate) {
+    for (int b=0;b<betas.size();++b) for (int v=0;v<width;++v)
+      accumulate(b,v,0,rows.size(),expected.col(v*bs.size()+betas[b]).data(),nullptr,0);
+  };
+  const auto expected_adjoint=cpu.apply_tiled_direction(width,host_reader(left),host_reader(right),change,
+      host_writer,{},support.get(),parity,{},budget);
+  xmvb::cuda::Context context(128ULL*1024*1024);
+  xmvb::cuda::DirectCiSigma gpu(context,cpu,1,parity),direction(context,gpu);
+  xmvb::cuda::Matrix<double> dh(context,n,n),dg(context,n*(n+1)/2,n*(n+1)/2);
+  xmvb::cuda::copy_to_device(context,dh.view(),delta.one_electron);
+  xmvb::cuda::copy_to_device(context,dg.view(),delta.pair_kernel);
+  direction.update_integrals(dh.view(),dg.view());
+  xmvb::cuda::Matrix<double> dl(context,left.rows(),left.cols()),dr(context,right.rows(),right.cols()),
+      out(context,left.rows(),left.cols()),second(context,left.rows(),left.cols()),h2(context,n,n),g2(context,dg.rows(),dg.cols());
+  xmvb::cuda::copy_to_device(context,dl.view(),left);
+  xmvb::cuda::copy_to_device(context,dr.view(),right);
+  const auto device_reader=[&](xmvb::linalg::ConstMatrixView source) -> xmvb::cuda::CiTileReader {
+    return [&,source](auto betas,auto rows,xmvb::linalg::MatrixView target) {
+      for (int b=0;b<betas.size();++b) for (int v=0;v<width;++v) for (int a=0;a<rows.size();++a)
+        xmvb::cuda::check_cuda(cudaMemcpyAsync(target.data+a+target.ld*(b*width+v),
+            source.data+rows[a]+source.ld*(v*bs.size()+betas[b]),sizeof(double),
+            cudaMemcpyDeviceToDevice,context.stream()),"test tile reader");
+    };
+  };
+  const auto device_writer=[&](xmvb::linalg::MatrixView destination) -> xmvb::cuda::CiTileWriter {
+    xmvb::cuda::check_cuda(cudaMemsetAsync(destination.data,0,destination.rows*destination.cols*sizeof(double),
+        context.stream()),"clear tile oracle");
+    return [&,destination](auto betas,auto rows,const xmvb::cuda::CiTileGather& gather) {
+      xmvb::cuda::Matrix<double> tile(context,rows.size(),betas.size()*width);
+      gather(-1,{},tile.view(),false);
+      const double one=1;
+      for (int b=0;b<betas.size();++b) for (int v=0;v<width;++v) for (int a=0;a<rows.size();++a)
+        xmvb::cuda::check_cublas(cublasDaxpy(context.blas(),1,&one,tile.data()+a+tile.rows()*(b*width+v),1,
+            destination.data+rows[a]+destination.ld*(v*bs.size()+betas[b]),1),"test tile writer");
+    };
+  };
+  const std::array<xmvb::cuda::CiTileRequest,2> requests{{
+      {device_reader(dl.view()),device_writer(out.view()),&direction,dh.view(),dg.view()},
+      {device_reader(dl.view()),device_writer(second.view()),nullptr,h2.view(),g2.view()}}};
+  gpu.apply_tiled_responses(width,requests,device_reader(dr.view()),support.get(),budget);
+  near(download(context,out),expected,3e-10,"GPU directional product tiles differ from CPU");
+  near(download(context,dh),expected_adjoint.one_electron,3e-10,"GPU tiled h adjoint differs from CPU");
+  near(download(context,dg),expected_adjoint.pair_kernel,3e-10,"GPU tiled g adjoint differs from CPU");
+  expected.setZero();
+  cpu.apply_tiled(width,host_reader(left),host_writer,support.get(),parity,{},budget);
+  near(download(context,second),expected,3e-10,"GPU second response lost the shared state scatter");
+  near(download(context,h2),expected_adjoint.one_electron,3e-10,"GPU second response adjoint differs");
+  near(download(context,g2),expected_adjoint.pair_kernel,3e-10,"GPU second response pair adjoint differs");
+  const std::array<xmvb::cuda::CiCarrierRequest,2> carriers{{
+      {dl.view(),out.view(),&direction,dh.view(),dg.view()},
+      {dl.view(),second.view(),nullptr,h2.view(),g2.view()}}};
+  gpu.apply_supported_responses(carriers,dr.view(),*support,budget);
+  near(download(context,out),cpu.apply(left)+change.apply(right),3e-10,
+      "supported resident HVP endpoint is not the full physical image");
+  near(download(context,second),cpu.apply(left),3e-10,
+      "supported resident CI endpoint is not the full physical image");
+  const auto full_adjoint=cpu.integral_adjoint(left,right);
+  near(download(context,dh),full_adjoint.one_electron,3e-10,"supported endpoint h adjoint differs from full sigma");
+  near(download(context,dg),full_adjoint.pair_kernel,3e-10,"supported endpoint g adjoint differs from full sigma");
+  const xmvb::cuda::CiCarrierRequest same{dr.view(),out.view(),nullptr,dh.view(),dg.view()};
+  gpu.apply_supported_responses({&same,1},dr.view(),*support,budget);
+  near(download(context,out),cpu.apply(right),3e-10,"accepted same-source supported sigma differs");
+  const auto density=cpu.integral_adjoint(right,right);
+  near(download(context,dh),density.one_electron,3e-10,"accepted same-source supported h density differs");
+  near(download(context,dg),density.pair_kernel,3e-10,"accepted same-source supported g density differs");
 }
 
 void check_sigma(int rhs_count,bool rotated,int maximum_tile=3,bool one_product=false,int n=4) {
@@ -669,6 +767,14 @@ void check_exterior(int rhs_count,int n=4,int nalpha=2,int nbeta=1) {
   xmvb::cuda::Context context(64ULL * 1024ULL * 1024ULL);
   const xmvb::cuda::ExteriorTransform gpu_alpha(context, cpu_alpha);
   const xmvb::cuda::ExteriorTransform gpu_beta(context, cpu_beta);
+  {
+    const std::vector<int> requested{static_cast<int>(beta.size())-1,0};
+    xmvb::cuda::Matrix<double> d_upper(context,n,n),rows(context,beta.size(),requested.size());
+    xmvb::cuda::copy_to_device(context,d_upper.view(),upper);
+    gpu_beta.generate_rows(d_upper.view(),requested,rows.view());
+    near(download(context,rows).transpose(),Matrix(cpu_beta.generate_rows(requested)),
+        2e-11,"device requested rows differ from the shared CPU row recursion");
+  }
   const Matrix seed = values(alpha.size(), beta.size() * rhs_count, 0.34);
   xmvb::cuda::Matrix<double> device(context, seed.rows(), seed.cols());
   const auto cpu_right = [&](Matrix* panel, bool adjoint) {
@@ -853,6 +959,9 @@ void check_full_metric(int rhs_count) {
 
 int main() {
   try {
+    for (int parity:{0,1,-1}) for (std::size_t budget:{std::size_t{4096},std::size_t{1024*1024}})
+      check_product_tiles(parity,parity!=0,budget);
+    check_product_tiles(0,true,1024*1024);
     for (bool rotated : {false, true})
       for (int rhs_count : {1, 3}) {
         check_sigma(rhs_count,rotated);

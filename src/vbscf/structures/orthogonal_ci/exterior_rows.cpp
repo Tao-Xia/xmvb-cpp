@@ -58,40 +58,8 @@ ExteriorRowPlan::Rows ExteriorRowPlan::apply(const Eigen::MatrixXd& upper,
       }
       double* previous=scratch.get()+2*dimension*part;
       double* current=previous+dimension;
-      previous[0]=1.0;
-      for (int k=1;k<=electrons_;++k) {
-        const int base=electrons_-k;
-        const auto count=choose(n_-base,k);
-        std::fill_n(current,count,0.0);
-        std::copy_n(occupied.data()+base,k,indices.data());
-        for (;;) {
-          std::uint64_t rank=0,suffix=0,prefix=0;
-          for (int p=0;p<k;++p) {
-            rank+=choose(indices[p]-base,p+1);
-            if (p) suffix+=choose(indices[p]-base-1,p);
-          }
-          double value=0.0;
-          // Laplace expansion along the newly prepended occupied row.
-          for (int p=0;p<k;++p) {
-            if (indices[0]!=base || p==0) {
-              const double coefficient=upper(occupied[base],indices[p]);
-              if (coefficient!=0.0)
-                value+=(p%2 ? -coefficient:coefficient)*previous[prefix+suffix];
-            }
-            prefix+=choose(indices[p]-base-1,p+1);
-            if (p+1<k) suffix-=choose(indices[p+1]-base-1,p+1);
-          }
-          current[rank]=value;
-          int p=0;
-          while (p<k && indices[p]+1==(p+1<k ? indices[p+1]:n_)) ++p;
-          if (p==k) break;
-          ++indices[p];
-          std::copy_n(occupied.data()+base,p,indices.data());
-        }
-        std::swap(previous,current);
-      }
-      for (std::size_t column=0;column<dimension;++column)
-        result(row,column)=previous[column_ranks_[column]];
+      mcscf::detail::exterior_row(topology(),upper.data(),upper.outerStride(),
+          occupied.data(),indices.data(),previous,current,result.row(row).data());
     }
   });
   return result;

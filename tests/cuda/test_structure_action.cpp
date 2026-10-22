@@ -15,6 +15,7 @@
 #include "cuda/vb/action.hpp"
 #include "linalg/eigensolver.hpp"
 #include "mcscf/ci/sigma.hpp"
+#include "mcscf/ci/strings.hpp"
 #include "vbscf/determinants/pairs/same_spin_cache.hpp"
 #include "vbscf/structures/assembly/action.hpp"
 #include "vbscf/structures/assembly/hamiltonian_overlap.hpp"
@@ -86,12 +87,12 @@ void check_self_tile_budget(const xmvb::vb::StructureAction& source) {
       "empty spin self diagonal is not the vacuum");
 }
 
-void check_action(int count, bool transformed) {
+void check_action(int count, bool transformed,bool covalent=false,bool broad=false) {
   // Four orbitals, two alpha electrons and one beta electron: the two spin
   // string spaces have different dimensions and different exterior maps.
   constexpr int n = 4;
   const Strings alpha{{0,1},{0,2},{0,3},{1,2},{1,3},{2,3}};
-  const Strings beta{{0},{1},{2},{3}};
+  const Strings beta=covalent ? alpha:Strings{{0},{1},{2},{3}};
   Strings products_alpha, products_beta;
   Terms terms;
   for (const auto& a : alpha)
@@ -102,8 +103,27 @@ void check_action(int count, bool transformed) {
     }
   // The third column shares determinant products with the first two. This
   // exercises a nontrivial selected overlap, including for the 3-column case.
-  terms[0].push_back({0,1.0});
-  if (count == 3) {
+  if (broad) {
+    // A proper support broad enough to prefer CPU's ordered-beta contraction.
+    // Exclude the unique maximal seed, so it is not the complete product grid.
+    for (int g=0;g+1<terms.size();++g) for (int s=0;s<count;++s)
+      terms[g].push_back({s,std::sin(0.23*(g+1)*(s+1))});
+  } else if (covalent) {
+    // The full singly occupied family has strict transformed support and
+    // nontrivial frontier channel envelopes. Both selected coefficient
+    // columns remain arbitrary; no closure is assumed for their span.
+    for (int a=0;a<alpha.size();++a) for (int b=0;b<beta.size();++b) {
+      bool disjoint=true;
+      for (int p:alpha[a]) for (int q:beta[b]) disjoint=disjoint && p!=q;
+      if (!disjoint) continue;
+      terms[a*beta.size()+b].push_back({0,1.0});
+      if (count==3) {
+        terms[a*beta.size()+b].push_back({1,std::sin(0.27*(a+1))});
+        terms[a*beta.size()+b].push_back({2,std::cos(0.41*(a+1))});
+      }
+    }
+  } else terms[0].push_back({0,1.0});
+  if (count == 3 && !covalent && !broad) {
     terms[5].push_back({1,1.0});
     terms[0].push_back({2,0.6});
     terms[5].push_back({2,-0.3});
@@ -186,6 +206,9 @@ void check_action(int count, bool transformed) {
     require((after_resize.hamiltonian-expected.hamiltonian).norm()<2e-10 &&
         (after_resize.overlap-expected.overlap).norm()<2e-10,
         "CUDA structure graph retained stale resized scratch addresses");
+    // A product-column action can return the resident executor's idle slab
+    // to the shared pool. Prepare the lease whose release is tested here.
+    point_sigma.prepare(3);
     const auto resident=context.counters().current_device_bytes;
     const auto generation=point_sigma.workspace_generation();
     point_sigma.reset_workspace();
@@ -230,6 +253,9 @@ int main() {
     check_action(1,true);
     check_action(3,false);
     check_action(3,true);
+    check_action(1,true,true);
+    check_action(3,true,true);
+    check_action(3,true,false,true);
     std::cout << "CUDA structure H/S block parity: PASS\n";
   } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';

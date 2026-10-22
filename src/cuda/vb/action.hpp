@@ -59,6 +59,8 @@ class StructureAction {
   void update_integrals(linalg::ConstMatrixView one_electron,
       linalg::ConstMatrixView pair_kernel,linalg::ConstMatrixView upper);
   const DirectCiSigma& carrier_sigma() const noexcept;
+  /** Exact broad-support plan, shared by H/S and derivative sigma consumers. */
+  const mcscf::ProductSupport* product_support() const noexcept;
   /** Borrow the two H/S carriers between complete structure actions.
    * Device consumers are serialized on Context's stream. Views must not
    * remain live across another H/S action; captured addresses are unchanged.

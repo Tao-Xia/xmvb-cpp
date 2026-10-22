@@ -5,6 +5,7 @@ add_library(xmvb_cuda
   linalg/spectrum.cu
   linalg/svd.cu
   ci/sigma.cu
+  ci/tiles.cu
   ci/moments.cu
   ci/spin_self.cu
   integrals/exact.cu
@@ -17,6 +18,7 @@ add_library(xmvb_cuda
   optimization/ciah.cu
   optimization/coarse.cu
   vb/transform.cu
+  vb/product.cu
   vb/metric.cu
   vb/orbitals.cu
   vb/chart.cu

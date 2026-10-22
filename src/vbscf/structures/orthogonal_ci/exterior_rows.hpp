@@ -6,6 +6,7 @@
 #include <vector>
 
 #include <Eigen/Core>
+#include "mcscf/ci/exterior_row.hpp"
 
 namespace xmvb::vb {
 
@@ -22,6 +23,12 @@ public:
   Rows apply(const Eigen::MatrixXd& upper,
       std::span<const std::uint64_t> masks, std::span<const int> rows) const;
   std::size_t dynamic_bytes() const noexcept;
+  mcscf::detail::ExteriorRowTopology topology() const noexcept {
+    return {n_,electrons_,static_cast<int>(column_ranks_.size()),
+        binomial_.data(),column_ranks_.data()};
+  }
+  std::span<const std::uint64_t> binomial() const noexcept { return binomial_; }
+  std::span<const int> column_ranks() const noexcept { return column_ranks_; }
 
 private:
   std::uint64_t choose(int n, int k) const noexcept;

@@ -22,6 +22,9 @@
 #include "cuda/memory/buffer.hpp"
 #include "cuda/memory/graph.hpp"
 #include "cuda/vb/transform.hpp"
+#include "cuda/vb/product.hpp"
+#include "mcscf/ci/product_support.hpp"
+#include "vbscf/structures/assembly/column_tiles.hpp"
 
 namespace xmvb::cuda {
 namespace {
@@ -178,6 +181,8 @@ struct StructureAction::Impl {
   mutable Matrix<double> carrier_diagonal;
   mutable std::unique_ptr<Graph> graph;
   mutable double graph_seconds=0;
+  std::unique_ptr<ProductContraction> product_contraction;
+  std::shared_ptr<const mcscf::ProductSupport> exact_support;
   mutable std::uint64_t graph_workspace_generation=0;
   std::uint64_t version=0;
 
@@ -253,6 +258,10 @@ struct StructureAction::Impl {
       const auto bytes=std::max(spmm_bytes(false,structure_vector.view(),support.view()),
           spmm_bytes(true,support.view(),structure_vector.view()));
       sparse_workspace=Buffer<std::byte>(context, bytes);
+      if (view.support) exact_support=std::make_shared<mcscf::ProductSupport>(*view.support);
+      const int sampled_columns=view.support ? view.support->columns().size():beta;
+      if (!vb::detail::prefer_ordered_beta(groups,alpha,beta,view.beta.shear_pair_count(),sampled_columns))
+        product_contraction=std::make_unique<ProductContraction>(context,view,alpha_transform,*beta_transform,exact_support);
       // Numerical workspace is planned at first apply, after the physical
       // point exists. Eager preparation here can consume its carrier storage
       // while the topology still holds only placeholder integrals.
@@ -318,7 +327,12 @@ struct StructureAction::Impl {
       alpha_transform.apply_left(coefficients);
       beta_transform->apply_right(coefficients);
       }
-      sigma.apply(coefficients,image);
+      if (exact_support) {
+        const CiCarrierRequest request{coefficients,image};
+        sigma.apply_supported_responses({&request,1},coefficients,*exact_support,
+            std::min(workspace::available(),context.device_byte_budget()-
+                context.counters().current_device_bytes)/4,false);
+      } else sigma.apply(coefficients,image);
       {
         const nvtx3::scoped_range range{"vb.transform_adjoint"};
         // The input is the overlap image after sigma consumed it. Transform H/M
@@ -334,6 +348,27 @@ struct StructureAction::Impl {
     if (vectors.rows!=structures || h.rows!=structures || m.rows!=structures ||
         vectors.cols<=0 || h.cols!=vectors.cols || m.cols!=vectors.cols)
       throw std::invalid_argument("CUDA structure action block dimensions");
+    if (product_contraction) {
+      sigma.reset_workspace();
+      Matrix<double> h_products(context,groups,1),m_products(context,groups,1);
+      const auto bytes=std::min(workspace::available(),
+          context.device_byte_budget()-context.counters().current_device_bytes);
+      for (std::int64_t rhs=0;rhs<vectors.cols;++rhs) {
+        spmm(false,vectors.column(rhs),support.view());
+        product_contraction->apply(support.view(),model_upper.view(),sigma,
+            h_products.view(),m_products.view(),bytes);
+        spmm(true,h_products.view(),h.column(rhs));
+        spmm(true,m_products.view(),m.column(rhs));
+      }
+      return;
+    }
+    if (exact_support) {
+      // CPU's ordered-beta alternative: transform once, execute the same
+      // supported sigma plan, and pull H/M back together. It is not a switch
+      // back to a full-product sigma merely because the input is resident.
+      for (std::int64_t rhs=0;rhs<vectors.cols;++rhs) emit(vectors.column(rhs),h.column(rhs),m.column(rhs));
+      return;
+    }
     sigma.prepare(1);
     if (!graph || graph_workspace_generation!=sigma.workspace_generation()) {
       // Another point may grow/repartition the shared scratch. Recapture the
@@ -516,6 +551,9 @@ void StructureAction::build_selected_metric(linalg::MatrixView output) const {
   }
 }
 const DirectCiSigma& StructureAction::carrier_sigma() const noexcept { return impl_->sigma; }
+const mcscf::ProductSupport* StructureAction::product_support() const noexcept {
+  return impl_->exact_support.get();
+}
 std::array<linalg::MatrixView,2> StructureAction::carrier_workspace() const noexcept {
   return {impl_->coefficients,impl_->image};
 }
@@ -528,6 +566,7 @@ void StructureAction::update_frame(linalg::ConstMatrixView upper) {
       cudaMemcpyDeviceToDevice,p.context.stream()),"CUDA spin-self frame update");
   impl_->alpha_transform.update_upper(upper);
   if (impl_->beta_storage) impl_->beta_storage->update_upper(upper);
+  if (p.product_contraction) p.product_contraction->update_frame();
   ++impl_->version;
 }
 void StructureAction::update_integrals(linalg::ConstMatrixView h,
@@ -545,6 +584,18 @@ void StructureAction::apply_overlap(linalg::ConstMatrixView vectors,
   if (vectors.rows!=p.structures || overlap.rows!=p.structures || vectors.cols<=0 ||
       overlap.cols!=vectors.cols)
     throw std::invalid_argument("CUDA overlap block dimensions");
+  if (p.product_contraction) {
+    Matrix<double> h_products(p.context,p.groups,1),m_products(p.context,p.groups,1);
+    const auto bytes=std::min(workspace::available(),
+        p.context.device_byte_budget()-p.context.counters().current_device_bytes);
+    for (std::int64_t rhs=0;rhs<vectors.cols;++rhs) {
+      p.spmm(false,vectors.column(rhs),p.support.view());
+      p.product_contraction->apply(p.support.view(),p.model_upper.view(),p.sigma,
+          h_products.view(),m_products.view(),bytes,true);
+      p.spmm(true,m_products.view(),overlap.column(rhs));
+    }
+    return;
+  }
   for (std::int64_t rhs=0;rhs<vectors.cols;++rhs) {
     expand_spin(vectors.column(rhs),p.coefficients);
     apply_orbital_transform(p.coefficients);

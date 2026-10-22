@@ -13,33 +13,45 @@ using ChannelRows=Eigen::Matrix<double,Eigen::Dynamic,Eigen::Dynamic,Eigen::RowM
  * Group zero is unrestricted. Group 1+first*n+last permits packed pairs
  * (p,q) with p<=first<=last<q. Output channels are never restricted here.
  */
-class ChannelProduct {
-  struct Block { std::vector<int> columns,inverse; Eigen::MatrixXd kernel; };
-  const Eigen::MatrixXd& kernel_;
+class ChannelSelectors {
+  struct Block { std::vector<int> columns,inverse; };
+  int pairs_;
   std::vector<Block> blocks_;
 public:
-  ChannelProduct(const Eigen::MatrixXd& kernel,int orbitals,bool restricted):kernel_(kernel) {
+  ChannelSelectors(int pairs,int orbitals,bool restricted):pairs_(pairs) {
     blocks_.resize(restricted ? 1+orbitals*orbitals:1);
     if (!restricted) return;
     for (int first=0;first<orbitals;++first) for (int last=first;last<orbitals-1;++last) {
       auto& block=blocks_[1+first*orbitals+last];
-      block.inverse.assign(kernel.rows(),-1);
+      block.inverse.assign(pairs,-1);
       for (int q=last+1;q<orbitals;++q) for (int p=0;p<=first;++p) {
         const int pair=q*(q+1)/2+p;
         block.inverse[pair]=block.columns.size();
         block.columns.push_back(pair);
       }
-      block.kernel.resize(kernel.rows(),block.columns.size());
-      for (int k=0;k<static_cast<int>(block.columns.size());++k)
-        block.kernel.col(k)=kernel.col(block.columns[k]);
     }
   }
 
   int groups() const noexcept { return blocks_.size(); }
-  int channels(int group) const noexcept { return group ? blocks_[group].columns.size():kernel_.rows(); }
+  int channels(int group) const noexcept { return group ? blocks_[group].columns.size():pairs_; }
   int local(int group,int pair) const noexcept { return group ? blocks_[group].inverse[pair]:pair; }
   int global(int group,int channel) const noexcept { return group ? blocks_[group].columns[channel]:channel; }
-  const Eigen::MatrixXd& kernel(int group) const noexcept { return group ? blocks_[group].kernel:kernel_; }
+};
+
+/** @brief Host numerical panels on the shared symbolic channel selectors. */
+class ChannelProduct : public ChannelSelectors {
+  const Eigen::MatrixXd& kernel_;
+  std::vector<Eigen::MatrixXd> kernels_;
+public:
+  ChannelProduct(const Eigen::MatrixXd& kernel,int orbitals,bool restricted)
+      :ChannelSelectors(kernel.rows(),orbitals,restricted),kernel_(kernel),kernels_(groups()) {
+    for (int group=1;group<groups();++group) {
+      auto& panel=kernels_[group];
+      panel.resize(kernel.rows(),channels(group));
+      for (int k=0;k<channels(group);++k) panel.col(k)=kernel.col(global(group,k));
+    }
+  }
+  const Eigen::MatrixXd& kernel(int group) const noexcept { return group ? kernels_[group]:kernel_; }
 };
 
 /** @brief Ragged row-major sources and full-channel column-major images in group order.
@@ -52,7 +64,7 @@ class ChannelLayout {
   bool identity_=true;
   int pairs_=0;
 public:
-  void reset(const ChannelProduct& basis,std::span<const int> groups,int count,int width) {
+  void reset(const ChannelSelectors& basis,std::span<const int> groups,int count,int width) {
     pairs_=basis.channels(0);
     offsets_.assign(basis.groups()+1,0);
     packed_offsets_.assign(basis.groups()+1,0);

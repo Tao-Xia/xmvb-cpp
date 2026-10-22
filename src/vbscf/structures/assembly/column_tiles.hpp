@@ -1,11 +1,8 @@
 #pragma once
 
 #include <algorithm>
-#include <functional>
 #include <initializer_list>
-#include <list>
 #include <memory>
-#include <unordered_map>
 #include <vector>
 
 #include <Eigen/Core>
@@ -13,6 +10,7 @@
 #include "parallel/openmp.hpp"
 #include "core/timing.hpp"
 #include "core/workspace.hpp"
+#include "mcscf/ci/column_cache.hpp"
 
 namespace xmvb::vb::detail {
 
@@ -163,69 +161,6 @@ inline ColumnTile pack_columns(std::initializer_list<const Eigen::MatrixXd*> pan
 }
 
 /** @brief Bounded compact panels; eviction consumes partial images linearly. */
-class ColumnPanels {
-public:
-  using Build=std::function<ColumnTile(int)>;
-  using Consume=std::function<void(int,ColumnTile&)>;
-
-  ColumnPanels(std::size_t bytes,Build build,Consume consume={})
-      : budget_(std::max<std::size_t>(1,bytes)),build_(std::move(build)),consume_(std::move(consume)) {}
-
-  bool contains(int index) const { return index_.contains(index); }
-
-  ColumnTile& get(int index) {
-    const auto found=index_.find(index);
-    if (found!=index_.end()) {
-      panels_.splice(panels_.begin(),panels_,found->second);
-      return found->second->tile;
-    }
-    return insert(index,build_(index));
-  }
-
-  /** @brief Admit a newly generated tile; no existing owner may have this key. */
-  ColumnTile& insert(int index,ColumnTile tile) {
-    const auto bytes=tile.bytes();
-    while (!panels_.empty() && (bytes>budget_ || resident_>budget_-bytes)) {
-      auto& last=panels_.back();
-      resident_-=last.tile.bytes();
-      if (consume_) consume_(last.index,last.tile);
-      index_.erase(last.index);
-      panels_.pop_back();
-      ++evictions;
-    }
-    panels_.push_front({index,std::move(tile)});
-    resident_+=bytes;
-    peak_bytes=std::max(peak_bytes,resident_);
-    index_[index]=panels_.begin();
-    return panels_.front().tile;
-  }
-
-  /** @brief Consume and free a column whose final physical user has completed. */
-  void release(int index) {
-    const auto found=index_.find(index);
-    if (found==index_.end()) return;
-    auto panel=found->second;
-    resident_-=panel->tile.bytes();
-    if (consume_) consume_(panel->index,panel->tile);
-    panels_.erase(panel);
-    index_.erase(found);
-    ++releases;
-  }
-
-  void finish() {
-    if (consume_) for (auto& panel:panels_) consume_(panel.index,panel.tile);
-    panels_.clear(); index_.clear(); resident_=0;
-  }
-
-  std::size_t evictions=0,peak_bytes=0,releases=0;
-
-private:
-  struct Entry { int index; ColumnTile tile; };
-  std::size_t budget_,resident_=0;
-  Build build_;
-  Consume consume_;
-  std::list<Entry> panels_;
-  std::unordered_map<int,std::list<Entry>::iterator> index_;
-};
+using ColumnPanels=mcscf::ColumnCache<ColumnTile>;
 
 } // namespace xmvb::vb::detail

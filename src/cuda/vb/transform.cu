@@ -6,11 +6,29 @@
 #include <stdexcept>
 
 #include "cuda/linalg/blas.hpp"
+#include "mcscf/ci/exterior_row.hpp"
+#include "vbscf/structures/orthogonal_ci/exterior_rows.hpp"
 
 namespace xmvb::cuda {
 namespace {
 
 using Edge = vb::ExteriorOrbitalTransform::ShearEdge;
+
+__global__ void requested_rows(mcscf::detail::ExteriorRowTopology plan,
+    linalg::ConstMatrixView upper,const std::uint64_t* masks,const int* rows,
+    int first,int count,double* scratch,linalg::MatrixView output) {
+  const int row=blockIdx.x*blockDim.x+threadIdx.x;
+  if (row>=count) return;
+  int occupied[63],indices[63];
+  auto mask=masks[rows[first+row]];
+  for (int k=0;mask;++k) {
+    occupied[k]=__ffsll(static_cast<long long>(mask))-1;
+    mask&=mask-1;
+  }
+  double* previous=scratch+2LL*plan.dimension*row;
+  mcscf::detail::exterior_row(plan,upper.data,upper.ld,occupied,indices,
+      previous,previous+plan.dimension,output.data+(first+row)*output.ld);
+}
 
 // The ordered elementary-factor coefficients are a small triangular problem,
 // not a product-space contraction. Use exactly the CPU elimination ordering.
@@ -60,7 +78,8 @@ unsigned int grid_size(std::int64_t count) {
 __global__ void shear_left(linalg::MatrixView coefficients,
                            const Edge* edges, int edge_count,
                            const double* coefficient, double orientation, bool adjoint,
-                           std::int64_t elements) {
+                           std::int64_t elements,const std::uint64_t* allowed=nullptr,
+                           int support_columns=0,int words=0) {
   const std::int64_t index = blockIdx.x * static_cast<std::int64_t>(blockDim.x)
                              + threadIdx.x;
   if (index >= elements) return;
@@ -68,6 +87,11 @@ __global__ void shear_left(linalg::MatrixView coefficients,
   const std::int64_t column = index / edge_count;
   const int source = adjoint ? edge.target : edge.source;
   const int target = adjoint ? edge.source : edge.target;
+  if (allowed) {
+    const auto* mask=allowed+(column%support_columns)*words;
+    if (!(mask[source/64]&(std::uint64_t{1}<<(source%64))) ||
+        !(mask[target/64]&(std::uint64_t{1}<<(target%64)))) return;
+  }
   coefficients.data[target + coefficients.ld*column] +=
       orientation*(*coefficient)*edge.sign*coefficients.data[source + coefficients.ld*column];
 }
@@ -100,7 +124,8 @@ __global__ void shear_right(linalg::MatrixView coefficients,
 template<bool Right>
 __global__ void exterior_tile(linalg::MatrixView panel,const Edge* edges,
     const ExteriorTransform::Shear* schedule,int steps,const double* coefficients,const double* scales,
-    int dimension,int lanes,bool adjoint,bool inverse) {
+    int dimension,int lanes,bool adjoint,bool inverse,const std::uint64_t* allowed=nullptr,
+    int support_columns=0,int words=0) {
   extern __shared__ double values[];
   const auto row_tiles=(panel.rows+lanes-1)/lanes;
   const auto column=Right ? blockIdx.x/row_tiles*dimension:blockIdx.x;
@@ -111,6 +136,7 @@ __global__ void exterior_tile(linalg::MatrixView panel,const Edge* edges,
     const auto row=Right ? row_begin+lane:spin;
     const auto col=Right ? column+spin:column;
     double v=row<panel.rows ? panel.data[row+panel.ld*col]:0.0;
+    if (allowed && !(allowed[(col%support_columns)*words+spin/64]&(std::uint64_t{1}<<(spin%64)))) v=0;
     if (adjoint==inverse) v*=scales[spin];
     values[k]=v;
   }
@@ -123,6 +149,11 @@ __global__ void exterior_tile(linalg::MatrixView panel,const Edge* edges,
       const int lane=k%lanes;
       const int source=adjoint ? edge.target:edge.source;
       const int target=adjoint ? edge.source:edge.target;
+      if (allowed) {
+        const auto* mask=allowed+(column%support_columns)*words;
+        if (!(mask[source/64]&(std::uint64_t{1}<<(source%64))) ||
+            !(mask[target/64]&(std::uint64_t{1}<<(target%64)))) continue;
+      }
       values[target*lanes+lane]+=(inverse ? -1.0:1.0)*coefficients[index]*edge.sign*
           values[source*lanes+lane];
     }
@@ -138,18 +169,34 @@ __global__ void exterior_tile(linalg::MatrixView panel,const Edge* edges,
   }
 }
 
+__global__ void restrict_columns(linalg::MatrixView panel,const std::uint64_t* allowed,
+    int columns,int words) {
+  const auto i=static_cast<std::int64_t>(blockIdx.x)*blockDim.x+threadIdx.x;
+  if (i>=panel.rows*panel.cols) return;
+  const auto row=i%panel.rows,column=i/panel.rows;
+  if (!(allowed[(column%columns)*words+row/64]&(std::uint64_t{1}<<(row%64))))
+    panel.data[row+panel.ld*column]=0.0;
+}
+
 }  // namespace
 
 ExteriorTransform::ExteriorTransform(
     Context& context, const vb::ExteriorOrbitalTransform& source)
     : context_(&context), dimension_(source.dimension()),n_orbitals_(source.n_orbitals()),
+      electrons_(source.n_electrons()),
       scales_(context, static_cast<std::size_t>(source.dimension())),
       inverse_scales_(context, static_cast<std::size_t>(source.dimension())),
       shear_coefficients_(context,source.shear_count()),
       occupations_(context,source.occupations().size()),
+      binomial_(context,source.row_plan().binomial().size()),
+      column_ranks_(context,source.row_plan().column_ranks().size()),
       unit_upper_(context,source.n_orbitals(),source.n_orbitals()) {
   if (dimension_ <= 0 || source.determinant_scales().size() != dimension_)
     throw std::invalid_argument("invalid CUDA exterior transform dimensions");
+  context.copy_to_device(binomial_.data(),source.row_plan().binomial().data(),
+      binomial_.size()*sizeof(std::uint64_t));
+  context.copy_to_device(column_ranks_.data(),source.row_plan().column_ranks().data(),
+      column_ranks_.size()*sizeof(int));
   int device=0,shared_bytes=0;
   check_cuda(cudaGetDevice(&device),"query exterior device");
   check_cuda(cudaDeviceGetAttribute(&shared_bytes,cudaDevAttrMaxSharedMemoryPerBlock,device),
@@ -234,6 +281,48 @@ void ExteriorTransform::apply_left(linalg::MatrixView coefficients,
   }
 }
 
+void ExteriorTransform::apply_supported_left(linalg::MatrixView panel,
+    std::span<const int> offsets,std::span<const int> rows,bool adjoint) const {
+  if (offsets.size()<2 || offsets.front()!=0 || offsets.back()!=rows.size() ||
+      panel.rows!=dimension_ || panel.ld<panel.rows || panel.cols<=0 ||
+      panel.cols%(offsets.size()-1))
+    throw std::invalid_argument("invalid CUDA supported exterior pattern");
+  const int columns=offsets.size()-1,words=(dimension_+63)/64;
+  std::vector<std::uint64_t> bits(static_cast<std::size_t>(columns)*words,0);
+  for (int b=0;b<columns;++b) {
+    if (offsets[b]<0 || offsets[b]>offsets[b+1] || offsets[b+1]>rows.size())
+      throw std::invalid_argument("invalid CUDA supported exterior offsets");
+    for (int i=offsets[b];i<offsets[b+1];++i) {
+      const int row=rows[i];
+      if (row<0 || row>=dimension_) throw std::invalid_argument("supported exterior row is out of range");
+      bits[static_cast<std::size_t>(b)*words+row/64]|=std::uint64_t{1}<<(row%64);
+    }
+  }
+  Buffer<std::uint64_t> allowed(*context_,bits.size());
+  context_->copy_to_device(allowed.data(),bits.data(),bits.size()*sizeof(std::uint64_t));
+  if (dimension_<=shared_values_) {
+    exterior_tile<false><<<grid_size(panel.cols*256),256,dimension_*sizeof(double),context_->stream()>>>(
+        panel,edges_.data(),schedule_.data(),shears_.size(),shear_coefficients_.data(),scales_.data(),
+        dimension_,1,adjoint,false,allowed.data(),columns,words);
+  } else {
+    restrict_columns<<<grid_size(panel.rows*panel.cols),256,0,context_->stream()>>>(panel,allowed.data(),columns,words);
+    const auto scale=[&] {
+      check_cublas(cublasDdgmm(context_->blas(),CUBLAS_SIDE_LEFT,blas_int(panel.rows),blas_int(panel.cols),
+          panel.data,blas_int(panel.ld),scales_.data(),1,panel.data,blas_int(panel.ld)),"supported exterior scaling");
+    };
+    if (!adjoint) scale();
+    for (std::size_t step=0;step<shears_.size();++step) {
+      const auto index=adjoint ? shears_.size()-1-step:step;
+      const auto& shear=shears_[index];
+      if (shear.count) shear_left<<<grid_size(shear.count*panel.cols),256,0,context_->stream()>>>(panel,
+          edges_.data()+shear.offset,shear.count,shear_coefficients_.data()+index,1.0,adjoint,
+          shear.count*panel.cols,allowed.data(),columns,words);
+    }
+    if (adjoint) scale();
+  }
+  check_cuda(cudaGetLastError(),"supported exterior action");
+}
+
 void ExteriorTransform::apply_right(linalg::MatrixView coefficients,
                                      bool adjoint, bool inverse) const {
   if (coefficients.rows <= 0 || coefficients.cols <= 0 ||
@@ -277,6 +366,34 @@ void ExteriorTransform::apply_right(linalg::MatrixView coefficients,
   }
   if (adjoint != inverse) {
     scale();
+  }
+}
+
+void ExteriorTransform::generate_rows(linalg::ConstMatrixView upper,
+    std::span<const int> rows,linalg::MatrixView output) const {
+  if (upper.rows!=n_orbitals_ || upper.cols!=n_orbitals_ ||
+      upper.ld<upper.rows || !upper.data || output.rows!=dimension_ ||
+      output.cols!=static_cast<std::int64_t>(rows.size()) || output.ld<output.rows)
+    throw std::invalid_argument("requested exterior-row dimensions");
+  if (rows.empty()) return;
+  if (!output.data || output.data==upper.data ||
+      std::any_of(rows.begin(),rows.end(),[&](int row) { return row<0 || row>=dimension_; }))
+    throw std::invalid_argument("invalid requested exterior rows");
+  auto& c=*context_;
+  Buffer<int> selected(c,rows.size());
+  c.copy_to_device(selected.data(),rows.data(),rows.size_bytes());
+  const auto available=c.device_byte_budget()-c.counters().current_device_bytes;
+  const int tile=static_cast<int>(std::min<std::size_t>(rows.size(),
+      available/(2ULL*dimension_*sizeof(double))));
+  if (!tile) throw std::runtime_error("exterior recursion cannot fit one single-spin row");
+  Buffer<double> scratch(c,2ULL*dimension_*tile);
+  const mcscf::detail::ExteriorRowTopology plan{
+      n_orbitals_,electrons_,dimension_,binomial_.data(),column_ranks_.data()};
+  for (int first=0;first<static_cast<int>(rows.size());first+=tile) {
+    const int count=std::min(tile,static_cast<int>(rows.size())-first);
+    requested_rows<<<grid_size(count),256,0,c.stream()>>>(plan,upper,occupations_.data(),
+        selected.data(),first,count,scratch.data(),output);
+    check_cuda(cudaGetLastError(),"shared CPU exterior-row recursion");
   }
 }
 

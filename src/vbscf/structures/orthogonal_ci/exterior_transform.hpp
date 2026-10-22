@@ -130,6 +130,7 @@ public:
       Eigen::MatrixXd* directional_coefficients) const;
 
   int dimension() const noexcept { return static_cast<int>(masks_.size()); }
+  const ExteriorRowPlan& row_plan() const noexcept { return *row_plan_; }
   /** Borrowed factors in the exact order used by the CPU exterior action. */
   const Eigen::VectorXd& determinant_scales() const noexcept { return determinant_scales_; }
   std::size_t shear_count() const noexcept { return shears_.size(); }

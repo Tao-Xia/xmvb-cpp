@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <span>
 
@@ -9,9 +10,40 @@
 #include "linalg/views.hpp"
 #include "mcscf/ci/links.hpp"
 
-namespace xmvb::mcscf { class DirectCiSigmaAction; }
+namespace xmvb::mcscf { class DirectCiSigmaAction; class ProductSupport; }
 
 namespace xmvb::cuda {
+
+/** Device counterpart of the CPU column callbacks. Packing is
+ * (alpha_rows, beta_local*width+rhs); callbacks borrow the current tile only.
+ */
+using CiTileReader=std::function<void(std::span<const int>,std::span<const int>,linalg::MatrixView)>;
+/** Gather directly into a consumer-owned panel, optionally adding to it.
+ * Source -1 denotes all beta columns, otherwise one tile-local beta column.
+ * An empty row span denotes the halo; otherwise rows are sorted distinct
+ * global alpha indices. No accumulator may outlive its writer callback.
+ */
+using CiTileGather=std::function<void(int,std::span<const int>,linalg::MatrixView,bool)>;
+using CiTileWriter=std::function<void(std::span<const int>,std::span<const int>,const CiTileGather&)>;
+using CiColumnRelease=std::function<void(std::span<const int>)>;
+
+class DirectCiSigma;
+struct CiTileRequest {
+  CiTileReader response;
+  CiTileWriter image;
+  const DirectCiSigma* direction=nullptr;
+  linalg::MatrixView one_adjoint{},pair_adjoint{};
+};
+
+/** Borrowed resident endpoints for consumers not yet storing compact columns.
+ * The executor is still the same support/halo tile sweep, not a second sigma.
+ */
+struct CiCarrierRequest {
+  linalg::ConstMatrixView response;
+  linalg::MatrixView image;
+  const DirectCiSigma* direction=nullptr;
+  linalg::MatrixView one_adjoint{},pair_adjoint{};
+};
 
 /** Exact packed-channel direct-CI action on a full current-RHS spin product.
  * A panel has n_alpha rows and n_beta*RHS columns, with beta varying fastest.
@@ -37,6 +69,19 @@ class DirectCiSigma {
   /** Enqueues work on Context's stream; host consumers must synchronize. */
   void apply(linalg::ConstMatrixView coefficients,
              linalg::MatrixView image, bool add = false) const;
+
+  /** CPU SigmaTilePlan, exact channel envelopes and release schedule, executed
+   * on device. Responses share the state scatter, one input halo, two ragged
+   * source slabs and one full-channel image, never a product-sized carrier.
+   * All integral adjoints and H*response+dH*state images are device-resident.
+   * workspace_bytes controls tiling only, not physical-space admission.
+   */
+  void apply_tiled_responses(int width,std::span<const CiTileRequest> requests,
+      const CiTileReader& state,const mcscf::ProductSupport* support,
+      std::size_t workspace_bytes,const CiColumnRelease& release={}) const;
+  void apply_supported_responses(std::span<const CiCarrierRequest> requests,
+      linalg::ConstMatrixView state,const mcscf::ProductSupport& support,
+      std::size_t workspace_bytes,bool physical_image=true) const;
 
   /** Full, unsymmetrized transition cotangent of the packed channel kernel.
    * Computes (E left)^T (E right), summed over all RHS columns. Every view is
@@ -147,6 +192,7 @@ class DirectCiSigma {
   }
   void complete_exchange(linalg::MatrixView,bool average) const;
   struct SpinGraph {
+    mcscf::SpinConnections topology;
     /** Zero means absent; signed (source+1) encodes the exact fermionic sign. */
     Buffer<int> sources;
     SpinGraph() = default;
@@ -164,7 +210,7 @@ class DirectCiSigma {
                         linalg::MatrixView channel_kernel_adjoint) const;
   void pullback_channel_kernel(linalg::ConstMatrixView channel_kernel_adjoint,
                                linalg::MatrixView one_electron_adjoint,
-                               linalg::MatrixView pair_kernel_adjoint) const;
+                               linalg::MatrixView pair_kernel_adjoint,double* scratch) const;
   Context* context_;
   int n_alpha_, n_beta_, n_orbitals_, n_electrons_, n_channels_, channel_capacity_;
   int exchange_parity_;
