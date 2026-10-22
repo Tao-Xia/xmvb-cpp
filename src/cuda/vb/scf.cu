@@ -274,19 +274,32 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,
       Matrix<double> dr(context,nb,norb),dc(context,nstr,1),hr(context,nb,norb),hc(context,nstr,1);
       Matrix<double> qr,qc;
       if (ns) { qr=Matrix<double>(context,nb,norb);qc=Matrix<double>(context,nstr,1); }
-      chart.expand(segment(x,0,no),dr.view());
-      if (ns) tangent->coefficient_response_coordinates(segment(x,no,ns),dc.view());
-      else check_cuda(cudaMemsetAsync(dc.data(),0,nstr*sizeof(double),context.stream()),"zero CI direction");
-      origin.hessian(dr.view(),dc.view(),hr.view(),hc.view(),qr.view(),qc.view());
-      chart.project(hr.view(),segment(hx,0,no));
-      if (ns) {
-        tangent->project_coordinates(hc.view(),segment(hx,no,ns));
-        scale(context,segment(hx,no,ns),1.0/std::sqrt(2.0));
-        chart.project(qr.view(),segment(structure_image.view(),0,no));
-        tangent->project_coordinates(qc.view(),segment(structure_image.view(),no,ns));
-        scale(context,segment(structure_image.view(),no,ns),1.0/std::sqrt(2.0));
+      {
+        const nvtx3::scoped_range range{"coupled.expand"};
+        chart.expand(segment(x,0,no),dr.view());
+        if (ns) tangent->coefficient_response_coordinates(segment(x,no,ns),dc.view());
       }
-      metric(x,mx);copy(context,orbital_image.view(),hx);
+      if (!ns) check_cuda(cudaMemsetAsync(dc.data(),0,nstr*sizeof(double),context.stream()),"zero CI direction");
+      {
+        const nvtx3::scoped_range range{"coupled.physical"};
+        origin.hessian(dr.view(),dc.view(),hr.view(),hc.view(),qr.view(),qc.view());
+      }
+      {
+        const nvtx3::scoped_range range{"coupled.project"};
+        chart.project(hr.view(),segment(hx,0,no));
+        if (ns) {
+          tangent->project_coordinates(hc.view(),segment(hx,no,ns));
+          scale(context,segment(hx,no,ns),1.0/std::sqrt(2.0));
+          chart.project(qr.view(),segment(structure_image.view(),0,no));
+          tangent->project_coordinates(qc.view(),segment(structure_image.view(),no,ns));
+          scale(context,segment(structure_image.view(),no,ns),1.0/std::sqrt(2.0));
+        }
+      }
+      {
+        const nvtx3::scoped_range range{"coupled.metric"};
+        metric(x,mx);
+      }
+      copy(context,orbital_image.view(),hx);
       if (ns) add(context,orbital_image.view(),structure_image.view(),-1.0);
       ++result.hvp;
     };

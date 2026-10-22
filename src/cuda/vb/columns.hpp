@@ -48,6 +48,15 @@ struct ProductColumns {
 void project_product_exchange(Context& context,
     std::span<ProductColumns* const> panels,int extent,int parity);
 
+/** Immutable support certificate, constructed only by its symbolic owner.
+ * The owner proves transpose closure from spin ordering and source seeds,
+ * and checks panel provenance before applying the numerical projection. */
+class ProductExchangeSupport {
+  friend struct ProductSymbolic;
+  ProductExchangeSupport()=default;
+  void project(Context&,std::span<ProductColumns* const>,int extent,int parity) const;
+};
+
 /** Read one numerical lane from compact panels into a requested dense device
  * tile. Missing columns or rows have exact zero value. Beta and alpha indices
  * are host metadata; all numerical gathering is on device. */

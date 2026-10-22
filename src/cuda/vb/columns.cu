@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <list>
 #include <stdexcept>
+#include <nvtx3/nvtx3.hpp>
 
 namespace xmvb::cuda {
 namespace {
@@ -134,8 +135,10 @@ __global__ void pack_columns(const CiColumnMap* maps,
 
 } // namespace
 
-void project_product_exchange(Context& context,
-    std::span<ProductColumns* const> panels,int extent,int parity) {
+namespace {
+void project_exchange(Context& context,
+    std::span<ProductColumns* const> panels,int extent,int parity,bool check_support) {
+  const nvtx3::scoped_range range{"vb.exchange_projection"};
   if (panels.empty() || !panels.back() || extent<=0 ||
       panels.back()->patterns.empty() ||
       panels.back()->patterns.size()>static_cast<std::size_t>(extent) ||
@@ -158,6 +161,8 @@ void project_product_exchange(Context& context,
         panel->values.rows()!=panel->offsets.back())
       throw std::invalid_argument("incompatible compact exchange panel");
     descriptors[p]={panel->maps.data(),panel->values.view()};
+    max_rows=std::max(max_rows,panel->max_rows);
+    if (!check_support) continue;
     for (int local=0;local<columns;++local) {
       const auto& pattern=*panel->patterns[local];
       if (pattern.size!=panel->offsets[local+1]-panel->offsets[local] ||
@@ -192,6 +197,17 @@ void project_product_exchange(Context& context,
   project_exchange_columns<<<dim3(n_beta,blocks),256,0,context.stream()>>>(
       device.data(),extent,n_beta,parity);
   check_cuda(cudaGetLastError(),"project compact exchange columns");
+}
+} // namespace
+
+void project_product_exchange(Context& context,
+    std::span<ProductColumns* const> panels,int extent,int parity) {
+  project_exchange(context,panels,extent,parity,true);
+}
+
+void ProductExchangeSupport::project(Context& context,
+    std::span<ProductColumns* const> panels,int extent,int parity) const {
+  project_exchange(context,panels,extent,parity,false);
 }
 
 void read_product_columns(Context& context,

@@ -39,6 +39,7 @@ struct Factors {
   Buffer<int> offsets,indices;
   Buffer<double> values;
   Factors(Context& c,cusparseHandle_t handle,linalg::ConstMatrixView dense):offsets(c,dense.rows+1) {
+    const nvtx3::scoped_range range{"vb.factor_build"};
     cusparseDnMatDescr_t input=nullptr;
     cusparseSpMatDescr_t output=nullptr;
     try {
@@ -229,6 +230,7 @@ struct ProductSymbolic {
   std::vector<std::weak_ptr<const ProductColumnPattern>> patterns;
   std::shared_ptr<const ProductColumnPattern> full_pattern;
   std::unique_ptr<mcscf::ColumnCache<RetainedPattern>> pattern_cache;
+  std::unique_ptr<ProductExchangeSupport> exchange;
 
   ProductSymbolic(Context& ctx,const vb::StructureAction::OrthogonalView& view,
       int alpha_dimension,int beta_dimension,const mcscf::ProductSupport* exact_support)
@@ -242,6 +244,28 @@ struct ProductSymbolic {
     }
     std::partial_sum(offsets.begin(),offsets.end(),offsets.begin());
     starts=upload<int>(c,offsets);raw_alpha=upload<int>(c,aa);raw_beta=upload<int>(c,bb);
+    if (view.exchange_parity) {
+      if (view.alpha.occupations()!=view.beta.occupations())
+        throw std::invalid_argument("exchange support requires identical spin ordering");
+      auto seeds=std::vector<mcscf::ProductIndex>(view.products.begin(),view.products.end());
+      std::sort(seeds.begin(),seeds.end());
+      for (const auto seed:seeds)
+        if (!std::binary_search(seeds.begin(),seeds.end(),(seed%beta)*beta+seed/beta))
+          throw std::invalid_argument("exchange source seeds are not transpose closed");
+      // ProductPaths applies the same prefix rules to both spin lists.
+      // Swapping a seed and its two deficit budgets therefore gives a witness
+      // for every transposed support entry, without scanning the product grid.
+      exchange.reset(new ProductExchangeSupport);
+    }
+  }
+
+  void project_exchange(std::span<ProductColumns* const> panels,int extent,int parity) {
+    if (!exchange) throw std::logic_error("uncertified product exchange support");
+    for (std::size_t p=0;p<panels.size();++p) if (panels[p])
+      for (std::size_t j=0;j<panels[p]->patterns.size();++j)
+        if (panels[p]->patterns[j]!=pattern(static_cast<int>(p)*extent+j))
+          throw std::logic_error("exchange panel does not belong to its symbolic support");
+    exchange->project(c,panels,extent,parity);
   }
 
   void prepare_patterns(std::size_t budget) {
@@ -339,6 +363,7 @@ struct ProductContraction::Impl {
       factor_cache.reset();factor_extent=extent;
     }
     if (!factor_cache) factor_cache=std::make_unique<mcscf::ColumnCache<Factors>>(budget,[this](int id) {
+      const nvtx3::scoped_range range{"vb.factor_sample",nvtx3::payload{static_cast<std::uint64_t>(id)}};
       const int first=id*factor_extent,count=std::min(factor_extent,beta-first);
       Matrix<double> values(c,beta,count);
       beta_transform.sample_rows(first,values.view());return Factors(c,sparse,values.view());
@@ -347,6 +372,7 @@ struct ProductContraction::Impl {
 
   void generate_source(ProductIncidence incidence,linalg::ConstMatrixView source,
       const Factors& f,linalg::MatrixView values) {
+    const nvtx3::scoped_range range{"vb.source_generate"};
     clear(c,values);
     if (source.data) generate_selected<<<grid(alpha),256,0,c.stream()>>>(symbolic->starts.data(),symbolic->raw_beta.data(),
         incidence,source,f.offsets.data(),f.indices.data(),f.values.data(),values);
@@ -361,6 +387,7 @@ struct ProductContraction::Impl {
     const bool tangent=response.data || delta_upper.data || delta_sigma;
     const bool joint=ci!=nullptr;
     const bool cached=tangent && endpoint.images && endpoint.images->complete();
+    const nvtx3::scoped_range cache_range{cached ? "vb.jet.cached":"vb.jet.uncached"};
     if (cached && delta_upper.data && !relative_direction.data)
       throw std::invalid_argument("cached product jet requires its relative frame direction");
     if (endpoint.coefficients.rows()!=incidence.size || endpoint.coefficients.cols()!=1 ||
@@ -386,6 +413,8 @@ struct ProductContraction::Impl {
     const auto row_bytes=sizeof(double)*(12ULL*alpha+8ULL*beta);
     const int extent=cached ? endpoint.extent:std::max<std::size_t>(1,std::min<std::size_t>(beta,quarter/row_bytes));
     const int panels=(beta+extent-1)/extent;
+    const nvtx3::scoped_range plan_range{"vb.jet.plan",nvtx3::payload{
+        (static_cast<std::uint64_t>(extent)<<32)|static_cast<unsigned>(panels)}};
     std::vector<int> all_beta(beta),all_rows(alpha);
     std::iota(all_beta.begin(),all_beta.end(),0);std::iota(all_rows.begin(),all_rows.end(),0);
     const auto selected=[&](int id) {
@@ -409,6 +438,7 @@ struct ProductContraction::Impl {
       db=beta_transform.direction(upper,delta_upper);
     }
     mcscf::ColumnCache<Factors> delta_factors(quarter/4,[&](int id) {
+      const nvtx3::scoped_range range{"vb.factor_direction",nvtx3::payload{static_cast<std::uint64_t>(id)}};
       auto keys=selected(id);Matrix<double> values(c,beta,keys.size()),delta(c,beta,keys.size());
       beta_transform.sample_directional_rows(db,id*extent,values.view(),delta.view());
       return Factors(c,sparse,delta.view());
@@ -469,6 +499,7 @@ struct ProductContraction::Impl {
       endpoint.readers->read(1,betas,rows,values);
     };
     mcscf::ColumnCache<ProductColumns> input(resident_input ? quarter/2:quarter,[&](int id) {
+      const nvtx3::scoped_range range{"vb.source_panel",nvtx3::payload{static_cast<std::uint64_t>(id)}};
       const auto keys=selected(id);const int count=keys.size();
       auto block=allocate(keys,input_width);
       Matrix<double> scratch;
@@ -500,10 +531,13 @@ struct ProductContraction::Impl {
         const auto& f=factors.get(id);
         const auto* df=delta_upper.data ? &delta_factors.get(id):nullptr;
         clear(c,values);
-        generate_selected_jet<<<grid(alpha),256,0,c.stream()>>>(symbolic->starts.data(),symbolic->raw_beta.data(),
-            incidence,endpoint.coefficients.view(),response,f.offsets.data(),f.indices.data(),f.values.data(),
-            df ? df->offsets.data():nullptr,df ? df->indices.data():nullptr,df ? df->values.data():nullptr,
-            count,joint,values);
+        {
+          const nvtx3::scoped_range range{"vb.source_generate"};
+          generate_selected_jet<<<grid(alpha),256,0,c.stream()>>>(symbolic->starts.data(),symbolic->raw_beta.data(),
+              incidence,endpoint.coefficients.view(),response,f.offsets.data(),f.indices.data(),f.values.data(),
+              df ? df->offsets.data():nullptr,df ? df->indices.data():nullptr,df ? df->values.data():nullptr,
+              count,joint,values);
+        }
         check_cuda(cudaGetLastError(),"generate fused product source lanes");
         if (delta_upper.data) {
           alpha_transform.apply_directional_left(da,y,dy);
@@ -591,6 +625,8 @@ struct ProductContraction::Impl {
     // and one beta-row traversal, then accumulate into distinct targets.
     const auto project_panel=[&](int id,linalg::MatrixView values,
         std::initializer_list<int> destinations,bool differentiate) {
+      const nvtx3::scoped_range range{"vb.source_project",nvtx3::payload{
+          (static_cast<std::uint64_t>(differentiate)<<32)|static_cast<unsigned>(id)}};
       const auto keys=selected(id);const int count=keys.size();
       const int lanes=destinations.size();
       const std::array<int,2> target{*destinations.begin(),lanes==2 ? *(destinations.begin()+1):0};
@@ -637,6 +673,7 @@ struct ProductContraction::Impl {
     mcscf::ColumnCache<ProductColumns> output(quarter,[&](int id) {
       auto block=allocate(selected(id),input_width);clear(c,block.values.view());return block;
     },[&](int id,ProductColumns& block) {
+      const nvtx3::scoped_range range{"vb.reverse_panel",nvtx3::payload{static_cast<std::uint64_t>(id)}};
       const int count=selected(id).size(),first=id*extent;
       Matrix<double> scratch;
       const auto values=dense_panel(block,scratch);
@@ -705,7 +742,7 @@ struct ProductContraction::Impl {
       for (int id=0;id<panels;++id) if (reachable_panel[id]) panels_view[id]=&output.get(id);
       if (sigma.exchange_parity() && !output.evictions) {
         while (!panels_view.empty() && !panels_view.back()) panels_view.pop_back();
-        project_product_exchange(c,panels_view,extent,sigma.exchange_parity());exchange_reduced=true;
+        symbolic->project_exchange(panels_view,extent,sigma.exchange_parity());exchange_reduced=true;
       }
     }
     if (!selected_only && !tangent && !output.evictions) {
