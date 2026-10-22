@@ -18,24 +18,26 @@ struct SigmaTileBudget {
 
 struct SigmaTargetGroup { int beta,begin,end,column=0; };
 
+/** Current bounded tile only; contains no cursors or borrowed support objects. */
+struct SigmaTile {
+  std::vector<SigmaTargetGroup> groups;
+  std::vector<int> active,group_index,halo,columns,halo_index,column_index,released;
+  std::vector<unsigned char> active_support;
+  std::vector<int> channel_groups,diagonal_rows;
+  std::size_t unsupported_targets=0;
+};
+
 /** @brief Stream each target once, admitting its actual shared neighborhoods.
  * One pending target crosses a budget boundary without rewinding the support
  * cursor. Storage is single-spin metadata plus the current tile, never U^2.
  */
-class SigmaTilePlan {
+class SigmaTilePlan : public SigmaTile {
 public:
   SigmaTilePlan(const SpinConnections& alpha,const SpinConnections& beta,
       const ProductSupport* support,int parity,SigmaTileBudget budget,bool release);
   bool next();
   std::size_t payload_bytes() const;
-
-  std::vector<SigmaTargetGroup> groups;
-  std::vector<int> active,group_index,halo,columns,halo_index,column_index,released;
-  std::vector<unsigned char> active_support;
-  std::vector<int> channel_groups;
-  /** Exchange-fixed rows and support counts, fused into node admission. */
-  std::vector<int> diagonal_rows;
-  std::size_t unsupported_targets=0;
+  bool exhausted() const noexcept { return !pending_ && next_beta_==beta_targets_.size(); }
 
 private:
   struct Node { int alpha,beta; bool supported; int group,channels; };

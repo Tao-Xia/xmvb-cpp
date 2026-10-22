@@ -201,6 +201,7 @@ class DirectCiSigma {
         static_cast<std::int64_t>(n_alpha_)*n_beta_)*width;
   }
   void complete_exchange(linalg::MatrixView,bool average) const;
+  std::size_t tile_resident_bytes() const noexcept;
   struct SpinGraph {
     mcscf::SpinConnections topology;
     /** Zero means absent; signed (source+1) encodes the exact fermionic sign. */
@@ -228,11 +229,13 @@ class DirectCiSigma {
   Buffer<double> kernel_;
   Buffer<double> effective_one_;
   std::shared_ptr<const SpinGraph> alpha_, beta_;
+  struct TileWorkspace;
   struct Workspace {
     Matrix<double> scattered,transformed,right_scattered,channel_adjoint;
     std::uint64_t generation=0;
     std::int64_t products=0;
     int moment_partitions=0;
+    std::shared_ptr<TileWorkspace> tiles;
   };
   // One scratch owner per shared spin graph family, not per physical point.
   std::shared_ptr<Workspace> workspace_;

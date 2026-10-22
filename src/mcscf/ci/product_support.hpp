@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <numeric>
 #include <stdexcept>
@@ -162,6 +163,9 @@ public:
   }
   bool has_channel_envelopes() const noexcept { return covalent_.has_value(); }
   int n_orbitals() const noexcept { return n_; }
+  /** Immutable support identity, shared by copies without retaining the support
+   * itself. Prepared schedules use it rather than borrowed object addresses. */
+  const std::shared_ptr<const char>& identity() const noexcept { return identity_; }
 
   /** @brief Small-query membership test; traversal should use cursor/column. */
   bool contains(int alpha, int beta, int depth = 0) const noexcept {
@@ -190,6 +194,7 @@ public:
   }
 
 private:
+  std::shared_ptr<const char> identity_=std::make_shared<const char>(0);
   void prepare_columns() {
     if (full_ || complete_covalent_) {
       columns_.resize(beta_.size());

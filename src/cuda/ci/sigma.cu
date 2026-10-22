@@ -360,7 +360,7 @@ DirectCiSigma::DirectCiSigma(Context& context,const DirectCiSigma& source)
 
 std::size_t DirectCiSigma::resident_bytes() const noexcept {
   return (kernel_.size()+effective_one_.size())*sizeof(double) +
-         alpha_->resident_bytes() +
+         alpha_->resident_bytes() + tile_resident_bytes() +
          (shared_spin_graph_ ? 0 : beta_->resident_bytes()) +
       sizeof(double)*(scattered_.rows()*scattered_.cols()+
           transformed_.rows()*transformed_.cols()+

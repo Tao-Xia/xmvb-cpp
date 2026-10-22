@@ -11,9 +11,9 @@ namespace xmvb::mcscf::detail {
 
 SigmaTilePlan::SigmaTilePlan(const SpinConnections& alpha,const SpinConnections& beta,
     const ProductSupport* support,int parity,SigmaTileBudget budget,bool release)
-    : halo_index(alpha.n_strings(),-1),column_index(beta.n_strings(),-1),
-      alpha_(alpha),beta_(beta),support_(support),parity_(parity),budget_(budget),
+    : alpha_(alpha),beta_(beta),support_(support),parity_(parity),budget_(budget),
       alpha_seen_(alpha.n_strings(),0) {
+  halo_index.assign(alpha.n_strings(),-1);column_index.assign(beta.n_strings(),-1);
   if (budget.width<=0 || budget.pairs<=0 || budget.slabs<=0 || !budget.bytes)
     throw std::invalid_argument("invalid sigma tile budget");
   if (budget.packed_slabs<0 || budget.packed_slabs>budget.slabs ||

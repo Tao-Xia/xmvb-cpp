@@ -241,6 +241,13 @@ void check_product_tiles(int parity,bool covalent,std::size_t budget) {
   const auto density=cpu.integral_adjoint(right,right);
   near(download(context,dh),density.one_electron,3e-10,"accepted same-source supported h density differs");
   near(download(context,dg),density.pair_kernel,3e-10,"accepted same-source supported g density differs");
+  // Repeat the symbolic tile with different amplitudes. Only indices may be
+  // reused: neither scattered sources nor the weighted Gram are immutable.
+  xmvb::cuda::copy_to_device(context,dr.view(),(-0.7*right).eval());
+  gpu.apply_supported_responses({&same,1},dr.view(),*support,budget);
+  near(download(context,out),-0.7*cpu.apply(right),3e-10,"reused tile retained old amplitudes");
+  near(download(context,dh),0.49*density.one_electron,3e-10,"reused weighted Gram retained old h density");
+  near(download(context,dg),0.49*density.pair_kernel,3e-10,"reused weighted Gram retained old g density");
 }
 
 void check_sigma(int rhs_count,bool rotated,int maximum_tile=3,bool one_product=false,int n=4) {
