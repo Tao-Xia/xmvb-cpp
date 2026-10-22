@@ -247,7 +247,7 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,
       chart.physical_metric(segment(x,0,no),segment(mx,0,no));
       if (ns) tangent->apply_metric_coordinates(segment(x,no,ns),segment(mx,no,ns));
     };
-    Matrix<double> last_image(context,dimension,1);
+    Matrix<double> orbital_image(context,dimension,1),structure_image(context,ns ? dimension:0,1);
     const auto base_inverse=[&](View r,double eigenvalue,Out p) {
       chart.apply_inverse_hessian_diagonal(segment(r,0,no),eigenvalue-1.0e-8,segment(p,0,no));
       if (ns) {
@@ -266,24 +266,29 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,
     // its next action recaptures against the shared workspace generation.
     action.carrier_sigma().reset_workspace();
     context.set_allocation_phase("CIAH coarse workspace");
-    // One full coupled sample is observed per retained AH direction. Unlike
-    // the CPU split-block collector, this path never emits two samples.
-    DeviceCoarsePreconditioner coarse(context,dimension,ns?ciah.max_cycle:0,
+    DeviceCoarsePreconditioner coarse(context,dimension,ns?2*ciah.max_cycle:0,
         ciah.lindep,ciah.operator_relative_accuracy);
     ciah.apply_images=[&](View x,Out hx,Out mx) {
       const nvtx3::scoped_range range{"scf.coupled_action"};
       AllocationPhase allocation(context,"coupled orbital-CI HVP");
       Matrix<double> dr(context,nb,norb),dc(context,nstr,1),hr(context,nb,norb),hc(context,nstr,1);
+      Matrix<double> qr,qc;
+      if (ns) { qr=Matrix<double>(context,nb,norb);qc=Matrix<double>(context,nstr,1); }
       chart.expand(segment(x,0,no),dr.view());
       if (ns) tangent->coefficient_response_coordinates(segment(x,no,ns),dc.view());
       else check_cuda(cudaMemsetAsync(dc.data(),0,nstr*sizeof(double),context.stream()),"zero CI direction");
-      origin.hessian(dr.view(),dc.view(),hr.view(),hc.view());
+      origin.hessian(dr.view(),dc.view(),hr.view(),hc.view(),qr.view(),qc.view());
       chart.project(hr.view(),segment(hx,0,no));
       if (ns) {
         tangent->project_coordinates(hc.view(),segment(hx,no,ns));
         scale(context,segment(hx,no,ns),1.0/std::sqrt(2.0));
+        chart.project(qr.view(),segment(structure_image.view(),0,no));
+        tangent->project_coordinates(qc.view(),segment(structure_image.view(),no,ns));
+        scale(context,segment(structure_image.view(),no,ns),1.0/std::sqrt(2.0));
       }
-      metric(x,mx);copy(context,last_image.view(),hx);++result.hvp;
+      metric(x,mx);copy(context,orbital_image.view(),hx);
+      if (ns) add(context,orbital_image.view(),structure_image.view(),-1.0);
+      ++result.hvp;
     };
     ciah.apply_metric=metric;ciah.coordinate_norm=coordinate_norm;
     ciah.residual_preconditioner=[&](View r,double value,Out p) {
@@ -293,7 +298,23 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,
       chart.inverse_metric(segment(r,0,no),segment(p,0,no));
       if (ns) copy(context,segment(p,no,ns),segment(r,no,ns));
     };
-    ciah.observe_images=[&](View x,View mx) { coarse.observe(x,last_image.view(),mx); };
+    Matrix<double> sample(context,ns ? dimension:0,1),sample_metric(context,ns ? dimension:0,1);
+    if (ns) ciah.observe_images=[&](View x,View mx) {
+      check_cuda(cudaMemsetAsync(sample.data(),0,dimension*sizeof(double),context.stream()),
+          "zero split coarse sample");
+      check_cuda(cudaMemsetAsync(sample_metric.data(),0,dimension*sizeof(double),context.stream()),
+          "zero split coarse metric sample");
+      copy(context,segment(sample.view(),0,no),segment(x,0,no));
+      copy(context,segment(sample_metric.view(),0,no),segment(mx,0,no));
+      coarse.observe(sample.view(),orbital_image.view(),sample_metric.view());
+      check_cuda(cudaMemsetAsync(sample.data(),0,no*sizeof(double),context.stream()),
+          "zero coarse orbital sample");
+      check_cuda(cudaMemsetAsync(sample_metric.data(),0,no*sizeof(double),context.stream()),
+          "zero coarse orbital metric sample");
+      copy(context,segment(sample.view(),no,ns),segment(x,no,ns));
+      copy(context,segment(sample_metric.view(),no,ns),segment(mx,no,ns));
+      coarse.observe(sample.view(),structure_image.view(),sample_metric.view());
+    };
     context.set_allocation_phase("CIAH subspace");
     DeviceCiahWorkspace workspace(context,dimension,ciah,seed.view());
     const auto maximum_component=[&](View x) {

@@ -87,7 +87,8 @@ void transform_one_electron_directional_adjoint(Context& context,
     linalg::ConstMatrixView direction,
     linalg::ConstMatrixView active_adjoint,
     linalg::ConstMatrixView active_adjoint_direction,
-    linalg::MatrixView gradient_direction) {
+    linalg::MatrixView gradient_direction,
+    linalg::ConstMatrixView component,linalg::MatrixView component_gradient) {
   validate(core, coefficients, gradient_direction);
   if (gradient_direction.rows != core.rows)
     throw std::invalid_argument("invalid CUDA directional one-electron gradient");
@@ -101,6 +102,13 @@ void transform_one_electron_directional_adjoint(Context& context,
   add_adjoint(context, gradient_direction, hd.view(), active_adjoint, 0.0);
   add_adjoint(context, gradient_direction, hc.view(),
               active_adjoint_direction, 1.0);
+  if (component.data) {
+    validate_active(component,coefficients.cols);
+    validate(core,coefficients,component_gradient);
+    if (component_gradient.rows!=core.rows)
+      throw std::invalid_argument("invalid CUDA component one-electron gradient");
+    add_adjoint(context,component_gradient,hc.view(),component,0.0);
+  }
 }
 
 }  // namespace xmvb::cuda

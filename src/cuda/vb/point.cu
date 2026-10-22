@@ -63,6 +63,12 @@ void add(Context& context,Out out,View in,double value=1.0) {
     check_cublas(cublasDaxpy(context.blas(),blas_int(out.rows),&value,
         in.column(j).data,1,out.column(j).data,1),"point sum");
 }
+void add_transpose(Context& c,Out out,View in) {
+  const double one=1.0;
+  check_cublas(cublasDgeam(c.blas(),CUBLAS_OP_N,CUBLAS_OP_T,
+      blas_int(out.rows),blas_int(out.cols),&one,out.data,blas_int(out.ld),
+      &one,in.data,blas_int(in.ld),out.data,blas_int(out.ld)),"point transpose sum");
+}
 double dot(Context& context,View x,View y) {
   if (x.rows!=y.rows || x.cols!=y.cols)
     throw std::invalid_argument("CUDA point dot dimensions");
@@ -254,9 +260,12 @@ void VbPoint::gradient(Out orbital,Out structure) const {
   }
 }
 
-void VbPoint::hessian(View orbital,View structure,Out orbital_image,Out structure_image) const {
+void VbPoint::hessian(View orbital,View structure,Out orbital_image,Out structure_image,
+    Out ci_orbital_image,Out ci_structure_image) const {
   const nvtx3::scoped_range range{"point.hvp"};
   if (!ready_) throw std::logic_error("CUDA point HVP requires evaluation");
+  if (static_cast<bool>(ci_orbital_image.data)!=static_cast<bool>(ci_structure_image.data))
+    throw std::invalid_argument("both CI column images must be supplied together");
   check_structure(structure,action_->size());
   auto& c=*context_;
   select_frame();
@@ -268,6 +277,25 @@ void VbPoint::hessian(View orbital,View structure,Out orbital_image,Out structur
   const auto [dc,dhy]=action_->carrier_workspace();
   action_->expand_spin(structure,dy);
   action_->apply_orbital_transform(dy);
+  const bool split=ci_orbital_image.data && ci_structure_image.data;
+  Matrix<double> ci_dy,ci_dhy,ci_coefficients,ci_dha,ci_dga;
+  if (split) {
+    ci_dy=Matrix<double>(c,dy.rows,dy.cols);copy(c,ci_dy.view(),dy);
+    ci_dhy=Matrix<double>(c,dy.rows,dy.cols);
+    ci_coefficients=Matrix<double>(c,8,1);
+    ci_dha=Matrix<double>(c,one_.rows(),one_.cols());
+    ci_dga=Matrix<double>(c,pair_.rows(),pair_.cols());
+    check_cuda(cudaMemsetAsync(ci_coefficients.data(),0,8*sizeof(double),c.stream()),
+        "zero CI component coefficients");
+    device_scalars(c,[&] {
+      check_cublas(cublasDdot(c.blas(),blas_int(dy.rows*dy.cols),state_.data(),1,
+          ci_dy.data(),1,ci_coefficients.data()),"CI component norm direction");
+      check_cublas(cublasDdot(c.blas(),blas_int(dy.rows*dy.cols),ci_dy.data(),1,
+          image_.data(),1,ci_coefficients.data()+1),"CI component energy direction");
+    });
+    hvp_coefficients<<<1,1,0,c.stream()>>>(ci_coefficients.data(),norm_,active_energy_);
+    check_cuda(cudaGetLastError(),"CI component normalization coefficients");
+  }
   sigma_.apply_generator(state_.view(),generator.view(),dc);
   add(c,dy,dc);
   const int nc=geometry_.inactive_count(),na=geometry_.active_count(),nb=geometry_.basis_size();
@@ -318,7 +346,7 @@ void VbPoint::hessian(View orbital,View structure,Out orbital_image,Out structur
   check_cuda(cudaGetLastError(),"point HVP normalization coefficients");
   Matrix<double> dha(c,one_.rows(),one_.cols()),dga(c,pair_.rows(),pair_.cols());
   sigma_.apply_direction_with_adjoint(dy,state_.view(),direction_sigma_,
-      dhy,dha.view(),dga.view());
+      dhy,dha.view(),dga.view(),ci_dy.view(),ci_dhy.view(),ci_dha.view(),ci_dga.view());
   sigma_.reset_workspace();
   device_scalars(c,[&] {
     const auto scaled=[&](Out x,int coefficient) {
@@ -334,13 +362,41 @@ void VbPoint::hessian(View orbital,View structure,Out orbital_image,Out structur
     added(dhy,state_.view(),6);added(dhy,dy,7);
     scaled(dhy,4);added(dhy,carrier_gradient_.view(),5);
   });
+  if (split) device_scalars(c,[&] {
+    const auto scaled=[&](Out x,int coefficient) {
+      check_cublas(cublasDscal(c.blas(),blas_int(x.rows*x.cols),
+          ci_coefficients.data()+coefficient,x.data,1),"CI component scale");
+    };
+    const auto added=[&](Out x,View y,int coefficient) {
+      check_cublas(cublasDaxpy(c.blas(),blas_int(x.rows*x.cols),
+          ci_coefficients.data()+coefficient,y.data,1,x.data,1),"CI component sum");
+    };
+    scaled(ci_dha.view(),4);added(ci_dha.view(),one_adjoint_.view(),5);
+    scaled(ci_dga.view(),4);added(ci_dga.view(),pair_adjoint_.view(),5);
+    added(ci_dhy.view(),state_.view(),6);added(ci_dhy.view(),ci_dy.view(),7);
+    scaled(ci_dhy.view(),4);added(ci_dhy.view(),carrier_gradient_.view(),5);
+  });
   // dhy now denotes the exact directional carrier gradient.
   Matrix<double> moment(c,one_.rows(),one_.cols()),other(c,one_.rows(),one_.cols());
-  sigma_.generator_moments(std::array<View,1>{dhy},state_.view(),
-      std::array<Out,1>{moment.view()});
-  sigma_.generator_moments(std::array<View,1>{carrier_gradient_.view()},dy,
-      std::array<Out,1>{other.view()});
-  add(c,moment.view(),other.view());
+  Matrix<double> ci_moment,ci_other,ci_frame;
+  if (split) {
+    ci_moment=Matrix<double>(c,na,na);ci_other=Matrix<double>(c,na,na);
+  }
+  const std::array<View,2> left{dhy,ci_dhy.view()},right{dy,ci_dy.view()};
+  const std::array<Out,2> moments{moment.view(),ci_moment.view()},
+      others{other.view(),ci_other.view()};
+  sigma_.generator_moments(std::span<const View>{left.data(),split ? 2U:1U},state_.view(),
+      std::span<const Out>{moments.data(),split ? 2U:1U});
+  // <g|E_pq|dy> = <dy|E_qp|g>. Batch both columns with the same right state.
+  sigma_.generator_moments(std::span<const View>{right.data(),split ? 2U:1U},
+      carrier_gradient_.view(),std::span<const Out>{others.data(),split ? 2U:1U});
+  add_transpose(c,moment.view(),other.view());
+  if (split) {
+    add_transpose(c,ci_moment.view(),ci_other.view());
+    ci_frame=product(c,ci_moment.view(),geometry_.frame_inverse_transform(),
+        Operation::none,Operation::transpose);
+    ci_dy={};
+  }
   auto dinverse=product(c,geometry_.frame_inverse_transform(),generator.view());
   scale(c,dinverse.view(),-1.0);
   auto dframe_gradient=product(c,moment.view(),geometry_.frame_inverse_transform(),
@@ -350,16 +406,21 @@ void VbPoint::hessian(View orbital,View structure,Out orbital_image,Out structur
   add(c,dframe_gradient.view(),frame_extra.view());
   Matrix<double> dfgrad(c,active_gradient_.rows(),active_gradient_.cols());
   Matrix<double> one_extra(c,active_gradient_.rows(),active_gradient_.cols());
+  Matrix<double> ci_dfgrad,ci_one;
+  if (split) { ci_dfgrad=Matrix<double>(c,nb,na);ci_one=Matrix<double>(c,nb,na); }
   integrals_->directional_adjoint(geometry_.orthogonal_active(),d.orthogonal_active.view(),
-      pair_adjoint_.view(),dga.view(),dfgrad.view(),pair_products(),exchange_products());
+      pair_adjoint_.view(),dga.view(),dfgrad.view(),pair_products(),exchange_products(),
+      ci_dga.view(),ci_dfgrad.view());
   transform_one_electron_directional_adjoint(c,effective_.view(),geometry_.orthogonal_active(),
-      d.orthogonal_active.view(),one_adjoint_.view(),dha.view(),one_extra.view());
+      d.orthogonal_active.view(),one_adjoint_.view(),dha.view(),one_extra.view(),
+      ci_dha.view(),ci_one.view());
   add(c,dfgrad.view(),one_extra.view());
+  if (split) add(c,ci_dfgrad.view(),ci_one.view());
   gemm(c,one_extra.view(),dheff_active.view(),one_adjoint_.view());
   gemm(c,one_extra.view(),dheff_active.view(),one_adjoint_.view(),1.0,1.0,
       Operation::none,Operation::transpose);
   add(c,dfgrad.view(),one_extra.view());
-  Matrix<double> dpgrad,projected_density;
+  Matrix<double> dpgrad,projected_density,ci_projected_density;
   if (nc) {
     projected_density=Matrix<double>(c,nb,nc);
     if (active_response_.data()) {
@@ -373,12 +434,29 @@ void VbPoint::hessian(View orbital,View structure,Out orbital_image,Out structur
       Matrix<double> dual_projection(c,nb,nc);
       gemm(c,dual_projection.view(),projected_density.view(),core_to_dual_.view());
       projected_density=std::move(dual_projection);
+      if (split) {
+        Matrix<double> factor_ci(c,nb,na);
+        gemm(c,factor_ci.view(),geometry_.orthogonal_active(),ci_dha.view(),0.25);
+        gemm(c,factor_ci.view(),geometry_.orthogonal_active(),ci_dha.view(),0.25,1.0,
+            Operation::none,Operation::transpose);
+        Matrix<double> core_projection(c,nb,nc);
+        density_projection(c,active_response_.view(),factor_ci.view(),core_projection.view());
+        ci_projected_density=Matrix<double>(c,nb,nc);
+        gemm(c,ci_projected_density.view(),core_projection.view(),core_to_dual_.view(),2.0);
+      }
     } else {
       dpgrad=Matrix<double>(c,nb,nb);
+      Matrix<double> ci_dpgrad;
+      if (split) ci_dpgrad=Matrix<double>(c,nb,nb);
       integrals_->active_core_density_directional_adjoint(geometry_.orthogonal_active(),
-          d.orthogonal_active.view(),one_adjoint_.view(),dha.view(),dpgrad.view());
+          d.orthogonal_active.view(),one_adjoint_.view(),dha.view(),dpgrad.view(),
+          ci_dha.view(),ci_dpgrad.view());
       gemm(c,projected_density.view(),dpgrad.view(),geometry_.inactive_dual());
       gemm(c,projected_density.view(),dheff.view(),geometry_.inactive_dual(),2.0,1.0);
+      if (split) {
+        ci_projected_density=Matrix<double>(c,nb,nc);
+        gemm(c,ci_projected_density.view(),ci_dpgrad.view(),geometry_.inactive_dual(),2.0);
+      }
     }
     // OrbitalGeometry consumes (dgp+dgp^T)*dual. Both exact G images are symmetric.
     scale(c,projected_density.view(),2.0);
@@ -386,6 +464,11 @@ void VbPoint::hessian(View orbital,View structure,Out orbital_image,Out structur
   geometry_.pullback_direction(d,{},density_gradient_.view(),{},frame_gradient_.view(),
       active_gradient_.view(),{},{},{},dframe_gradient.view(),dfgrad.view(),orbital_image,
       projected_density.view());
+  if (split) {
+    geometry_.pullback({},{},{},ci_frame.view(),ci_dfgrad.view(),ci_orbital_image,
+        ci_projected_density.view());
+    project_carrier(ci_dhy.view(),ci_structure_image);
+  }
   // d(T^T gY)=T^T[dgY+E(dR R^-1)^T gY], without a second H/M action.
   Matrix<double> transpose(c,generator.rows(),generator.cols());
   constexpr double one=1.0,zero=0.0;

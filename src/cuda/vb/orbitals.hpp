@@ -46,13 +46,16 @@ class OrbitalGeometry {
    * F=T_a R^-1, where R^T R=A. The upper-triangular R cotangent is
    * independent of F's cotangent. Any upstream view may be empty. The output
    * has the raw-slot layout; its fixed and padded slots are zero.
+   * density_projection optionally supplies (gp+gp^T)*inactive_dual directly,
+   * instead of gp, for consumers of accepted density-response maps.
    */
   void pullback(linalg::ConstMatrixView active_auxiliary_gradient,
                 linalg::ConstMatrixView inactive_density_gradient,
                 linalg::ConstMatrixView active_overlap_gradient,
                 linalg::ConstMatrixView frame_transform_gradient,
                 linalg::ConstMatrixView orthogonal_active_gradient,
-                linalg::MatrixView raw_gradient) const;
+                linalg::MatrixView raw_gradient,
+                linalg::ConstMatrixView density_projection = {}) const;
 
   /** Exact directional derivative of pullback, including fixed-upstream
    * curvature. Upstream directions may be empty when fixed. An optional

@@ -522,7 +522,7 @@ FrameAdjoints frame_pullback(Context& context,View active,View frame,
 }  // namespace
 
 void OrbitalGeometry::pullback(View gt,View gp,View ga,View gr,View gf,
-                               Mutable raw_gradient) const {
+                               Mutable raw_gradient,View density_projection) const {
   if (!prepared_) throw std::logic_error("CUDA orbital pullback requires prepare");
   check_view(gt,basis_,active_count_,"active auxiliary gradient",true);
   check_view(gp,basis_,basis_,"inactive density gradient",true);
@@ -530,6 +530,9 @@ void OrbitalGeometry::pullback(View gt,View gp,View ga,View gr,View gf,
   check_view(gr,active_count_,active_count_,"frame transform gradient",true);
   check_view(gf,basis_,active_count_,"orthogonal active gradient",true);
   check_view(raw_gradient,basis_,orbitals_,"raw orbital gradient");
+  check_view(density_projection,basis_,inactive_,"projected density gradient",true);
+  if (supplied(gp) && supplied(density_projection))
+    throw std::invalid_argument("duplicate inactive density gradient");
   auto& context=*context_;
   auto adj=frame_pullback(context,active_.view(),frame_.view(),
       frame_inverse_.view(),frame_transform_.view(),gt,ga,gr,gf);
@@ -552,6 +555,7 @@ void OrbitalGeometry::pullback(View gt,View gp,View ga,View gr,View gf,
                        Operation::transpose);
     add_sym(context,q.view(),cross.view(),-1.0);
     auto qd=product(context,q.view(),dual_.view());
+    if (supplied(density_projection)) axpy(context,qd.view(),density_projection,1.0);
     auto h=product(context,ci,qd.view(),Operation::transpose);
     auto sh=product(context,overlap_,dual_.view());
     gemm(context,qd.view(),sh.view(),h.view(),-1.0,1.0);

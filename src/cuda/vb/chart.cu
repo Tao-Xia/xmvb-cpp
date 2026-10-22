@@ -120,6 +120,7 @@ __global__ void chart_sign_columns(double*,int,int);
 __global__ void chart_ray_reflector(const double*,double*,int,double);
 __global__ void chart_stored_quotient(Const,double*,int,int,int);
 __global__ void chart_scale_vector(double*,int,double);
+__global__ void chart_normalize_columns(Mut,Const);
 __global__ void chart_make_basis(Const,Const,Const,double*,int,int,double,bool);
 __global__ void chart_rank_one(double*,const double*,int);
 __global__ void chart_subtract(double*,const double*,int);
@@ -580,8 +581,6 @@ void AcceptedOrbitalChart::Impl::build_rotation_frame(const OrbitalGeometry& geo
     inactive_inverse_transform=spectral_power(ctx,eig,-0.5);
     core=chart_product(ctx,normalized,inactive_inverse_transform.view());
   }
-  const auto overlap_root=ao_metric.root();
-  const auto overlap_inverse_root=ao_metric.inverse_root();
   Matrix<double> occupied_frame(ctx,basis,occupied);
   if (occupied) {
     chart_compose<<<grid(basis*occupied),kThreads,0,ctx.stream()>>>(
@@ -592,18 +591,28 @@ void AcceptedOrbitalChart::Impl::build_rotation_frame(const OrbitalGeometry& geo
   const int virtual_count=basis-occupied;
   Matrix<double> virtual_frame(ctx,basis,virtual_count);
   if (virtual_count) {
-    Matrix<double> null_vectors(ctx,basis,virtual_count);
+    // Match the CPU virtual gauge, not just its span. The analytic rotation
+    // diagonal and component clipping are not invariant to arbitrary virtual
+    // rotations returned by a null-space SVD.
+    auto complement=chart_eye(ctx,basis);
     if (occupied) {
-      auto horizontal=chart_product(ctx,occupied_frame.view(),
-          overlap_root,Operation::transpose);
-      auto svd=chart_svd(ctx,horizontal.view());
-      if (svd.rank!=occupied)
-        throw std::runtime_error("CUDA chart occupied rotation frame rank deficient");
-      chart_copy(ctx,null_vectors.view(),svd.right.view().columns(occupied,virtual_count));
-    } else {
-      null_vectors=chart_eye(ctx,basis);
+      auto image=chart_product(ctx,overlap,occupied_frame.view());
+      gemm(ctx,complement.view(),occupied_frame.view(),image.view(),-1.0,1.0,
+          Operation::none,Operation::transpose);
     }
-    virtual_frame=chart_product(ctx,overlap_inverse_root,null_vectors.view());
+    auto image=chart_product(ctx,overlap,complement.view());
+    auto projected=chart_product(ctx,complement.view(),image.view(),Operation::transpose);
+    auto eig=symmetric_spectrum(ctx,solver,projected.view());
+    // This is the existing CPU virtual-space rank criterion.
+    if (!(eig.host_values[occupied]>1.0e-10))
+      throw std::runtime_error("CUDA virtual auxiliary metric rank deficient");
+    virtual_frame=chart_product(ctx,complement.view(),
+        eig.vectors.view().columns(occupied,virtual_count));
+    auto s_virtual=chart_product(ctx,overlap,virtual_frame.view());
+    auto norms=chart_product(ctx,virtual_frame.view(),s_virtual.view(),Operation::transpose);
+    chart_normalize_columns<<<grid(basis*virtual_count),kThreads,0,ctx.stream()>>>(
+        virtual_frame.view(),norms.view());
+    check_cuda(cudaGetLastError(),"CUDA virtual auxiliary normalization");
   }
   const int external_count=basis-inactive;
   frame_external=Matrix<double>(ctx,basis,external_count);
@@ -1016,6 +1025,14 @@ __global__ void chart_stored_quotient(Const u,double* output,
 __global__ void chart_scale_vector(double* x,int n,double scale) {
   const int k=blockIdx.x*blockDim.x+threadIdx.x;
   if (k<n) x[k]*=scale;
+}
+
+__global__ void chart_normalize_columns(Mut values,Const gram) {
+  const int k=blockIdx.x*blockDim.x+threadIdx.x;
+  if (k<values.rows*values.cols) {
+    const int row=k%values.rows,col=k/values.rows;
+    values.data[row+col*values.ld]/=sqrt(gram.data[col+col*gram.ld]);
+  }
 }
 
 __global__ void chart_make_basis(Const u,Const x,Const r,double* out,

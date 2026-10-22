@@ -320,10 +320,22 @@ void check_case(bool inactive,int structures) {
     auto dorbital=upload(context,orbital),dstructure=upload(context,structure);
     DeviceMatrix out_raw(context,raw.rows(),raw.cols());
     DeviceMatrix out_ci(context,structures,1);
+    DeviceMatrix ci_raw(context,raw.rows(),raw.cols()),ci_image(context,structures,1);
     point.hessian(dorbital.view(),dstructure.view(),
-                  out_raw.view(),out_ci.view());
+                  out_raw.view(),out_ci.view(),ci_raw.view(),ci_image.view());
     const auto direct_raw=download(context,out_raw.view());
     const auto direct_ci=download(context,out_ci.view());
+    const auto split_raw=download(context,ci_raw.view()),split_ci=download(context,ci_image.view());
+    auto zero_raw=upload(context,Matrix::Zero(raw.rows(),raw.cols()).eval());
+    auto zero_ci=upload(context,Matrix::Zero(structures,1).eval());
+    // Independent full actions are test oracles only. Production obtains both
+    // columns in one sigma/adjoint sweep and never makes these extra calls.
+    point.hessian(zero_raw.view(),dstructure.view(),out_raw.view(),out_ci.view());
+    near(split_raw,download(context,out_raw.view()),2e-10,"split CI orbital image");
+    near(split_ci,download(context,out_ci.view()),2e-10,"split CI structure image");
+    point.hessian(dorbital.view(),zero_ci.view(),out_raw.view(),out_ci.view());
+    near(direct_raw-split_raw,download(context,out_raw.view()),2e-10,"split orbital column");
+    near(direct_ci-split_ci,download(context,out_ci.view()),2e-10,"split orbital structure forcing");
     xmvb::cuda::copy_to_device(context,dorbital.view(),(-0.7*orbital).eval());
     xmvb::cuda::copy_to_device(context,dstructure.view(),(-0.7*structure).eval());
     point.hessian(dorbital.view(),dstructure.view(),out_raw.view(),out_ci.view());
@@ -334,6 +346,15 @@ void check_case(bool inactive,int structures) {
     point.hessian(dorbital.view(),dstructure.view(),out_raw.view(),out_ci.view());
     near(download(context,out_raw.view()),direct_raw,2e-10,"replayed raw HVP");
     near(download(context,out_ci.view()),direct_ci,2e-10,"replayed CI HVP");
+    // Without accepted AO response maps, the two density adjoints must share
+    // one batched JK sweep and agree with the prepared projection path.
+    point.evaluate(base_raw.view(),base_ci.view());
+    point.hessian(dorbital.view(),dstructure.view(),out_raw.view(),out_ci.view(),
+        ci_raw.view(),ci_image.view());
+    near(download(context,out_raw.view()),direct_raw,2e-10,"unprepared split raw HVP");
+    near(download(context,out_ci.view()),direct_ci,2e-10,"unprepared split CI HVP");
+    near(download(context,ci_raw.view()),split_raw,2e-10,"unprepared CI orbital column");
+    near(download(context,ci_image.view()),split_ci,2e-10,"unprepared CI structure column");
     const auto after_hvp=action.apply(ci);
     near(after_hvp.hamiltonian,before_hvp.hamiltonian,2e-10,
         "borrowed HVP carriers corrupted the next H action");

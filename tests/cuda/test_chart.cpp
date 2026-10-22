@@ -17,6 +17,7 @@
 #include "vbscf/core/contracts/orbital_type.hpp"
 #include "vbscf/orbitals/charts/chart.hpp"
 #include "vbscf/orbitals/charts/physical_metric.hpp"
+#include "vbscf/orbitals/preparation/preparer.hpp"
 #include "vbscf/optimization/preconditioners/hessian_diagonal.hpp"
 
 namespace {
@@ -271,6 +272,14 @@ void check_accepted(bool oeo,int inactive,bool complete=true,bool separated=fals
       xmvb::vb::OrbitalChart::Coordinates::Unwhitened);
   xmvb::cuda::AcceptedOrbitalChart chart(context,input,full,ao_metric);
   chart.rebuild(geometry);
+  if (basis>occupied) {
+    const auto prepared=xmvb::vb::ActiveSpaceOrbitalPreparer{}.prepare(input);
+    const Matrix cpu_virtual=prepared.auxiliary_orbital_matrix.rightCols(basis-occupied);
+    const Matrix gpu_virtual=download(context,chart.accepted_mo_frame()).rightCols(basis-occupied);
+    const Matrix frame_overlap=cpu_virtual.transpose()*input.ao_overlap_matrix*gpu_virtual;
+    near_accepted(frame_overlap.cwiseAbs(),Matrix::Identity(basis-occupied,basis-occupied),
+        "CUDA analytic diagonal virtual gauge differs from CPU");
+  }
   if (chart.reduced_size()!=reference.reduced_size() ||
       chart.rank_signature()!=reference.rank_signature())
     throw std::runtime_error("CUDA accepted chart rank differs from CPU chart");

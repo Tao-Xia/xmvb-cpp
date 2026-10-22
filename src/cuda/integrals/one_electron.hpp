@@ -26,6 +26,8 @@ void transform_one_electron_directional_adjoint(Context& context,
     linalg::ConstMatrixView direction,
     linalg::ConstMatrixView active_adjoint,
     linalg::ConstMatrixView active_adjoint_direction,
-    linalg::MatrixView gradient_direction);
+    linalg::MatrixView gradient_direction,
+    linalg::ConstMatrixView component_adjoint = {},
+    linalg::MatrixView component_gradient = {});
 
 }  // namespace xmvb::cuda

@@ -130,14 +130,19 @@ class ExactAoPairOperator {
                linalg::ConstMatrixView kernel_adjoint,
                linalg::MatrixView gradient, ConstPairPanel products = {}) const;
 
-  /** Directional derivative of the pullback, including changing adjoint. */
+  /** Directional derivative of the pullback, including changing adjoint.
+   * Optional component_adjoint shares the generated pair tiles and receives
+   * its ordinary pullback; it never starts another integral traversal.
+   */
   void directional_adjoint(linalg::ConstMatrixView coefficients,
                            linalg::ConstMatrixView direction,
                            linalg::ConstMatrixView kernel_adjoint,
                            linalg::ConstMatrixView kernel_adjoint_direction,
                            linalg::MatrixView gradient_direction,
                            ConstPairPanel products = {},
-                           ConstPairPanel exchange = {}) const;
+                           ConstPairPanel exchange = {},
+                           linalg::ConstMatrixView component_adjoint = {},
+                           linalg::MatrixView component_gradient = {}) const;
 
 
   /** Symmetric AO-density contraction coulomb*J(P)+exchange*K(P).
@@ -183,7 +188,9 @@ class ExactAoPairOperator {
       linalg::ConstMatrixView direction,
       linalg::ConstMatrixView active_adjoint,
       linalg::ConstMatrixView active_adjoint_direction,
-      linalg::MatrixView density_adjoint_direction) const;
+      linalg::MatrixView density_adjoint_direction,
+      linalg::ConstMatrixView component_adjoint = {},
+      linalg::MatrixView component_gradient = {}) const;
 
  private:
   std::size_t response_capacity() const;

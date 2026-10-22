@@ -71,12 +71,18 @@ class DirectCiSigma {
    * direction.update_integrals(). Each source row is scattered once and both
    * products share its all-channel intermediate; no directional carrier or
    * full-carrier output slab is retained.
+   * An optional component of response receives H*component and its integral
+   * adjoint in the same sweep, sharing the state scatter and channel slabs.
    */
   void apply_direction_with_adjoint(linalg::ConstMatrixView response,
       linalg::ConstMatrixView state,const DirectCiSigma& direction,
       linalg::MatrixView combined_image,
       linalg::MatrixView one_electron_adjoint,
-      linalg::MatrixView pair_kernel_adjoint) const;
+      linalg::MatrixView pair_kernel_adjoint,
+      linalg::ConstMatrixView component = {},
+      linalg::MatrixView component_image = {},
+      linalg::MatrixView component_one_adjoint = {},
+      linalg::MatrixView component_pair_adjoint = {}) const;
 
   /** Exact product-basis diagonal of the current Hamiltonian channel kernel.
    * Output has n_alpha rows and n_beta columns, in apply's product ordering.

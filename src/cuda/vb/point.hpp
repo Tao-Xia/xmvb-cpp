@@ -31,9 +31,14 @@ class VbPoint {
   Matrix<double> hessian_diagonal(linalg::ConstMatrixView mo);
   /** Pull back only requested components; an empty output omits that work. */
   void gradient(linalg::MatrixView orbital,linalg::MatrixView structure = {}) const;
-  /** @brief Joint Hessian action, not a relaxed orbital response solve. */
+  /** Joint Hessian action, not a relaxed orbital response solve. Optional CI
+   * images give H(0,q), reusing the same sigma, AO tiles and accepted responses;
+   * H(p,0) is the total minus this image. No additional full action is taken.
+   */
   void hessian(linalg::ConstMatrixView orbital,linalg::ConstMatrixView structure,
-               linalg::MatrixView orbital_image,linalg::MatrixView structure_image) const;
+               linalg::MatrixView orbital_image,linalg::MatrixView structure_image,
+               linalg::MatrixView ci_orbital_image = {},
+               linalg::MatrixView ci_structure_image = {}) const;
 
   const OrbitalGeometry& geometry() const noexcept { return geometry_; }
   linalg::ConstMatrixView effective_one_electron() const noexcept { return effective_.view(); }

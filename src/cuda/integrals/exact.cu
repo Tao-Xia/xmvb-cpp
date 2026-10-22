@@ -1,11 +1,13 @@
 #include "cuda/integrals/exact.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 #include <cuda_runtime.h>
 #include <cub/block/block_reduce.cuh>
@@ -1099,7 +1101,8 @@ void ExactAoPairOperator::adjoint(
 void ExactAoPairOperator::directional_adjoint(
     linalg::ConstMatrixView c, linalg::ConstMatrixView d,
     linalg::ConstMatrixView g, linalg::ConstMatrixView dg,
-    linalg::MatrixView gradient,ConstPairPanel accepted,ConstPairPanel exchange) const {
+    linalg::MatrixView gradient,ConstPairPanel accepted,ConstPairPanel exchange,
+    linalg::ConstMatrixView component,linalg::MatrixView component_gradient) const {
   validate_coefficients(c);
   const std::int64_t pairs = active_pairs(c.cols);
   if ((d.data && (d.rows != c.rows || d.cols != c.cols || d.ld < d.rows)) ||
@@ -1112,6 +1115,18 @@ void ExactAoPairOperator::directional_adjoint(
   if (accepted.data && (accepted.rows!=n_pairs_ || accepted.cols!=pairs || accepted.ld<pairs))
     throw std::invalid_argument("invalid CUDA accepted pair products");
   const bool projected=d.data && exchange.data;
+  Buffer<double> ch;
+  if (component.data) {
+    if (component.rows!=pairs || component.cols!=pairs || component.ld<pairs ||
+        !component_gradient.data || component_gradient.rows!=c.rows ||
+        component_gradient.cols!=c.cols || component_gradient.ld<c.rows)
+      throw std::invalid_argument("invalid CUDA component pair adjoint");
+    ch=Buffer<double>(*context_,pairs*pairs);
+    symmetrize<<<blocks(pairs*pairs),256,0,context_->stream()>>>(
+        component,{},ch.data(),nullptr,blas_int(pairs),pairs*pairs);
+    check_launch("symmetrize CUDA component pair adjoint");
+    zero_matrix(*context_,component_gradient);
+  }
   Buffer<double> h(*context_, pairs * pairs);
   Buffer<double> dh;
   if (dg.data) dh = Buffer<double>(*context_, pairs * pairs);
@@ -1159,6 +1174,12 @@ void ExactAoPairOperator::directional_adjoint(
             dtp, c, pair_first_.data(), pair_second_.data(), begin, gradient, work);
         check_launch("directional CUDA pair pullback");
       }
+    }
+    if (component.data) {
+      multiply_pair_tile(*context_,tp,pp,ch.data(),blas_int(pairs));
+      pair_pullback<<<blocks(work),256,0,context_->stream()>>>(
+          tp,c,pair_first_.data(),pair_second_.data(),begin,component_gradient,work);
+      check_launch("CUDA component pair pullback");
     }
   }
   if (projected) {
@@ -1394,7 +1415,8 @@ void ExactAoPairOperator::active_core_density_adjoint(
 void ExactAoPairOperator::active_core_density_directional_adjoint(
     linalg::ConstMatrixView c, linalg::ConstMatrixView d,
     linalg::ConstMatrixView a, linalg::ConstMatrixView da,
-    linalg::MatrixView density_adjoint_direction) const {
+    linalg::MatrixView density_adjoint_direction,
+    linalg::ConstMatrixView component,linalg::MatrixView component_gradient) const {
   validate_coefficients(c);
   if (!d.data || d.rows != c.rows || d.cols != c.cols || d.ld < d.rows ||
       !a.data || a.rows != c.cols || a.cols != c.cols || a.ld < a.rows ||
@@ -1416,14 +1438,34 @@ void ExactAoPairOperator::active_core_density_directional_adjoint(
   Matrix<double> contracted(*context_, n_bf_, n);
   gemm(*context_, contracted.view(), c, h);
   gemm(*context_, directional_contracted.view(), d, h);
-  Matrix<double> active_density_direction(*context_, n_bf_, n_bf_);
+  Matrix<double> active_density_direction(*context_, n_bf_, n_bf_*(component.data ? 2:1));
+  auto total_density=active_density_direction.view().columns(0,n_bf_);
   gemm(*context_, directional_contracted.view(), c, dh, 1.0, 1.0);
-  gemm(*context_, active_density_direction.view(),
+  gemm(*context_, total_density,
        directional_contracted.view(), c, 0.5, 0.0,
        Operation::none, Operation::transpose);
-  gemm(*context_, active_density_direction.view(), contracted.view(), d,
+  gemm(*context_, total_density, contracted.view(), d,
        0.5, 1.0, Operation::none, Operation::transpose);
-  contract_jk(active_density_direction.view(), density_adjoint_direction);
+  if (component.data) {
+    if (component.rows!=n || component.cols!=n || component.ld<n ||
+        !component_gradient.data || component_gradient.rows!=n_bf_ ||
+        component_gradient.cols!=n_bf_ || component_gradient.ld<n_bf_)
+      throw std::invalid_argument("invalid CUDA component density adjoint");
+    symmetrize<<<blocks(n*n),256,0,context_->stream()>>>(
+        component,{},symmetric.data(),nullptr,n,n*n);
+    check_launch("symmetrize CUDA component density adjoint");
+    gemm(*context_,contracted.view(),c,{symmetric.data(),n,n,n});
+    gemm(*context_,active_density_direction.view().columns(n_bf_,n_bf_),
+        contracted.view(),c,0.5,0.0,Operation::none,Operation::transpose);
+    Matrix<double> outputs(*context_,n_bf_,2*n_bf_);
+    contract_jk_batch(active_density_direction.view(),outputs.view());
+    for (auto [destination,source]:std::array{
+        std::pair{density_adjoint_direction,outputs.view().columns(0,n_bf_)},
+        std::pair{component_gradient,outputs.view().columns(n_bf_,n_bf_)}})
+      check_cuda(cudaMemcpy2DAsync(destination.data,destination.ld*sizeof(double),
+          source.data,source.ld*sizeof(double),n_bf_*sizeof(double),n_bf_,
+          cudaMemcpyDeviceToDevice,context_->stream()),"CUDA density component copy");
+  } else contract_jk(total_density,density_adjoint_direction);
 }
 
 }  // namespace xmvb::cuda
