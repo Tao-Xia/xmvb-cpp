@@ -4,6 +4,7 @@
 #include "cuda/integrals/exact.hpp"
 #include "cuda/vb/action.hpp"
 #include "cuda/vb/orbitals.hpp"
+#include "cuda/vb/product.hpp"
 
 namespace xmvb::cuda {
 
@@ -43,12 +44,12 @@ class VbPoint {
   const OrbitalGeometry& geometry() const noexcept { return geometry_; }
   linalg::ConstMatrixView effective_one_electron() const noexcept { return effective_.view(); }
   linalg::ConstMatrixView one_electron_adjoint() const noexcept { return one_adjoint_.view(); }
+  /** Upper orbital-generator cotangent of the normalized physical state. */
+  linalg::ConstMatrixView frame_moment() const noexcept { return frame_moment_.view(); }
   /** Full Frobenius cotangent of the symmetric orthogonal active pair kernel. */
   linalg::ConstMatrixView pair_kernel_adjoint() const noexcept { return pair_adjoint_.view(); }
   linalg::ConstMatrixView one_electron() const noexcept { return one_.view(); }
   linalg::ConstMatrixView pair_kernel() const noexcept { return pair_.view(); }
-  /** Evaluated, unrenormalized orthogonal spin-product state, owned by this point. */
-  linalg::ConstMatrixView orthogonal_state() const noexcept { return state_.view(); }
   ConstPairPanel pair_products() const noexcept {
     return pair_products_.empty() ? ConstPairPanel{}:
         ConstPairPanel{pair_products_.data(),integrals_->pair_count(),pair_.rows(),pair_.rows()};
@@ -62,7 +63,7 @@ class VbPoint {
 
  private:
   void select_frame() const;
-  void project_carrier(linalg::ConstMatrixView carrier,linalg::MatrixView output) const;
+  std::size_t product_workspace_bytes() const;
 
   Context* context_;
   StructureAction* action_;
@@ -71,13 +72,15 @@ class VbPoint {
   double nuclear_,active_energy_=0.0,total_energy_=0.0,norm_=0.0;
   OrbitalGeometry geometry_;
   mutable DirectCiSigma sigma_,direction_sigma_;
-  Matrix<double> effective_,one_,pair_,state_,image_,carrier_gradient_;
+  Matrix<double> effective_,one_,pair_;
+  mutable ProductEndpoint endpoint_;
+  std::unique_ptr<ProductContraction> products_;
+  Matrix<double> selected_h_,selected_m_,selected_gradient_;
   Matrix<double> one_adjoint_,pair_adjoint_,frame_gradient_,frame_moment_;
   Matrix<double> active_gradient_,density_gradient_;
   Buffer<double> pair_products_,exchange_products_;
   Buffer<double> inactive_response_;
   Matrix<double> active_response_,overlap_core_,core_basis_,core_to_dual_;
-  mutable Matrix<double> carrier_scratch_;
   mutable std::uint64_t selected_action_version_=0;
   bool ready_=false,prepared_=false;
   double core_energy_=0.0;

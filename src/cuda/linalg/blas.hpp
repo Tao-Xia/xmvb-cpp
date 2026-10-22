@@ -11,6 +11,10 @@ namespace xmvb::cuda {
 
 enum class Operation { none, transpose };
 
+/** Add only the independent upper entries of a matrix cotangent. */
+void add_upper(Context&,linalg::MatrixView target,
+    linalg::ConstMatrixView source,double scale);
+
 inline int blas_int(std::int64_t value) {
   if (value < 0 || value > std::numeric_limits<int>::max()) {
     throw std::overflow_error("cuBLAS dimension exceeds int range");

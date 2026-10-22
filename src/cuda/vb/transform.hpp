@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <memory>
 #include <vector>
 
 #include "cuda/memory/buffer.hpp"
@@ -26,6 +27,8 @@ class ExteriorTransform {
     int count;
   };
   ExteriorTransform(Context& context, const vb::ExteriorOrbitalTransform& source);
+  /** Independent numerical frame with borrowed immutable spin topology. */
+  ExteriorTransform(Context& context, const ExteriorTransform& reference);
   ExteriorTransform(const ExteriorTransform&) = delete;
   ExteriorTransform& operator=(const ExteriorTransform&) = delete;
 
@@ -38,9 +41,12 @@ class ExteriorTransform {
   /** Apply the exterior transform to spin rows, in place. */
   void apply_left(linalg::MatrixView coefficients, bool adjoint = false,
                   bool inverse = false) const;
-  /** Same exact invariant column support as CPU apply_supported_left(). */
-  void apply_supported_left(linalg::MatrixView coefficients,std::span<const int> offsets,
-      std::span<const int> rows,bool adjoint=false) const;
+  /** CPU's exact invariant support, with borrowed immutable device bitsets.
+   * Each of `columns` masks has ceil(dimension/64) consecutive words; RHS
+   * lanes reuse those masks. The caller owns their budgeted lifetime.
+   */
+  void apply_supported_left(linalg::MatrixView coefficients,const std::uint64_t* allowed,
+      int columns,bool adjoint=false) const;
   ExteriorDirection direction(linalg::ConstMatrixView upper,
       linalg::ConstMatrixView delta_upper) const;
   /** Same ordered primal/tangent factors as CPU apply_directional_left and
@@ -58,19 +64,39 @@ class ExteriorTransform {
    * Storage is the caller's single-spin panel, never a product carrier.
    */
   void sample_rows(std::span<const int> rows,linalg::MatrixView output) const;
+  /** Requested adjoint rows and their tangent, without a host identity panel. */
+  void sample_directional_rows(const ExteriorDirection& direction,
+      std::span<const int> rows,linalg::MatrixView primal,
+      linalg::MatrixView tangent) const;
 
   int dimension() const noexcept { return dimension_; }
+  int n_orbitals() const noexcept { return n_orbitals_; }
+  const std::uint64_t* occupations_data() const noexcept { return topology_->occupations.data(); }
+  const vb::ExteriorOrbitalTransform::ShearEdge* shear_edges_data() const noexcept {
+    return topology_->edges.data();
+  }
+  const Shear* shear_schedule_data() const noexcept { return topology_->schedule.data(); }
+  std::size_t shear_count() const noexcept { return topology_->shears.size(); }
   /** Current determinant diagonal scales, resident at a stable device address. */
   const double* scale_data() const noexcept { return scales_.data(); }
   std::size_t resident_bytes() const noexcept {
     return (scales_.size()+inverse_scales_.size()+shear_coefficients_.size()+
             unit_upper_.rows()*unit_upper_.cols())*sizeof(double) +
-           occupations_.size()*sizeof(std::uint64_t) +
-           schedule_.size()*sizeof(Shear) +
-           edges_.size()*sizeof(vb::ExteriorOrbitalTransform::ShearEdge);
+           (topology_.use_count()==1 ?
+               topology_->occupations.size()*sizeof(std::uint64_t)+
+               topology_->schedule.size()*sizeof(Shear)+
+               topology_->edges.size()*sizeof(vb::ExteriorOrbitalTransform::ShearEdge):0);
   }
 
  private:
+  struct Topology {
+    explicit Topology(Context& context,std::size_t strings)
+        : occupations(context,strings) {}
+    Buffer<std::uint64_t> occupations;
+    Buffer<vb::ExteriorOrbitalTransform::ShearEdge> edges;
+    std::vector<Shear> shears;
+    Buffer<Shear> schedule;
+  };
   Context* context_;
   int dimension_;
   int n_orbitals_;
@@ -78,11 +104,8 @@ class ExteriorTransform {
   Buffer<double> scales_;
   Buffer<double> inverse_scales_;
   Buffer<double> shear_coefficients_;
-  Buffer<std::uint64_t> occupations_;
+  std::shared_ptr<Topology> topology_;
   Matrix<double> unit_upper_;
-  Buffer<vb::ExteriorOrbitalTransform::ShearEdge> edges_;
-  std::vector<Shear> shears_;
-  Buffer<Shear> schedule_;
 };
 
 }  // namespace xmvb::cuda

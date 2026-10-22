@@ -100,13 +100,6 @@ void check_selected_transport() {
   xmvb::cuda::Context context(128ULL*1024ULL*1024ULL);
   xmvb::cuda::StructureAction action(context,*f.cpu);
   xmvb::cuda::SelectedCrossOverlap overlap(context,action,Fixture::orbitals);
-  const auto carrier=[&](xmvb::linalg::ConstMatrixView frame,
-      xmvb::linalg::ConstMatrixView coefficients) {
-    xmvb::cuda::Matrix<double> state(context,action.n_alpha_strings(),action.n_beta_strings());
-    action.expand_spin(coefficients,state.view());action.update_frame(frame);
-    action.apply_orbital_transform(state.view());
-    return state;
-  };
   Matrix d=Matrix::Zero(4,4),e=Matrix::Zero(4,4);
   d(0,0)=0.12; d(1,1)=-0.09; d(2,2)=0.07; d(3,3)=0.03;
   d(0,1)=0.14; d(0,3)=-0.05; d(1,2)=0.08; d(2,3)=-0.06;
@@ -146,15 +139,13 @@ void check_selected_transport() {
     xmvb::cuda::Matrix<double> dr(context,3,1),dw(context,3,1);
     xmvb::cuda::copy_to_device(context,dr.view(),r);
     xmvb::cuda::copy_to_device(context,dw.view(),w);
-    const auto origin_state=carrier(dr0.view(),dr.view());
-    const auto trial_state=carrier(dt.view(),dw.view());
-    overlap.transport_image(dt.view(),dr0.view(),de.view(),dx.view(),origin_state.view(),dout.view());
+    overlap.transport_image(dt.view(),dr0.view(),de.view(),dx.view(),dr.view(),dout.view());
     const Matrix zero=Matrix::Zero(4,4);
     near(download(context,dout.view()),reference.apply(trial,f.r0,x)+
         reference.apply_direction(trial,f.r0,zero,e,r),3e-9,
         "contracted transport RHS differs from unfused CPU formula");
     overlap.transport_gradient(dt.view(),dr0.view(),de.view(),dy.view(),dx.view(),
-        origin_state.view(),trial_state.view(),dgleft.view(),dgright.view(),dout.view());
+        dr.view(),dw.view(),dgleft.view(),dgright.view(),dout.view());
     const auto a=reference.adjoint(trial,f.r0,y,x);
     const auto b=reference.adjoint_direction(trial,f.r0,zero,e,y,r);
     const auto m=reference.adjoint(trial,trial,y,w);
@@ -201,9 +192,8 @@ void check_selected_transport() {
   xmvb::cuda::copy_to_device(context,dc0.view(),c0);
   xmvb::cuda::copy_to_device(context,dhc0.view(),images.hamiltonian);
   xmvb::cuda::copy_to_device(context,dmc0.view(),images.overlap);
-  const auto origin_carrier=carrier(dr0.view(),dc0.view());
   xmvb::cuda::SingleStateCiTransport transport(
-      context,overlap,dr0.view(),dc0.view(),dhc0.view(),dmc0.view(),origin_carrier.view(),1.0);
+      context,overlap,dr0.view(),dc0.view(),dhc0.view(),dmc0.view(),1.0);
   const Vector gc0=download(context,transport.origin_coefficient_gradient());
   require(gc0.norm()>1e-3,
           "transport test did not retain a finite CI residual");
@@ -234,8 +224,7 @@ void check_selected_transport() {
     const double physical=gc0.dot(delta)+0.5*delta.dot(b*delta);
     const Vector coefficient_gradient=gc0+b*delta;
     xmvb::cuda::copy_to_device(context,dy.view(),coefficient_gradient);
-    const auto physical_carrier=carrier(dt.view(),point.coefficients.view());
-    const auto model=transport.evaluate_model(point,physical,dy.view(),physical_carrier.view());
+    const auto model=transport.evaluate_model(point,physical,dy.view());
     const Matrix current=download(context,model.current_upper.view());
     const Matrix origin=download(context,model.origin_upper.view());
     const Vector ci_covector=download(context,model.structure_covector.view());

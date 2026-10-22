@@ -18,15 +18,23 @@ namespace xmvb::cuda {
  * (alpha_rows, beta_local*width+rhs); callbacks borrow the current tile only.
  */
 using CiTileReader=std::function<void(std::span<const int>,std::span<const int>,linalg::MatrixView)>;
+/** A generated right carrier read into bounded dense device beta tiles. */
+struct CiStreamedGeneratorRequest {
+  CiTileReader read;
+  double scale=1.0;
+  bool transpose=false;
+};
 /** Borrowed compact output column. Source -1 denotes the whole halo panel;
  * otherwise source is one tile-local beta column. A null rows pointer uses
  * the tile halo; nonnull rows are the consumer's device-resident indices.
+ * full_rows denotes the implicit identity row map, without allocating it.
  * Numerical columns can be views into the same packed allocation.
  */
 struct CiTileColumn {
   int source;
   const int* rows;
   linalg::MatrixView values;
+  bool full_rows=false;
 };
 /** Contract a batch into consumer-owned views with one launch. No view or
  * index pointer may outlive the writer callback. */
@@ -166,6 +174,27 @@ class DirectCiSigma {
    */
   void generator_moments(std::span<const linalg::ConstMatrixView> left,
       linalg::ConstMatrixView right,std::span<const linalg::MatrixView> outputs) const;
+
+  /** CPU generator_adjoint_streamed counterpart. Every left is a device
+   * n_alpha by panel_count matrix, with one RHS. Readers fill requested beta
+   * columns and all alpha rows on device. Each orbital output is overwritten
+   * unless add is true; only the upper triangle is produced. symmetric_sum
+   * adds the transpose before restricting to that triangle. The exchange
+   * shortcut is valid only for full same-parity carriers accumulated across
+   * every beta panel, as certified by the constructor's exchange_parity.
+   * Dense numerical storage is bounded by one n_alpha by panel_count tile.
+   */
+  void generator_adjoint_streamed(int first,
+      std::span<const linalg::ConstMatrixView> lefts,
+      std::span<const CiStreamedGeneratorRequest> requests,
+      std::span<const linalg::MatrixView> outputs,
+      bool symmetric_sum=false,bool spin_exchange_reduced=false,bool add=false) const;
+
+  /** One-body generator image for a beta panel, with a device reader for
+   * target and spectator columns. The image is overwritten. */
+  void apply_one_body_generator_columns(int first,int count,
+      const CiTileReader& columns,linalg::ConstMatrixView generator,
+      linalg::MatrixView image,bool alpha_only=false) const;
 
   /** Allocate the bounded channel slabs before stream capture. */
   void prepare(int block_width) const;

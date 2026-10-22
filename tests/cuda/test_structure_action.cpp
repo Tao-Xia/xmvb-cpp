@@ -1,11 +1,14 @@
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <utility>
 #include <vector>
 
 #include <Eigen/Core>
+#include <Eigen/LU>
 
 #include "core/pair_index.hpp"
 #include "cuda/ci/sigma.hpp"
@@ -16,6 +19,7 @@
 #include "cuda/vb/product.hpp"
 #include "linalg/eigensolver.hpp"
 #include "mcscf/ci/sigma.hpp"
+#include "mcscf/ci/integrals.hpp"
 #include "mcscf/ci/product_support.hpp"
 #include "mcscf/ci/strings.hpp"
 #include "vbscf/determinants/pairs/same_spin_cache.hpp"
@@ -32,46 +36,282 @@ void require(bool ok, const char* message) {
   if (!ok) throw std::runtime_error(message);
 }
 
-/** Force small block lifetimes independently of the normal contraction-order
- * planner. Compare after exact projection into the original selected space.
+/** Force small block lifetimes in the production selected-coordinate action.
  * Unequal spin sectors, COV and broad proper supports use the same test.
  */
 void check_packed_blocks(const xmvb::vb::StructureAction& source,const Eigen::MatrixXd& vectors) {
   const auto view=source.orthogonal_view();
   xmvb::cuda::Context context(64ULL*1024*1024);
-  const xmvb::cuda::ExteriorTransform alpha(context,view.alpha),beta(context,view.beta);
-  const auto support=view.support ? std::make_shared<xmvb::mcscf::ProductSupport>(*view.support):nullptr;
-  xmvb::cuda::ProductContraction product(context,view,alpha,beta,support);
+  const xmvb::cuda::StructureAction action(context,source);
+  xmvb::cuda::ProductContraction product(context,view,action.alpha_transform(),
+      action.beta_transform(),view.support);
   const xmvb::cuda::DirectCiSigma sigma(context,view.sigma,1,view.exchange_parity);
+  const xmvb::cuda::ProductIncidence incidence{action.term_offsets_data(),
+      action.term_structures_data(),action.term_weights_data(),source.n_structures()};
   for (int width:{1,2}) {
-    Eigen::MatrixXd coefficients=Eigen::MatrixXd::Zero(view.products.size(),width);
-    for (int g=0;g<coefficients.rows();++g)
-      for (auto t=view.offsets[g];t<view.offsets[g+1];++t)
-        coefficients.row(g)+=view.terms[t].coefficient*vectors.row(view.terms[t].structure).head(width);
-    xmvb::cuda::Matrix<double> x(context,coefficients.rows(),width),h(context,coefficients.rows(),width),
-        m(context,coefficients.rows(),width);
-    xmvb::cuda::copy_to_device(context,x.view(),coefficients);
+    xmvb::cuda::Matrix<double> x(context,source.n_structures(),width),
+        h(context,source.n_structures(),width),m(context,source.n_structures(),width);
+    xmvb::cuda::copy_to_device(context,x.view(),vectors.leftCols(width));
     const auto expected=source.apply(vectors.leftCols(width));
-    const auto project=[&](const auto& device) {
-      Eigen::MatrixXd values(coefficients.rows(),width);
-      xmvb::cuda::copy_to_host(context,values,device.view());
-      Eigen::MatrixXd result=Eigen::MatrixXd::Zero(vectors.rows(),width);
-      for (int g=0;g<values.rows();++g)
-        for (auto t=view.offsets[g];t<view.offsets[g+1];++t)
-          result.row(view.terms[t].structure)+=view.terms[t].coefficient*values.row(g);
-      return result;
+    const auto host=[&](const auto& device) {
+      Eigen::MatrixXd result(source.n_structures(),width);
+      xmvb::cuda::copy_to_host(context,result,device.view());return result;
     };
     for (std::size_t budget:{std::size_t{3200},std::size_t{1024*1024}}) {
-      product.apply(x.view(),sigma,h.view(),m.view(),budget);
-      require((project(h)-expected.hamiltonian).norm()<2e-10,
+      product.apply_selected(incidence,x.view(),sigma,h.view(),m.view(),budget);
+      require((host(h)-expected.hamiltonian).norm()<2e-10,
           "packed product H block differs from selected CPU action");
-      require((project(m)-expected.overlap).norm()<2e-10,
+      require((host(m)-expected.overlap).norm()<2e-10,
           "packed product overlap block differs from selected CPU action");
-      product.apply(x.view(),sigma,h.view(),m.view(),budget,true);
-      require((project(m)-expected.overlap).norm()<2e-10,
+      product.apply_selected(incidence,x.view(),sigma,h.view(),m.view(),budget,true);
+      require((host(m)-expected.overlap).norm()<2e-10,
           "packed overlap-only block changed the selected-space projection");
     }
   }
+}
+
+/** Deliberately materialize the tiny CPU carrier here: this oracle does not
+ * use the product-panel implementation, its accepted cache, or selected-space
+ * closure. In particular, each selected bra is transformed before projection.
+ */
+void check_product_jet(const xmvb::vb::StructureAction& source,
+    const xmvb::cuda::StructureAction& action,xmvb::cuda::Context& context,
+    const Strings& alpha_strings,const Strings& beta_strings) {
+  const auto view=source.orthogonal_view();
+  const int count=source.n_structures(),na=view.alpha.dimension(),nb=view.beta.dimension();
+  const Eigen::MatrixXd upper=view.alpha.orbital_transform();
+  Eigen::MatrixXd du=Eigen::MatrixXd::Zero(upper.rows(),upper.cols());
+  du(0,0)=0.017;du(1,1)=-0.013;du(2,2)=0.009;du(0,1)=0.021;
+  du(0,2)=-0.014;du(1,3)=0.011;
+  Eigen::MatrixXd c(count,1),q(count,1);
+  for (int i=0;i<count;++i) {c(i,0)=std::cos(0.37*(i+1));q(i,0)=std::sin(0.53*(i+2));}
+  struct Oracle {
+    Eigen::MatrixXd h,m,one,pair,generator;
+  };
+  const int channels=view.sigma.n_orbitals()*(view.sigma.n_orbitals()+1)/2;
+  xmvb::mcscf::ActiveIntegrals delta_integrals{
+      Eigen::MatrixXd::Zero(upper.rows(),upper.cols()),
+      Eigen::MatrixXd::Zero(channels,channels)};
+  for (int j=0;j<upper.cols();++j) for (int i=0;i<=j;++i)
+    delta_integrals.one_electron(i,j)=delta_integrals.one_electron(j,i)=
+        0.007*std::cos(0.37*(i+1)*(j+2));
+  for (int j=0;j<channels;++j) for (int i=0;i<=j;++i)
+    delta_integrals.pair_kernel(i,j)=delta_integrals.pair_kernel(j,i)=
+        0.003*std::sin(0.19*(i+1)*(j+2));
+  const xmvb::mcscf::DirectCiSigmaAction delta_cpu(view.sigma,delta_integrals);
+  const auto reference=[&](const Eigen::MatrixXd& coefficients,const Eigen::MatrixXd& frame,
+      double integral_step=0.0) {
+    const xmvb::vb::ExteriorOrbitalTransform ta(alpha_strings,frame),tb(beta_strings,frame);
+    const auto expand=[&](const Eigen::MatrixXd& x) {
+      Eigen::MatrixXd result=Eigen::MatrixXd::Zero(na,nb);
+      for (int g=0;g<view.products.size();++g)
+        for (auto t=view.offsets[g];t<view.offsets[g+1];++t)
+          result(view.products[g]/nb,view.products[g]%nb)+=
+              view.terms[t].coefficient*x(view.terms[t].structure,0);
+      ta.apply_left(&result);tb.apply_right(&result);return result;
+    };
+    const Eigen::MatrixXd y=expand(coefficients);
+    Eigen::MatrixXd hy=view.sigma.apply(y,0);
+    if (integral_step!=0.0) hy.noalias()+=integral_step*delta_cpu.apply(y,0);
+    Oracle result{Eigen::MatrixXd::Zero(count,1),Eigen::MatrixXd::Zero(count,1),
+        {},{},2.0*view.sigma.one_body_generator_adjoint(hy,y)};
+    const auto density=view.sigma.integral_adjoint(y,y,0);
+    result.one=density.one_electron;result.pair=density.pair_kernel;
+    for (int s=0;s<count;++s) {
+      Eigen::MatrixXd basis=Eigen::MatrixXd::Zero(count,1);basis(s,0)=1.0;
+      const Eigen::MatrixXd bra=expand(basis);
+      result.h(s,0)=(bra.array()*hy.array()).sum();
+      result.m(s,0)=(bra.array()*y.array()).sum();
+    }
+    return result;
+  };
+  const Oracle base=reference(c,upper);
+  const double energy=(c.transpose()*base.h)(0,0)/(c.transpose()*base.m)(0,0);
+  const auto support=view.support ? std::make_shared<xmvb::mcscf::ProductSupport>(*view.support):nullptr;
+  xmvb::cuda::ProductContraction product(context,view,action.alpha_transform(),
+      action.beta_transform(),support.get());
+  const xmvb::cuda::ProductIncidence incidence{action.term_offsets_data(),
+      action.term_structures_data(),action.term_weights_data(),count};
+  xmvb::cuda::Matrix<double> dc(context,count,1),dq(context,count,1),r(context,upper.rows(),upper.cols()),
+      dr(context,upper.rows(),upper.cols()),rel(context,upper.rows(),upper.cols());
+  xmvb::cuda::copy_to_device(context,dc.view(),c);
+  xmvb::cuda::copy_to_device(context,dq.view(),q);
+  xmvb::cuda::copy_to_device(context,r.view(),upper);
+  xmvb::cuda::copy_to_device(context,dr.view(),du);
+  const Eigen::MatrixXd relative=du*upper.inverse();
+  xmvb::cuda::copy_to_device(context,rel.view(),relative);
+  xmvb::cuda::DirectCiSigma sigma(context,view.sigma,1,view.exchange_parity);
+  xmvb::cuda::ProductEndpoint accepted{xmvb::cuda::Matrix<double>(context,count,1)};
+  xmvb::cuda::copy_to_device(context,accepted.coefficients.view(),c);
+  const std::size_t budget=8ULL*1024*1024;
+  const auto primal=product.jet(incidence,sigma,accepted,r.view(),{},{},nullptr,budget);
+  const auto host=[&](const auto& device) {
+    Eigen::MatrixXd result(device.rows(),device.cols());
+    xmvb::cuda::copy_to_host(context,result,device.view());return result;
+  };
+  require((host(primal.hamiltonian)-base.h).norm()<2e-10,
+      "product jet primal H differs from expanded CPU carrier");
+  require((host(primal.overlap)-base.m).norm()<2e-10,
+      "product jet primal M differs from expanded CPU carrier");
+  require((host(primal.one)-base.one).norm()<2e-10 &&
+      (host(primal.pair)-base.pair).norm()<2e-10,
+      "product jet primal integral adjoint differs from CPU carrier");
+  const Eigen::MatrixXd primal_generator=host(primal.generator);
+  for (int j=0;j<primal_generator.cols();++j)
+    for (int i=0;i<=j;++i)
+      require(std::abs(primal_generator(i,j)-base.generator(i,j))<2e-10,
+          "product jet primal generator differs from CPU carrier");
+  product.accept(accepted,energy);
+  require(accepted.images && accepted.images->complete(),
+      "product jet test did not retain accepted compact cache");
+  const double step=2e-6;
+  const Oracle plus=reference(c+step*q,upper+step*du);
+  const Oracle minus=reference(c-step*q,upper-step*du);
+  const Oracle ci_plus=reference(c+step*q,upper);
+  const Oracle ci_minus=reference(c-step*q,upper);
+  const auto compare=[&](const xmvb::cuda::ProductJet& value,
+      const xmvb::cuda::ProductJet& ci,const Oracle& high,const Oracle& low) {
+    const auto finite=[&](const Eigen::MatrixXd& a,const Eigen::MatrixXd& b) {
+      return Eigen::MatrixXd((a-b)/(2*step));
+    };
+    require((host(value.hamiltonian)-finite(high.h,low.h)).norm()<2e-8,
+        "product jet directional H differs from carrier finite difference");
+    require((host(value.overlap)-finite(high.m,low.m)).norm()<2e-8,
+        "product jet directional M differs from carrier finite difference");
+    require((2.0*host(value.one)-finite(high.one,low.one)).norm()<2e-8 &&
+        (2.0*host(value.pair)-finite(high.pair,low.pair)).norm()<2e-8,
+        "product jet directional integral adjoint differs from finite difference");
+    const Eigen::MatrixXd expected_generator=finite(high.generator,low.generator)-
+        2.0*energy*finite(high.one,low.one);
+    const Eigen::MatrixXd actual_generator=host(value.generator);
+    for (int j=0;j<actual_generator.cols();++j)
+      for (int i=0;i<=j;++i)
+        require(std::abs(actual_generator(i,j)-expected_generator(i,j))<3e-8,
+            "product jet directional generator differs from finite difference");
+    require((host(ci.hamiltonian)-finite(ci_plus.h,ci_minus.h)).norm()<2e-8 &&
+        (host(ci.overlap)-finite(ci_plus.m,ci_minus.m)).norm()<2e-8,
+        "independent CI jet image includes orbital direction");
+    require((2.0*host(ci.one)-finite(ci_plus.one,ci_minus.one)).norm()<2e-8 &&
+        (2.0*host(ci.pair)-finite(ci_plus.pair,ci_minus.pair)).norm()<2e-8,
+        "independent CI jet integral adjoint includes orbital direction");
+    const Eigen::MatrixXd expected_ci=finite(ci_plus.generator,ci_minus.generator)-
+        2.0*energy*finite(ci_plus.one,ci_minus.one);
+    const Eigen::MatrixXd actual_ci=host(ci.generator);
+    for (int j=0;j<actual_ci.cols();++j)
+      for (int i=0;i<=j;++i)
+        require(std::abs(actual_ci(i,j)-expected_ci(i,j))<3e-8,
+            "independent CI jet generator includes orbital direction");
+  };
+  xmvb::cuda::ProductJet cached_ci;
+  const auto cached=product.jet(incidence,sigma,accepted,r.view(),dq.view(),dr.view(),nullptr,
+      budget,&cached_ci,rel.view());
+  compare(cached,cached_ci,plus,minus);
+  xmvb::cuda::ProductEndpoint uncached{xmvb::cuda::Matrix<double>(context,count,1)};
+  xmvb::cuda::copy_to_device(context,uncached.coefficients.view(),c);
+  uncached.energy=energy;
+  xmvb::cuda::ProductJet uncached_ci;
+  const auto fresh=product.jet(incidence,sigma,uncached,r.view(),dq.view(),dr.view(),nullptr,
+      budget,&uncached_ci,rel.view());
+  compare(fresh,uncached_ci,plus,minus);
+  // At 3200 bytes, the joint three-lane full-support output panels cannot
+  // all fit in their one-fifth cache share; consume partial panels on eviction.
+  xmvb::cuda::ProductEndpoint streaming{xmvb::cuda::Matrix<double>(context,count,1)};
+  xmvb::cuda::copy_to_device(context,streaming.coefficients.view(),c);
+  streaming.energy=energy;
+  xmvb::cuda::ProductJet streaming_ci;
+  const auto evicted=product.jet(incidence,sigma,streaming,r.view(),dq.view(),dr.view(),
+      nullptr,3200,&streaming_ci,rel.view());
+  compare(evicted,streaming_ci,plus,minus);
+  if (view.exchange_parity) {
+    xmvb::cuda::Matrix<double> delta_h(context,upper.rows(),upper.cols()),
+        delta_g(context,channels,channels);
+    xmvb::cuda::copy_to_device(context,delta_h.view(),delta_integrals.one_electron);
+    xmvb::cuda::copy_to_device(context,delta_g.view(),delta_integrals.pair_kernel);
+    xmvb::cuda::DirectCiSigma delta_gpu(context,sigma);
+    delta_gpu.update_integrals(delta_h.view(),delta_g.view());
+    const Oracle coupled_plus=reference(c+step*q,upper+step*du,step);
+    const Oracle coupled_minus=reference(c-step*q,upper-step*du,-step);
+    xmvb::cuda::ProductJet coupled_ci;
+    const auto coupled=product.jet(incidence,sigma,accepted,r.view(),dq.view(),dr.view(),
+        &delta_gpu,budget,&coupled_ci,rel.view());
+    compare(coupled,coupled_ci,coupled_plus,coupled_minus);
+    xmvb::cuda::ProductJet coupled_fresh_ci;
+    const auto coupled_fresh=product.jet(incidence,sigma,uncached,r.view(),dq.view(),dr.view(),
+        &delta_gpu,budget,&coupled_fresh_ci,rel.view());
+    compare(coupled_fresh,coupled_fresh_ci,coupled_plus,coupled_minus);
+  }
+}
+
+void check_selected_below_carrier_budget() {
+  // The complete 5/5 one-spin spaces are much larger than the two selected
+  // structures. The old graph path required two full 252 x 252 carriers.
+  constexpr int n=10,electrons=5,selected=2;
+  Strings strings;
+  for (unsigned mask=0;mask<(1u<<n);++mask) if (std::popcount(mask)==electrons) {
+    strings.emplace_back();
+    for (int p=0;p<n;++p) if (mask&(1u<<p)) strings.back().push_back(p);
+  }
+  require(strings.size()==252,"large selected test has incomplete spin strings");
+  Strings products_alpha,products_beta;
+  Terms terms(strings.size()*strings.size());
+  products_alpha.reserve(terms.size());products_beta.reserve(terms.size());
+  for (const auto& a:strings) for (const auto& b:strings) {
+    products_alpha.push_back(a);products_beta.push_back(b);
+  }
+  terms[0].push_back({0,1.0});
+  terms[terms.size()/2].push_back({1,-0.6});
+  terms.back().push_back({0,0.2});
+  terms.back().push_back({1,0.8});
+  Eigen::MatrixXd overlap=Eigen::MatrixXd::Identity(n,n);
+  for (int p=0;p<n-1;++p) overlap(p,p+1)=overlap(p+1,p)=0.015;
+  const std::vector<double> packed_overlap(overlap.data(),overlap.data()+overlap.size());
+  Eigen::MatrixXd one=Eigen::MatrixXd::Zero(n,n);
+  for (int p=0;p<n;++p) {
+    one(p,p)=-0.3+0.1*p;
+    if (p+1<n) one(p,p+1)=one(p+1,p)=0.025;
+  }
+  xmvb::integrals::ActiveSpaceTwoElectronResult eri;
+  eri.packed_active_two_electron_integrals.resize(
+      xmvb::integrals::packed_active_two_electron_integral_count(n));
+  for (std::size_t i=0;i<eri.packed_active_two_electron_integrals.size();++i)
+    eri.packed_active_two_electron_integrals[i]=0.002*std::cos(0.13*(i+1));
+  const auto topology=xmvb::vb::build_orthogonal_spin_topology(
+      products_alpha,products_beta,n);
+  const xmvb::vb::StructureAction cpu(terms,selected,topology,packed_overlap,one,eri,n,
+      nullptr,xmvb::vb::StructureActionMode::ActionOnly);
+  std::size_t baseline=0;
+  {
+    xmvb::cuda::Context wide(256ULL*1024*1024);
+    const xmvb::cuda::StructureAction warm(wide,cpu);
+    baseline=wide.counters().current_device_bytes;
+  }
+  const std::size_t full_carriers=2ULL*strings.size()*strings.size()*sizeof(double);
+  const std::size_t budget=baseline+full_carriers-1;
+  xmvb::cuda::Context context(budget);
+  const xmvb::cuda::StructureAction gpu(context,cpu);
+  require(context.counters().current_device_bytes<budget,
+      "large selected action constructor used the old full-carrier budget");
+  Eigen::MatrixXd v(selected,1);v<<0.73,-0.41;
+  const auto expected=cpu.apply(v);
+  xmvb::cuda::Matrix<double> x(context,selected,1),h(context,selected,1),m(context,selected,1);
+  xmvb::cuda::copy_to_device(context,x.view(),v);
+  gpu.apply(x.view(),h.view(),m.view());
+  Eigen::MatrixXd actual_h(selected,1),actual_m(selected,1);
+  xmvb::cuda::copy_to_host(context,actual_h,h.view());
+  xmvb::cuda::copy_to_host(context,actual_m,m.view());
+  require((actual_h-expected.hamiltonian).norm()<2e-9 &&
+      (actual_m-expected.overlap).norm()<2e-9,
+      "small-budget selected H/M differs from CPU after first apply");
+  Eigen::MatrixXd carrier=cpu.expand_structure_block(v);
+  const auto view=cpu.orthogonal_view();
+  view.alpha.apply_left(&carrier);view.beta.apply_right(&carrier);
+  require(std::abs(gpu.maximum_orthogonal_component(x.view())-
+      carrier.cwiseAbs().maxCoeff())<2e-10,
+      "small-budget selected maximum differs from explicit transformed carrier");
+  require(gpu.graph_nodes()==0,
+      "small-budget selected test unexpectedly admitted the old full-carrier graph");
+  require(context.counters().peak_device_bytes<=budget,
+      "small-budget selected action exceeded the device allocation limit");
 }
 
 void check_self_tile_budget(const xmvb::vb::StructureAction& source) {
@@ -131,7 +371,8 @@ void check_self_tile_budget(const xmvb::vb::StructureAction& source) {
       "empty spin self diagonal is not the vacuum");
 }
 
-void check_action(int count, bool transformed,bool covalent=false,bool broad=false) {
+void check_action(int count, bool transformed,bool covalent=false,bool broad=false,
+    bool full=false,bool exchange_covalent=false,bool sparse_three=false) {
   // Four orbitals, two alpha electrons and one beta electron: the two spin
   // string spaces have different dimensions and different exterior maps.
   constexpr int n = 4;
@@ -147,7 +388,10 @@ void check_action(int count, bool transformed,bool covalent=false,bool broad=fal
     }
   // The third column shares determinant products with the first two. This
   // exercises a nontrivial selected overlap, including for the 3-column case.
-  if (broad) {
+  if (full) {
+    for (int g=0;g<terms.size();++g) for (int s=0;s<count;++s)
+      terms[g].push_back({s,std::sin(0.23*(g+1)*(s+1))});
+  } else if (broad) {
     // A proper support broad enough to prefer CPU's ordered-beta contraction.
     // Exclude the unique maximal seed, so it is not the complete product grid.
     for (int g=0;g+1<terms.size();++g) for (int s=0;s<count;++s)
@@ -162,12 +406,19 @@ void check_action(int count, bool transformed,bool covalent=false,bool broad=fal
       if (!disjoint) continue;
       terms[a*beta.size()+b].push_back({0,1.0});
       if (count==3) {
-        terms[a*beta.size()+b].push_back({1,std::sin(0.27*(a+1))});
-        terms[a*beta.size()+b].push_back({2,std::cos(0.41*(a+1))});
+        const int key=exchange_covalent ? a*b+1:a+1;
+        terms[a*beta.size()+b].push_back({1,std::sin(0.27*key)});
+        terms[a*beta.size()+b].push_back({2,std::cos(0.41*key)});
       }
     }
+  } else if (sparse_three) {
+    // Three independent, nonmaximal seeds leave beta columns 2 and 3
+    // exactly empty even though the high-budget panel contains all four.
+    terms[0].push_back({0,1.0});
+    terms[5].push_back({1,1.0});
+    terms[9].push_back({2,1.0});
   } else terms[0].push_back({0,1.0});
-  if (count == 3 && !covalent && !broad) {
+  if (count == 3 && !covalent && !broad && !sparse_three) {
     terms[5].push_back({1,1.0});
     terms[0].push_back({2,0.6});
     terms[5].push_back({2,-0.3});
@@ -198,6 +449,16 @@ void check_action(int count, bool transformed,bool covalent=false,bool broad=fal
       .build_davidson_jacobi_preconditioner(products_alpha,products_beta,terms,
           overlap,h,n,eri,count,topology);
   const xmvb::vb::StructureAction cpu(terms,count,topology,overlap,h,eri,n,&diagonal_model);
+  if (sparse_three) {
+    require(cpu.orthogonal_view().support && !cpu.orthogonal_view().support->full(),
+        "three-seed fixture unexpectedly has complete product support");
+    std::vector<int> empty;
+    cpu.orthogonal_view().support->append_column_rows(2,empty);
+    require(empty.empty(),"three-seed fixture lost its empty beta column");
+  }
+  if (exchange_covalent)
+    require(cpu.orthogonal_view().exchange_parity==1,
+        "equal-spin selected COV fixture did not certify positive exchange parity");
   if (count==1 && transformed) check_self_tile_budget(cpu);
   xmvb::cuda::Context context(256ULL*1024ULL*1024ULL);
   const xmvb::cuda::StructureAction gpu(context,cpu);
@@ -228,6 +489,8 @@ void check_action(int count, bool transformed,bool covalent=false,bool broad=fal
       std::max(1.0,expected.overlap.norm());
   require(h_error < 2e-10 && s_error < 2e-10,
           "GPU structure H/S block differs from the CPU action");
+  if (count==3 && transformed && (!covalent || exchange_covalent))
+    check_product_jet(cpu,gpu,context,alpha,beta);
   require(gpu.size() == count,"GPU action structure dimension changed");
   require(context.counters().peak_device_bytes != 0,
           "GPU action allocated no device storage");
@@ -300,7 +563,11 @@ int main() {
     check_action(3,true);
     check_action(1,true,true);
     check_action(3,true,true);
+    check_action(3,true,true,false,false,true);
     check_action(3,true,false,true);
+    check_action(3,true,false,false,true);
+    check_action(3,true,false,false,false,false,true);
+    check_selected_below_carrier_budget();
     std::cout << "CUDA structure H/S block parity: PASS\n";
   } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';

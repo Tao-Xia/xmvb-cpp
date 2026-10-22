@@ -1,5 +1,6 @@
 add_library(xmvb_cuda
   linalg/block_map.cu
+  linalg/triangular.cu
   linalg/davidson.cu
   linalg/cholesky.cu
   linalg/spectrum.cu

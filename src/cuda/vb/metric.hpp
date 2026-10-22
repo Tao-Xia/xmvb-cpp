@@ -130,11 +130,10 @@ class FullMetric {
   void validate(linalg::ConstMatrixView input,
                 linalg::MatrixView output) const;
 
+  Context* context_;
   const SpinMetric* spin_;
   const StructureAction* action_;
   mutable Matrix<double> structure_;
-  mutable Matrix<double> carrier_;
-  mutable Matrix<double> image_;
 };
 
 }  // namespace xmvb::cuda

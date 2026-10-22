@@ -2,7 +2,6 @@
 
 #include <memory>
 #include <cstdint>
-#include <array>
 #include <Eigen/Core>
 
 #include "cuda/memory/context.hpp"
@@ -12,6 +11,7 @@
 namespace xmvb::cuda {
 
 class DirectCiSigma;
+class ExteriorTransform;
 
 /** Exact GPU H/M action in the original selected VB structure coordinates.
  * The sparse incidence and elementary orbital transformations are borrowed
@@ -59,12 +59,14 @@ class StructureAction {
   void update_integrals(linalg::ConstMatrixView one_electron,
       linalg::ConstMatrixView pair_kernel,linalg::ConstMatrixView upper);
   const DirectCiSigma& carrier_sigma() const noexcept;
-  /** Borrow the two H/S carriers between complete structure actions.
-   * Device consumers are serialized on Context's stream. Views must not
-   * remain live across another H/S action; captured addresses are unchanged.
-   */
-  std::array<linalg::MatrixView,2> carrier_workspace() const noexcept;
-
+  const ExteriorTransform& alpha_transform() const noexcept;
+  const ExteriorTransform& beta_transform() const noexcept;
+  const vb::StructureAction::OrthogonalView& orthogonal_view() const noexcept;
+  const std::int64_t* product_indices_data() const noexcept;
+  const std::int64_t* term_offsets_data() const noexcept;
+  const std::int64_t* term_structures_data() const noexcept;
+  const double* term_weights_data() const noexcept;
+  std::int64_t n_product_groups() const noexcept;
   int n_alpha_strings() const noexcept;
   int n_beta_strings() const noexcept;
   /** @brief Exact sparse structure/product maps, without orbital transforms. */
@@ -78,7 +80,7 @@ class StructureAction {
   void apply_carrier_hamiltonian(linalg::ConstMatrixView carrier,
                                 linalg::MatrixView image) const;
   /** Maximum orthogonal-carrier amplitude of a structure response.
-   * Matches direct-CI CIAH clipping; reuses the action's carrier workspace.
+   * Matches direct-CI CIAH clipping using bounded source-factor panels.
    * Caller must select the intended orbital frame first.
    */
   double maximum_orthogonal_component(linalg::ConstMatrixView structure) const;

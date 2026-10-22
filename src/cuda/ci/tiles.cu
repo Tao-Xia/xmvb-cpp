@@ -128,7 +128,8 @@ __global__ void gather(TileMap map,const int* halo_rows,const CiTileColumn* colu
   for (auto i=static_cast<std::size_t>(blockIdx.y)*blockDim.x+threadIdx.x;
        i<work;i+=static_cast<std::size_t>(gridDim.y)*blockDim.x) {
     const int r=i%nrows,column=i/nrows,v=column%map.width;
-    const int h=map.halo_index[(target.rows ? target.rows:halo_rows)[r]],
+    const int row=target.full_rows ? r:(target.rows ? target.rows:halo_rows)[r];
+    const int h=map.halo_index[row],
         b=target.source<0 ? column/map.width:target.source;
     const double value=h<0 ? 0.0:halo.data[h+halo.ld*(b*map.width+v)];
     auto& target=output.data[r+output.ld*column];
@@ -466,7 +467,8 @@ void DirectCiSigma::apply_tiled_responses(int width,std::span<const CiTileReques
           for (const auto& target:targets) {
             const auto& output=target.values;
             if (target.source < -1 || target.source>=columns || output.rows<0 ||
-                (!target.rows && output.rows!=halo) ||
+                (target.full_rows ? output.rows!=n_alpha_:
+                    (!target.rows && output.rows!=halo)) ||
                 output.cols!=(target.source<0 ? columns:1)*width || output.ld<output.rows)
               throw std::invalid_argument("invalid tiled sigma gather dimensions");
             work=std::max(work,static_cast<std::size_t>(output.rows)*output.cols);

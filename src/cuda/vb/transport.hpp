@@ -3,6 +3,7 @@
 #include <functional>
 #include <memory>
 #include <utility>
+#include <vector>
 
 #include "cuda/memory/buffer.hpp"
 #include "linalg/metric_solve.hpp"
@@ -12,12 +13,13 @@ namespace xmvb::cuda {
 
 class StructureAction;
 class SelectedMetric;
+class ExteriorTransform;
 
 /** Exact F(R_left)^T F(R_right) in the original selected structure space.
  * F(R)=wedge(R) W; W is the sparse selected expansion in StructureAction.
  * No closure of the selected structures is assumed. Frame updates and all
- * vector arithmetic stay on Context's stream. The borrowed action is left at
- * the last frame used by each call, so physical callers must set their frame.
+ * vector arithmetic stay on Context's stream. Cross-frame calls leave the
+ * borrowed action at the right/current frame; physical callers set their frame.
  */
 class SelectedCrossOverlap {
  public:
@@ -62,16 +64,13 @@ class SelectedCrossOverlap {
                linalg::MatrixView left_gradient,
                linalg::MatrixView right_gradient) const;
 
-  /** F(current)^T [F(origin) base + dF(origin)[direction] reference].
-   * reference is the already evaluated orthogonal spin-product carrier.
-   */
+  /** F(current)^T [F(origin) base + dF(origin)[direction] reference]. */
   void transport_image(linalg::ConstMatrixView current,linalg::ConstMatrixView origin,
       linalg::ConstMatrixView direction,linalg::ConstMatrixView base,
       linalg::ConstMatrixView reference,linalg::MatrixView image) const;
 
   /** Contracted finite-transport pullback and F(origin)^T F(current) lambda.
-   * reference and transported are borrowed physical spin-product carriers;
-   * no selected-space completeness or CI stationarity is assumed.
+   * reference and transported are selected-structure coefficients.
    */
   void transport_gradient(linalg::ConstMatrixView current,linalg::ConstMatrixView origin,
       linalg::ConstMatrixView direction,linalg::ConstMatrixView lambda,
@@ -101,24 +100,33 @@ class SelectedCrossOverlap {
   void check_structure(linalg::ConstMatrixView vector) const;
   void check_structure(linalg::MatrixView vector) const;
   void check_gradient(linalg::MatrixView matrix) const;
-  void frame_image(linalg::ConstMatrixView frame,
-                   linalg::ConstMatrixView coefficients,
-                   linalg::MatrixView carrier) const;
-  void frame_direction(linalg::ConstMatrixView frame,
-                       linalg::ConstMatrixView direction,
-                       linalg::ConstMatrixView image,
-                       linalg::MatrixView directional_image) const;
   void pullback(linalg::ConstMatrixView frame,
                 linalg::ConstMatrixView moment,
                 linalg::MatrixView gradient) const;
-  void transport_target(linalg::ConstMatrixView origin,linalg::ConstMatrixView direction,
-      linalg::ConstMatrixView base,linalg::ConstMatrixView reference,
-      linalg::MatrixView target) const;
-  void check_carrier(linalg::ConstMatrixView) const;
+  bool use_product_overlap(int images,bool moments=false) const;
+  void physical_carrier(linalg::ConstMatrixView coefficients,
+      const ExteriorTransform& alpha,const ExteriorTransform& beta,
+      linalg::MatrixView carrier) const;
+  void load_sources(int begin,int count,linalg::ConstMatrixView coefficients,
+                   linalg::MatrixView alpha,linalg::MatrixView beta) const;
+  void contract_source(linalg::ConstMatrixView alpha,linalg::ConstMatrixView beta,
+                       linalg::MatrixView image) const;
+  void seeds(const ExteriorTransform& alpha_map,const ExteriorTransform& beta_map,
+             linalg::ConstMatrixView coefficients,
+             linalg::ConstMatrixView alpha,linalg::ConstMatrixView beta,
+             linalg::MatrixView alpha_seed,linalg::MatrixView beta_seed,
+             linalg::MatrixView alpha_work,linalg::MatrixView beta_work) const;
+  void accumulate_moment(const ExteriorTransform& transform,
+      linalg::ConstMatrixView seed,linalg::ConstMatrixView image,double scale,
+      linalg::MatrixView moment) const;
+  int source_extent() const;
 
   Context* context_;
   StructureAction* action_;
-  int structures_, alpha_, beta_, active_;
+  int structures_, alpha_, beta_, active_, groups_;
+  std::vector<int> source_columns_;
+  Buffer<int> source_groups_,source_columns_device_,source_offsets_device_,
+      alpha_offsets_device_;
   mutable Buffer<double> diagonal_;
   mutable Matrix<double> diagonal_h_scratch_;
   ExactMetricInverse exact_inverse_;
@@ -152,8 +160,8 @@ struct SingleStateCiTransportModel {
  * Hc0 and Mc0 must be the exact accepted selected-action images, including
  * any finite Ritz residual. The optional physical coefficient gradient is the
  * authoritative frozen residual when supplied; it must use the same weight
- * as evaluate_model. origin_carrier must equal F(origin_frame)*selected_state
- * and remain valid through transport calls. No stationarity cutoff is imposed.
+ * as evaluate_model. The accepted source is retained in selected structure
+ * coordinates. No stationarity cutoff is imposed.
  */
 class SingleStateCiTransport {
  public:
@@ -162,7 +170,6 @@ class SingleStateCiTransport {
       linalg::ConstMatrixView selected_state,
       linalg::ConstMatrixView hamiltonian_image,
       linalg::ConstMatrixView metric_image,
-      linalg::ConstMatrixView origin_carrier,
       double normalized_weight,
       linalg::ConstMatrixView physical_origin_coefficient_gradient = {});
 
@@ -175,8 +182,7 @@ class SingleStateCiTransport {
   /** Physical coefficient gradient must include normalized_weight. */
   SingleStateCiTransportModel evaluate_model(
       const SingleStateCiTransportPoint& point, double physical_energy,
-      linalg::ConstMatrixView physical_coefficient_gradient,
-      linalg::ConstMatrixView physical_carrier) const;
+      linalg::ConstMatrixView physical_coefficient_gradient) const;
 
   linalg::ConstMatrixView origin_coefficient_gradient() const noexcept {
     return origin_gradient_.view();
@@ -188,9 +194,7 @@ class SingleStateCiTransport {
   SelectedCrossOverlap* overlap_;
   int structures_, active_;
   double coordinate_scale_;
-  Matrix<double> origin_frame_,origin_gradient_;
-  /** Borrowed accepted-point state; its owner must outlive transport calls. */
-  linalg::ConstMatrixView origin_carrier_;
+  Matrix<double> origin_frame_,origin_gradient_,origin_coefficients_;
 };
 
 }  // namespace xmvb::cuda

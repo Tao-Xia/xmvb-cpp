@@ -221,7 +221,7 @@ ExteriorTransform::ExteriorTransform(
       scales_(context, static_cast<std::size_t>(source.dimension())),
       inverse_scales_(context, static_cast<std::size_t>(source.dimension())),
       shear_coefficients_(context,source.shear_count()),
-      occupations_(context,source.occupations().size()),
+      topology_(std::make_shared<Topology>(context,source.occupations().size())),
       unit_upper_(context,source.n_orbitals(),source.n_orbitals()) {
   if (dimension_ <= 0 || source.determinant_scales().size() != dimension_)
     throw std::invalid_argument("invalid CUDA exterior transform dimensions");
@@ -238,24 +238,46 @@ ExteriorTransform::ExteriorTransform(
   std::vector<Edge> all_edges;
   std::vector<double> coefficients;
   coefficients.reserve(source.shear_count());
-  shears_.reserve(source.shear_count());
+  topology_->shears.reserve(source.shear_count());
   for (std::size_t i = 0; i < source.shear_count(); ++i) {
     const auto edges = source.shear_edges(i);
     if (edges.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
       throw std::overflow_error("CUDA exterior shear is too large");
-    shears_.push_back({all_edges.size(), static_cast<int>(edges.size())});
+    topology_->shears.push_back({all_edges.size(), static_cast<int>(edges.size())});
     coefficients.push_back(source.shear_coefficient(i));
     all_edges.insert(all_edges.end(), edges.begin(), edges.end());
   }
-  edges_ = Buffer<Edge>(context, all_edges.size());
-  schedule_=Buffer<Shear>(context,shears_.size());
-  context.copy_to_device(schedule_.data(),shears_.data(),shears_.size()*sizeof(Shear));
-  context.copy_to_device(edges_.data(), all_edges.data(),
+  topology_->edges = Buffer<Edge>(context, all_edges.size());
+  topology_->schedule=Buffer<Shear>(context,topology_->shears.size());
+  context.copy_to_device(topology_->schedule.data(),topology_->shears.data(),topology_->shears.size()*sizeof(Shear));
+  context.copy_to_device(topology_->edges.data(), all_edges.data(),
                          all_edges.size()*sizeof(Edge));
   context.copy_to_device(shear_coefficients_.data(),coefficients.data(),
                          coefficients.size()*sizeof(double));
-  context.copy_to_device(occupations_.data(),source.occupations().data(),
-                         occupations_.size()*sizeof(std::uint64_t));
+  context.copy_to_device(topology_->occupations.data(),source.occupations().data(),
+                         topology_->occupations.size()*sizeof(std::uint64_t));
+}
+
+ExteriorTransform::ExteriorTransform(Context& context,
+    const ExteriorTransform& reference)
+    : context_(&context),dimension_(reference.dimension_),
+      n_orbitals_(reference.n_orbitals_),shared_values_(reference.shared_values_),
+      scales_(context,reference.scales_.size()),
+      inverse_scales_(context,reference.inverse_scales_.size()),
+      shear_coefficients_(context,reference.shear_coefficients_.size()),
+      topology_(reference.topology_),
+      unit_upper_(context,reference.unit_upper_.rows(),reference.unit_upper_.cols()) {
+  if (reference.context_!=&context)
+    throw std::invalid_argument("CUDA exterior frame clone requires same context");
+  const auto copy_numeric=[&](double* target,const double* source,std::size_t count) {
+    if (count)
+      check_cuda(cudaMemcpyAsync(target,source,count*sizeof(double),
+          cudaMemcpyDeviceToDevice,context.stream()),"clone CUDA exterior frame");
+  };
+  copy_numeric(scales_.data(),reference.scales_.data(),scales_.size());
+  copy_numeric(inverse_scales_.data(),reference.inverse_scales_.data(),inverse_scales_.size());
+  copy_numeric(shear_coefficients_.data(),reference.shear_coefficients_.data(),
+      shear_coefficients_.size());
 }
 
 void ExteriorTransform::update_upper(linalg::ConstMatrixView upper) {
@@ -265,7 +287,7 @@ void ExteriorTransform::update_upper(linalg::ConstMatrixView upper) {
   factor_upper<<<1,1,0,context_->stream()>>>(upper,unit_upper_.view(),
       shear_coefficients_.data());
   update_scales<<<grid_size(dimension_),256,0,context_->stream()>>>(upper,
-      occupations_.data(),scales_.data(),inverse_scales_.data(),dimension_);
+      topology_->occupations.data(),scales_.data(),inverse_scales_.data(),dimension_);
   check_cuda(cudaGetLastError(),"CUDA exterior frame update");
 }
 
@@ -274,10 +296,10 @@ void ExteriorTransform::apply_left(linalg::MatrixView coefficients,
   if (coefficients.rows != dimension_ || coefficients.cols <= 0 ||
       coefficients.ld < coefficients.rows || coefficients.data == nullptr)
     throw std::invalid_argument("invalid CUDA exterior left panel");
-  if (!shears_.empty() && dimension_<=shared_values_) {
+  if (!topology_->shears.empty() && dimension_<=shared_values_) {
     exterior_tile<false><<<grid_size(coefficients.cols*256),256,
         static_cast<std::size_t>(dimension_)*sizeof(double),context_->stream()>>>(
-        coefficients,edges_.data(),schedule_.data(),shears_.size(),shear_coefficients_.data(),
+        coefficients,topology_->edges.data(),topology_->schedule.data(),topology_->shears.size(),shear_coefficients_.data(),
         inverse ? inverse_scales_.data():scales_.data(),dimension_,1,adjoint,inverse);
     check_cuda(cudaGetLastError(),"CUDA fused exterior left tile");
     return;
@@ -294,13 +316,13 @@ void ExteriorTransform::apply_left(linalg::MatrixView coefficients,
   if (adjoint == inverse) {
     scale();
   }
-  for (std::size_t step = 0; step < shears_.size(); ++step) {
-    const auto index=adjoint != inverse ? shears_.size()-1-step : step;
-    const Shear& shear = shears_[index];
+  for (std::size_t step = 0; step < topology_->shears.size(); ++step) {
+    const auto index=adjoint != inverse ? topology_->shears.size()-1-step : step;
+    const Shear& shear = topology_->shears[index];
     if (shear.count == 0) continue;
     const std::int64_t work = static_cast<std::int64_t>(shear.count)*coefficients.cols;
     shear_left<<<grid_size(work),256,0,context_->stream()>>>(
-        coefficients, edges_.data()+shear.offset, shear.count,
+        coefficients, topology_->edges.data()+shear.offset, shear.count,
         shear_coefficients_.data()+index,inverse ? -1.0:1.0,adjoint,work);
     check_cuda(cudaGetLastError(), "CUDA exterior left shear");
   }
@@ -310,41 +332,29 @@ void ExteriorTransform::apply_left(linalg::MatrixView coefficients,
 }
 
 void ExteriorTransform::apply_supported_left(linalg::MatrixView panel,
-    std::span<const int> offsets,std::span<const int> rows,bool adjoint) const {
-  if (offsets.size()<2 || offsets.front()!=0 || offsets.back()!=rows.size() ||
+    const std::uint64_t* allowed,int columns,bool adjoint) const {
+  if (!allowed || columns<=0 ||
       panel.rows!=dimension_ || panel.ld<panel.rows || panel.cols<=0 ||
-      panel.cols%(offsets.size()-1))
+      panel.cols%columns)
     throw std::invalid_argument("invalid CUDA supported exterior pattern");
-  const int columns=offsets.size()-1,words=(dimension_+63)/64;
-  std::vector<std::uint64_t> bits(static_cast<std::size_t>(columns)*words,0);
-  for (int b=0;b<columns;++b) {
-    if (offsets[b]<0 || offsets[b]>offsets[b+1] || offsets[b+1]>rows.size())
-      throw std::invalid_argument("invalid CUDA supported exterior offsets");
-    for (int i=offsets[b];i<offsets[b+1];++i) {
-      const int row=rows[i];
-      if (row<0 || row>=dimension_) throw std::invalid_argument("supported exterior row is out of range");
-      bits[static_cast<std::size_t>(b)*words+row/64]|=std::uint64_t{1}<<(row%64);
-    }
-  }
-  Buffer<std::uint64_t> allowed(*context_,bits.size());
-  context_->copy_to_device(allowed.data(),bits.data(),bits.size()*sizeof(std::uint64_t));
+  const int words=(dimension_+63)/64;
   if (dimension_<=shared_values_) {
     exterior_tile<false><<<grid_size(panel.cols*256),256,dimension_*sizeof(double),context_->stream()>>>(
-        panel,edges_.data(),schedule_.data(),shears_.size(),shear_coefficients_.data(),scales_.data(),
-        dimension_,1,adjoint,false,allowed.data(),columns,words);
+        panel,topology_->edges.data(),topology_->schedule.data(),topology_->shears.size(),shear_coefficients_.data(),scales_.data(),
+        dimension_,1,adjoint,false,allowed,columns,words);
   } else {
-    restrict_columns<<<grid_size(panel.rows*panel.cols),256,0,context_->stream()>>>(panel,allowed.data(),columns,words);
+    restrict_columns<<<grid_size(panel.rows*panel.cols),256,0,context_->stream()>>>(panel,allowed,columns,words);
     const auto scale=[&] {
       check_cublas(cublasDdgmm(context_->blas(),CUBLAS_SIDE_LEFT,blas_int(panel.rows),blas_int(panel.cols),
           panel.data,blas_int(panel.ld),scales_.data(),1,panel.data,blas_int(panel.ld)),"supported exterior scaling");
     };
     if (!adjoint) scale();
-    for (std::size_t step=0;step<shears_.size();++step) {
-      const auto index=adjoint ? shears_.size()-1-step:step;
-      const auto& shear=shears_[index];
+    for (std::size_t step=0;step<topology_->shears.size();++step) {
+      const auto index=adjoint ? topology_->shears.size()-1-step:step;
+      const auto& shear=topology_->shears[index];
       if (shear.count) shear_left<<<grid_size(shear.count*panel.cols),256,0,context_->stream()>>>(panel,
-          edges_.data()+shear.offset,shear.count,shear_coefficients_.data()+index,1.0,adjoint,
-          shear.count*panel.cols,allowed.data(),columns,words);
+          topology_->edges.data()+shear.offset,shear.count,shear_coefficients_.data()+index,1.0,adjoint,
+          shear.count*panel.cols,allowed,columns,words);
     }
     if (adjoint) scale();
   }
@@ -358,11 +368,11 @@ ExteriorDirection ExteriorTransform::direction(linalg::ConstMatrixView upper,
       delta_upper.ld<delta_upper.rows || !upper.data || !delta_upper.data)
     throw std::invalid_argument("invalid CUDA exterior direction frame");
   auto& c=*context_;
-  ExteriorDirection result{Buffer<double>(c,dimension_),Buffer<double>(c,shears_.size())};
+  ExteriorDirection result{Buffer<double>(c,dimension_),Buffer<double>(c,topology_->shears.size())};
   Matrix<double> unit(c,n_orbitals_,n_orbitals_),delta_unit(c,n_orbitals_,n_orbitals_);
   factor_upper<<<1,1,0,c.stream()>>>(upper,unit.view(),nullptr,
       delta_upper,delta_unit.view(),result.shears.data());
-  update_scales<<<grid_size(dimension_),256,0,c.stream()>>>(upper,occupations_.data(),
+  update_scales<<<grid_size(dimension_),256,0,c.stream()>>>(upper,topology_->occupations.data(),
       nullptr,nullptr,dimension_,delta_upper,result.scales.data());
   check_cuda(cudaGetLastError(),"CUDA exterior direction factors");
   return result;
@@ -373,13 +383,13 @@ void ExteriorTransform::apply_directional_left(const ExteriorDirection& directio
   if (primal.rows!=dimension_ || primal.cols<=0 || primal.ld<primal.rows ||
       tangent.rows!=primal.rows || tangent.cols!=primal.cols || tangent.ld<tangent.rows ||
       !primal.data || !tangent.data || primal.data==tangent.data ||
-      direction.scales.size()!=dimension_ || direction.shears.size()!=shears_.size())
+      direction.scales.size()!=dimension_ || direction.shears.size()!=topology_->shears.size())
     throw std::invalid_argument("invalid CUDA directional exterior panel");
   auto& c=*context_;
   if (dimension_<=shared_values_/2) {
     exterior_tile<false,true><<<grid_size(primal.cols*256),256,
-        2ULL*dimension_*sizeof(double),c.stream()>>>(primal,edges_.data(),schedule_.data(),
-        shears_.size(),shear_coefficients_.data(),scales_.data(),dimension_,1,adjoint,false,
+        2ULL*dimension_*sizeof(double),c.stream()>>>(primal,topology_->edges.data(),topology_->schedule.data(),
+        topology_->shears.size(),shear_coefficients_.data(),scales_.data(),dimension_,1,adjoint,false,
         nullptr,0,0,tangent,direction.scales.data(),direction.shears.data());
   } else {
     const auto scale=[&] {
@@ -387,12 +397,12 @@ void ExteriorTransform::apply_directional_left(const ExteriorDirection& directio
           primal,tangent,scales_.data(),direction.scales.data());
     };
     if (!adjoint) scale();
-    for (std::size_t step=0;step<shears_.size();++step) {
-      const auto index=adjoint ? shears_.size()-1-step:step;
-      const auto& shear=shears_[index];
+    for (std::size_t step=0;step<topology_->shears.size();++step) {
+      const auto index=adjoint ? topology_->shears.size()-1-step:step;
+      const auto& shear=topology_->shears[index];
       if (!shear.count) continue;
       const auto work=static_cast<std::int64_t>(shear.count)*primal.cols;
-      shear_left<<<grid_size(work),256,0,c.stream()>>>(primal,edges_.data()+shear.offset,
+      shear_left<<<grid_size(work),256,0,c.stream()>>>(primal,topology_->edges.data()+shear.offset,
           shear.count,shear_coefficients_.data()+index,1.0,adjoint,work,nullptr,0,0,
           tangent,direction.shears.data()+index);
     }
@@ -408,13 +418,13 @@ void ExteriorTransform::apply_right(linalg::MatrixView coefficients,
       coefficients.ld < coefficients.rows || coefficients.data == nullptr)
     throw std::invalid_argument("invalid CUDA exterior right panel");
   const std::int64_t rhs = coefficients.cols/dimension_;
-  if (!shears_.empty() && dimension_<=shared_values_) {
+  if (!topology_->shears.empty() && dimension_<=shared_values_) {
     int lanes=1;
     while (lanes<32 && 2*lanes<=shared_values_/dimension_) lanes*=2;
     const auto tiles=((coefficients.rows+lanes-1)/lanes)*rhs;
     exterior_tile<true><<<grid_size(tiles*256),256,
         static_cast<std::size_t>(dimension_)*lanes*sizeof(double),context_->stream()>>>(
-        coefficients,edges_.data(),schedule_.data(),shears_.size(),shear_coefficients_.data(),
+        coefficients,topology_->edges.data(),topology_->schedule.data(),topology_->shears.size(),shear_coefficients_.data(),
         inverse ? inverse_scales_.data():scales_.data(),dimension_,lanes,adjoint,inverse);
     check_cuda(cudaGetLastError(),"CUDA fused exterior right tile");
     return;
@@ -431,14 +441,14 @@ void ExteriorTransform::apply_right(linalg::MatrixView coefficients,
   if (adjoint == inverse) {
     scale();
   }
-  for (std::size_t step = 0; step < shears_.size(); ++step) {
-    const auto index=adjoint != inverse ? shears_.size()-1-step : step;
-    const Shear& shear = shears_[index];
+  for (std::size_t step = 0; step < topology_->shears.size(); ++step) {
+    const auto index=adjoint != inverse ? topology_->shears.size()-1-step : step;
+    const Shear& shear = topology_->shears[index];
     if (shear.count == 0) continue;
     const std::int64_t work = static_cast<std::int64_t>(shear.count)*
                               coefficients.rows*rhs;
     shear_right<<<grid_size(work),256,0,context_->stream()>>>(
-        coefficients, edges_.data()+shear.offset, shear.count,
+        coefficients, topology_->edges.data()+shear.offset, shear.count,
         shear_coefficients_.data()+index,inverse ? -1.0:1.0,adjoint,dimension_,work);
     check_cuda(cudaGetLastError(), "CUDA exterior right shear");
   }
@@ -463,6 +473,35 @@ void ExteriorTransform::sample_rows(std::span<const int> rows,linalg::MatrixView
   selected_identity<<<grid_size(rows.size()),256,0,c.stream()>>>(selected.data(),rows.size(),output);
   check_cuda(cudaGetLastError(),"selected exterior identity columns");
   apply_left(output,true);
+}
+
+void ExteriorTransform::sample_directional_rows(
+    const ExteriorDirection& direction,std::span<const int> rows,
+    linalg::MatrixView primal,linalg::MatrixView tangent) const {
+  if (primal.rows!=dimension_ ||
+      primal.cols!=static_cast<std::int64_t>(rows.size()) ||
+      primal.ld<primal.rows || tangent.rows!=primal.rows ||
+      tangent.cols!=primal.cols || tangent.ld<tangent.rows ||
+      primal.data==tangent.data)
+    throw std::invalid_argument("requested directional exterior-row dimensions");
+  if (rows.empty()) return;
+  if (!primal.data || !tangent.data ||
+      std::any_of(rows.begin(),rows.end(),
+          [&](int row) { return row<0 || row>=dimension_; }))
+    throw std::invalid_argument("invalid requested directional exterior rows");
+  auto& c=*context_;
+  Buffer<int> selected(c,rows.size());
+  c.copy_to_device(selected.data(),rows.data(),rows.size_bytes());
+  check_cuda(cudaMemset2DAsync(primal.data,primal.ld*sizeof(double),0,
+      primal.rows*sizeof(double),primal.cols,c.stream()),
+      "clear directional exterior primal rows");
+  check_cuda(cudaMemset2DAsync(tangent.data,tangent.ld*sizeof(double),0,
+      tangent.rows*sizeof(double),tangent.cols,c.stream()),
+      "clear directional exterior tangent rows");
+  selected_identity<<<grid_size(rows.size()),256,0,c.stream()>>>(
+      selected.data(),rows.size(),primal);
+  check_cuda(cudaGetLastError(),"directional exterior identity columns");
+  apply_directional_left(direction,primal,tangent,true);
 }
 
 }  // namespace xmvb::cuda

@@ -7,6 +7,8 @@
 #include <cmath>
 #include <limits>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -21,6 +23,7 @@
 #include "cuda/linalg/blas.hpp"
 #include "cuda/memory/buffer.hpp"
 #include "cuda/memory/graph.hpp"
+#include "cuda/vb/product.hpp"
 #include "cuda/vb/transform.hpp"
 
 namespace xmvb::cuda {
@@ -131,9 +134,44 @@ __global__ void selected_source_terms(const std::int64_t* row_offsets,
   }
 }
 
+__global__ void expand_selected_groups(const std::int64_t* row_offsets,
+    const std::int64_t* products,const std::int64_t* columns,
+    const double* weights,linalg::ConstMatrixView structures,
+    linalg::MatrixView carrier,std::int64_t groups) {
+  for (auto group=static_cast<std::int64_t>(blockIdx.x)*blockDim.x+threadIdx.x;
+       group<groups;group+=static_cast<std::int64_t>(gridDim.x)*blockDim.x) {
+    double value=0.0;
+    for (auto term=row_offsets[group];term<row_offsets[group+1];++term)
+      value+=weights[term]*structures.data[columns[term]];
+    const auto product=products[group];
+    carrier.data[product%carrier.rows+carrier.ld*(product/carrier.rows)]=value;
+  }
+}
+
+__global__ void contract_selected_groups(const std::int64_t* row_offsets,
+    const std::int64_t* products,const std::int64_t* columns,
+    const double* weights,linalg::ConstMatrixView carrier,
+    linalg::MatrixView structures,std::int64_t groups) {
+  for (auto group=static_cast<std::int64_t>(blockIdx.x)*blockDim.x+threadIdx.x;
+       group<groups;group+=static_cast<std::int64_t>(gridDim.x)*blockDim.x) {
+    const auto product=products[group];
+    const double value=carrier.data[product%carrier.rows+carrier.ld*(product/carrier.rows)];
+    for (auto term=row_offsets[group];term<row_offsets[group+1];++term)
+      atomicAdd(structures.data+columns[term],weights[term]*value);
+  }
+}
+
 void check_sparse(cusparseStatus_t status, const char* operation) {
   if (status != CUSPARSE_STATUS_SUCCESS)
     throw std::runtime_error(std::string(operation) + ": " + cusparseGetErrorString(status));
+}
+
+bool resource_error(const std::runtime_error& error) {
+  const std::string_view message{error.what()};
+  return message.find("exceeds byte budget")!=std::string_view::npos ||
+      message.find("cudaMallocFromPoolAsync")!=std::string_view::npos ||
+      message.find("CUDA direct-CI budget")!=std::string_view::npos ||
+      message.find("out of memory")!=std::string_view::npos;
 }
 
 /** Dense descriptors borrow caller-owned views and never own numerical data. */
@@ -154,6 +192,7 @@ class DenseDescriptor {
 
 struct StructureAction::Impl {
   Context& context;
+  const vb::StructureAction::OrthogonalView source_view;
   int structures, alpha, beta;
   std::int64_t groups, products;
   vb::StructureDiagonal diagonal;
@@ -172,9 +211,10 @@ struct StructureAction::Impl {
   cusparseHandle_t sparse = nullptr;
   cusparseSpMatDescr_t incidence = nullptr;
   mutable Matrix<double> carriers, support;
-  linalg::MatrixView coefficients, image;
+  mutable linalg::MatrixView coefficients, image;
   mutable Buffer<std::byte> sparse_workspace;
   mutable Matrix<double> input, hamiltonian, overlap;
+  mutable std::unique_ptr<ProductContraction> selected_product;
   mutable Matrix<double> carrier_diagonal;
   mutable std::unique_ptr<Graph> graph;
   mutable double graph_seconds=0;
@@ -182,7 +222,7 @@ struct StructureAction::Impl {
   std::uint64_t version=0;
 
   Impl(Context& ctx, const vb::StructureAction& source)
-      : context(ctx), structures(source.n_structures()),
+      : context(ctx),source_view(source.orthogonal_view()),structures(source.n_structures()),
         alpha(source.n_alpha_strings()), beta(source.n_beta_strings()),
         groups(source.orthogonal_view().products.size()),
         products(static_cast<std::int64_t>(alpha)*beta),
@@ -196,10 +236,7 @@ struct StructureAction::Impl {
         model_upper(ctx,source.orthogonal_view().alpha.n_orbitals(),source.orthogonal_view().alpha.n_orbitals()),
         row_offsets(ctx, groups+1), product_indices(ctx, groups),
         columns(ctx, source.orthogonal_view().terms.size()),
-        weights(ctx, source.orthogonal_view().terms.size()),
-        carriers(ctx,alpha,2*static_cast<std::int64_t>(beta)),support(ctx,groups,1),
-        coefficients(carriers.view().columns(0,beta)),image(carriers.view().columns(beta,beta)),
-        input(ctx,structures,1),hamiltonian(ctx,structures,1),overlap(ctx,structures,1) {
+        weights(ctx, source.orthogonal_view().terms.size()) {
     const auto view=source.orthogonal_view();
     copy_to_device(context,model_upper.view(),view.alpha.orbital_transform());
     std::vector<unsigned char> alpha_touched(alpha),beta_touched(beta);
@@ -248,14 +285,8 @@ struct StructureAction::Impl {
       check_sparse(cusparseCreateCsr(&incidence, groups, structures, values.size(),
           row_offsets.data(), columns.data(), weights.data(), CUSPARSE_INDEX_64I,
           CUSPARSE_INDEX_64I, CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F), "cusparseCreateCsr");
-      // Query both orientations once; reuse one device workspace in every action.
-      Matrix<double> structure_vector(context, structures, 1);
-      const auto bytes=std::max(spmm_bytes(false,structure_vector.view(),support.view()),
-          spmm_bytes(true,support.view(),structure_vector.view()));
-      sparse_workspace=Buffer<std::byte>(context, bytes);
-      // Numerical workspace is planned at first apply, after the physical
-      // point exists. Eager preparation here can consume its carrier storage
-      // while the topology still holds only placeholder integrals.
+      // Only the sparse topology is resident. Complete carrier and group
+      // buffers are admitted lazily for the small-system graph fast path.
     } catch (...) {
       if (incidence) cusparseDestroySpMat(incidence);
       if (sparse) cusparseDestroy(sparse);
@@ -303,6 +334,79 @@ struct StructureAction::Impl {
     spmm(true,support.view(),output);
   }
 
+  ProductIncidence selected_incidence() const noexcept {
+    return {row_offsets.data(),columns.data(),weights.data(),structures};
+  }
+
+  std::size_t available_bytes() const {
+    const auto budget=context.device_byte_budget();
+    const auto resident=context.counters().current_device_bytes;
+    if (resident>budget)
+      throw std::runtime_error("CUDA structure action accounting exceeds budget");
+    std::size_t free=0,total=0;
+    check_cuda(cudaMemGetInfo(&free,&total),"query CUDA structure action free memory");
+    return std::min(budget-resident,free);
+  }
+
+  ProductContraction& selected_contraction() const {
+    if (!selected_product)
+      selected_product=std::make_unique<ProductContraction>(context,source_view,
+          alpha_transform,*beta_transform,source_view.support);
+    return *selected_product;
+  }
+
+  void clear_graph_storage() const {
+    graph.reset();
+    coefficients={};image={};
+    carriers=Matrix<double>{};support=Matrix<double>{};
+    input=Matrix<double>{};hamiltonian=Matrix<double>{};overlap=Matrix<double>{};
+    sparse_workspace=Buffer<std::byte>{};
+  }
+
+  void release_graph_for_selected() const {
+    if (!graph) return;
+    context.synchronize();
+    clear_graph_storage();
+    sigma.reset_workspace();
+  }
+
+  bool admit_graph() const {
+    if (graph) return true;
+    const auto elements=2*static_cast<std::size_t>(products)+
+        static_cast<std::size_t>(groups)+3*static_cast<std::size_t>(structures);
+    if (elements>std::numeric_limits<std::size_t>::max()/sizeof(double) ||
+        elements*sizeof(double)>=available_bytes()) return false;
+    try {
+      carriers=Matrix<double>(context,alpha,2*static_cast<std::int64_t>(beta));
+      support=Matrix<double>(context,groups,1);
+      coefficients=carriers.view().columns(0,beta);
+      image=carriers.view().columns(beta,beta);
+      input=Matrix<double>(context,structures,1);
+      hamiltonian=Matrix<double>(context,structures,1);
+      overlap=Matrix<double>(context,structures,1);
+      const auto scratch=std::max(spmm_bytes(false,input.view(),support.view()),
+          spmm_bytes(true,support.view(),input.view()));
+      if (scratch>=available_bytes()) {clear_graph_storage();return false;}
+      sparse_workspace=Buffer<std::byte>(context,scratch);
+      sigma.prepare(1);
+      const auto start=std::chrono::steady_clock::now();
+      graph=std::make_unique<Graph>(context,[&] {
+        emit(input.view(),hamiltonian.view(),overlap.view());
+      });
+      graph_seconds+=std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();
+      graph_workspace_generation=sigma.workspace_generation();
+      return true;
+    } catch (const std::runtime_error& error) {
+      // Admission is optional: resource-limit failures route to the exact
+      // selected-space contraction, but numerical/capture failures remain visible.
+      const bool resource=resource_error(error);
+      clear_graph_storage();
+      if (resource) sigma.reset_workspace();
+      if (!resource) throw;
+      return false;
+    }
+  }
+
   // Called exactly once during capture; there is one maintained contraction path.
   void emit(linalg::ConstMatrixView vector,linalg::MatrixView h,linalg::MatrixView m) const {
       {
@@ -337,18 +441,15 @@ struct StructureAction::Impl {
     if (vectors.rows!=structures || h.rows!=structures || m.rows!=structures ||
         vectors.cols<=0 || h.cols!=vectors.cols || m.cols!=vectors.cols)
       throw std::invalid_argument("CUDA structure action block dimensions");
-    sigma.prepare(1);
-    if (!graph || graph_workspace_generation!=sigma.workspace_generation()) {
-      // Another point may grow/repartition the shared scratch. Recapture the
-      // same physical action before replay, never launch stale device pointers.
+    if (graph && graph_workspace_generation!=sigma.workspace_generation()) {
+      // Shared sigma scratch changed; never replay stale captured addresses.
       context.synchronize();
-      graph.reset();
-      const auto start=std::chrono::steady_clock::now();
-      graph=std::make_unique<Graph>(context,[&] {
-        emit(input.view(),hamiltonian.view(),overlap.view());
-      });
-      graph_seconds+=std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();
-      graph_workspace_generation=sigma.workspace_generation();
+      clear_graph_storage();
+    }
+    if (!admit_graph()) {
+      selected_contraction().apply_selected(selected_incidence(),vectors,sigma,h,m,
+          available_bytes());
+      return;
     }
     const auto bytes=static_cast<std::size_t>(structures)*sizeof(double);
     for (std::int64_t rhs=0;rhs<vectors.cols;++rhs) {
@@ -385,7 +486,8 @@ void StructureAction::diagonal_model(linalg::MatrixView h,
   const nvtx3::scoped_range range{"vb.nonorthogonal_jacobi"};
   // Only supported spin rows are prepared. Cross-spin contractions are
   // consumed at touched product groups, never expanded to a carrier grid.
-  p.sigma.reset_workspace();
+  if (p.graph) p.release_graph_for_selected();
+  else p.sigma.reset_workspace();
   const auto kernel=p.sigma.channel_kernel();
   Matrix<double> symmetric(p.context,kernel.rows,kernel.cols),
       projected(p.context,p.alpha_self->moments().rows,kernel.cols);
@@ -421,6 +523,7 @@ void StructureAction::build_selected_metric(linalg::MatrixView output) const {
   if (output.rows!=p.structures || output.cols!=p.structures ||
       output.ld<output.rows || !output.data)
     throw std::invalid_argument("CUDA selected metric output dimensions");
+  p.release_graph_for_selected();
   if (p.groups==0) {
     for (int column=0;column<p.structures;++column)
       check_cuda(cudaMemsetAsync(output.data+output.ld*column,0,
@@ -519,9 +622,14 @@ void StructureAction::build_selected_metric(linalg::MatrixView output) const {
   }
 }
 const DirectCiSigma& StructureAction::carrier_sigma() const noexcept { return impl_->sigma; }
-std::array<linalg::MatrixView,2> StructureAction::carrier_workspace() const noexcept {
-  return {impl_->coefficients,impl_->image};
-}
+const ExteriorTransform& StructureAction::alpha_transform() const noexcept { return impl_->alpha_transform; }
+const ExteriorTransform& StructureAction::beta_transform() const noexcept { return *impl_->beta_transform; }
+const vb::StructureAction::OrthogonalView& StructureAction::orthogonal_view() const noexcept { return impl_->source_view; }
+const std::int64_t* StructureAction::product_indices_data() const noexcept { return impl_->product_indices.data(); }
+const std::int64_t* StructureAction::term_offsets_data() const noexcept { return impl_->row_offsets.data(); }
+const std::int64_t* StructureAction::term_structures_data() const noexcept { return impl_->columns.data(); }
+const double* StructureAction::term_weights_data() const noexcept { return impl_->weights.data(); }
+std::int64_t StructureAction::n_product_groups() const noexcept { return impl_->groups; }
 void StructureAction::update_frame(linalg::ConstMatrixView upper) {
   auto& p=*impl_;
   if (upper.rows!=p.model_upper.rows() || upper.cols!=p.model_upper.cols() || upper.ld<upper.rows)
@@ -531,6 +639,7 @@ void StructureAction::update_frame(linalg::ConstMatrixView upper) {
       cudaMemcpyDeviceToDevice,p.context.stream()),"CUDA spin-self frame update");
   impl_->alpha_transform.update_upper(upper);
   if (impl_->beta_storage) impl_->beta_storage->update_upper(upper);
+  if (impl_->selected_product) impl_->selected_product->update_frame();
   ++impl_->version;
 }
 void StructureAction::update_integrals(linalg::ConstMatrixView h,
@@ -548,11 +657,24 @@ void StructureAction::apply_overlap(linalg::ConstMatrixView vectors,
   if (vectors.rows!=p.structures || overlap.rows!=p.structures || vectors.cols<=0 ||
       overlap.cols!=vectors.cols)
     throw std::invalid_argument("CUDA overlap block dimensions");
+  Matrix<double> unused_h;
+  try { unused_h=Matrix<double>(p.context,p.structures,1); }
+  catch (const std::runtime_error& error) {
+    if (!p.graph || !resource_error(error)) throw;
+    p.release_graph_for_selected();
+    unused_h=Matrix<double>(p.context,p.structures,1);
+  }
   for (std::int64_t rhs=0;rhs<vectors.cols;++rhs) {
-    expand_spin(vectors.column(rhs),p.coefficients);
-    apply_orbital_transform(p.coefficients);
-    apply_adjoint_orbital_transform(p.coefficients);
-    contract_spin(p.coefficients,overlap.column(rhs));
+    const auto run=[&] {
+      p.selected_contraction().apply_selected(p.selected_incidence(),vectors.column(rhs),p.sigma,
+          unused_h.view(),overlap.column(rhs),p.available_bytes(),true);
+    };
+    try { run(); }
+    catch (const std::runtime_error& error) {
+      if (!p.graph || !resource_error(error)) throw;
+      p.release_graph_for_selected();
+      run();
+    }
   }
 }
 
@@ -566,12 +688,15 @@ void StructureAction::expand_spin(linalg::ConstMatrixView structures,
       carrier.cols!=p.beta*structures.cols || carrier.ld!=p.alpha)
     throw std::invalid_argument("CUDA spin expansion dimensions");
   for (std::int64_t rhs=0;rhs<structures.cols;++rhs) {
-    p.spmm(false,structures.column(rhs),p.support.view());
     auto panel=carrier.columns(rhs*p.beta,p.beta);
     check_cuda(cudaMemsetAsync(panel.data,0,p.products*sizeof(double),p.context.stream()),
         "clear expanded spin panel");
-    thrust::scatter(thrust::cuda::par_nosync.on(p.context.stream()),p.support.data(),
-        p.support.data()+p.groups,p.product_indices.data(),panel.data);
+    if (p.groups) {
+      expand_selected_groups<<<tile_grid(p.groups),256,0,p.context.stream()>>>(
+          p.row_offsets.data(),p.product_indices.data(),p.columns.data(),p.weights.data(),
+          structures.column(rhs),panel,p.groups);
+      check_cuda(cudaGetLastError(),"CUDA selected spin expansion");
+    }
   }
 }
 
@@ -581,8 +706,17 @@ void StructureAction::contract_spin(linalg::ConstMatrixView carrier,
   if (structures.rows!=p.structures || structures.cols<=0 || carrier.rows!=p.alpha ||
       carrier.cols!=p.beta*structures.cols || carrier.ld!=p.alpha)
     throw std::invalid_argument("CUDA spin contraction dimensions");
-  for (std::int64_t rhs=0;rhs<structures.cols;++rhs)
-    p.project(carrier.columns(rhs*p.beta,p.beta),structures.column(rhs));
+  for (std::int64_t rhs=0;rhs<structures.cols;++rhs) {
+    auto selected=structures.column(rhs);
+    check_cuda(cudaMemsetAsync(selected.data,0,p.structures*sizeof(double),p.context.stream()),
+        "clear selected spin contraction");
+    if (p.groups) {
+      contract_selected_groups<<<tile_grid(p.groups),256,0,p.context.stream()>>>(
+          p.row_offsets.data(),p.product_indices.data(),p.columns.data(),p.weights.data(),
+          carrier.columns(rhs*p.beta,p.beta),selected,p.groups);
+      check_cuda(cudaGetLastError(),"CUDA selected spin contraction");
+    }
+  }
 }
 
 void StructureAction::apply_orbital_transform(linalg::MatrixView carrier) const {
@@ -611,20 +745,16 @@ double StructureAction::maximum_orthogonal_component(
   if (structure.rows!=p.structures || structure.cols!=1 ||
       structure.ld<structure.rows || !structure.data)
     throw std::invalid_argument("CUDA orthogonal CI maximum dimensions");
-  expand_spin(structure,p.coefficients);
-  apply_orbital_transform(p.coefficients);
-  int index=0;
-  check_cublas(cublasSetPointerMode(p.context.blas(),CUBLAS_POINTER_MODE_HOST),
-      "CUDA orthogonal CI maximum scalar pointer mode");
-  check_cublas(cublasIdamax(p.context.blas(),blas_int(p.products),
-      p.coefficients.data,1,&index),"CUDA orthogonal CI maximum index");
-  if (index<1 || index>p.products)
-    throw std::runtime_error("CUDA orthogonal CI maximum index is invalid");
-  double value=0.0;
-  p.context.copy_to_host(&value,p.coefficients.data+index-1,sizeof(double));
-  if (!std::isfinite(value))
-    throw std::runtime_error("CUDA orthogonal CI maximum is non-finite");
-  return std::abs(value);
+  const auto run=[&] {
+    return p.selected_contraction().maximum_orthogonal_component(
+        p.selected_incidence(),structure,p.available_bytes());
+  };
+  try { return run(); }
+  catch (const std::runtime_error& error) {
+    if (!p.graph || !resource_error(error)) throw;
+    p.release_graph_for_selected();
+    return run();
+  }
 }
 
 void StructureAction::divide_carrier_diagonal(linalg::MatrixView carrier,

@@ -390,10 +390,8 @@ void SpinMetric::solve_diagonal_model(linalg::ConstMatrixView rhs,
 
 FullMetric::FullMetric(Context& context,const SpinMetric& spin,
                        const StructureAction& action)
-    : spin_(&spin),action_(&action),
-      structure_(context,spin.dimension(),1),
-      carrier_(context,action.n_alpha_strings(),action.n_beta_strings()),
-      image_(context,action.n_alpha_strings(),action.n_beta_strings()) {
+    : context_(&context),spin_(&spin),action_(&action),
+      structure_(context,spin.dimension(),1) {
   if (spin.dimension()!=action.n_structures() ||
       action.n_alpha_strings()<=0 || action.n_beta_strings()<=0)
     throw std::invalid_argument("CUDA FULL metric dimensions disagree");
@@ -407,10 +405,11 @@ void FullMetric::validate(linalg::ConstMatrixView input,
 void FullMetric::to_ci_coordinates(linalg::ConstMatrixView structure,
                                    linalg::MatrixView coordinates) const {
   validate(structure,coordinates);
+  Matrix<double> carrier(*context_,action_->n_alpha_strings(),action_->n_beta_strings());
   for (std::int64_t column=0;column<structure.cols;++column) {
-    action_->expand_spin(structure.column(column),carrier_.view());
-    action_->apply_orbital_transform(carrier_.view());
-    action_->contract_spin(carrier_.view(),structure_.view());
+    action_->expand_spin(structure.column(column),carrier.view());
+    action_->apply_orbital_transform(carrier.view());
+    action_->contract_spin(carrier.view(),structure_.view());
     spin_->solve(structure_.view(),coordinates.column(column),SpinMetric::Part::Lower);
   }
 }
@@ -418,11 +417,12 @@ void FullMetric::to_ci_coordinates(linalg::ConstMatrixView structure,
 void FullMetric::from_ci_coordinates(linalg::ConstMatrixView coordinates,
                                      linalg::MatrixView structure) const {
   validate(coordinates,structure);
+  Matrix<double> carrier(*context_,action_->n_alpha_strings(),action_->n_beta_strings());
   for (std::int64_t column=0;column<coordinates.cols;++column) {
     spin_->solve(coordinates.column(column),structure_.view(),SpinMetric::Part::Upper);
-    action_->expand_spin(structure_.view(),carrier_.view());
-    action_->apply_inverse_orbital_transform(carrier_.view());
-    action_->contract_spin(carrier_.view(),structure_.view());
+    action_->expand_spin(structure_.view(),carrier.view());
+    action_->apply_inverse_orbital_transform(carrier.view());
+    action_->contract_spin(carrier.view(),structure_.view());
     spin_->solve(structure_.view(),structure.column(column),SpinMetric::Part::Gram);
   }
 }
@@ -430,11 +430,12 @@ void FullMetric::from_ci_coordinates(linalg::ConstMatrixView coordinates,
 void FullMetric::ci_covector_to_structure(linalg::ConstMatrixView covector,
                                           linalg::MatrixView structure) const {
   validate(covector,structure);
+  Matrix<double> carrier(*context_,action_->n_alpha_strings(),action_->n_beta_strings());
   for (std::int64_t column=0;column<covector.cols;++column) {
     spin_->solve(covector.column(column),structure_.view(),SpinMetric::Part::Upper);
-    action_->expand_spin(structure_.view(),carrier_.view());
-    action_->apply_adjoint_orbital_transform(carrier_.view());
-    action_->contract_spin(carrier_.view(),structure.column(column));
+    action_->expand_spin(structure_.view(),carrier.view());
+    action_->apply_adjoint_orbital_transform(carrier.view());
+    action_->contract_spin(carrier.view(),structure.column(column));
   }
 }
 
@@ -442,12 +443,13 @@ void FullMetric::inverse_metric(linalg::ConstMatrixView covector,
                                 linalg::MatrixView structure) const {
   validate(covector,structure);
   // Match the factorized CPU FULL inverse: G^-1 W^T T^-1 T^-T W G^-1.
+  Matrix<double> carrier(*context_,action_->n_alpha_strings(),action_->n_beta_strings());
   for (std::int64_t column=0;column<covector.cols;++column) {
     spin_->solve(covector.column(column),structure_.view(),SpinMetric::Part::Gram);
-    action_->expand_spin(structure_.view(),carrier_.view());
-    action_->apply_inverse_adjoint_orbital_transform(carrier_.view());
-    action_->apply_inverse_orbital_transform(carrier_.view());
-    action_->contract_spin(carrier_.view(),structure_.view());
+    action_->expand_spin(structure_.view(),carrier.view());
+    action_->apply_inverse_adjoint_orbital_transform(carrier.view());
+    action_->apply_inverse_orbital_transform(carrier.view());
+    action_->contract_spin(carrier.view(),structure_.view());
     spin_->solve(structure_.view(),structure.column(column),SpinMetric::Part::Gram);
   }
 }
@@ -462,13 +464,14 @@ void FullMetric::apply_structure_carrier_inverse(
     throw std::invalid_argument("CUDA FULL structure AH inverse scalar dimensions");
   // This is the original-structure-coordinate counterpart of the isometric
   // CI inverse: G^-1 W^T T^-1 D^-1 T^-T W G^-1.
+  Matrix<double> carrier(*context_,action_->n_alpha_strings(),action_->n_beta_strings());
   for (std::int64_t column=0;column<covector.cols;++column) {
     spin_->solve(covector.column(column),structure_.view(),SpinMetric::Part::Gram);
-    action_->expand_spin(structure_.view(),carrier_.view());
-    action_->apply_inverse_adjoint_orbital_transform(carrier_.view());
-    action_->divide_carrier_diagonal(carrier_.view(),selected_energy,eigenvalue);
-    action_->apply_inverse_orbital_transform(carrier_.view());
-    action_->contract_spin(carrier_.view(),structure_.view());
+    action_->expand_spin(structure_.view(),carrier.view());
+    action_->apply_inverse_adjoint_orbital_transform(carrier.view());
+    action_->divide_carrier_diagonal(carrier.view(),selected_energy,eigenvalue);
+    action_->apply_inverse_orbital_transform(carrier.view());
+    action_->contract_spin(carrier.view(),structure_.view());
     spin_->solve(structure_.view(),structure.column(column),SpinMetric::Part::Gram);
   }
 }
@@ -476,11 +479,14 @@ void FullMetric::apply_structure_carrier_inverse(
 void FullMetric::apply_ci_hamiltonian(linalg::ConstMatrixView coordinates,
                                       linalg::MatrixView image) const {
   validate(coordinates,image);
+  // The exact sigma retains its input while writing the output carrier.
+  Matrix<double> carrier(*context_,action_->n_alpha_strings(),action_->n_beta_strings());
+  Matrix<double> carrier_image(*context_,action_->n_alpha_strings(),action_->n_beta_strings());
   for (std::int64_t column=0;column<coordinates.cols;++column) {
     spin_->solve(coordinates.column(column),structure_.view(),SpinMetric::Part::Upper);
-    action_->expand_spin(structure_.view(),carrier_.view());
-    action_->apply_carrier_hamiltonian(carrier_.view(),image_.view());
-    action_->contract_spin(image_.view(),structure_.view());
+    action_->expand_spin(structure_.view(),carrier.view());
+    action_->apply_carrier_hamiltonian(carrier.view(),carrier_image.view());
+    action_->contract_spin(carrier_image.view(),structure_.view());
     spin_->solve(structure_.view(),image.column(column),SpinMetric::Part::Lower);
   }
 }
@@ -492,11 +498,12 @@ void FullMetric::apply_ci_preconditioner(linalg::ConstMatrixView covector,
   if (energies.rows!=1 || energies.cols!=covector.cols ||
       energies.ld<energies.rows || !energies.data || !std::isfinite(eigenvalue))
     throw std::invalid_argument("CUDA FULL preconditioner energies dimensions");
+  Matrix<double> carrier(*context_,action_->n_alpha_strings(),action_->n_beta_strings());
   for (std::int64_t column=0;column<covector.cols;++column) {
     spin_->solve(covector.column(column),structure_.view(),SpinMetric::Part::Upper);
-    action_->expand_spin(structure_.view(),carrier_.view());
-    action_->divide_carrier_diagonal(carrier_.view(),energies.column(column),eigenvalue);
-    action_->contract_spin(carrier_.view(),structure_.view());
+    action_->expand_spin(structure_.view(),carrier.view());
+    action_->divide_carrier_diagonal(carrier.view(),energies.column(column),eigenvalue);
+    action_->contract_spin(carrier.view(),structure_.view());
     spin_->solve(structure_.view(),result.column(column),SpinMetric::Part::Lower);
   }
 }
