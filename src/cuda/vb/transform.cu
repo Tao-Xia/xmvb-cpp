@@ -12,9 +12,10 @@ namespace {
 
 using Edge = vb::ExteriorOrbitalTransform::ShearEdge;
 
-__global__ void selected_identity(const int* rows,int count,linalg::MatrixView output) {
+template<bool Consecutive>
+__global__ void selected_identity(const int* rows,int first,int count,linalg::MatrixView output) {
   const int row=blockIdx.x*blockDim.x+threadIdx.x;
-  if (row<count) output.data[rows[row]+output.ld*row]=1.0;
+  if (row<count) output.data[(Consecutive ? first+row:rows[row])+output.ld*row]=1.0;
 }
 
 // The ordered elementary-factor coefficients are a small triangular problem,
@@ -495,7 +496,23 @@ void ExteriorTransform::sample_rows(std::span<const int> rows,linalg::MatrixView
   c.copy_to_device(selected.data(),rows.data(),rows.size_bytes());
   check_cuda(cudaMemset2DAsync(output.data,output.ld*sizeof(double),0,
       output.rows*sizeof(double),output.cols,c.stream()),"clear selected identity columns");
-  selected_identity<<<grid_size(rows.size()),256,0,c.stream()>>>(selected.data(),rows.size(),output);
+  selected_identity<false><<<grid_size(rows.size()),256,0,c.stream()>>>(
+      selected.data(),0,rows.size(),output);
+  check_cuda(cudaGetLastError(),"selected exterior identity columns");
+  apply_left(output,true);
+}
+
+void ExteriorTransform::sample_rows(int first,linalg::MatrixView output) const {
+  if (output.rows!=dimension_ || output.cols<0 || output.ld<output.rows ||
+      first<0 || first>dimension_ || output.cols>dimension_-first)
+    throw std::invalid_argument("requested exterior-row dimensions");
+  if (!output.cols) return;
+  if (!output.data) throw std::invalid_argument("invalid requested exterior rows");
+  auto& c=*context_;
+  check_cuda(cudaMemset2DAsync(output.data,output.ld*sizeof(double),0,
+      output.rows*sizeof(double),output.cols,c.stream()),"clear selected identity columns");
+  selected_identity<true><<<grid_size(output.cols),256,0,c.stream()>>>(
+      nullptr,first,output.cols,output);
   check_cuda(cudaGetLastError(),"selected exterior identity columns");
   apply_left(output,true);
 }
@@ -523,8 +540,32 @@ void ExteriorTransform::sample_directional_rows(
   check_cuda(cudaMemset2DAsync(tangent.data,tangent.ld*sizeof(double),0,
       tangent.rows*sizeof(double),tangent.cols,c.stream()),
       "clear directional exterior tangent rows");
-  selected_identity<<<grid_size(rows.size()),256,0,c.stream()>>>(
-      selected.data(),rows.size(),primal);
+  selected_identity<false><<<grid_size(rows.size()),256,0,c.stream()>>>(
+      selected.data(),0,rows.size(),primal);
+  check_cuda(cudaGetLastError(),"directional exterior identity columns");
+  apply_directional_left(direction,primal,tangent,true);
+}
+
+void ExteriorTransform::sample_directional_rows(
+    const ExteriorDirection& direction,int first,
+    linalg::MatrixView primal,linalg::MatrixView tangent) const {
+  if (primal.rows!=dimension_ || primal.cols<0 || primal.ld<primal.rows ||
+      tangent.rows!=primal.rows || tangent.cols!=primal.cols ||
+      tangent.ld<tangent.rows || primal.data==tangent.data ||
+      first<0 || first>dimension_ || primal.cols>dimension_-first)
+    throw std::invalid_argument("requested directional exterior-row dimensions");
+  if (!primal.cols) return;
+  if (!primal.data || !tangent.data)
+    throw std::invalid_argument("invalid requested directional exterior rows");
+  auto& c=*context_;
+  check_cuda(cudaMemset2DAsync(primal.data,primal.ld*sizeof(double),0,
+      primal.rows*sizeof(double),primal.cols,c.stream()),
+      "clear directional exterior primal rows");
+  check_cuda(cudaMemset2DAsync(tangent.data,tangent.ld*sizeof(double),0,
+      tangent.rows*sizeof(double),tangent.cols,c.stream()),
+      "clear directional exterior tangent rows");
+  selected_identity<true><<<grid_size(primal.cols),256,0,c.stream()>>>(
+      nullptr,first,primal.cols,primal);
   check_cuda(cudaGetLastError(),"directional exterior identity columns");
   apply_directional_left(direction,primal,tangent,true);
 }

@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cmath>
 #include <iostream>
 #include <memory>
@@ -10,6 +11,7 @@
 #include <Eigen/Core>
 
 #include "cuda/vb/columns.hpp"
+#include "cuda/memory/upload.hpp"
 
 namespace {
 using Matrix=Eigen::MatrixXd;
@@ -199,11 +201,93 @@ void check_read_cache() {
     throw std::runtime_error("over-budget compact read retained metadata");
   verify("over-budget compact read differs from streamed source",1);
 }
+
+void check_pinned_upload() {
+  using xmvb::cuda::Buffer;
+  using xmvb::cuda::Context;
+  using xmvb::cuda::PinnedUpload;
+  Context context(160);
+  constexpr std::size_t small=32,large=48;
+  Buffer<std::byte> first(context,small),second(context,small),third(context,large);
+  const auto resident=context.counters().current_device_bytes;
+  const auto copied=context.counters().host_to_device_bytes;
+  if (resident!=2*small+large)
+    throw std::runtime_error("pinned upload test baseline mismatch");
+
+  std::array<std::byte,small> a{},b{};
+  std::array<std::byte,large> c{};
+  for (std::size_t i=0;i<small;++i) {
+    a[i]=std::byte{static_cast<unsigned char>(i+1)};
+    b[i]=std::byte{static_cast<unsigned char>(200-i)};
+  }
+  for (std::size_t i=0;i<large;++i)
+    c[i]=std::byte{static_cast<unsigned char>(i+71)};
+  const auto expected_a=a;
+
+  {
+    PinnedUpload upload(context);
+    upload.assign(std::span<const std::byte>{a});
+    if (upload.size()!=small || upload.data()==nullptr ||
+        context.counters().host_to_device_bytes!=copied+small)
+      throw std::runtime_error("first pinned upload metadata mismatch");
+    auto* reused=upload.data();
+    xmvb::cuda::check_cuda(cudaMemcpyAsync(first.data(),upload.data(),small,
+        cudaMemcpyDeviceToDevice,context.stream()),"first pinned upload consumer");
+    a.fill(std::byte{0});  // caller storage may change once assign returns
+
+    upload.assign(small,[&](std::span<std::byte> slot) {
+      std::copy(b.begin(),b.end(),slot.begin());
+    });
+    if (upload.data()!=reused || upload.size()!=small ||
+        context.counters().host_to_device_bytes!=copied+2*small)
+      throw std::runtime_error("same-size pinned upload did not reuse tile");
+    xmvb::cuda::check_cuda(cudaMemcpyAsync(second.data(),upload.data(),small,
+        cudaMemcpyDeviceToDevice,context.stream()),"second pinned upload consumer");
+
+    upload.assign(std::span<const std::byte>{c});
+    if (upload.size()!=large || upload.data()==nullptr ||
+        context.counters().current_device_bytes!=resident+large ||
+        context.counters().peak_device_bytes!=resident+large ||
+        context.counters().host_to_device_bytes!=copied+2*small+large)
+      throw std::runtime_error("resized pinned upload accounting mismatch");
+    xmvb::cuda::check_cuda(cudaMemcpyAsync(third.data(),upload.data(),large,
+        cudaMemcpyDeviceToDevice,context.stream()),"third pinned upload consumer");
+
+    upload.assign(std::span<const std::byte>{});
+    if (upload.size()!=0 || upload.data()!=nullptr ||
+        context.counters().current_device_bytes!=resident ||
+        context.counters().host_to_device_bytes!=copied+2*small+large)
+      throw std::runtime_error("empty pinned upload did not release tile");
+  }
+  if (context.counters().current_device_bytes!=resident)
+    throw std::runtime_error("pinned upload destructor retained device tile");
+
+  // Destruction with an outstanding upload must keep its pinned source alive.
+  {
+    PinnedUpload upload(context);
+    upload.assign(std::span<const std::byte>{c});
+    xmvb::cuda::check_cuda(cudaMemcpyAsync(third.data(),upload.data(),large,
+        cudaMemcpyDeviceToDevice,context.stream()),"destructor upload consumer");
+  }
+  if (context.counters().current_device_bytes!=resident ||
+      context.counters().host_to_device_bytes!=copied+2*small+2*large ||
+      context.counters().peak_device_bytes!=resident+large)
+    throw std::runtime_error("pinned upload destructor accounting mismatch");
+
+  std::array<std::byte,small> observed_a{},observed_b{};
+  std::array<std::byte,large> observed_c{};
+  context.copy_to_host(observed_a.data(),first.data(),small);
+  context.copy_to_host(observed_b.data(),second.data(),small);
+  context.copy_to_host(observed_c.data(),third.data(),large);
+  if (observed_a!=expected_a || observed_b!=b || observed_c!=c)
+    throw std::runtime_error("pinned upload overwrote a queued consumer");
+}
 } // namespace
 
 int main() {
   try {
     check(1);check(-1);check_reject_asymmetric();check_read_cache();
+    check_pinned_upload();
     std::cout<<"compact product column tests passed\n";
   } catch (const std::exception& error) {
     std::cerr<<error.what()<<'\n';return 1;

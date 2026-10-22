@@ -340,9 +340,8 @@ struct ProductContraction::Impl {
     }
     if (!factor_cache) factor_cache=std::make_unique<mcscf::ColumnCache<Factors>>(budget,[this](int id) {
       const int first=id*factor_extent,count=std::min(factor_extent,beta-first);
-      std::vector<int> selected(count);std::iota(selected.begin(),selected.end(),first);
       Matrix<double> values(c,beta,count);
-      beta_transform.sample_rows(selected,values.view());return Factors(c,sparse,values.view());
+      beta_transform.sample_rows(first,values.view());return Factors(c,sparse,values.view());
     });
   }
 
@@ -411,7 +410,7 @@ struct ProductContraction::Impl {
     }
     mcscf::ColumnCache<Factors> delta_factors(quarter/4,[&](int id) {
       auto keys=selected(id);Matrix<double> values(c,beta,keys.size()),delta(c,beta,keys.size());
-      beta_transform.sample_directional_rows(db,keys,values.view(),delta.view());
+      beta_transform.sample_directional_rows(db,id*extent,values.view(),delta.view());
       return Factors(c,sparse,delta.view());
     });
     const auto generate=[&](linalg::ConstMatrixView source,const Factors& f,

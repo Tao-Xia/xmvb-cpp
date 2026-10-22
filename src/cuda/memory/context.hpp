@@ -128,13 +128,21 @@ class Context {
     counters_.current_device_bytes -= bytes;
   }
 
-  void copy_to_device(void* dst, const void* src, std::size_t bytes) {
+  /** Queue H2D on this stream without waiting. The caller borrows src to CUDA:
+   * its contents and lifetime must remain valid until this copy completes.
+   */
+  void enqueue_to_device(void* dst, const void* src, std::size_t bytes) {
     if (bytes == 0) return;
     check_cuda(cudaMemcpyAsync(dst, src, bytes, cudaMemcpyHostToDevice, stream_),
                "host-to-device copy");
+    counters_.host_to_device_bytes += bytes;
+  }
+
+  void copy_to_device(void* dst, const void* src, std::size_t bytes) {
+    if (bytes == 0) return;
+    enqueue_to_device(dst, src, bytes);
     // The source may be caller-owned temporary host memory.
     synchronize();
-    counters_.host_to_device_bytes += bytes;
   }
 
   void copy_to_host(void* dst, const void* src, std::size_t bytes) {

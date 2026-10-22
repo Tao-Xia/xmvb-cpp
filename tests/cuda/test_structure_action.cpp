@@ -51,7 +51,7 @@ void check_packed_blocks(const xmvb::vb::StructureAction& source,const Eigen::Ma
   const xmvb::cuda::DirectCiSigma sigma(context,view.sigma,1,view.exchange_parity);
   const xmvb::cuda::ProductIncidence incidence{action.term_offsets_data(),
       action.term_structures_data(),action.term_weights_data(),source.n_structures()};
-  for (int width:{1,2}) {
+  for (int width:{1,2,3}) {
     xmvb::cuda::Matrix<double> x(context,source.n_structures(),width),
         h(context,source.n_structures(),width),m(context,source.n_structures(),width);
     xmvb::cuda::copy_to_device(context,x.view(),vectors.leftCols(width));
@@ -60,7 +60,7 @@ void check_packed_blocks(const xmvb::vb::StructureAction& source,const Eigen::Ma
       Eigen::MatrixXd result(source.n_structures(),width);
       xmvb::cuda::copy_to_host(context,result,device.view());return result;
     };
-    for (std::size_t budget:{std::size_t{3200},std::size_t{1024*1024}}) {
+    for (std::size_t budget:{std::size_t{width==3 ? 6400U:3200U},std::size_t{1024*1024}}) {
       product->apply_selected(incidence,x.view(),sigma,h.view(),m.view(),budget);
       require((host(h)-expected.hamiltonian).norm()<2e-10,
           "packed product H block differs from selected CPU action");

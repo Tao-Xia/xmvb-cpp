@@ -2,12 +2,14 @@
 
 #include <algorithm>
 #include <array>
+#include <cstring>
 #include <limits>
 #include <stdexcept>
 #include <vector>
 #include <nvtx3/nvtx3.hpp>
 
 #include "cuda/linalg/blas.hpp"
+#include "cuda/memory/upload.hpp"
 #include "mcscf/ci/channel_product.hpp"
 #include "mcscf/ci/product_support.hpp"
 #include "mcscf/ci/sigma_plan.hpp"
@@ -21,7 +23,7 @@ unsigned grid(std::size_t work) {
 
 struct PackedGroup {
   std::size_t offset;
-  int begin,channels;
+  int begin,channels,rows;
   bool operator==(const PackedGroup&) const = default;
 };
 
@@ -33,7 +35,14 @@ struct TileMap {
   int count,width,pairs,alpha,beta;
 
   __device__ int group(int row) const { return groups ? groups[row%count]:0; }
-  __device__ int image_row(int row) const { return image ? image[row]:row; }
+  __device__ int image_row(int row) const {
+    return image ? image[row%count]+(row/count)*packed_groups[group(row)].rows:row;
+  }
+  __device__ bool is_supported(int row) const {
+    return packed_groups ? group(row)==0:(!supported || supported[row%count]);
+  }
+  __device__ int halo_row(int row) const { return halo_index ? halo_index[row]:row; }
+  __device__ int column(int col) const { return column_index ? column_index[col]:col; }
   __device__ std::size_t packed_row(int row) const {
     if (!packed_groups) return static_cast<std::size_t>(row)*pairs;
     const auto& entry=packed_groups[group(row)];
@@ -52,14 +61,14 @@ __global__ void scatter(TileMap map,linalg::ConstMatrixView input,
     const int a=map.active[t],b=map.betas[t];
     const int sa=alpha[static_cast<std::size_t>(p)*map.alpha+a];
     const int sb=beta[static_cast<std::size_t>(p)*map.beta+b];
-    const int h=map.halo_index[a],column=map.column_index[b];
+    const int h=map.halo_row(a),column=map.column(b);
     double value=0;
-    if (sa && (abs(sa)-1!=a || map.supported[t]))
+    if (sa && (abs(sa)-1!=a || map.is_supported(t)))
       value+=(sa>0 ? 1.0:-1.0)*input.data[
-          map.halo_index[abs(sa)-1]+input.ld*(column*map.width+v)];
-    if (sb && (abs(sb)-1!=b || map.supported[t]))
+          map.halo_row(abs(sa)-1)+input.ld*(column*map.width+v)];
+    if (sb && (abs(sb)-1!=b || map.is_supported(t)))
       value+=(sb>0 ? 1.0:-1.0)*input.data[
-          h+input.ld*(map.column_index[abs(sb)-1]*map.width+v)];
+          h+input.ld*(map.column(abs(sb)-1)*map.width+v)];
     output[map.packed_row(row)+channel]=value;
   }
 }
@@ -207,11 +216,11 @@ __global__ void scatter_image(TileMap map,const int* alpha,const int* beta,
         static_cast<std::size_t>(p)*map.count*map.width];
     const int sa=alpha[static_cast<std::size_t>(p)*map.alpha+a];
     const int sb=beta[static_cast<std::size_t>(p)*map.beta+b];
-    if (sa) atomicAdd(output.data+(resident ? abs(sa)-1:map.halo_index[abs(sa)-1])+
-        output.ld*(resident ? v*map.beta+b:map.column_index[b]*map.width+v),
+    if (sa) atomicAdd(output.data+(resident ? abs(sa)-1:map.halo_row(abs(sa)-1))+
+        output.ld*(resident ? v*map.beta+b:map.column(b)*map.width+v),
         (sa>0 ? value:-value));
-    if (sb) atomicAdd(output.data+(resident ? a:map.halo_index[a])+
-        output.ld*(resident ? v*map.beta+abs(sb)-1:map.column_index[abs(sb)-1]*map.width+v),
+    if (sb) atomicAdd(output.data+(resident ? a:map.halo_row(a))+
+        output.ld*(resident ? v*map.beta+abs(sb)-1:map.column(abs(sb)-1)*map.width+v),
         (sb>0 ? value:-value));
   }
 }
@@ -227,7 +236,7 @@ __global__ void gather(TileMap map,const int* halo_rows,const CiTileColumn* colu
        i<work;i+=static_cast<std::size_t>(gridDim.y)*blockDim.x) {
     const int r=i%nrows,column=i/nrows,v=column%map.width;
     const int row=target.full_rows ? r:(target.rows ? target.rows:halo_rows)[r];
-    const int h=map.halo_index[row],
+    const int h=map.halo_row(row),
         b=target.source<0 ? column/map.width:target.source;
     const double value=h<0 ? 0.0:halo.data[h+halo.ld*(b*map.width+v)];
     auto& target=output.data[r+output.ld*column];
@@ -246,7 +255,7 @@ __global__ void gather_panel(TileMap map,const int* betas,int first,int source_f
        i+=static_cast<std::size_t>(gridDim.y)*blockDim.x) {
     const int r=i%column.size,v=i/column.size;
     const int a=column.rows ? column.rows[r]:r;
-    const int h=map.halo_index[a];
+    const int h=map.halo_row(a);
     if (h>=0) output.data[column.offset+r+output.ld*(lane+v)]+=
         halo.data[h+halo.ld*(source*map.width+v)];
   }
@@ -315,9 +324,9 @@ struct DirectCiSigma::TileWorkspace {
   std::vector<int> global,local,offsets,metadata;
   std::vector<PackedGroup> packed_groups;
   std::vector<GroupTile> groups;
-  Buffer<int> device_global,device_local,device;
-  Buffer<PackedGroup> device_packed_groups;
-  Buffer<GroupTile> device_groups;
+  Buffer<int> device_global,device_local;
+  PinnedUpload device;
+  std::size_t packed_offset=0,group_offset=0;
   std::optional<mcscf::detail::SigmaTile> prepared;
   std::shared_ptr<const char> support_identity;
   mcscf::detail::SigmaTileBudget budget{};
@@ -341,7 +350,7 @@ struct DirectCiSigma::TileWorkspace {
 
   TileWorkspace(Context& context,int pairs,int orbitals,bool restrict)
       :selectors(pairs,orbitals,restrict),restricted(restrict),
-       local(selectors.groups()*pairs,-1),offsets(selectors.groups()+1) {
+       local(selectors.groups()*pairs,-1),offsets(selectors.groups()+1),device(context) {
     for (int g=0;g<selectors.groups();++g) {
       offsets[g]=global.size();
       for (int p=0;p<selectors.channels(g);++p) {
@@ -353,25 +362,39 @@ struct DirectCiSigma::TileWorkspace {
     device_global=upload<int>(context,global);device_local=upload<int>(context,local);
   }
 
-  void bind(Context& context,std::vector<int> indices,std::vector<PackedGroup> layout) {
+  const int* indices() const noexcept { return reinterpret_cast<const int*>(device.data()); }
+  const PackedGroup* packed() const noexcept {
+    return packed_groups.empty() ? nullptr:
+        reinterpret_cast<const PackedGroup*>(device.data()+packed_offset);
+  }
+  const GroupTile* batches() const noexcept {
+    return groups.empty() ? nullptr:
+        reinterpret_cast<const GroupTile*>(device.data()+group_offset);
+  }
+
+  void bind(std::vector<int> indices,std::vector<PackedGroup> layout,
+      std::span<const GroupTile> batches) {
     const nvtx3::scoped_range range{"ci.tile_index_upload"};
-    if (metadata!=indices) {
-      device=Buffer<int>();device=upload<int>(context,indices);metadata=std::move(indices);
-    }
-    if (packed_groups!=layout) {
-      device_packed_groups=Buffer<PackedGroup>();
-      if (!layout.empty()) device_packed_groups=upload<PackedGroup>(context,layout);
-      packed_groups=std::move(layout);
-    }
+    if (metadata==indices && packed_groups==layout &&
+        groups.size()==batches.size() && std::equal(groups.begin(),groups.end(),batches.begin())) return;
+    metadata=std::move(indices);packed_groups=std::move(layout);
+    groups.assign(batches.begin(),batches.end());
+    const auto align=[](std::size_t n,std::size_t a) {return (n+a-1)/a*a;};
+    const auto ints=metadata.size()*sizeof(int),packed_bytes=packed_groups.size()*sizeof(PackedGroup);
+    packed_offset=align(ints,alignof(PackedGroup));
+    group_offset=align(packed_offset+packed_bytes,alignof(GroupTile));
+    device.assign(group_offset+groups.size()*sizeof(GroupTile),[&](std::span<std::byte> host) {
+      if (ints) std::memcpy(host.data(),metadata.data(),ints);
+      if (packed_bytes) std::memcpy(host.data()+packed_offset,packed_groups.data(),packed_bytes);
+      if (!groups.empty()) std::memcpy(host.data()+group_offset,groups.data(),groups.size()*sizeof(GroupTile));
+    });
   }
 };
 
 std::size_t DirectCiSigma::tile_resident_bytes() const noexcept {
   if (!workspace_->tiles) return 0;
   const auto& tile=*workspace_->tiles;
-  return sizeof(int)*(tile.device_global.size()+tile.device_local.size()+tile.device.size())+
-      sizeof(PackedGroup)*tile.device_packed_groups.size()+
-      sizeof(GroupTile)*tile.device_groups.size();
+  return sizeof(int)*(tile.device_global.size()+tile.device_local.size())+tile.device.size();
 }
 
 void DirectCiSigma::apply_supported_responses(std::span<const CiCarrierRequest> requests,
@@ -455,6 +478,10 @@ void DirectCiSigma::apply_tiled_responses(int width,std::span<const CiTileReques
   const auto& selectors=symbols.selectors;
   const auto group_descriptor_bytes=static_cast<std::size_t>(selectors.groups())*sizeof(GroupTile);
   const bool allow_grouping=selectors.groups()>1 && workspace_bytes>group_descriptor_bytes;
+  // Replay certificates include the complete device packet, including group
+  // descriptors. Greedy numeric admission reserves those descriptors below;
+  // do not subtract them a second time from the physical replay allowance.
+  const auto replay_bytes=workspace_bytes;
   if (allow_grouping) workspace_bytes-=group_descriptor_bytes;
   const bool separate=static_cast<bool>(state) && (collect || has_direction || requests.size()>1);
   const int slabs=separate ? 3:2,packed_slabs=restricted ? (separate ? 2:1):0;
@@ -470,11 +497,10 @@ void DirectCiSigma::apply_tiled_responses(int width,std::span<const CiTileReques
   const auto cotangent_bytes=sizeof(double)*pairs*pairs*(collect+
       std::count_if(requests.begin(),requests.end(),
           [](const auto& request) {return request.one_adjoint.data!=nullptr;}));
-  const auto packed_index_bytes=static_cast<std::size_t>(selectors.groups())*sizeof(PackedGroup);
-  const auto old_index_bytes=symbols.device.size()*sizeof(int)+packed_index_bytes;
+  const auto old_index_bytes=symbols.device.size();
   if (!boundaries.entries.empty() &&
-      (boundaries.workspace_peak+cotangent_bytes>budget.bytes ||
-       boundaries.first_numeric+old_index_bytes+cotangent_bytes>budget.bytes))
+      (boundaries.workspace_peak+cotangent_bytes>replay_bytes ||
+       boundaries.first_numeric+old_index_bytes+cotangent_bytes>replay_bytes))
     boundaries.clear();
   std::unique_ptr<mcscf::detail::SigmaTilePlan> iterator;
   if (!replay) {
@@ -534,7 +560,7 @@ void DirectCiSigma::apply_tiled_responses(int width,std::span<const CiTileReques
     return true;
   };
   while (next()) {
-    const auto previous_index_bytes=symbols.device.size()*sizeof(int)+packed_index_bytes;
+    const auto previous_index_bytes=symbols.device.size();
     const auto& plan=replay ? *symbols.prepared:static_cast<const mcscf::detail::SigmaTile&>(*iterator);
     const nvtx3::scoped_range tile_range{"ci.tile"};
     const int count=plan.active.size(),halo=plan.halo.size(),columns=plan.columns.size();
@@ -570,17 +596,6 @@ void DirectCiSigma::apply_tiled_responses(int width,std::span<const CiTileReques
     static_assert(sizeof(void*)==sizeof(double));
     const bool grouped=allow_grouping && live_groups.size()>1 &&
         input_size>=3*live_groups.size();
-    if (grouped) {
-      if (symbols.device_groups.size()<live_groups.size()) {
-        symbols.device_groups=Buffer<GroupTile>(ctx,live_groups.size());
-        symbols.groups.clear();
-      }
-      if (symbols.groups!=live_groups) {
-        ctx.copy_to_device(symbols.device_groups.data(),live_groups.data(),
-            live_groups.size()*sizeof(GroupTile));
-        symbols.groups=live_groups;
-      }
-    }
     const double** left_ptrs=nullptr;
     const double** right_ptrs=nullptr;
     double** result_ptrs=nullptr;
@@ -595,41 +610,49 @@ void DirectCiSigma::apply_tiled_responses(int width,std::span<const CiTileReques
     };
     const auto active_offset=append(plan.active),halo_offset=append(plan.halo);
     const auto columns_offset=append(plan.columns);
-    const auto halo_index_offset=append(plan.halo_index),column_index_offset=append(plan.column_index);
+    const bool full_halo=halo==n_alpha_,full_columns=columns==n_beta_;
+    const auto halo_index_offset=full_halo ? 0:append(plan.halo_index);
+    const auto column_index_offset=full_columns ? 0:append(plan.column_index);
     const bool identity=plan.channel_groups.empty() ||
         std::all_of(plan.channel_groups.begin(),plan.channel_groups.end(),
             [](int group) {return group==0;});
-    std::vector<int> betas(count),groups(identity ? 0:count),
-        supported(plan.active_support.begin(),plan.active_support.end());
+    std::vector<int> betas(count),groups(identity ? 0:count),supported;
+    // Packed covalent labels already certify membership: precisely group 0.
+    // Other supports need explicit membership only when the tile has a frontier.
+    if (identity && plan.unsupported_targets)
+      supported.assign(plan.active_support.begin(),plan.active_support.end());
     for (int i=0;i<count;++i) {
       betas[i]=plan.groups[plan.group_index[i]].beta;
       if (!identity) groups[i]=plan.channel_groups[i];
     }
     const auto betas_offset=append(betas),groups_offset=append(groups),supported_offset=append(supported);
-    std::vector<int> images(identity ? 0:count*width);
-    if (!identity) for (int row=0;row<count*width;++row) images[row]=layout.image(row);
+    // CPU ChannelLayout places RHS lanes consecutively inside each group.
+    // One target permutation plus the exact per-lane group size determines
+    // every lane's image; never upload width copies of the same permutation.
+    std::vector<int> images(identity ? 0:count);
+    if (!identity) for (int row=0;row<count;++row) images[row]=layout.image(row);
     std::vector<PackedGroup> packed_groups(identity ? 0:selectors.groups());
     if (!identity) for (int g=0;g<selectors.groups();++g)
-      packed_groups[g]={layout.offset(g),layout.begin(g),selectors.channels(g)};
+      packed_groups[g]={layout.offset(g),layout.begin(g),selectors.channels(g),layout.size(g)/width};
     const auto image_offset=append(images);
     const auto diagonal_offset=append(plan.diagonal_rows);
-    symbols.bind(ctx,std::move(metadata),std::move(packed_groups));
+    symbols.bind(std::move(metadata),std::move(packed_groups),
+        grouped ? std::span<const GroupTile>{live_groups}:std::span<const GroupTile>{});
     if (!replay) {
       const auto numeric_bytes=numerical.size()*sizeof(double);
-      const auto index_bytes=symbols.device.size()*sizeof(int)+packed_index_bytes;
+      const auto index_bytes=symbols.device.size();
       // The numerical slab only grows within a sweep. Include the preceding
       // indices, still live when that slab grows, and both packed-map states.
       boundaries.workspace_peak=std::max(boundaries.workspace_peak,
           numeric_bytes+std::max(previous_index_bytes,index_bytes));
       if (ordinal==1) boundaries.first_numeric=numeric_bytes;
     }
-    const auto& device=symbols.device;
-    const auto ptr=[&](std::size_t offset) {return device.data()+offset;};
+    const auto ptr=[&](std::size_t offset) {return symbols.indices()+offset;};
     const TileMap map{ptr(active_offset),ptr(betas_offset),
-        identity ? nullptr:ptr(groups_offset),ptr(supported_offset),
-        ptr(halo_index_offset),ptr(column_index_offset),
+        identity ? nullptr:ptr(groups_offset),supported.empty() ? nullptr:ptr(supported_offset),
+        full_halo ? nullptr:ptr(halo_index_offset),full_columns ? nullptr:ptr(column_index_offset),
         identity ? nullptr:ptr(image_offset),device_local.data(),
-        symbols.device_packed_groups.data(),
+        symbols.packed(),
         count,width,n_channels_,n_alpha_,n_beta_};
     const auto do_scatter=[&](const CiTileReader& reader,double* output) {
       {
@@ -647,11 +670,11 @@ void DirectCiSigma::apply_tiled_responses(int width,std::span<const CiTileReques
           n_channels_,count*width,exchange_parity_ ? 2.0:1.0,previous,gram_call);
       if (gram_call)
         grouped_pointers<true><<<grid(batch),256,0,ctx.stream()>>>(
-            symbols.device_groups.data(),begin,batch,source,second,full_kernel,
+            symbols.batches(),begin,batch,source,second,full_kernel,
             output,left_ptrs,right_ptrs,result_ptrs);
       else
         grouped_pointers<false><<<grid(batch),256,0,ctx.stream()>>>(
-            symbols.device_groups.data(),begin,batch,source,second,full_kernel,
+            symbols.batches(),begin,batch,source,second,full_kernel,
             output,left_ptrs,right_ptrs,result_ptrs);
       check_cuda(cudaGetLastError(),"prepare grouped channel GEMM pointers");
       grouped_gemm.run(ctx,left_ptrs,right_ptrs,result_ptrs);
@@ -694,7 +717,7 @@ void DirectCiSigma::apply_tiled_responses(int width,std::span<const CiTileReques
             const nvtx3::scoped_range range{"ci.tile_gram"};
             grouped_call(true,begin,end,response,gram_right,nullptr,gram.data(),0.0);
             add_grouped_gram<<<grid(gram_capacity),256,0,ctx.stream()>>>(
-                gram.data(),adjoints[r].view(),symbols.device_groups.data(),
+                gram.data(),adjoints[r].view(),symbols.batches(),
                 begin,end,device_local.data(),n_channels_);
           } else for (int index=begin;index<end;++index) {
             const int g=live_groups[index].group;

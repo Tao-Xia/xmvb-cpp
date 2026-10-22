@@ -934,6 +934,26 @@ void check_exterior(int rhs_count,int n=4,int nalpha=2,int nbeta=1) {
     xmvb::cuda::copy_to_device(context,d_upper.view(),upper);
     gpu_beta.update_upper(d_upper.view());
   }
+  {
+    const int dimension=static_cast<int>(beta.size());
+    const std::array<std::array<int,2>,2> intervals{{{1,2},{dimension-1,1}}};
+    for (const auto [first,count]:intervals) {
+      std::vector<int> requested(count);
+      for (int j=0;j<count;++j) requested[j]=first+j;
+      xmvb::cuda::Matrix<double> arbitrary(context,dimension,count),
+          consecutive(context,dimension,count);
+      gpu_beta.sample_rows(requested,arbitrary.view());
+      const auto uploaded=context.counters().host_to_device_bytes;
+      gpu_beta.sample_rows(first,consecutive.view());
+      require(context.counters().host_to_device_bytes==uploaded,
+          "consecutive exterior rows uploaded host indices");
+      const Matrix expected=Matrix(cpu_beta.generate_rows(requested)).transpose();
+      near(download(context,consecutive),download(context,arbitrary),2e-11,
+          "consecutive exterior rows differ from arbitrary rows");
+      near(download(context,consecutive),expected,2e-11,
+          "consecutive exterior rows differ from CPU");
+    }
+  }
   const Matrix seed = values(alpha.size(), beta.size() * rhs_count, 0.34);
   xmvb::cuda::Matrix<double> device(context, seed.rows(), seed.cols());
   const auto cpu_right = [&](Matrix* panel, bool adjoint) {
@@ -1008,6 +1028,37 @@ void check_exterior(int rhs_count,int n=4,int nalpha=2,int nbeta=1) {
     xmvb::cuda::copy_to_device(context,du.view(),delta);
     const auto cpu_direction=cpu_alpha.direction(delta);
     const auto gpu_direction=gpu_alpha.direction(u.view(),du.view());
+    if (n==4) {
+      const int dimension=static_cast<int>(alpha.size());
+      const std::array<std::array<int,2>,2> intervals{{{1,2},{dimension-1,1}}};
+      for (const auto [first,count]:intervals) {
+        std::vector<int> requested(count);
+        Matrix expected=Matrix::Zero(dimension,count),expected_delta=Matrix::Zero(dimension,count);
+        for (int j=0;j<count;++j) {
+          requested[j]=first+j;
+          expected(first+j,j)=1.0;
+        }
+        cpu_alpha.apply_directional_adjoint_left(cpu_direction,&expected,&expected_delta);
+        xmvb::cuda::Matrix<double> arbitrary(context,dimension,count),
+            arbitrary_delta(context,dimension,count),consecutive(context,dimension,count),
+            consecutive_delta(context,dimension,count);
+        gpu_alpha.sample_directional_rows(gpu_direction,requested,
+            arbitrary.view(),arbitrary_delta.view());
+        const auto uploaded=context.counters().host_to_device_bytes;
+        gpu_alpha.sample_directional_rows(gpu_direction,first,
+            consecutive.view(),consecutive_delta.view());
+        require(context.counters().host_to_device_bytes==uploaded,
+            "consecutive directional exterior rows uploaded host indices");
+        near(download(context,consecutive),download(context,arbitrary),3e-11,
+            "consecutive directional primal rows differ from arbitrary rows");
+        near(download(context,consecutive_delta),download(context,arbitrary_delta),3e-11,
+            "consecutive directional tangent rows differ from arbitrary rows");
+        near(download(context,consecutive),expected,3e-11,
+            "consecutive directional primal rows differ from CPU");
+        near(download(context,consecutive_delta),expected_delta,3e-11,
+            "consecutive directional tangent rows differ from CPU");
+      }
+    }
     for (bool adjoint:{false,true}) {
       Matrix expected=initial,expected_delta=tangent;
       if (adjoint) cpu_alpha.apply_directional_adjoint_left(

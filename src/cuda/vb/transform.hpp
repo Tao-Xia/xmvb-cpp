@@ -64,10 +64,15 @@ class ExteriorTransform {
    * Storage is the caller's single-spin panel, never a product carrier.
    */
   void sample_rows(std::span<const int> rows,linalg::MatrixView output) const;
+  /** Sample consecutive rows [first, first + output.cols) without an index upload. */
+  void sample_rows(int first,linalg::MatrixView output) const;
   /** Requested adjoint rows and their tangent, without a host identity panel. */
   void sample_directional_rows(const ExteriorDirection& direction,
       std::span<const int> rows,linalg::MatrixView primal,
       linalg::MatrixView tangent) const;
+  /** Sample consecutive primal/tangent rows without an index upload. */
+  void sample_directional_rows(const ExteriorDirection& direction,int first,
+      linalg::MatrixView primal,linalg::MatrixView tangent) const;
 
   int dimension() const noexcept { return dimension_; }
   int n_orbitals() const noexcept { return n_orbitals_; }
