@@ -9,6 +9,14 @@
 
 namespace xmvb::cuda {
 
+/** CPU ExteriorTransformDirection, stored on the device. One instance is
+ * reused by every primal/adjoint column panel at a fixed directional point.
+ */
+struct ExteriorDirection {
+  Buffer<double> scales;
+  Buffer<double> shears;
+};
+
 /** Device replay of the CPU transform's retained diagonal and ordered shears. */
 class ExteriorTransform {
  public:
@@ -33,6 +41,13 @@ class ExteriorTransform {
   /** Same exact invariant column support as CPU apply_supported_left(). */
   void apply_supported_left(linalg::MatrixView coefficients,std::span<const int> offsets,
       std::span<const int> rows,bool adjoint=false) const;
+  ExteriorDirection direction(linalg::ConstMatrixView upper,
+      linalg::ConstMatrixView delta_upper) const;
+  /** Same ordered primal/tangent factors as CPU apply_directional_left and
+   * apply_directional_adjoint_left. Only bounded single-spin panels are used.
+   */
+  void apply_directional_left(const ExteriorDirection&,linalg::MatrixView primal,
+      linalg::MatrixView tangent,bool adjoint=false) const;
   /** Apply it to spin columns in each consecutive RHS block, in place. */
   void apply_right(linalg::MatrixView coefficients, bool adjoint = false,
                    bool inverse = false) const;

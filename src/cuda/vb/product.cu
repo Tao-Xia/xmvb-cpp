@@ -1,4 +1,5 @@
 #include "cuda/vb/product.hpp"
+#include "cuda/vb/columns.hpp"
 
 #include <algorithm>
 #include <limits>
@@ -91,22 +92,6 @@ __global__ void project(const int* raw_alpha,const int* raw_beta,int groups,
   }
 }
 
-struct ColumnMap { const int* rows; int size; std::int64_t offset; };
-
-/** One launch for a ragged batch. The packed allocation has one leading
- * dimension for all RHSs; columns are views, not separately owned matrices.
- */
-__global__ void pack_columns(const ColumnMap* maps,int count,linalg::MatrixView full,
-    linalg::MatrixView compact,bool unpack) {
-  const int b=blockIdx.x;const auto column=maps[b];
-  for (auto i=static_cast<std::size_t>(blockIdx.y)*blockDim.x+threadIdx.x;
-       i<static_cast<std::size_t>(column.size)*compact.cols;i+=static_cast<std::size_t>(gridDim.y)*blockDim.x) {
-    const int r=i%column.size,v=i/column.size,a=column.rows ? column.rows[r]:r;
-    auto& destination=unpack ? full.data[a+full.ld*(v*count+b)]:compact.data[column.offset+r+compact.ld*v];
-    destination=unpack ? compact.data[column.offset+r+compact.ld*v]:full.data[a+full.ld*(v*count+b)];
-  }
-}
-
 struct ColumnRead { const int* rows; linalg::ConstMatrixView values; int destination; };
 
 __global__ void read_columns(const ColumnRead* columns,const int* requested,int count,
@@ -124,32 +109,9 @@ __global__ void read_columns(const ColumnRead* columns,const int* requested,int 
   }
 }
 
-struct Pattern {
-  bool full=false;
-  int size=0;
-  std::vector<int> rows;
-  Buffer<int> device_rows;
-};
 struct RetainedPattern {
-  std::shared_ptr<const Pattern> pattern;
+  std::shared_ptr<const ProductColumnPattern> pattern;
   std::size_t bytes() const {return 2*pattern->rows.size()*sizeof(int);}
-};
-struct Block {
-  std::vector<std::shared_ptr<const Pattern>> patterns;
-  std::vector<std::int64_t> offsets;
-  Buffer<ColumnMap> maps;
-  Matrix<double> values;
-  int max_rows=0;
-  std::size_t bytes() const {
-    return values.rows()*values.cols()*sizeof(double)+maps.size()*sizeof(ColumnMap)+offsets.size()*sizeof(std::int64_t);
-  }
-  linalg::MatrixView column(int b) {
-    return {values.data() ? values.data()+offsets[b]:nullptr,patterns[b]->size,values.cols(),values.rows()};
-  }
-  void pack(Context& c,linalg::MatrixView dense,bool unpack) {
-    if (max_rows) pack_columns<<<dim3(patterns.size(),grid(static_cast<std::size_t>(max_rows)*values.cols())),
-        256,0,c.stream()>>>(maps.data(),patterns.size(),dense,values.view(),unpack);
-  }
 };
 } // namespace
 
@@ -162,8 +124,8 @@ struct ProductContraction::Impl {
   Buffer<int> starts,raw_alpha,raw_beta;
   cusparseHandle_t sparse=nullptr;
   std::vector<int> reachable,beta_positions;
-  std::vector<std::weak_ptr<const Pattern>> patterns;
-  std::shared_ptr<const Pattern> full_pattern;
+  std::vector<std::weak_ptr<const ProductColumnPattern>> patterns;
+  std::shared_ptr<const ProductColumnPattern> full_pattern;
   std::unique_ptr<mcscf::ColumnCache<RetainedPattern>> pattern_cache;
   std::unique_ptr<mcscf::ColumnCache<Factors>> factor_cache;
 
@@ -190,11 +152,11 @@ struct ProductContraction::Impl {
     return std::span<const int>{reachable}.subspan(first,std::min<std::size_t>(extent,reachable.size()-first));
   }
 
-  std::shared_ptr<const Pattern> pattern(int b) {
+  std::shared_ptr<const ProductColumnPattern> pattern(int b) {
     if (!support && full_pattern) return full_pattern;
     if (pattern_cache->contains(b)) return pattern_cache->get(b).pattern;
     if (auto found=patterns[b].lock()) return found;
-    auto result=std::make_shared<Pattern>();result->full=!support;
+    auto result=std::make_shared<ProductColumnPattern>();result->full=!support;
     if (support) support->append_column_rows(b,result->rows);
     else {result->rows.resize(alpha);std::iota(result->rows.begin(),result->rows.end(),0);}
     result->size=result->rows.size();result->device_rows=upload<int>(c,result->rows);
@@ -203,21 +165,14 @@ struct ProductContraction::Impl {
     return result;
   }
 
-  Block allocate(std::span<const int> keys,int width) {
-    Block block;block.offsets.push_back(0);
-    std::vector<ColumnMap> maps;maps.reserve(keys.size());
-    for (int key:keys) {
-      auto p=pattern(key);
-      maps.push_back({p->full ? nullptr:p->device_rows.data(),p->size,block.offsets.back()});
-      block.offsets.push_back(block.offsets.back()+p->size);
-      block.max_rows=std::max(block.max_rows,p->size);block.patterns.push_back(std::move(p));
-    }
-    block.maps=upload<ColumnMap>(c,maps);
-    block.values=Matrix<double>(c,block.offsets.back(),width);
-    return block;
+  ProductColumns allocate(std::span<const int> keys,int width) {
+    std::vector<std::shared_ptr<const ProductColumnPattern>> columns;
+    columns.reserve(keys.size());
+    for (int key:keys) columns.push_back(pattern(key));
+    return ProductColumns(c,std::move(columns),width);
   }
 
-  void transform(linalg::MatrixView values,const Block& block,bool adjoint) {
+  void transform(linalg::MatrixView values,const ProductColumns& block,bool adjoint) {
     const nvtx3::scoped_range range{adjoint ? "vb.product_alpha_adjoint":"vb.product_alpha"};
     if (!support) {alpha_transform.apply_left(values,adjoint);return;}
     std::vector<int> offsets{0},rows;
@@ -251,7 +206,7 @@ struct ProductContraction::Impl {
     clear(c,h);clear(c,m);
     const int blocks=(reachable.size()+extent-1)/extent;
     std::vector<unsigned char> overlap_consumed(blocks,0);
-    const auto project_block=[&](int id,Block& block,linalg::MatrixView image,linalg::MatrixView target) {
+    const auto project_block=[&](int id,ProductColumns& block,linalg::MatrixView image,linalg::MatrixView target) {
       const auto& factors=factor_cache->get(id);
       transform(image,block,true);
       project<<<grid(static_cast<std::size_t>(groups)*width),256,0,c.stream()>>>(raw_alpha.data(),raw_beta.data(),groups,
@@ -271,10 +226,10 @@ struct ProductContraction::Impl {
       }
       return block;
     };
-    mcscf::ColumnCache<Block> input(quarter,build);
-    mcscf::ColumnCache<Block> output(quarter,[&](int id) {
+    mcscf::ColumnCache<ProductColumns> input(quarter,build);
+    mcscf::ColumnCache<ProductColumns> output(quarter,[&](int id) {
       auto block=allocate(keys(id,extent),width);clear(c,block.values.view());return block;
-    },[&](int id,Block& block) {
+    },[&](int id,ProductColumns& block) {
       const nvtx3::scoped_range range{"vb.product_project"};
       Matrix<double> image(c,alpha,block.patterns.size()*width);clear(c,image.view());
       block.pack(c,image.view(),true);project_block(id,block,image.view(),h);
@@ -294,7 +249,7 @@ struct ProductContraction::Impl {
     const CiTileReader read=[&](auto betas,auto rows,linalg::MatrixView values) {
       clear(c,values);const auto device_rows=upload<int>(c,rows);
       const auto partitions=partition(betas);
-      const auto copy=[&](Block& block,const Entries& entries) {
+      const auto copy=[&](ProductColumns& block,const Entries& entries) {
         std::vector<ColumnRead> columns;columns.reserve(entries.size());
         for (auto [pos,destination]:entries) {
           const auto& p=block.patterns[pos];

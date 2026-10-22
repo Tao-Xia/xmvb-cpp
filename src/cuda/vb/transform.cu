@@ -20,30 +20,49 @@ __global__ void selected_identity(const int* rows,int count,linalg::MatrixView o
 // The ordered elementary-factor coefficients are a small triangular problem,
 // not a product-space contraction. Use exactly the CPU elimination ordering.
 __global__ void factor_upper(linalg::ConstMatrixView upper,
-    linalg::MatrixView unit,double* coefficients) {
+    linalg::MatrixView unit,double* coefficients,
+    linalg::ConstMatrixView delta={},linalg::MatrixView delta_unit={},
+    double* delta_coefficients=nullptr) {
   if (blockIdx.x || threadIdx.x) return;
   const int n=upper.rows;
-  for (int j=0;j<n;++j) for (int i=0;i<n;++i)
+  for (int j=0;j<n;++j) for (int i=0;i<n;++i) {
+    if (delta.data) delta_unit.data[i+delta_unit.ld*j]=
+        delta.data[i+delta.ld*j]/upper.data[j+upper.ld*j]-
+        upper.data[i+upper.ld*j]*(delta.data[j+delta.ld*j]/
+            (upper.data[j+upper.ld*j]*upper.data[j+upper.ld*j]));
     unit.data[i+unit.ld*j]=upper.data[i+upper.ld*j]/upper.data[j+upper.ld*j];
+  }
   int step=0;
   for (int removed=1;removed<n;++removed)
     for (int inserted=removed-1;inserted>=0;--inserted) {
       const double coefficient=unit.data[inserted+unit.ld*removed];
-      coefficients[step++]=coefficient;
-      for (int i=0;i<n;++i)
+      if (coefficients) coefficients[step]=coefficient;
+      const double dc=delta.data ? delta_unit.data[inserted+delta_unit.ld*removed]:0.0;
+      if (delta.data) delta_coefficients[step]=dc;
+      ++step;
+      for (int i=0;i<n;++i) {
+        if (delta.data) delta_unit.data[i+delta_unit.ld*removed]-=
+            dc*unit.data[i+unit.ld*inserted]+
+            coefficient*delta_unit.data[i+delta_unit.ld*inserted];
         unit.data[i+unit.ld*removed]-=coefficient*unit.data[i+unit.ld*inserted];
+      }
     }
 }
 
 __global__ void update_scales(linalg::ConstMatrixView upper,
-    const std::uint64_t* occupations,double* scales,double* inverse,int dimension) {
+    const std::uint64_t* occupations,double* scales,double* inverse,int dimension,
+    linalg::ConstMatrixView delta={},double* delta_scales=nullptr) {
   const int i=blockIdx.x*blockDim.x+threadIdx.x;
   if (i>=dimension) return;
-  double value=1.0;
+  double value=1.0,logarithmic=0.0;
   for (int p=0;p<upper.rows;++p)
-    if (occupations[i]&(std::uint64_t{1}<<p)) value*=upper.data[p+upper.ld*p];
-  scales[i]=value;
-  inverse[i]=1.0/value;
+    if (occupations[i]&(std::uint64_t{1}<<p)) {
+      value*=upper.data[p+upper.ld*p];
+      if (delta.data) logarithmic+=delta.data[p+delta.ld*p]/upper.data[p+upper.ld*p];
+    }
+  if (scales) scales[i]=value;
+  if (inverse) inverse[i]=1.0/value;
+  if (delta.data) delta_scales[i]=value*logarithmic;
 }
 
 __global__ void inverse_scale(const double* scales, double* inverse, int n) {
@@ -66,7 +85,8 @@ __global__ void shear_left(linalg::MatrixView coefficients,
                            const Edge* edges, int edge_count,
                            const double* coefficient, double orientation, bool adjoint,
                            std::int64_t elements,const std::uint64_t* allowed=nullptr,
-                           int support_columns=0,int words=0) {
+                           int support_columns=0,int words=0,
+                           linalg::MatrixView tangent={},const double* dc=nullptr) {
   const std::int64_t index = blockIdx.x * static_cast<std::int64_t>(blockDim.x)
                              + threadIdx.x;
   if (index >= elements) return;
@@ -79,6 +99,9 @@ __global__ void shear_left(linalg::MatrixView coefficients,
     if (!(mask[source/64]&(std::uint64_t{1}<<(source%64))) ||
         !(mask[target/64]&(std::uint64_t{1}<<(target%64)))) return;
   }
+  if (tangent.data) tangent.data[target+tangent.ld*column]+=edge.sign*
+      ((*dc)*coefficients.data[source+coefficients.ld*column]+
+       (*coefficient)*tangent.data[source+tangent.ld*column]);
   coefficients.data[target + coefficients.ld*column] +=
       orientation*(*coefficient)*edge.sign*coefficients.data[source + coefficients.ld*column];
 }
@@ -108,11 +131,12 @@ __global__ void shear_right(linalg::MatrixView coefficients,
 // for the complete ordered exterior product: sources and targets of one
 // elementary shear are disjoint, and the barrier orders consecutive shears.
 // This is not a new factorization, truncation, or full product-space cache.
-template<bool Right>
+template<bool Right,bool Tangent=false>
 __global__ void exterior_tile(linalg::MatrixView panel,const Edge* edges,
     const ExteriorTransform::Shear* schedule,int steps,const double* coefficients,const double* scales,
     int dimension,int lanes,bool adjoint,bool inverse,const std::uint64_t* allowed=nullptr,
-    int support_columns=0,int words=0) {
+    int support_columns=0,int words=0,linalg::MatrixView tangent={},
+    const double* delta_scales=nullptr,const double* delta_coefficients=nullptr) {
   extern __shared__ double values[];
   const auto row_tiles=(panel.rows+lanes-1)/lanes;
   const auto column=Right ? blockIdx.x/row_tiles*dimension:blockIdx.x;
@@ -123,6 +147,11 @@ __global__ void exterior_tile(linalg::MatrixView panel,const Edge* edges,
     const auto row=Right ? row_begin+lane:spin;
     const auto col=Right ? column+spin:column;
     double v=row<panel.rows ? panel.data[row+panel.ld*col]:0.0;
+    if constexpr (Tangent) {
+      double dv=row<panel.rows ? tangent.data[row+tangent.ld*col]:0.0;
+      if (!adjoint) dv=scales[spin]*dv+delta_scales[spin]*v;
+      values[work+k]=dv;
+    }
     if (allowed && !(allowed[(col%support_columns)*words+spin/64]&(std::uint64_t{1}<<(spin%64)))) v=0;
     if (adjoint==inverse) v*=scales[spin];
     values[k]=v;
@@ -141,6 +170,9 @@ __global__ void exterior_tile(linalg::MatrixView panel,const Edge* edges,
         if (!(mask[source/64]&(std::uint64_t{1}<<(source%64))) ||
             !(mask[target/64]&(std::uint64_t{1}<<(target%64)))) continue;
       }
+      if constexpr (Tangent) values[work+target*lanes+lane]+=edge.sign*
+          (delta_coefficients[index]*values[source*lanes+lane]+
+           coefficients[index]*values[work+source*lanes+lane]);
       values[target*lanes+lane]+=(inverse ? -1.0:1.0)*coefficients[index]*edge.sign*
           values[source*lanes+lane];
     }
@@ -151,9 +183,25 @@ __global__ void exterior_tile(linalg::MatrixView panel,const Edge* edges,
     const auto row=Right ? row_begin+lane:spin;
     const auto col=Right ? column+spin:column;
     double v=values[k];
+    if constexpr (Tangent) {
+      double dv=values[work+k];
+      if (adjoint) dv=scales[spin]*dv+delta_scales[spin]*v;
+      if (row<panel.rows) tangent.data[row+tangent.ld*col]=dv;
+    }
     if (adjoint!=inverse) v*=scales[spin];
     if (row<panel.rows) panel.data[row+panel.ld*col]=v;
   }
+}
+
+__global__ void scale_direction(linalg::MatrixView primal,linalg::MatrixView tangent,
+    const double* scales,const double* delta_scales) {
+  const auto i=static_cast<std::int64_t>(blockIdx.x)*blockDim.x+threadIdx.x;
+  if (i>=primal.rows*primal.cols) return;
+  const auto a=i%primal.rows,b=i/primal.rows;
+  auto& value=primal.data[a+primal.ld*b];
+  auto& delta=tangent.data[a+tangent.ld*b];
+  delta=scales[a]*delta+delta_scales[a]*value;
+  value*=scales[a];
 }
 
 __global__ void restrict_columns(linalg::MatrixView panel,const std::uint64_t* allowed,
@@ -301,6 +349,56 @@ void ExteriorTransform::apply_supported_left(linalg::MatrixView panel,
     if (adjoint) scale();
   }
   check_cuda(cudaGetLastError(),"supported exterior action");
+}
+
+ExteriorDirection ExteriorTransform::direction(linalg::ConstMatrixView upper,
+    linalg::ConstMatrixView delta_upper) const {
+  if (upper.rows!=n_orbitals_ || upper.cols!=n_orbitals_ || upper.ld<upper.rows ||
+      delta_upper.rows!=n_orbitals_ || delta_upper.cols!=n_orbitals_ ||
+      delta_upper.ld<delta_upper.rows || !upper.data || !delta_upper.data)
+    throw std::invalid_argument("invalid CUDA exterior direction frame");
+  auto& c=*context_;
+  ExteriorDirection result{Buffer<double>(c,dimension_),Buffer<double>(c,shears_.size())};
+  Matrix<double> unit(c,n_orbitals_,n_orbitals_),delta_unit(c,n_orbitals_,n_orbitals_);
+  factor_upper<<<1,1,0,c.stream()>>>(upper,unit.view(),nullptr,
+      delta_upper,delta_unit.view(),result.shears.data());
+  update_scales<<<grid_size(dimension_),256,0,c.stream()>>>(upper,occupations_.data(),
+      nullptr,nullptr,dimension_,delta_upper,result.scales.data());
+  check_cuda(cudaGetLastError(),"CUDA exterior direction factors");
+  return result;
+}
+
+void ExteriorTransform::apply_directional_left(const ExteriorDirection& direction,
+    linalg::MatrixView primal,linalg::MatrixView tangent,bool adjoint) const {
+  if (primal.rows!=dimension_ || primal.cols<=0 || primal.ld<primal.rows ||
+      tangent.rows!=primal.rows || tangent.cols!=primal.cols || tangent.ld<tangent.rows ||
+      !primal.data || !tangent.data || primal.data==tangent.data ||
+      direction.scales.size()!=dimension_ || direction.shears.size()!=shears_.size())
+    throw std::invalid_argument("invalid CUDA directional exterior panel");
+  auto& c=*context_;
+  if (dimension_<=shared_values_/2) {
+    exterior_tile<false,true><<<grid_size(primal.cols*256),256,
+        2ULL*dimension_*sizeof(double),c.stream()>>>(primal,edges_.data(),schedule_.data(),
+        shears_.size(),shear_coefficients_.data(),scales_.data(),dimension_,1,adjoint,false,
+        nullptr,0,0,tangent,direction.scales.data(),direction.shears.data());
+  } else {
+    const auto scale=[&] {
+      scale_direction<<<grid_size(primal.rows*primal.cols),256,0,c.stream()>>>(
+          primal,tangent,scales_.data(),direction.scales.data());
+    };
+    if (!adjoint) scale();
+    for (std::size_t step=0;step<shears_.size();++step) {
+      const auto index=adjoint ? shears_.size()-1-step:step;
+      const auto& shear=shears_[index];
+      if (!shear.count) continue;
+      const auto work=static_cast<std::int64_t>(shear.count)*primal.cols;
+      shear_left<<<grid_size(work),256,0,c.stream()>>>(primal,edges_.data()+shear.offset,
+          shear.count,shear_coefficients_.data()+index,1.0,adjoint,work,nullptr,0,0,
+          tangent,direction.shears.data()+index);
+    }
+    if (adjoint) scale();
+  }
+  check_cuda(cudaGetLastError(),"CUDA directional exterior action");
 }
 
 void ExteriorTransform::apply_right(linalg::MatrixView coefficients,

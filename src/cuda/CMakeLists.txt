@@ -19,6 +19,7 @@ add_library(xmvb_cuda
   optimization/coarse.cu
   vb/transform.cu
   vb/product.cu
+  vb/columns.cu
   vb/metric.cu
   vb/orbitals.cu
   vb/chart.cu

@@ -15,6 +15,7 @@
 #include "cuda/memory/context.hpp"
 #include "cuda/memory/graph.hpp"
 #include "cuda/vb/action.hpp"
+#include "cuda/vb/columns.hpp"
 #include "cuda/vb/metric.hpp"
 #include "cuda/vb/transform.hpp"
 #include "integrals/active/two_electron.hpp"
@@ -107,6 +108,82 @@ Matrix download(xmvb::cuda::Context& context,
 
 double bilinear(const Matrix& left, const Matrix& image) {
   return (left.array() * image.array()).sum();
+}
+
+void check_compact_endpoints() {
+  using namespace xmvb::cuda;
+  Context context(8ULL*1024*1024);
+  const auto pattern=[&](std::vector<int> rows,bool full=false,int size=0) {
+    auto result=std::make_shared<ProductColumnPattern>();
+    result->full=full;result->size=full ? size:rows.size();
+    result->rows=std::move(rows);
+    if (!full) {
+      result->device_rows=Buffer<int>(context,result->rows.size());
+      context.copy_to_device(result->device_rows.data(),result->rows.data(),
+          result->rows.size()*sizeof(int));
+    }
+    return result;
+  };
+  const std::vector<std::shared_ptr<const ProductColumnPattern>> patterns{
+      pattern({0,3,8}),pattern({}),pattern({1,7})};
+  ProductColumns compact(context,patterns,2);
+  const Matrix source=values(9,6,0.71);
+  xmvb::cuda::Matrix<double> dense(context,9,6),unpacked(context,9,6);
+  copy_to_device(context,dense.view(),source);
+  compact.pack(context,dense.view(),false);
+  check_cuda(cudaMemsetAsync(unpacked.data(),0,9*6*sizeof(double),context.stream()),
+      "clear compact endpoint oracle");
+  compact.pack(context,unpacked.view(),true);
+  Matrix expected=Matrix::Zero(9,6);
+  for (int v=0;v<2;++v) for (int b=0;b<3;++b)
+    for (int row:patterns[b]->rows) expected(row,3*v+b)=source(row,3*v+b);
+  near(download(context,unpacked),expected,0.0,
+      "compact endpoint loses exact holes or RHS lanes");
+  require(compact.values.rows()==5 && compact.values.cols()==2,
+      "compact endpoint allocated the full product rectangle");
+  const auto bytes=compact.bytes();
+  ProductImages retained(2*bytes);
+  retained.begin(2);
+  require(retained.retain(0,std::move(compact)),"accepted endpoint rejected fitting tile");
+  bool incomplete=false;
+  try { retained.at(0); } catch (const std::logic_error&) { incomplete=true; }
+  require(incomplete,"partial endpoint was exposed to readers");
+  ProductColumns other(context,patterns,2);
+  other.pack(context,dense.view(),false);
+  require(retained.retain(1,std::move(other)),"accepted endpoint rejected exact budget");
+  retained.finish();
+  require(retained.complete() && retained.bytes()==2*bytes,
+      "accepted endpoint budget or completeness changed");
+  const auto& first=retained.at(0);
+  require(first.patterns[0]==retained.at(1).patterns[0],
+      "accepted lanes do not share immutable row metadata");
+
+  ProductImages bounded(bytes);
+  bounded.begin(2);
+  require(bounded.retain(0,ProductColumns(context,patterns,2)),
+      "bounded endpoint rejected fitting first tile");
+  require(!bounded.retain(1,ProductColumns(context,patterns,2)),
+      "bounded endpoint exceeded its allowance");
+  bounded.finish();
+  require(!bounded.complete() && bounded.bytes()==0,
+      "over-budget endpoint left partial accepted data resident");
+
+  ProductColumns full(context,{pattern({},true,9)},2);
+  xmvb::cuda::Matrix<double> full_input(context,9,2),full_output(context,9,2);
+  copy_to_device(context,full_input.view(),source.leftCols(2));
+  full.pack(context,full_input.view(),false);
+  full.pack(context,full_output.view(),true);
+  near(download(context,full_output),source.leftCols(2),0.0,
+      "full column endpoint changed its implicit row identity");
+  require(full.patterns[0]->device_rows.empty(),
+      "full column allocated redundant identity row indices");
+
+  // C16 spin dimension, but only two touched entries: the endpoint contract
+  // must not secretly allocate any 12870-by-12870 rectangular carrier.
+  const auto before=context.counters().current_device_bytes;
+  ProductColumns sparse(context,{pattern({0,12869})},2);
+  require(context.counters().current_device_bytes-before<1024,
+      "compact endpoint scales with the enclosing spin-product rectangle");
 }
 
 void check_directional_derivative(
@@ -855,6 +932,38 @@ void check_exterior(int rhs_count,int n=4,int nalpha=2,int nbeta=1) {
                    bilinear(cpu_left_adjoint, seed)) <
               2.0e-11 * std::max(1.0, forward.norm()),
           "exterior transform violates forward/adjoint pairing");
+  {
+    Matrix delta=Matrix::Zero(n,n);
+    for (int j=0;j<n;++j) for (int i=0;i<=j;++i)
+      delta(i,j)=0.02*std::sin(0.17*(i+1)*(j+2));
+    const Matrix initial=values(alpha.size(),rhs_count,0.29);
+    const Matrix tangent=0.07*values(alpha.size(),rhs_count,0.82);
+    xmvb::cuda::Matrix<double> u(context,n,n),du(context,n,n),
+        primal(context,initial.rows()+2,rhs_count),jet(context,initial.rows()+3,rhs_count);
+    xmvb::cuda::copy_to_device(context,u.view(),upper);
+    xmvb::cuda::copy_to_device(context,du.view(),delta);
+    const auto cpu_direction=cpu_alpha.direction(delta);
+    const auto gpu_direction=gpu_alpha.direction(u.view(),du.view());
+    for (bool adjoint:{false,true}) {
+      Matrix expected=initial,expected_delta=tangent;
+      if (adjoint) cpu_alpha.apply_directional_adjoint_left(
+          cpu_direction,&expected,&expected_delta);
+      else cpu_alpha.apply_directional_left(cpu_direction,&expected,&expected_delta);
+      Matrix p=Matrix::Constant(primal.rows(),rhs_count,-17.0);
+      Matrix dp=Matrix::Constant(jet.rows(),rhs_count,23.0);
+      p.topRows(initial.rows())=initial;dp.topRows(initial.rows())=tangent;
+      xmvb::cuda::copy_to_device(context,primal.view(),p);
+      xmvb::cuda::copy_to_device(context,jet.view(),dp);
+      gpu_alpha.apply_directional_left(gpu_direction,
+          {primal.data(),initial.rows(),rhs_count,primal.rows()},
+          {jet.data(),initial.rows(),rhs_count,jet.rows()},adjoint);
+      p.topRows(initial.rows())=expected;dp.topRows(initial.rows())=expected_delta;
+      near(download(context,primal),p,3e-11,
+          "directional exterior primal or padding differs from CPU");
+      near(download(context,jet),dp,3e-11,
+          "directional exterior tangent or padding differs from CPU");
+    }
+  }
 }
 
 void check_cholesky(int rhs_count) {
@@ -977,6 +1086,7 @@ void check_full_metric(int rhs_count) {
 
 int main() {
   try {
+    check_compact_endpoints();
     for (int parity:{0,1,-1}) for (std::size_t budget:{std::size_t{4096},std::size_t{1024*1024}})
       check_product_tiles(parity,parity!=0,budget);
     check_product_tiles(0,true,1024*1024);
