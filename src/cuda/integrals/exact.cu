@@ -256,52 +256,9 @@ __global__ void pack_density_batch(linalg::ConstMatrixView densities,
   }
 }
 
-__device__ void add_oriented_exchange(int u,int v,double value,
-    const int* first,const int* second,linalg::ConstMatrixView density,
-    linalg::MatrixView output,int channels) {
-  const int ui = first[u], uj = second[u], vi = first[v], vj = second[v];
-  for (int swap_u = 0; swap_u < (ui == uj ? 1 : 2); ++swap_u) {
-    const int a = swap_u ? uj : ui, b = swap_u ? ui : uj;
-    for (int swap_v = 0; swap_v < (vi == vj ? 1 : 2); ++swap_v) {
-      const int c = swap_v ? vj : vi, d = swap_v ? vi : vj;
-      for (int channel=0;channel<channels;++channel) {
-        const double source=density.data[b+density.ld*(d+channel*density.rows)];
-        // Literal zero support is exact; do not issue an atomic add of zero.
-        // No magnitude threshold or screening approximation is introduced.
-        if (source!=0.0)
-          atomic_add_double(output.data+a+output.ld*(c+channel*output.rows),value*source);
-      }
-    }
-  }
-}
-
 template<class Index>
 __device__ int unique_row(const Index* offsets,int rows,std::int64_t edge,int begin=0) {
   return begin+cub::UpperBound(offsets+begin+1,rows-begin,edge);
-}
-
-// Balance integral edges, not variably sized CSR rows. A warp finds its
-// first row once; only lanes crossing that row's end need another lookup.
-// Row offsets are small and shared; no full edge-to-row index is stored.
-template<class Index>
-__global__ void exchange_unique(const Index* offsets,const Index* columns,
-    const double* values,int rows,std::int64_t edges,const int* first,const int* second,
-    linalg::ConstMatrixView density,linalg::MatrixView output,double weight,int channels) {
-  const int lane=threadIdx.x&31;
-  for (auto begin=blockIdx.x*static_cast<std::int64_t>(blockDim.x)+threadIdx.x-lane;
-       begin<edges;begin+=gridDim.x*static_cast<std::int64_t>(blockDim.x)) {
-    int left=0;
-    if (!lane) left=unique_row(offsets,rows,begin);
-    left=__shfl_sync(0xffffffff,left,0);
-    const auto p=begin+lane;
-    if (p>=edges) continue;
-    if (p>=offsets[left+1]) left=unique_row(offsets,rows,p,left+1);
-    const int right=static_cast<int>(columns[p]);
-    const double value=weight*values[p];
-    add_oriented_exchange(left,right,value,first,second,density,output,channels);
-    if (left!=right)
-      add_oriented_exchange(right,left,value,first,second,density,output,channels);
-  }
 }
 
 // One-index half transform H_mu(nu;k,b)=sum_l (mu nu|k l) C(l,b).
@@ -347,10 +304,11 @@ __global__ void unique_half_rows(const Index* offsets,const Index* columns,
   }
 }
 
-// A CSR row (i,j) contributes only to output rows i and j. Merge those
-// contributions in block-local panels before the global accumulation. CSR
-// already contains the reverse pair orientation; do not emit it again.
-__global__ void exchange_rows(const int* offsets,const int* columns,const double* values,
+// A full CSR row contributes to output rows i,j. A unique row also owns
+// its reverse-pair contributions to columns i,j. Reduce these panels in
+// shared memory, without materializing the missing half of the ERI graph.
+template<bool Unique=false,class Index=int>
+__global__ void exchange_rows(const Index* offsets,const Index* columns,const double* values,
     const int* first,const int* second,linalg::ConstMatrixView density,
     linalg::MatrixView output,double weight,int channels,int column_width,
     int channel_width) {
@@ -360,13 +318,12 @@ __global__ void exchange_rows(const int* offsets,const int* columns,const double
   const int count=min(column_width,static_cast<int>(output.rows)-column_begin);
   const int channel_begin=blockIdx.z*channel_width;
   const int channel_count=min(channel_width,channels-channel_begin);
-  const int panel=count*channel_count,cells=2*panel;
+  const int panel=count*channel_count,cells=(Unique ? 4:2)*panel;
   for (int k=threadIdx.x;k<cells;k+=blockDim.x) sums[k]=0.0;
   __syncthreads();
-  const int begin=offsets[row];
-  const int end=offsets[row+1];
-  for (int edge=begin+threadIdx.x;edge<end;edge+=blockDim.x) {
-    const int v=columns[edge],vi=first[v],vj=second[v];
+  const auto begin=offsets[row],end=offsets[row+1];
+  for (auto edge=begin+threadIdx.x;edge<end;edge+=blockDim.x) {
+    const int v=static_cast<int>(columns[edge]),vi=first[v],vj=second[v];
     const double value=weight*values[edge];
     if (value==0.0) continue;
     for (int c=0;c<channel_count;++c) {
@@ -377,12 +334,28 @@ __global__ void exchange_rows(const int* offsets,const int* columns,const double
             value*density.data[uj+density.ld*(vj+shift)]);
         if (ui!=uj) atomic_add_double(sums+panel+base+vi-column_begin,
             value*density.data[ui+density.ld*(vj+shift)]);
+        if constexpr (Unique) {
+          if (v!=row) {
+            atomic_add_double(sums+2*panel+base+vi-column_begin,
+                value*density.data[vj+density.ld*(uj+shift)]);
+            if (ui!=uj) atomic_add_double(sums+3*panel+base+vi-column_begin,
+                value*density.data[vj+density.ld*(ui+shift)]);
+          }
+        }
       }
       if (vi!=vj && vj>=column_begin && vj<column_begin+count) {
         atomic_add_double(sums+base+vj-column_begin,
             value*density.data[uj+density.ld*(vi+shift)]);
         if (ui!=uj) atomic_add_double(sums+panel+base+vj-column_begin,
             value*density.data[ui+density.ld*(vi+shift)]);
+        if constexpr (Unique) {
+          if (v!=row) {
+            atomic_add_double(sums+2*panel+base+vj-column_begin,
+                value*density.data[vi+density.ld*(uj+shift)]);
+            if (ui!=uj) atomic_add_double(sums+3*panel+base+vj-column_begin,
+                value*density.data[vi+density.ld*(ui+shift)]);
+          }
+        }
       }
     }
   }
@@ -391,23 +364,31 @@ __global__ void exchange_rows(const int* offsets,const int* columns,const double
     const double value=sums[k];
     if (value==0.0) continue;
     const int local=k%panel,channel=channel_begin+local/count;
-    const int column=column_begin+local%count,ao=k<panel ? ui:uj;
+    const int column=column_begin+local%count,segment=k/panel,ao=(segment&1) ? uj:ui;
+    if constexpr (Unique) {
+      if (segment>=2) {
+        atomic_add_double(output.data+column+output.ld*(ao+channel*output.rows),value);
+        continue;
+      }
+    }
     atomic_add_double(output.data+ao+output.ld*(column+channel*output.rows),value);
   }
 }
 
-void launch_exchange_rows(Context& context,const int* offsets,const int* columns,
+template<bool Unique=false,class Index=int>
+void launch_exchange_rows(Context& context,const Index* offsets,const Index* columns,
     const double* values,const int* first,const int* second,
     linalg::ConstMatrixView density,linalg::MatrixView output,double weight,
     int channels,int shared_values,std::int64_t pairs) {
   // Capacity comes from the device, not an independent numerical/cache knob.
   // Only very wide AO rows or channel blocks require another source-row visit.
-  const int column_width=std::min(blas_int(output.rows),shared_values/2);
-  const int channel_width=std::min(channels,shared_values/(2*column_width));
+  constexpr int panels=Unique ? 4:2;
+  const int column_width=std::min(blas_int(output.rows),shared_values/panels);
+  const int channel_width=std::min(channels,shared_values/(panels*column_width));
   const dim3 grid(blas_int(pairs),(blas_int(output.rows)+column_width-1)/column_width,
       (channels+channel_width-1)/channel_width);
-  const auto bytes=2*static_cast<std::size_t>(column_width)*channel_width*sizeof(double);
-  exchange_rows<<<grid,256,bytes,context.stream()>>>(offsets,columns,values,first,second,
+  const auto bytes=panels*static_cast<std::size_t>(column_width)*channel_width*sizeof(double);
+  exchange_rows<Unique><<<grid,256,bytes,context.stream()>>>(offsets,columns,values,first,second,
         density,output,weight,channels,column_width,channel_width);
 }
 
@@ -1192,13 +1173,13 @@ void ExactAoPairOperator::directional_adjoint(
 void ExactAoPairOperator::unique_exchange(linalg::ConstMatrixView density,
     linalg::MatrixView output,double weight,int channels) const {
   if (wide_)
-    exchange_unique<<<blocks(n_integrals_),256,0,context_->stream()>>>(
-        wide_offsets_.data(),wide_columns_.data(),values_.data(),blas_int(n_pairs_),
-        n_integrals_,pair_first_.data(),pair_second_.data(),density,output,weight,channels);
+    launch_exchange_rows<true>(*context_,wide_offsets_.data(),wide_columns_.data(),
+        values_.data(),pair_first_.data(),pair_second_.data(),density,output,weight,
+        channels,exchange_shared_values_,n_pairs_);
   else
-    exchange_unique<<<blocks(n_integrals_),256,0,context_->stream()>>>(
-        row_offsets_.data(),columns_.data(),values_.data(),blas_int(n_pairs_),
-        n_integrals_,pair_first_.data(),pair_second_.data(),density,output,weight,channels);
+    launch_exchange_rows<true>(*context_,row_offsets_.data(),columns_.data(),
+        values_.data(),pair_first_.data(),pair_second_.data(),density,output,weight,
+        channels,exchange_shared_values_,n_pairs_);
 }
 
 void ExactAoPairOperator::unique_half(linalg::ConstMatrixView c,int begin,int count,
