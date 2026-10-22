@@ -245,10 +245,13 @@ void VbPoint::project_carrier(View carrier,Out output) const {
 
 void VbPoint::gradient(Out orbital,Out structure) const {
   if (!ready_) throw std::logic_error("CUDA point gradient requires evaluation");
-  select_frame();
-  geometry_.pullback({},density_gradient_.view(),{},frame_gradient_.view(),
-      active_gradient_.view(),orbital);
-  project_carrier(carrier_gradient_.view(),structure);
+  if (orbital.data)
+    geometry_.pullback({},density_gradient_.view(),{},frame_gradient_.view(),
+        active_gradient_.view(),orbital);
+  if (structure.data) {
+    select_frame();
+    project_carrier(carrier_gradient_.view(),structure);
+  }
 }
 
 void VbPoint::hessian(View orbital,View structure,Out orbital_image,Out structure_image) const {

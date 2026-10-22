@@ -29,7 +29,8 @@ class VbPoint {
    * same integral sweep. mo is ordered orthonormal core, active, virtual.
    */
   Matrix<double> hessian_diagonal(linalg::ConstMatrixView mo);
-  void gradient(linalg::MatrixView orbital,linalg::MatrixView structure) const;
+  /** Pull back only requested components; an empty output omits that work. */
+  void gradient(linalg::MatrixView orbital,linalg::MatrixView structure = {}) const;
   /** @brief Joint Hessian action, not a relaxed orbital response solve. */
   void hessian(linalg::ConstMatrixView orbital,linalg::ConstMatrixView structure,
                linalg::MatrixView orbital_image,linalg::MatrixView structure_image) const;

@@ -68,7 +68,7 @@ double dot(Context& c,View x,View y) {
 struct Trial {
   std::unique_ptr<VbPoint> point;
   std::shared_ptr<const StructureCiPoint> ci_point;
-  Matrix<double> raw,coefficients;
+  Matrix<double> raw,coefficients,orbital_gradient,structure_gradient;
   DeviceDavidsonResult ci;
   double energy=0.0;
 };
@@ -132,6 +132,22 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,
   ScfResult result;
   result.ao_upload_seconds=upload_seconds;
   result.host_integral_release_seconds=release_seconds;
+  // A relaxed Trial is immutable. Reuse its covectors across terminal checks,
+  // reporting and the next macro, without retaining another carrier panel.
+  const auto orbital_covector=[&](Trial& trial)->View {
+    if (!trial.orbital_gradient.data()) {
+      trial.orbital_gradient=Matrix<double>(context,nb,norb);
+      trial.point->gradient(trial.orbital_gradient.view());
+    }
+    return trial.orbital_gradient.view();
+  };
+  const auto structure_covector=[&](Trial& trial)->View {
+    if (!trial.structure_gradient.data()) {
+      trial.structure_gradient=Matrix<double>(context,nstr,1);
+      trial.point->gradient({},trial.structure_gradient.view());
+    }
+    return trial.structure_gradient.view();
+  };
   const auto finish=[&](Trial& trial,View guess) {
     trial.ci_point=ci_solver.point();
     trial.coefficients=clone(context,trial.ci.eigenpairs.eigenvector_matrix.view());
@@ -167,10 +183,8 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,
     }
     auto& chart=*chart_owner;
     const int no=chart.reduced_size();
-    Matrix<double> raw_gradient(context,nb,norb),coefficient_gradient(context,nstr,1);
-    origin.gradient(raw_gradient.view(),coefficient_gradient.view());
     Matrix<double> reduced(context,no,1);
-    chart.project(raw_gradient.view(),reduced.view());
+    chart.project(orbital_covector(accepted),reduced.view());
     result.energy=accepted.energy;
     result.gradient_inf=chart.reference_gradient_inf_norm(reduced.view());
     if (iteration==0 && observe)
@@ -214,7 +228,7 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,
         origin.geometry().frame_transform(),accepted.coefficients.view(),
         accepted.ci.hamiltonian_eigenvectors.view(),accepted.ci.overlap_view(),
         origin.orthogonal_state(),1.0,
-        coefficient_gradient.view());
+        structure_covector(accepted));
     Matrix<double> gradient(context,dimension,1),seed(context,dimension,1);
     copy(context,segment(gradient.view(),0,no),reduced.view());
     if (ns) tangent->origin_gradient(segment(gradient.view(),no,ns));
@@ -371,8 +385,8 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,
     macro.terminal=[&](Trial& trial) {
       AcceptedOrbitalChart trial_chart(context,orbital,input.complete_active_space,ao_metric);
       trial_chart.rebuild(trial.point->geometry());
-      Matrix<double> gr(context,nb,norb),gc(context,nstr,1),g(context,trial_chart.reduced_size(),1);
-      trial.point->gradient(gr.view(),gc.view());trial_chart.project(gr.view(),g.view());
+      Matrix<double> g(context,trial_chart.reduced_size(),1);
+      trial_chart.project(orbital_covector(trial),g.view());
       return trial_chart.reference_gradient_inf_norm(g.view())<options.gradient_tolerance;
     };
     auto chosen=mcscf::run_ciah_macro(workspace,micro,gradient,accepted.energy,
@@ -393,8 +407,8 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,
     // its stationarity in its own newly built quotient, not the old model.
     next_chart=std::make_unique<AcceptedOrbitalChart>(context,orbital,input.complete_active_space,ao_metric);
     auto& next=*next_chart;next.rebuild(accepted.point->geometry());
-    Matrix<double> gr(context,nb,norb),gc(context,nstr,1),g(context,next.reduced_size(),1);
-    accepted.point->gradient(gr.view(),gc.view());next.project(gr.view(),g.view());
+    Matrix<double> g(context,next.reduced_size(),1);
+    next.project(orbital_covector(accepted),g.view());
     record.gradient_inf=next.reference_gradient_inf_norm(g.view());
     result.trace.push_back(record);if (observe) observe(record);
   }

@@ -228,7 +228,15 @@ Derivatives gradient(xmvb::cuda::Context& context,xmvb::cuda::VbPoint& point,
   point.evaluate(draw.view(),dci.view());
   DeviceMatrix gout(context,raw.rows(),raw.cols()),cout(context,ci.rows(),1);
   point.gradient(gout.view(),cout.view());
-  return {download(context,gout.view()),download(context,cout.view())};
+  Derivatives result{download(context,gout.view()),download(context,cout.view())};
+  // Omitting a component must not change either covector, including at
+  // finite CI residual. The following independent finite differences use
+  // the same result for both raw-orbital and structure directions.
+  point.gradient(gout.view());
+  near(download(context,gout.view()),result.raw,2e-11,"orbital-only gradient");
+  point.gradient({},cout.view());
+  near(download(context,cout.view()),result.ci,2e-11,"structure-only gradient");
+  return result;
 }
 
 double energy(xmvb::cuda::Context& context,xmvb::cuda::VbPoint& point,

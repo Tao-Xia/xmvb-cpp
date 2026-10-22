@@ -9,7 +9,7 @@ import re
 
 def summarize(root: Path, output: Path) -> None:
     rows = []
-    for case in ("mixed20", "cov", "ion02", "full"):
+    for case in ("mixed20", "cov", "ion02", "full", "c14cov"):
         directory = root / case
         if not directory.is_dir():
             continue
