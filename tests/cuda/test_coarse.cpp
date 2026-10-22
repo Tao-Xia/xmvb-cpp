@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 
 #include <Eigen/Core>
@@ -133,12 +134,52 @@ void check_certification() {
   }
 }
 
+void check_scalar_batches() {
+  constexpr int n=513;
+  xmvb::cuda::Context context(16ULL*1024*1024);
+  xmvb::cuda::DeviceCoarsePreconditioner gpu(context,n,3,1e-14,1e-12);
+  xmvb::mcscf::CoarsePreconditioner cpu(n,3,1e-14,1e-12);
+  const Vector zero=Vector::Zero(n);
+  observe(context,gpu,cpu,zero,zero,zero);
+  require(gpu.size()==0,"zero sample was admitted by scalar batching");
+  Vector first(n),second(n);
+  for (int i=0;i<n;++i) {
+    first[i]=(i%2 ? -1.0:1.0)*(1.0+i*0.001);
+    second[i]=std::sin(i*0.31);
+  }
+  observe(context,gpu,cpu,first,2*first,first);
+  // Both passes must consume the already updated residual, not a batched CGS
+  // projection of the original input. The norm pair must retain BLAS scaling.
+  const Vector mixed=1e3*first+second;
+  observe(context,gpu,cpu,mixed,2*mixed,mixed);
+  require(gpu.size()==2,"independent mixed sample was lost");
+  observe(context,gpu,cpu,1e150*first,2e150*first,1e150*first);
+  require(gpu.size()==2,"large dependent sample was admitted");
+  for (int slot=0;slot<3;++slot) {
+    Vector v=second,h=2*second,m=second;
+    (slot==0 ? v:slot==1 ? h:m)[17]=
+        slot==1 ? std::numeric_limits<double>::quiet_NaN():
+                  std::numeric_limits<double>::infinity();
+    auto dv=upload(context,v),dh=upload(context,h),dm=upload(context,m);
+    bool rejected=false;
+    try { gpu.observe(dv.view(),dh.view(),dm.view()); }
+    catch (const std::invalid_argument&) { rejected=true; }
+    require(rejected,"nonfinite sample escaped batched reductions");
+    require(gpu.size()==2,"nonfinite sample damaged retained rank");
+  }
+  cublasPointerMode_t mode;
+  xmvb::cuda::check_cublas(cublasGetPointerMode(context.blas(),&mode),
+      "check coarse scalar mode");
+  require(mode==CUBLAS_POINTER_MODE_HOST,"coarse leaked device scalar mode");
+}
+
 }  // namespace
 
 int main() {
   try {
     check_balancing();
     check_certification();
+    check_scalar_batches();
     std::cout<<"CUDA coupled coarse correction: PASS\n";
   } catch (const std::exception& error) {
     std::cerr<<error.what()<<'\n';

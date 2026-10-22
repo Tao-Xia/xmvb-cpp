@@ -38,14 +38,9 @@ class DeviceCoarsePreconditioner {
   void validate_vector(linalg::ConstMatrixView vector) const;
   void ensure_finite(linalg::ConstMatrixView first,
       linalg::ConstMatrixView second={},linalg::ConstMatrixView third={}) const;
-  double dot(linalg::ConstMatrixView left,linalg::ConstMatrixView right) const;
-  double norm(linalg::ConstMatrixView vector) const;
-  double frobenius(linalg::ConstMatrixView panel,int columns) const;
   double projection_roundoff(linalg::ConstMatrixView basis,
       linalg::ConstMatrixView action,const Eigen::MatrixXd& projected) const;
   void copy(linalg::MatrixView out,linalg::ConstMatrixView in) const;
-  void axpy(linalg::MatrixView out,double coefficient,
-            linalg::ConstMatrixView in) const;
   void scale(linalg::MatrixView out,double coefficient) const;
   Eigen::VectorXd project(linalg::ConstMatrixView panel,
       linalg::ConstMatrixView vector,int columns) const;
@@ -58,6 +53,8 @@ class DeviceCoarsePreconditioner {
   Matrix<double> basis_,images_,metrics_;
   mutable Matrix<double> sample_v_,sample_h_,sample_m_;
   mutable Matrix<double> coefficients_;
+  // Small packed scalar results only; no full-length reduction temporaries.
+  mutable Buffer<double> reductions_;
   mutable Buffer<int> finite_;
   Eigen::MatrixXd hessian_projection_,metric_projection_,sample_factor_;
 };

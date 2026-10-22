@@ -4,6 +4,9 @@
 #include <cmath>
 #include <limits>
 #include <stdexcept>
+#include <utility>
+
+#include <cub/block/block_reduce.cuh>
 
 #include <Eigen/LU>
 #include <Eigen/SVD>
@@ -22,10 +25,41 @@ __global__ void finite_vectors(linalg::ConstMatrixView first,
       (third.data && !isfinite(third.data[i]))) atomicExch(valid,0);
 }
 
-__global__ void absolute_product(const double* left,const double* right,
-    double* product,std::int64_t dimension) {
-  const auto i=static_cast<std::int64_t>(blockIdx.x)*blockDim.x+threadIdx.x;
-  if (i<dimension) product[i]=fabs(left[i]*right[i]);
+__global__ void projection_magnitudes(linalg::ConstMatrixView basis,
+    linalg::ConstMatrixView action,double* result,int rank) {
+  using Reduce=cub::BlockReduce<double,256>;
+  __shared__ typename Reduce::TempStorage scratch;
+  const int row=blockIdx.x%rank,column=blockIdx.x/rank;
+  double sum=0.0;
+  for (std::int64_t i=threadIdx.x;i<basis.rows;i+=blockDim.x)
+    sum+=fabs(basis.data[row*basis.ld+i]*action.data[column*action.ld+i]);
+  const double total=Reduce(scratch).Sum(sum);
+  if (!threadIdx.x) result[blockIdx.x]=total;
+}
+
+// The following AXPYs consume this coefficient on the same stream. MGS is
+// still sequential, including its second pass; no host scalar is needed.
+__global__ void accumulate_coefficient(double* coefficient,double* total) {
+  *total+=*coefficient;
+  *coefficient=-*coefficient;
+}
+
+class DeviceScalars {
+ public:
+  explicit DeviceScalars(cublasHandle_t handle):handle_(handle) {
+    check_cublas(cublasSetPointerMode(handle_,CUBLAS_POINTER_MODE_DEVICE),
+        "CUDA coarse device scalar pointer mode");
+  }
+  ~DeviceScalars() { cublasSetPointerMode(handle_,CUBLAS_POINTER_MODE_HOST); }
+  DeviceScalars(const DeviceScalars&)=delete;
+  DeviceScalars& operator=(const DeviceScalars&)=delete;
+ private:
+  cublasHandle_t handle_;
+};
+
+std::size_t reduction_size(int capacity) {
+  const auto n=static_cast<std::size_t>(std::max(0,capacity));
+  return std::max({n*n,4*n+4,n+3});
 }
 
 unsigned int grid(std::int64_t count) {
@@ -48,7 +82,8 @@ DeviceCoarsePreconditioner::DeviceCoarsePreconditioner(Context& context,
       metrics_(context,dimension,std::max(0,capacity_)),
       sample_v_(context,dimension,1),sample_h_(context,dimension,1),
       sample_m_(context,dimension,1),
-      coefficients_(context,std::max(1,capacity_),1),finite_(context,1),
+      coefficients_(context,std::max(1,capacity_),1),
+      reductions_(context,reduction_size(capacity_)),finite_(context,1),
       hessian_projection_(Eigen::MatrixXd::Zero(std::max(0,capacity_),
                                                   std::max(0,capacity_))),
       metric_projection_(Eigen::MatrixXd::Zero(std::max(0,capacity_),
@@ -74,38 +109,14 @@ void DeviceCoarsePreconditioner::ensure_finite(linalg::ConstMatrixView first,
   validate_vector(first);
   if (second.data) validate_vector(second);
   if (third.data) validate_vector(third);
-  const int valid=1;
-  context_->copy_to_device(finite_.data(),&valid,sizeof(valid));
+  check_cuda(cudaMemsetAsync(finite_.data(),1,sizeof(int),context_->stream()),
+      "CUDA coarse finite flag initialization");
   finite_vectors<<<grid(dimension_),256,0,context_->stream()>>>(
       first,second,third,finite_.data(),dimension_);
   check_cuda(cudaGetLastError(),"CUDA coarse finite validation");
   int host=0;
   context_->copy_to_host(&host,finite_.data(),sizeof(host));
   if (!host) throw std::invalid_argument("nonfinite CUDA coarse sample");
-}
-
-double DeviceCoarsePreconditioner::dot(linalg::ConstMatrixView left,
-    linalg::ConstMatrixView right) const {
-  double value=0.0;
-  check_cublas(cublasDdot(context_->blas(),dimension_,left.data,1,right.data,1,
-      &value),"CUDA coarse dot");
-  return value;
-}
-
-double DeviceCoarsePreconditioner::norm(linalg::ConstMatrixView vector) const {
-  double value=0.0;
-  check_cublas(cublasDnrm2(context_->blas(),dimension_,vector.data,1,&value),
-      "CUDA coarse norm");
-  return value;
-}
-
-double DeviceCoarsePreconditioner::frobenius(linalg::ConstMatrixView panel,
-    int columns) const {
-  double value=0.0;
-  // Owned panels are contiguous; the Frobenius norm is one vector norm.
-  check_cublas(cublasDnrm2(context_->blas(),blas_int(panel.rows*columns),
-      panel.data,1,&value),"CUDA coarse panel norm");
-  return value;
 }
 
 Eigen::VectorXd DeviceCoarsePreconditioner::project(linalg::ConstMatrixView panel,
@@ -133,12 +144,6 @@ void DeviceCoarsePreconditioner::copy(linalg::MatrixView out,
       cudaMemcpyDeviceToDevice,context_->stream()),"CUDA coarse vector copy");
 }
 
-void DeviceCoarsePreconditioner::axpy(linalg::MatrixView out,double coefficient,
-    linalg::ConstMatrixView in) const {
-  check_cublas(cublasDaxpy(context_->blas(),dimension_,&coefficient,
-      in.data,1,out.data,1),"CUDA coarse axpy");
-}
-
 void DeviceCoarsePreconditioner::scale(linalg::MatrixView out,
     double coefficient) const {
   check_cublas(cublasDscal(context_->blas(),dimension_,&coefficient,out.data,1),
@@ -150,15 +155,11 @@ double DeviceCoarsePreconditioner::projection_roundoff(
     const Eigen::MatrixXd& projected) const {
   const int rank=static_cast<int>(projected.rows());
   Eigen::MatrixXd magnitude(rank,rank);
-  for (int j=0;j<rank;++j) for (int i=0;i<rank;++i) {
-    absolute_product<<<grid(dimension_),256,0,context_->stream()>>>(
-        basis.column(i).data,action.column(j).data,sample_m_.data(),dimension_);
-    check_cuda(cudaGetLastError(),"CUDA coarse projection magnitude");
-    double value=0.0;
-    check_cublas(cublasDasum(context_->blas(),dimension_,sample_m_.data(),1,
-        &value),"CUDA coarse projection absolute sum");
-    magnitude(i,j)=value;
-  }
+  projection_magnitudes<<<rank*rank,256,0,context_->stream()>>>(
+      basis,action,reductions_.data(),rank);
+  check_cuda(cudaGetLastError(),"CUDA coarse projection magnitudes");
+  context_->copy_to_host(magnitude.data(),reductions_.data(),
+      magnitude.size()*sizeof(double));
   const double u=0.5*std::numeric_limits<double>::epsilon();
   const double nu=static_cast<double>(dimension_)*u;
   const double gamma=nu/(1.0-nu);
@@ -177,20 +178,36 @@ void DeviceCoarsePreconditioner::observe(linalg::ConstMatrixView direction,
   copy(sample_v_.view(),direction);
   copy(sample_h_.view(),image);
   copy(sample_m_.view(),metric_image);
-  const double initial=norm(sample_v_.view());
-  if (!(initial>0.0)) return;
-  Eigen::VectorXd coefficients=Eigen::VectorXd::Zero(size_);
-  for (int pass=0;pass<2;++pass) for (int i=0;i<size_;++i) {
-    const double coefficient=dot(basis_.view().column(i),sample_v_.view());
-    coefficients[i]+=coefficient;
-    axpy(sample_v_.view(),-coefficient,basis_.view().column(i));
-    axpy(sample_h_.view(),-coefficient,images_.view().column(i));
-    axpy(sample_m_.view(),-coefficient,metrics_.view().column(i));
+  double* const scalars=reductions_.data();
+  check_cuda(cudaMemsetAsync(scalars,0,size_*sizeof(double),context_->stream()),
+      "CUDA coarse coefficient initialization");
+  {
+    DeviceScalars mode(context_->blas());
+    check_cublas(cublasDnrm2(context_->blas(),dimension_,sample_v_.data(),1,
+        scalars+size_),"CUDA coarse initial norm");
+    for (int pass=0;pass<2;++pass) for (int i=0;i<size_;++i) {
+      double* const coefficient=scalars+size_+2;
+      check_cublas(cublasDdot(context_->blas(),dimension_,
+          basis_.view().column(i).data,1,sample_v_.data(),1,coefficient),
+          "CUDA coarse device dot");
+      accumulate_coefficient<<<1,1,0,context_->stream()>>>(coefficient,scalars+i);
+      check_cuda(cudaGetLastError(),"CUDA coarse coefficient accumulation");
+      for (auto panels:{std::pair{sample_v_.data(),basis_.view().column(i).data},
+                        std::pair{sample_h_.data(),images_.view().column(i).data},
+                        std::pair{sample_m_.data(),metrics_.view().column(i).data}})
+        check_cublas(cublasDaxpy(context_->blas(),dimension_,coefficient,
+            panels.second,1,panels.first,1),"CUDA coarse device axpy");
+    }
+    check_cublas(cublasDnrm2(context_->blas(),dimension_,sample_v_.data(),1,
+        scalars+size_+1),"CUDA coarse remaining norm");
   }
-  const double remaining=norm(sample_v_.view());
+  Eigen::VectorXd samples(size_+2);
+  context_->copy_to_host(samples.data(),scalars,samples.size()*sizeof(double));
+  const double initial=samples[size_],remaining=samples[size_+1];
+  if (!(initial>0.0)) return;
   Eigen::MatrixXd factor=Eigen::MatrixXd::Zero(size_+1,size_+1);
   factor.topLeftCorner(size_,size_)=sample_factor_.topLeftCorner(size_,size_);
-  factor.col(size_).head(size_)=coefficients/initial;
+  factor.col(size_).head(size_)=samples.head(size_)/initial;
   factor(size_,size_)=remaining/initial;
   const Eigen::JacobiSVD<Eigen::MatrixXd> spectrum(factor);
   const double ratio=std::pow(spectrum.singularValues().tail(1)[0]/
@@ -204,14 +221,34 @@ void DeviceCoarsePreconditioner::observe(linalg::ConstMatrixView direction,
   scale(basis_.view().column(candidate),inverse);
   scale(images_.view().column(candidate),inverse);
   scale(metrics_.view().column(candidate),inverse);
-  hessian_projection_.col(candidate).head(candidate+1)=
-      project(basis_.view(),images_.view().column(candidate),candidate+1);
+  int offset=0;
+  const auto enqueue=[&](linalg::ConstMatrixView panel,
+      linalg::ConstMatrixView vector,int columns) {
+    if (columns) gemm(*context_,{scalars+offset,columns,1,columns},
+        panel.columns(0,columns),vector,1.0,0.0,Operation::transpose);
+    offset+=columns;
+  };
+  enqueue(basis_.view(),images_.view().column(candidate),candidate+1);
+  enqueue(images_.view(),basis_.view().column(candidate),candidate);
+  enqueue(basis_.view(),metrics_.view().column(candidate),candidate+1);
+  enqueue(metrics_.view(),basis_.view().column(candidate),candidate);
+  if (action_accuracy_>0.0) {
+    DeviceScalars mode(context_->blas());
+    const int count=blas_int(static_cast<std::int64_t>(dimension_)*(candidate+1));
+    check_cublas(cublasDnrm2(context_->blas(),count,basis_.data(),1,scalars+offset),
+        "CUDA coarse basis norm");
+    check_cublas(cublasDnrm2(context_->blas(),count,images_.data(),1,scalars+offset+1),
+        "CUDA coarse image norm");
+  }
+  Eigen::VectorXd projections(offset+(action_accuracy_>0.0 ? 2:0));
+  context_->copy_to_host(projections.data(),scalars,projections.size()*sizeof(double));
+  hessian_projection_.col(candidate).head(candidate+1)=projections.head(candidate+1);
   hessian_projection_.row(candidate).head(candidate)=
-      project(images_.view(),basis_.view().column(candidate),candidate).transpose();
+      projections.segment(candidate+1,candidate).transpose();
   metric_projection_.col(candidate).head(candidate+1)=
-      project(basis_.view(),metrics_.view().column(candidate),candidate+1);
+      projections.segment(2*candidate+1,candidate+1);
   metric_projection_.row(candidate).head(candidate)=
-      project(metrics_.view(),basis_.view().column(candidate),candidate).transpose();
+      projections.segment(3*candidate+2,candidate).transpose();
   const auto certified=[&](const Eigen::MatrixXd& projection,
       linalg::ConstMatrixView images,double action_accuracy) {
     const Eigen::MatrixXd raw=projection.topLeftCorner(candidate+1,candidate+1);
@@ -219,8 +256,7 @@ void DeviceCoarsePreconditioner::observe(linalg::ConstMatrixView direction,
     double bound=256*std::numeric_limits<double>::epsilon()*(candidate+1)*
         std::max(1.0,raw.norm());
     if (action_accuracy>0.0)
-      bound+=action_accuracy*frobenius(basis_.view(),candidate+1)*
-          frobenius(images,candidate+1);
+      bound+=action_accuracy*projections[offset]*projections[offset+1];
     if (skew>bound)
       bound+=projection_roundoff(basis_.view(),images,raw);
     return std::isfinite(skew) && std::isfinite(bound) && skew<=bound;
@@ -279,8 +315,12 @@ void DeviceCoarsePreconditioner::apply(linalg::ConstMatrixView residual,
   check_cublas(cublasSetPointerMode(context_->blas(),CUBLAS_POINTER_MODE_HOST),
       "CUDA coarse restore scalar pointer mode");
   ensure_finite(sample_h_.view());
-  projected=project(images_.view(),sample_h_.view(),size_)-
-      eigenvalue*project(metrics_.view(),sample_h_.view(),size_);
+  const linalg::MatrixView projection{reductions_.data(),size_,1,size_};
+  gemm(*context_,projection,images_.view().columns(0,size_),sample_h_.view(),
+      1.0,0.0,Operation::transpose);
+  gemm(*context_,projection,metrics_.view().columns(0,size_),sample_h_.view(),
+      -eigenvalue,1.0,Operation::transpose);
+  context_->copy_to_host(projected.data(),projection.data,size_*sizeof(double));
   const Eigen::VectorXd b=solve(projected);
   copy(output,sample_h_.view());
   combine(output,basis_.view(),a-b);
