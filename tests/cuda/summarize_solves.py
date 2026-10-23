@@ -28,7 +28,6 @@ def summarize(reference, current):
                    old_gpu_actions=old["ci_block_actions"], gpu_actions=gpu["ci_block_actions"],
                    old_gpu_total_seconds=old["benchmark_elapsed_seconds"],
                    gpu_total_seconds=gpu["benchmark_elapsed_seconds"],
-                   gpu_graph_build_seconds=gpu["gpu_graph_build_seconds"],
                    gpu_peak_payload_bytes=gpu["gpu_peak_device_bytes"],
                    gpu_sampled_process_peak_gib=process_gpu_peak_gib(
                        current / case / "gpu_samples.csv",gpu["process_id"]))

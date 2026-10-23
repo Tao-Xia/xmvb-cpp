@@ -131,15 +131,6 @@ void check_panel(linalg::ConstMatrixView input,linalg::MatrixView output,int row
     throw std::invalid_argument("CUDA spin metric panel dimensions");
 }
 
-std::size_t full_carrier_bytes(const StructureAction& action,std::size_t count) {
-  const auto alpha=static_cast<std::size_t>(action.n_alpha_strings());
-  const auto beta=static_cast<std::size_t>(action.n_beta_strings());
-  const auto maximum=std::numeric_limits<std::size_t>::max();
-  if (!alpha || !beta || !count || alpha>maximum/sizeof(double)/beta/count)
-    throw std::overflow_error("CUDA FULL carrier size overflow");
-  return alpha*beta*sizeof(double)*count;
-}
-
 }  // namespace
 
 SelectedMetric::SelectedMetric(Context& context,Matrix<double> gram)
@@ -413,12 +404,9 @@ void FullMetric::to_ci_coordinates(linalg::ConstMatrixView structure,
                                    linalg::MatrixView coordinates) const {
   AllocationPhase phase(*context_,"FULL to CI coordinates");
   validate(structure,coordinates);
-  action_->reserve_workspace(full_carrier_bytes(*action_,1));
-  Matrix<double> carrier(*context_,action_->n_alpha_strings(),action_->n_beta_strings());
   for (std::int64_t column=0;column<structure.cols;++column) {
-    action_->expand_spin(structure.column(column),carrier.view());
-    action_->apply_orbital_transform(carrier.view());
-    action_->contract_spin(carrier.view(),structure_.view());
+    action_->apply_full_structure_map(ProductMap::Orbital,
+        structure.column(column),structure_.view());
     spin_->solve(structure_.view(),coordinates.column(column),SpinMetric::Part::Lower);
   }
 }
@@ -427,14 +415,11 @@ void FullMetric::from_ci_coordinates(linalg::ConstMatrixView coordinates,
                                      linalg::MatrixView structure) const {
   AllocationPhase phase(*context_,"FULL from CI coordinates");
   validate(coordinates,structure);
-  action_->reserve_workspace(full_carrier_bytes(*action_,1));
-  Matrix<double> carrier(*context_,action_->n_alpha_strings(),action_->n_beta_strings());
   for (std::int64_t column=0;column<coordinates.cols;++column) {
     spin_->solve(coordinates.column(column),structure_.view(),SpinMetric::Part::Upper);
-    action_->expand_spin(structure_.view(),carrier.view());
-    action_->apply_inverse_orbital_transform(carrier.view());
-    action_->contract_spin(carrier.view(),structure_.view());
-    spin_->solve(structure_.view(),structure.column(column),SpinMetric::Part::Gram);
+    action_->apply_full_structure_map(ProductMap::InverseOrbital,
+        structure_.view(),structure.column(column));
+    spin_->solve(structure.column(column),structure.column(column),SpinMetric::Part::Gram);
   }
 }
 
@@ -442,13 +427,10 @@ void FullMetric::ci_covector_to_structure(linalg::ConstMatrixView covector,
                                           linalg::MatrixView structure) const {
   AllocationPhase phase(*context_,"FULL CI covector to structure");
   validate(covector,structure);
-  action_->reserve_workspace(full_carrier_bytes(*action_,1));
-  Matrix<double> carrier(*context_,action_->n_alpha_strings(),action_->n_beta_strings());
   for (std::int64_t column=0;column<covector.cols;++column) {
     spin_->solve(covector.column(column),structure_.view(),SpinMetric::Part::Upper);
-    action_->expand_spin(structure_.view(),carrier.view());
-    action_->apply_adjoint_orbital_transform(carrier.view());
-    action_->contract_spin(carrier.view(),structure.column(column));
+    action_->apply_full_structure_map(ProductMap::AdjointOrbital,
+        structure_.view(),structure.column(column));
   }
 }
 
@@ -456,16 +438,13 @@ void FullMetric::inverse_metric(linalg::ConstMatrixView covector,
                                 linalg::MatrixView structure) const {
   AllocationPhase phase(*context_,"FULL inverse metric");
   validate(covector,structure);
-  // Match the factorized CPU FULL inverse: G^-1 W^T T^-1 T^-T W G^-1.
-  action_->reserve_workspace(full_carrier_bytes(*action_,1));
-  Matrix<double> carrier(*context_,action_->n_alpha_strings(),action_->n_beta_strings());
+  // Keep the two carrier transforms together, without an intermediate
+  // selected-space projection.
   for (std::int64_t column=0;column<covector.cols;++column) {
     spin_->solve(covector.column(column),structure_.view(),SpinMetric::Part::Gram);
-    action_->expand_spin(structure_.view(),carrier.view());
-    action_->apply_inverse_adjoint_orbital_transform(carrier.view());
-    action_->apply_inverse_orbital_transform(carrier.view());
-    action_->contract_spin(carrier.view(),structure_.view());
-    spin_->solve(structure_.view(),structure.column(column),SpinMetric::Part::Gram);
+    action_->apply_full_structure_map(ProductMap::InverseMetric,
+        structure_.view(),structure.column(column));
+    spin_->solve(structure.column(column),structure.column(column),SpinMetric::Part::Gram);
   }
 }
 
@@ -478,19 +457,13 @@ void FullMetric::apply_structure_carrier_inverse(
   if (selected_energy.rows!=1 || selected_energy.cols!=1 ||
       selected_energy.ld<1 || !selected_energy.data || !std::isfinite(eigenvalue))
     throw std::invalid_argument("CUDA FULL structure AH inverse scalar dimensions");
-  // This is the original-structure-coordinate counterpart of the isometric
-  // CI inverse: G^-1 W^T T^-1 D^-1 T^-T W G^-1.
-  action_->reserve_workspace(full_carrier_bytes(*action_,
-      action_->has_carrier_diagonal() ? 1:2));
-  Matrix<double> carrier(*context_,action_->n_alpha_strings(),action_->n_beta_strings());
+  // The carrier diagonal need not preserve a spin-adapted sector, so the
+  // inverse maps and diagonal are one unprojected bounded product operation.
   for (std::int64_t column=0;column<covector.cols;++column) {
     spin_->solve(covector.column(column),structure_.view(),SpinMetric::Part::Gram);
-    action_->expand_spin(structure_.view(),carrier.view());
-    action_->apply_inverse_adjoint_orbital_transform(carrier.view());
-    action_->divide_carrier_diagonal(carrier.view(),selected_energy,eigenvalue);
-    action_->apply_inverse_orbital_transform(carrier.view());
-    action_->contract_spin(carrier.view(),structure_.view());
-    spin_->solve(structure_.view(),structure.column(column),SpinMetric::Part::Gram);
+    action_->apply_full_structure_map(ProductMap::InverseOrbitalDiagonalInverseAdjointOrbital,
+        structure_.view(),structure.column(column),selected_energy,eigenvalue);
+    spin_->solve(structure.column(column),structure.column(column),SpinMetric::Part::Gram);
   }
 }
 
@@ -498,16 +471,11 @@ void FullMetric::apply_ci_hamiltonian(linalg::ConstMatrixView coordinates,
                                       linalg::MatrixView image) const {
   AllocationPhase phase(*context_,"FULL CI Hamiltonian");
   validate(coordinates,image);
-  // The exact sigma retains its input while writing the output carrier.
-  action_->reserve_workspace(full_carrier_bytes(*action_,2));
-  Matrix<double> carrier(*context_,action_->n_alpha_strings(),action_->n_beta_strings());
-  Matrix<double> carrier_image(*context_,action_->n_alpha_strings(),action_->n_beta_strings());
   for (std::int64_t column=0;column<coordinates.cols;++column) {
     spin_->solve(coordinates.column(column),structure_.view(),SpinMetric::Part::Upper);
-    action_->expand_spin(structure_.view(),carrier.view());
-    action_->apply_carrier_hamiltonian(carrier.view(),carrier_image.view());
-    action_->contract_spin(carrier_image.view(),structure_.view());
-    spin_->solve(structure_.view(),image.column(column),SpinMetric::Part::Lower);
+    action_->apply_full_structure_map(ProductMap::IdentityHamiltonian,
+        structure_.view(),image.column(column));
+    spin_->solve(image.column(column),image.column(column),SpinMetric::Part::Lower);
   }
 }
 
@@ -519,15 +487,11 @@ void FullMetric::apply_ci_preconditioner(linalg::ConstMatrixView covector,
   if (energies.rows!=1 || energies.cols!=covector.cols ||
       energies.ld<energies.rows || !energies.data || !std::isfinite(eigenvalue))
     throw std::invalid_argument("CUDA FULL preconditioner energies dimensions");
-  action_->reserve_workspace(full_carrier_bytes(*action_,
-      action_->has_carrier_diagonal() ? 1:2));
-  Matrix<double> carrier(*context_,action_->n_alpha_strings(),action_->n_beta_strings());
   for (std::int64_t column=0;column<covector.cols;++column) {
     spin_->solve(covector.column(column),structure_.view(),SpinMetric::Part::Upper);
-    action_->expand_spin(structure_.view(),carrier.view());
-    action_->divide_carrier_diagonal(carrier.view(),energies.column(column),eigenvalue);
-    action_->contract_spin(carrier.view(),structure_.view());
-    spin_->solve(structure_.view(),result.column(column),SpinMetric::Part::Lower);
+    action_->apply_full_structure_map(ProductMap::IdentityDiagonalInverse,
+        structure_.view(),result.column(column),energies.column(column),eigenvalue);
+    spin_->solve(result.column(column),result.column(column),SpinMetric::Part::Lower);
   }
 }
 

@@ -177,10 +177,10 @@ __global__ void pullback_pair_kernel(linalg::ConstMatrixView channel,
 
 __global__ void product_diagonal(linalg::MatrixView values,
     const double* kernel,const int* alpha,const int* beta,
-    int n_alpha,int n_beta,int n_orbitals,int n_channels) {
+    int n_alpha,int n_beta,int n_orbitals,int n_channels,int first_beta) {
   const std::int64_t product=blockIdx.x*static_cast<std::int64_t>(blockDim.x)+threadIdx.x;
-  if (product>=static_cast<std::int64_t>(n_alpha)*n_beta) return;
-  const int a=product%n_alpha, b=product/n_alpha;
+  if (product>=static_cast<std::int64_t>(n_alpha)*values.cols) return;
+  const int a=product%n_alpha, b=first_beta+product/n_alpha;
   double result=0;
   for (int p=0;p<n_orbitals;++p) {
     const int pp=p*(p+1)/2+p;
@@ -202,7 +202,7 @@ __global__ void product_diagonal(linalg::MatrixView values,
       result+=links*kernel[channel+static_cast<std::int64_t>(n_channels)*channel];
     }
   }
-  values.data[a+values.ld*b]=result;
+  values.data[a+values.ld*(b-first_beta)]=result;
 }
 
 __global__ void apply_orbital_generator(linalg::ConstMatrixView coefficients,
@@ -704,8 +704,19 @@ void DirectCiSigma::diagonal(linalg::MatrixView values) const {
   const auto* beta=beta_->sources.data();
   product_diagonal<<<grid_size(static_cast<std::int64_t>(n_alpha_)*n_beta_),
       256,0,context_->stream()>>>(values,kernel_.data(),alpha,beta,
-          n_alpha_,n_beta_,n_orbitals_,n_channels_);
+          n_alpha_,n_beta_,n_orbitals_,n_channels_,0);
   check_cuda(cudaGetLastError(),"CUDA direct-CI product diagonal");
+}
+
+void DirectCiSigma::diagonal_columns(int first_beta,linalg::MatrixView values) const {
+  if (first_beta<0 || values.cols<=0 || values.cols>n_beta_-first_beta)
+    throw std::invalid_argument("invalid CUDA direct-CI diagonal beta range");
+  validate_output(values,n_alpha_,values.cols,
+      "invalid CUDA direct-CI diagonal column output");
+  product_diagonal<<<grid_size(static_cast<std::int64_t>(n_alpha_)*values.cols),
+      256,0,context_->stream()>>>(values,kernel_.data(),alpha_->sources.data(),
+          beta_->sources.data(),n_alpha_,n_beta_,n_orbitals_,n_channels_,first_beta);
+  check_cuda(cudaGetLastError(),"CUDA direct-CI product diagonal columns");
 }
 
 void DirectCiSigma::update_integrals(linalg::ConstMatrixView one_electron,

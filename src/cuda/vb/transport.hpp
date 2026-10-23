@@ -16,6 +16,35 @@ class StructureAction;
 class SelectedMetric;
 class ExteriorTransform;
 
+/** Exact sparse W source factors and W^T projection, shared by selected
+ * cross-overlap and other bounded carrier-free CI maps.
+ */
+class StructureSourceFactors {
+ public:
+  StructureSourceFactors(Context& context,const StructureAction& action);
+  int source_count() const noexcept { return static_cast<int>(source_columns_.size()); }
+  int source_column(int index) const { return source_columns_.at(index); }
+  /** Conservative transport workspace width, strictly below beta dimension
+   * when beta has more than one string. Call before allocating factor panels.
+   */
+  int source_extent() const;
+  /** Form W C as alpha coefficients times raw beta identity columns. */
+  void load(int begin,int count,linalg::ConstMatrixView coefficients,
+            linalg::MatrixView alpha,linalg::MatrixView beta) const;
+  /** Add W^T sum_j alpha_j beta_j^T to the initialized image. */
+  void contract(linalg::ConstMatrixView alpha,linalg::ConstMatrixView beta,
+                linalg::MatrixView image) const;
+
+ private:
+  friend class SelectedCrossOverlap;
+  Context* context_;
+  const StructureAction* action_;
+  int structures_,alpha_,beta_,groups_;
+  std::vector<int> source_columns_;
+  Buffer<int> source_groups_,source_columns_device_,source_offsets_device_,
+      alpha_offsets_device_;
+};
+
 /** Exact F(R_left)^T F(R_right) in the original selected structure space.
  * F(R)=wedge(R) W; W is the sparse selected expansion in StructureAction.
  * No closure of the selected structures is assumed. Frame updates and all
@@ -36,6 +65,7 @@ class SelectedCrossOverlap {
 
   int size() const noexcept { return structures_; }
   int active_orbitals() const noexcept { return active_; }
+  int source_count() const noexcept { return sources_.source_count(); }
   /** Refreshed before each matrix-free solve; valid until the next solve. */
   linalg::ConstMatrixView current_metric_diagonal() const noexcept {
     return {diagonal_.data(),structures_,1,structures_};
@@ -111,14 +141,6 @@ class SelectedCrossOverlap {
   void pullback(linalg::ConstMatrixView frame,
                 linalg::ConstMatrixView moment,
                 linalg::MatrixView gradient) const;
-  bool use_product_overlap(int images,bool moments=false) const;
-  void physical_carrier(linalg::ConstMatrixView coefficients,
-      const ExteriorTransform& alpha,const ExteriorTransform& beta,
-      linalg::MatrixView carrier) const;
-  void load_sources(int begin,int count,linalg::ConstMatrixView coefficients,
-                   linalg::MatrixView alpha,linalg::MatrixView beta) const;
-  void contract_source(linalg::ConstMatrixView alpha,linalg::ConstMatrixView beta,
-                       linalg::MatrixView image) const;
   void seeds(const ExteriorTransform& alpha_map,const ExteriorTransform& beta_map,
              linalg::ConstMatrixView coefficients,
              linalg::ConstMatrixView alpha,linalg::ConstMatrixView beta,
@@ -127,14 +149,20 @@ class SelectedCrossOverlap {
   void accumulate_moment(const ExteriorTransform& transform,
       linalg::ConstMatrixView seed,linalg::ConstMatrixView image,double scale,
       linalg::MatrixView moment) const;
-  int source_extent() const;
+  int source_extent() const { return sources_.source_extent(); }
+  void load_sources(int begin,int count,linalg::ConstMatrixView coefficients,
+                    linalg::MatrixView alpha,linalg::MatrixView beta) const {
+    sources_.load(begin,count,coefficients,alpha,beta);
+  }
+  void contract_source(linalg::ConstMatrixView alpha,linalg::ConstMatrixView beta,
+                       linalg::MatrixView image) const {
+    sources_.contract(alpha,beta,image);
+  }
 
   Context* context_;
   StructureAction* action_;
-  int structures_, alpha_, beta_, active_, groups_;
-  std::vector<int> source_columns_;
-  Buffer<int> source_groups_,source_columns_device_,source_offsets_device_,
-      alpha_offsets_device_;
+  int structures_, alpha_, beta_, active_;
+  StructureSourceFactors sources_;
   mutable Buffer<double> diagonal_;
   mutable Matrix<double> diagonal_h_scratch_;
   ExactMetricInverse exact_inverse_;

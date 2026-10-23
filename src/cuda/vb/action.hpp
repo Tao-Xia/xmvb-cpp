@@ -16,6 +16,13 @@ class DirectCiSigma;
 class ExteriorTransform;
 class ProductContraction;
 
+/** Exact W^T op W maps, evaluated with bounded spin-factor panels. */
+enum class ProductMap {
+  Orbital, InverseOrbital, AdjointOrbital, InverseAdjointOrbital,
+  IdentityHamiltonian, IdentityDiagonalInverse, InverseMetric,
+  InverseOrbitalDiagonalInverseAdjointOrbital
+};
+
 /** Exact GPU H/M action in the original selected VB structure coordinates.
  * The sparse incidence and elementary orbital transformations are borrowed
  * from the CPU mathematical representation and uploaded once. Numerical
@@ -36,8 +43,6 @@ class StructureAction {
   vb::StructureActionResult apply(
       const Eigen::Ref<const Eigen::MatrixXd>& vectors) const;
   int size() const noexcept;
-  double graph_build_seconds() const noexcept;
-  std::size_t graph_nodes() const noexcept;
   int n_structures() const noexcept { return size(); }
   /** Frozen source-point CPU diagnostic only; dynamic device solvers use
    * diagonal_model() and must never use this after a frame/integral update.
@@ -56,8 +61,8 @@ class StructureAction {
    */
   void build_selected_metric(linalg::MatrixView overlap) const;
   std::uint64_t version() const noexcept;
-  /** Return idle action workspaces to the stream-ordered pool when a FULL
-   * temporary carrier cannot fit. Immutable topology and point-owned images
+  /** Return idle action workspaces to the stream-ordered pool for bounded
+   * temporary panels. Immutable topology and point-owned images
    * remain resident.
    */
   void reserve_workspace(std::size_t bytes) const;
@@ -84,25 +89,14 @@ class StructureAction {
   std::int64_t n_product_groups() const noexcept;
   int n_alpha_strings() const noexcept;
   int n_beta_strings() const noexcept;
-  /** @brief Exact sparse structure/product maps, without orbital transforms. */
-  void expand_spin(linalg::ConstMatrixView structures, linalg::MatrixView carrier) const;
-  void contract_spin(linalg::ConstMatrixView carrier, linalg::MatrixView structures) const;
-  /** @brief In-place orbital maps on packed alpha-by-(beta*RHS) panels. */
-  void apply_orbital_transform(linalg::MatrixView carrier) const;
-  void apply_inverse_orbital_transform(linalg::MatrixView carrier) const;
-  void apply_inverse_adjoint_orbital_transform(linalg::MatrixView carrier) const;
-  void apply_adjoint_orbital_transform(linalg::MatrixView carrier) const;
-  void apply_carrier_hamiltonian(linalg::ConstMatrixView carrier,
-                                linalg::MatrixView image) const;
-  bool has_carrier_diagonal() const noexcept;
   /** Maximum orthogonal-carrier amplitude of a structure response.
    * Matches direct-CI CIAH clipping using bounded source-factor panels.
    * Caller must select the intended orbital frame first.
    */
   double maximum_orthogonal_component(linalg::ConstMatrixView structure) const;
-  /** @brief Production FULL diagonal inverse; energies is a 1-by-RHS device view. */
-  void divide_carrier_diagonal(linalg::MatrixView carrier,
-      linalg::ConstMatrixView energies, double eigenvalue) const;
+  /** FULL-coordinate boundary and orthogonal CI maps without full carriers. */
+  void apply_full_structure_map(ProductMap map,linalg::ConstMatrixView source,
+      linalg::MatrixView image,linalg::ConstMatrixView energies={},double eigenvalue=0) const;
 
  private:
   struct Impl;

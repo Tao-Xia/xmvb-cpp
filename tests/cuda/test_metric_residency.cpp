@@ -63,18 +63,12 @@ void check_full_constructor_residency() {
   seed(0,0)=1.0;
   xmvb::cuda::copy_to_device(context,vector.view(),seed);
   action.apply(vector.view(),hamiltonian.view(),metric.view());
-  if (action.graph_nodes()==0)
-    throw std::runtime_error("FULL pressure fixture did not capture an action graph");
   Eigen::MatrixXd first_h(3,1),first_m(3,1),second_h(3,1),second_m(3,1);
   xmvb::cuda::copy_to_host(context,first_h,hamiltonian.view());
   xmvb::cuda::copy_to_host(context,first_m,metric.view());
   const auto available=context.available_device_bytes();
   action.reserve_workspace(available);
-  if (action.graph_nodes()==0)
-    throw std::runtime_error("FULL reserve evicted a fitting action graph");
   action.reserve_workspace(available+1);
-  if (action.graph_nodes()!=0 || context.available_device_bytes()<=available)
-    throw std::runtime_error("FULL reserve retained an idle action graph under pressure");
   action.apply(vector.view(),hamiltonian.view(),metric.view());
   xmvb::cuda::copy_to_host(context,second_h,hamiltonian.view());
   xmvb::cuda::copy_to_host(context,second_m,metric.view());

@@ -10,13 +10,14 @@
 #include <cstdio>
 #include <cstdlib>
 #include <initializer_list>
+#include <list>
 #include <cusparse.h>
 #include <nvtx3/nvtx3.hpp>
 
 #include "cuda/linalg/blas.hpp"
 #include "mcscf/ci/column_cache.hpp"
 #include "mcscf/ci/product_support.hpp"
-#include "vbscf/structures/assembly/column_tiles.hpp"
+#include "cuda/vb/panel.hpp"
 
 namespace xmvb::cuda {
 namespace {
@@ -160,25 +161,6 @@ __global__ void contract_groups(ProductIncidence incidence,int begin,int count,
   }
 }
 
-/** The same sparse incidence used by the panel generator, in ordered form. */
-__global__ void ordered_products(ProductIncidence incidence,const int* aa,
-    const int* bb,int groups,linalg::ConstMatrixView source,
-    linalg::MatrixView image,bool adjoint) {
-  for (auto g=static_cast<std::size_t>(blockIdx.x)*blockDim.x+threadIdx.x;
-       g<groups;g+=static_cast<std::size_t>(gridDim.x)*blockDim.x) {
-    if (adjoint) {
-      const double value=source.data[aa[g]+source.ld*bb[g]];
-      for (auto t=incidence.offsets[g];t<incidence.offsets[g+1];++t)
-        atomicAdd(image.data+incidence.structures[t],incidence.weights[t]*value);
-    } else {
-      double value=0.0;
-      for (auto t=incidence.offsets[g];t<incidence.offsets[g+1];++t)
-        value+=incidence.weights[t]*source.data[incidence.structures[t]];
-      image.data[aa[g]+image.ld*bb[g]]=value;
-    }
-  }
-}
-
 void add(Context& c,linalg::MatrixView target,linalg::ConstMatrixView source,double scale=1.0) {
   if (target.ld==target.rows && source.ld==source.rows) {
     check_cublas(cublasDaxpy(c.blas(),blas_int(target.rows*target.cols),&scale,
@@ -254,7 +236,9 @@ struct ProductSymbolic {
   ProductSymbolic(Context& ctx,const vb::StructureAction::OrthogonalView& view,
       int alpha_dimension,int beta_dimension,const mcscf::ProductSupport* exact_support)
       :c(ctx),alpha(alpha_dimension),beta(beta_dimension),groups(view.products.size()),
-       support(exact_support),patterns(beta) {
+       support(exact_support),patterns(std::max(beta,0)) {
+    if (alpha<=0 || beta<=0)
+      throw std::invalid_argument("product dimensions must be positive");
     if (support) reachable=support->columns();
     else {reachable.resize(beta);std::iota(reachable.begin(),reachable.end(),0);}
     std::vector<int> offsets(alpha+1,0),aa(groups),bb(groups);
@@ -313,22 +297,36 @@ struct ProductContraction::Impl {
   const ExteriorTransform& alpha_transform;
   const ExteriorTransform& beta_transform;
   int alpha,beta,groups,factor_extent=0,mask_extent=0;
-  std::size_t beta_shears;
   const mcscf::ProductSupport* support;
   std::shared_ptr<ProductSymbolic> symbolic;
   cusparseHandle_t sparse=nullptr;
   std::unique_ptr<mcscf::ColumnCache<Factors>> factor_cache;
   std::unique_ptr<mcscf::ColumnCache<SupportMask>> mask_cache;
+  struct ReadGroup {int id,offset,count;};
+  struct ReadPlan {
+    int extent=0;
+    std::vector<int> betas,rows;
+    std::vector<ReadGroup> groups;
+    Buffer<int> indices;
+    bool complete=false;
+    std::size_t bytes() const noexcept {
+      return (betas.size()+rows.size()+indices.size())*sizeof(int)+
+          groups.size()*sizeof(ReadGroup);
+    }
+  };
+  // Exact request indices only. No borrowed numerical panel or sigma graph is
+  // retained; the LRU is capped by the current sweep's metadata allowance.
+  std::list<ReadPlan> read_plans;
+  std::size_t read_plan_bytes=0;
 
   Impl(Context& ctx,const vb::StructureAction::OrthogonalView& view,
       const ExteriorTransform& a,const ExteriorTransform& b,const mcscf::ProductSupport* exact_support)
-      :Impl(ctx,a,b,std::make_shared<ProductSymbolic>(ctx,view,a.dimension(),b.dimension(),exact_support),
-          view.beta.shear_pair_count()) {}
+      :Impl(ctx,a,b,std::make_shared<ProductSymbolic>(ctx,view,a.dimension(),b.dimension(),exact_support)) {}
 
   Impl(Context& ctx,const ExteriorTransform& a,const ExteriorTransform& b,
-      std::shared_ptr<ProductSymbolic> shared,std::size_t shears)
+      std::shared_ptr<ProductSymbolic> shared)
       :c(ctx),alpha_transform(a),beta_transform(b),alpha(shared->alpha),beta(shared->beta),
-       groups(shared->groups),beta_shears(shears),support(shared->support),symbolic(std::move(shared)) {
+       groups(shared->groups),support(shared->support),symbolic(std::move(shared)) {
     if (&symbolic->c!=&c || a.dimension()!=alpha || b.dimension()!=beta)
       throw std::invalid_argument("product symbolic support does not match executor frame");
     sparse_check(cusparseCreate(&sparse),"create product contraction sparse handle");
@@ -414,6 +412,15 @@ struct ProductContraction::Impl {
         incidence,source,f.offsets.data(),f.indices.data(),f.values.data(),values);
   }
 
+  // CPU's cooperative panel width, constrained by the current device budget.
+  // A one-column beta space is indivisible; otherwise no panel spans beta.
+  int panel_extent(std::size_t allowance) const {
+    const auto row_bytes=sizeof(double)*(12ULL*alpha+8ULL*beta);
+    return static_cast<int>(std::max<std::size_t>(1,std::min<std::size_t>(
+        {beta>1 ? static_cast<std::size_t>(beta-1):std::size_t{1},
+            static_cast<std::size_t>(product_panel_width()),allowance/row_bytes})));
+  }
+
   ProductJet jet(ProductIncidence incidence,const DirectCiSigma& sigma,
       ProductEndpoint& endpoint,linalg::ConstMatrixView upper,
       linalg::ConstMatrixView response,linalg::ConstMatrixView delta_upper,
@@ -422,7 +429,12 @@ struct ProductContraction::Impl {
     const nvtx3::scoped_range range{"vb.product_jet"};
     const bool tangent=response.data || delta_upper.data || delta_sigma;
     const bool joint=ci!=nullptr;
-    const bool cached=tangent && endpoint.images && endpoint.images->complete();
+    // Reusing an accepted endpoint must not override the current panel bound.
+    // A smaller workspace simply recomputes the requested source panels.
+    const auto quarter=std::max<std::size_t>(1,bytes/5);
+    const int extent=panel_extent(quarter);
+    const bool cached=tangent && endpoint.images && endpoint.images->complete() &&
+        endpoint.extent==extent;
     const nvtx3::scoped_range cache_range{cached ? "vb.jet.cached":"vb.jet.uncached"};
     if (cached && delta_upper.data && !relative_direction.data)
       throw std::invalid_argument("cached product jet requires its relative frame direction");
@@ -443,11 +455,8 @@ struct ProductContraction::Impl {
     if (joint) *ci=make_result();
     // CPU input/output/sigma owners plus bounded reverse/factor panels.
     // Device index mirrors also count against this process-wide allowance.
-    const auto quarter=std::max<std::size_t>(1,bytes/5);
     const int width=tangent ? (joint ? 3:2):1;
     const int input_width=cached ? width-1:width;
-    const auto row_bytes=sizeof(double)*(12ULL*alpha+8ULL*beta);
-    const int extent=cached ? endpoint.extent:std::max<std::size_t>(1,std::min<std::size_t>(beta,quarter/row_bytes));
     const int panels=(beta+extent-1)/extent;
     // Host-only diagnostics: no device synchronization or numerical changes.
     const bool audit=std::getenv("CUVB_PANEL_AUDIT")!=nullptr;
@@ -464,10 +473,6 @@ struct ProductContraction::Impl {
     };
     std::vector<bool> reachable_panel(panels,false);
     for (int b:symbolic->reachable) reachable_panel[b/extent]=true;
-    int sampled_beta=0;
-    for (int id=0;id<panels;++id) if (reachable_panel[id]) sampled_beta+=selected(id).size();
-    const bool ordered_beta=vb::detail::prefer_ordered_beta(groups,alpha,beta,beta_shears,sampled_beta);
-    const auto products=static_cast<std::size_t>(alpha)*beta;
     symbolic->prepare_patterns(quarter/4);
     // The fixed-point beta rows and the directional beta rows follow exactly
     // the CPU ColumnPanels lifetime; no product-sized factor is introduced.
@@ -496,45 +501,6 @@ struct ProductContraction::Impl {
         linalg::MatrixView values) {
       generate_source(incidence,source,f,values);
     };
-    // CPU's ordered source map is a temporary alternative to G-by-row-panel
-    // contraction, not an endpoint. Both orders have the same exact support.
-    Matrix<double> resident_y,resident_dy,resident_q;
-    const bool resident_input=ordered_beta && products<=quarter/
-        (2*sizeof(double)*(input_width+(delta_upper.data && !cached ? 2:0)));
-    const auto expand=[&](linalg::ConstMatrixView source,Matrix<double>& image) {
-      image=Matrix<double>(c,alpha,beta);clear(c,image.view());
-      if (source.data) ordered_products<<<grid(groups),256,0,c.stream()>>>(
-          incidence,symbolic->raw_alpha.data(),symbolic->raw_beta.data(),groups,source,image.view(),false);
-    };
-    if (resident_input) {
-      if (!cached) {
-        expand(endpoint.coefficients.view(),resident_y);
-        if (tangent) {
-          expand(response,resident_dy);
-          if (delta_upper.data) {
-            alpha_transform.apply_directional_left(da,resident_y.view(),resident_dy.view());
-            // Reuse the existing directional-right implementation via a
-            // pair of transposed temporaries, never retained at the point.
-            Matrix<double> x(c,beta,alpha),dx(c,beta,alpha);
-            const double one=1.0,zero=0.0;
-            const auto transpose=[&](linalg::ConstMatrixView in,linalg::MatrixView out) {
-              check_cublas(cublasDgeam(c.blas(),CUBLAS_OP_T,CUBLAS_OP_T,out.rows,out.cols,
-                  &one,in.data,in.ld,&zero,in.data,in.ld,out.data,out.ld),"ordered source transpose");
-            };
-            transpose(resident_y.view(),x.view());transpose(resident_dy.view(),dx.view());
-            beta_transform.apply_directional_left(db,x.view(),dx.view());
-            transpose(x.view(),resident_y.view());transpose(dx.view(),resident_dy.view());
-          } else {
-            alpha_transform.apply_left(resident_y.view());beta_transform.apply_right(resident_y.view());
-            alpha_transform.apply_left(resident_dy.view());beta_transform.apply_right(resident_dy.view());
-          }
-        } else {alpha_transform.apply_left(resident_y.view());beta_transform.apply_right(resident_y.view());}
-      }
-      if (joint || cached) {
-        expand(response,resident_q);
-        alpha_transform.apply_left(resident_q.view());beta_transform.apply_right(resident_q.view());
-      }
-    }
     if (cached && !endpoint.readers) {
       std::vector<const ProductColumns*> accepted(panels,nullptr);
       for (int id=0;id<panels;++id)
@@ -547,7 +513,7 @@ struct ProductContraction::Impl {
     const CiTileReader accepted_r=[&](auto betas,auto rows,linalg::MatrixView values) {
       endpoint.readers->read(1,betas,rows,values);
     };
-    mcscf::ColumnCache<ProductColumns> input(resident_input ? quarter/2:quarter,[&](int id) {
+    mcscf::ColumnCache<ProductColumns> input(quarter,[&](int id) {
       if (audit) {
         ++builds[source_stage];
         if (generations[id]++) ++rebuilds[source_stage];
@@ -559,8 +525,7 @@ struct ProductContraction::Impl {
       const auto values=dense_panel(block,scratch);
       if (cached) {
         auto dy=values.columns(0,count);
-        if (resident_input) copy_panel(dy,resident_q.view().columns(id*extent,count));
-        else {generate(response,factors.get(id),dy);transform(dy,id*extent,count,false);}
+        generate(response,factors.get(id),dy);transform(dy,id*extent,count,false);
         if (joint) copy_panel(values.columns(count,count),dy);
         if (delta_upper.data) {
           Matrix<double> orbital(c,alpha,count);
@@ -568,13 +533,6 @@ struct ProductContraction::Impl {
               relative_direction,orbital.view());
           add(c,dy,orbital.view());
         }
-        if (scratch.data()) block.pack(c,values,false);
-        return block;
-      }
-      if (resident_input) {
-        copy_panel(values.columns(0,count),resident_y.view().columns(id*extent,count));
-        if (tangent) copy_panel(values.columns(count,count),resident_dy.view().columns(id*extent,count));
-        if (joint) copy_panel(values.columns(2*count,count),resident_q.view().columns(id*extent,count));
         if (scratch.data()) block.pack(c,values,false);
         return block;
       }
@@ -600,43 +558,66 @@ struct ProductContraction::Impl {
       if (scratch.data()) block.pack(c,values,false);
       return block;
     },{},[&](int id) {return panel_bytes(selected(id),input_width);});
-    struct ReadGroup {int id,offset,count;};
-    struct ReadPlan {
-      std::vector<int> betas,rows;
-      std::vector<ReadGroup> groups;
-      Buffer<int> indices;
-      bool complete=false;
-    } read_plan;
+    const auto metadata_budget=quarter/8;
+    while (!read_plans.empty() && read_plan_bytes>metadata_budget) {
+      read_plan_bytes-=read_plans.back().bytes();read_plans.pop_back();
+    }
+    ReadPlan temporary_plan;
+    std::size_t read_plan_hits=0,read_plan_uploads=0;
+    const auto get_read_plan=[&](auto betas,auto rows) -> ReadPlan& {
+      const auto matches=[&](const ReadPlan& plan) {
+        return plan.extent==extent && plan.betas.size()==betas.size() &&
+            plan.rows.size()==rows.size() &&
+            std::equal(plan.betas.begin(),plan.betas.end(),betas.begin()) &&
+            std::equal(plan.rows.begin(),plan.rows.end(),rows.begin());
+      };
+      auto found=std::find_if(read_plans.begin(),read_plans.end(),matches);
+      if (found!=read_plans.end()) {
+        ++read_plan_hits;
+        read_plans.splice(read_plans.begin(),read_plans,found);
+        return read_plans.front();
+      }
+      if (matches(temporary_plan)) {++read_plan_hits;return temporary_plan;}
+      // The maximum plan size is linear in requested indices. Evict before
+      // uploading a new plan so repeat calls can reuse its device index map.
+      const auto bound=2*rows.size()*sizeof(int)+
+          betas.size()*(3*sizeof(int)+sizeof(ReadGroup));
+      const bool retain=bound<=metadata_budget;
+      if (retain) while (!read_plans.empty() && read_plan_bytes>metadata_budget-bound) {
+        read_plan_bytes-=read_plans.back().bytes();read_plans.pop_back();
+      }
+      ReadPlan plan;
+      plan.extent=extent;
+      plan.betas.assign(betas.begin(),betas.end());
+      plan.rows.assign(rows.begin(),rows.end());
+      plan.complete=true;
+      std::vector<int> indices(rows.begin(),rows.end());
+      for (int j=0;j<betas.size();++j) {
+        const int b=betas[j];
+        if (b<0 || b>=beta) throw std::out_of_range("invalid product reader beta column");
+        const int id=b/extent;
+        if (!reachable_panel[id]) {plan.complete=false;continue;}
+        const int offset=(indices.size()-rows.size())/2;
+        if (plan.groups.empty() || plan.groups.back().id!=id)
+          plan.groups.push_back({id,offset,0});
+        ++plan.groups.back().count;
+        indices.push_back(b%extent);indices.push_back(j);
+      }
+      plan.indices=upload<int>(c,indices);
+      ++read_plan_uploads;
+      if (!retain) {temporary_plan=std::move(plan);return temporary_plan;}
+      read_plan_bytes+=plan.bytes();
+      read_plans.push_front(std::move(plan));
+      return read_plans.front();
+    };
     const auto reader=[&](int lane) -> CiTileReader {
       if (cached && lane==0) return accepted_y;
       const int input_lane=cached ? lane-1:lane;
       return [&,input_lane](auto betas,auto rows,linalg::MatrixView values) {
         if (betas.empty() || rows.empty()) return;
-        if (read_plan.betas.size()!=betas.size() || read_plan.rows.size()!=rows.size() ||
-            !std::equal(read_plan.betas.begin(),read_plan.betas.end(),betas.begin()) ||
-            !std::equal(read_plan.rows.begin(),read_plan.rows.end(),rows.begin())) {
-          std::vector<int> indices(rows.begin(),rows.end());
-          read_plan.groups.clear();
-          read_plan.complete=true;
-          for (int j=0;j<betas.size();++j) {
-            const int b=betas[j];
-            if (b<0 || b>=beta) throw std::out_of_range("invalid product reader beta column");
-            const int id=b/extent;
-            if (!reachable_panel[id]) {read_plan.complete=false;continue;}
-            const int offset=(indices.size()-rows.size())/2;
-            if (read_plan.groups.empty() || read_plan.groups.back().id!=id)
-              read_plan.groups.push_back({id,offset,0});
-            ++read_plan.groups.back().count;
-            indices.push_back(b%extent);indices.push_back(j);
-          }
-          // Only symbolic request indices are retained. Input cache blocks may
-          // be evicted or rebuilt; their device maps and values are borrowed
-          // afresh below, immediately before each same-stream kernel launch.
-          read_plan.indices=Buffer<int>{};
-          read_plan.indices=upload<int>(c,indices);
-          read_plan.betas.assign(betas.begin(),betas.end());
-          read_plan.rows.assign(rows.begin(),rows.end());
-        }
+        auto& read_plan=get_read_plan(betas,rows);
+        // Input panels can be evicted or rebuilt. Their device maps and
+        // values are borrowed afresh before each same-stream kernel launch.
         // Every requested row is overwritten by the device gather. Clear only
         // when an entire, unreachable beta panel has no reader at all.
         if (!read_plan.complete) clear(c,values);
@@ -654,10 +635,6 @@ struct ProductContraction::Impl {
     };
     const auto y=reader(0),dy=reader(tangent ? 1:0),q=joint ? reader(2):CiTileReader{};
     const int targets=joint ? 4:2;
-    const bool resident_projection=ordered_beta &&
-        products<=quarter/(sizeof(double)*(targets*(delta_upper.data && !cached ? 2:1)+
-            (delta_upper.data && !cached ? 2:0)));
-    std::vector<Matrix<double>> projected(targets),left_projected(targets);
     const std::array<linalg::MatrixView,4> destinations{result.hamiltonian.view(),result.overlap.view(),
         joint ? ci->hamiltonian.view():linalg::MatrixView{},joint ? ci->overlap.view():linalg::MatrixView{}};
     const int group_extent=std::max<std::size_t>(1,std::min<std::size_t>(groups,
@@ -666,7 +643,7 @@ struct ProductContraction::Impl {
       Matrix<double> values;
       std::size_t bytes() const {return values.rows()*values.cols()*sizeof(double);}
     };
-    // Share the reverse-metadata allowance with the persistent reader plans.
+    // Reverse group tiles and reader plans have separate bounded allowances.
     mcscf::ColumnCache<Projection> projections(quarter/(cached ? 8:4),[&](int id) {
       Projection value{Matrix<double>(c,std::min<std::int64_t>(group_extent,groups-id*group_extent),targets)};
       clear(c,value.values.view());return value;
@@ -694,23 +671,6 @@ struct ProductContraction::Impl {
       } else {
         // Input and reverse factors borrow the same immutable support mask.
         transform(values,id*extent,count,true);
-      }
-      if (resident_projection) {
-        for (int lane=0;lane<lanes;++lane) {
-          const int destination=target[lane];
-          if (!projected[destination].data()) {
-            projected[destination]=Matrix<double>(c,alpha,beta);clear(c,projected[destination].view());
-          }
-          add(c,projected[destination].view().columns(id*extent,count),
-              (differentiate ? delta.view():values).columns(lane*count,count));
-          if (differentiate) {
-            if (!left_projected[destination].data()) {
-              left_projected[destination]=Matrix<double>(c,alpha,beta);clear(c,left_projected[destination].view());
-            }
-            add(c,left_projected[destination].view().columns(id*extent,count),values.columns(lane*count,count));
-          }
-        }
-        return;
       }
       const auto& f=factors.get(id);
       for (std::int64_t begin=0;begin<groups;begin+=group_extent) {
@@ -885,31 +845,18 @@ struct ProductContraction::Impl {
       }
     }
     projections.finish();
-    if (resident_projection) for (int k=0;k<targets;++k) if (projected[k].data()) {
-      if (left_projected[k].data()) {
-        Matrix<double> x(c,beta,alpha),dx(c,beta,alpha);
-        const double one=1.0,zero=0.0;
-        const auto transpose=[&](linalg::ConstMatrixView in,linalg::MatrixView out) {
-          check_cublas(cublasDgeam(c.blas(),CUBLAS_OP_T,CUBLAS_OP_T,out.rows,out.cols,
-              &one,in.data,in.ld,&zero,in.data,in.ld,out.data,out.ld),"ordered projection transpose");
-        };
-        transpose(left_projected[k].view(),x.view());transpose(projected[k].view(),dx.view());
-        beta_transform.apply_directional_left(db,x.view(),dx.view(),true);
-        transpose(dx.view(),projected[k].view());
-      } else beta_transform.apply_right(projected[k].view(),true);
-      ordered_products<<<grid(groups),256,0,c.stream()>>>(incidence,symbolic->raw_alpha.data(),symbolic->raw_beta.data(),
-          groups,projected[k].view(),destinations[k],true);
-    }
     if (!selected_only) multiply(c,result.generator.view(),2.0);
     if (tangent && !cached) add_upper(c,result.generator.view(),result.one.view(),-4*endpoint.energy);
     if (joint) {multiply(c,ci->generator.view(),2.0);if (!cached) add_upper(c,ci->generator.view(),ci->one.view(),-4*endpoint.energy);}
     if (audit) {
       std::fprintf(stderr,"panel_audit tangent=%d joint=%d cached=%d resident=%d panels=%d input_evictions=%zu output_evictions=%zu input_peak=%zu\n",
-          tangent,joint,cached,resident_input,panels,input.evictions,output.evictions,input.peak_bytes);
+          tangent,joint,cached,0,panels,input.evictions,output.evictions,input.peak_bytes);
       const char* names[]={"sigma","reverse","terminal"};
       for (int s=0;s<3;++s) std::fprintf(stderr,
           "panel_source stage=%s builds=%zu rebuilds=%zu reads=%zu hits=%zu\n",
           names[s],builds[s],rebuilds[s],reads[s],hits[s]);
+      std::fprintf(stderr,"panel_reader_plan hits=%zu uploads=%zu retained_bytes=%zu\n",
+          read_plan_hits,read_plan_uploads,read_plan_bytes);
     }
     return result;
   }
@@ -923,8 +870,7 @@ struct ProductContraction::Impl {
     if (source.rows!=incidence.size || source.cols!=1 || source.ld<source.rows)
       throw std::invalid_argument("invalid selected product maximum source");
     const auto allowance=std::max<std::size_t>(1,bytes/5);
-    const auto row_bytes=sizeof(double)*(12ULL*alpha+8ULL*beta);
-    const int extent=std::max<std::size_t>(1,std::min<std::size_t>(beta,allowance/row_bytes));
+    const int extent=panel_extent(allowance);
     symbolic->prepare_patterns(allowance/4);
     prepare_factors(extent,allowance/4);
     prepare_masks(extent,allowance/4);
@@ -957,7 +903,7 @@ ProductContraction::ProductContraction(std::unique_ptr<Impl> impl):impl_(std::mo
 ProductContraction::~ProductContraction()=default;
 std::unique_ptr<ProductContraction> ProductContraction::clone() const {
   return std::unique_ptr<ProductContraction>(new ProductContraction(std::make_unique<Impl>(
-      impl_->c,impl_->alpha_transform,impl_->beta_transform,impl_->symbolic,impl_->beta_shears)));
+      impl_->c,impl_->alpha_transform,impl_->beta_transform,impl_->symbolic)));
 }
 void ProductContraction::update_frame() {impl_->factor_cache.reset();}
 void ProductContraction::release_cached_workspace(std::size_t bytes) const {
@@ -965,6 +911,9 @@ void ProductContraction::release_cached_workspace(std::size_t bytes) const {
   while (bytes>p.c.available_device_bytes()) {
     if (p.factor_cache && p.factor_cache->evict_one()) continue;
     if (p.mask_cache && p.mask_cache->evict_one()) continue;
+    if (!p.read_plans.empty()) {
+      p.read_plan_bytes-=p.read_plans.back().bytes();p.read_plans.pop_back();continue;
+    }
     break;
   }
 }

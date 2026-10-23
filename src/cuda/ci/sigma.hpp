@@ -182,6 +182,8 @@ class DirectCiSigma {
    * Output has n_alpha rows and n_beta columns, in apply's product ordering.
    */
   void diagonal(linalg::MatrixView values) const;
+  /** Product diagonal for consecutive beta columns, without a full carrier. */
+  void diagonal_columns(int first_beta,linalg::MatrixView values) const;
 
   /** Rebuilds the resident Hamiltonian channel kernel from device integrals.
    * Uses the constructor's absorbed one-body and normal-ordering convention.

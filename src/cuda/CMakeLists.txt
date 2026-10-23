@@ -31,6 +31,7 @@ add_library(xmvb_cuda
   vb/scf.cu
   vb/ci.cu
   vb/action.cu)
+target_sources(xmvb_cuda PRIVATE vb/full_action.cu vb/panel.cpp)
 target_include_directories(xmvb_cuda PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(xmvb_cuda PUBLIC
   xmvb_linalg xmvb_mcscf xmvb_vbscf

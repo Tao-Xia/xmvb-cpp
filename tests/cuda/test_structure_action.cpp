@@ -175,8 +175,16 @@ void check_product_jet(const xmvb::vb::StructureAction& source,
       require(std::abs(primal_generator(i,j)-base.generator(i,j))<2e-10,
           "product jet primal generator differs from CPU carrier");
   product->accept(accepted,energy);
-  require(accepted.images && accepted.images->complete(),
-      "product jet test did not retain accepted compact cache");
+  if (accepted.images && accepted.images->complete()) {
+    const int beta_strings=source.n_beta_strings();
+    require(accepted.extent>0 && accepted.extent<=beta_strings &&
+        (beta_strings==1 || accepted.extent<beta_strings),
+        "accepted endpoint used a complete beta-width panel");
+    for (int panel=0;panel<accepted.images->size();++panel)
+      require(accepted.images->at(panel).patterns.size()<=
+          static_cast<std::size_t>(accepted.extent),
+          "accepted endpoint panel exceeded its beta width");
+  }
   const double step=2e-6;
   const Oracle plus=reference(c+step*q,upper+step*du);
   const Oracle minus=reference(c-step*q,upper-step*du);
@@ -328,8 +336,6 @@ void check_selected_below_carrier_budget() {
   require(std::abs(gpu.maximum_orthogonal_component(x.view())-
       carrier.cwiseAbs().maxCoeff())<2e-10,
       "small-budget selected maximum differs from explicit transformed carrier");
-  require(gpu.graph_nodes()==0,
-      "small-budget selected test unexpectedly admitted the old full-carrier graph");
   require(context.counters().peak_device_bytes<=budget,
       "small-budget selected action exceeded the device allocation limit");
 }
@@ -484,7 +490,6 @@ void check_action(int count, bool transformed,bool covalent=false,bool broad=fal
   const xmvb::cuda::StructureAction gpu(context,cpu);
   require(gpu.carrier_sigma().exchange_parity()==cpu.orthogonal_view().exchange_parity,
       "CUDA structure action lost the common spin-exchange certificate");
-  require(gpu.graph_nodes()==0,"topology eagerly prepared numerical sigma workspace");
   xmvb::cuda::Matrix<double> model_h(context,count,1),model_m(context,count,1);
   gpu.diagonal_model(model_h.view(),model_m.view());
   Eigen::MatrixXd self_h(count,1),self_m(count,1);

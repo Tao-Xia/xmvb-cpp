@@ -35,9 +35,7 @@ def summarize(baseline, current, previous_root=None):
                        gpu_peak_payload_bytes=gpu["gpu_peak_device_bytes"],
                        gpu_previous_peak_payload_bytes=previous["gpu_peak_device_bytes"],
                        gpu_sampled_process_peak_gib=process_gpu_peak_gib(
-                           current / case / "gpu_samples.csv",gpu["process_id"]),
-                       gpu_graph_build_seconds=gpu.get("gpu_graph_build_seconds"),
-                       gpu_graph_nodes=gpu.get("gpu_graph_nodes"))
+                           current / case / "gpu_samples.csv",gpu["process_id"]))
             for key, value in cpu.items():
                 if key.startswith(prefix + "cpu_phase_"):
                     row[key.removeprefix(prefix)] = value

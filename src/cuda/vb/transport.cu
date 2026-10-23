@@ -1,7 +1,6 @@
 #include "cuda/vb/transport.hpp"
 
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <limits>
 #include <sstream>
@@ -17,7 +16,7 @@
 #include "cuda/vb/action.hpp"
 #include "cuda/vb/metric.hpp"
 #include "cuda/vb/transform.hpp"
-#include "parallel/openmp.hpp"
+#include "cuda/vb/panel.hpp"
 
 namespace xmvb::cuda {
 namespace {
@@ -92,38 +91,8 @@ __global__ void jacobi_kernel(double* image, const double* residual,
   if (index < size) image[index] = residual[index]/diagonal[index];
 }
 
-__global__ void transpose_carrier(linalg::ConstMatrixView input,
-    linalg::MatrixView output,std::int64_t elements) {
-  for (auto index=static_cast<std::int64_t>(blockIdx.x)*blockDim.x+threadIdx.x;
-       index<elements;index+=static_cast<std::int64_t>(gridDim.x)*blockDim.x) {
-    const auto row=index%input.rows,column=index/input.rows;
-    output.data[column+output.ld*row]=input.data[row+input.ld*column];
-  }
-}
-
 unsigned int source_grid(std::int64_t size) {
   return static_cast<unsigned int>(std::min<std::int64_t>(65535,(size+255)/256));
-}
-
-void transpose(Context& context,linalg::ConstMatrixView input,linalg::MatrixView output) {
-  if (input.rows!=output.cols || input.cols!=output.rows ||
-      input.ld<input.rows || output.ld<output.rows || !input.data || !output.data ||
-      input.data==output.data)
-    throw std::invalid_argument("invalid transport carrier transpose");
-  transpose_carrier<<<source_grid(input.rows*input.cols),256,0,context.stream()>>>(
-      input,output,input.rows*input.cols);
-  check_cuda(cudaGetLastError(),"transport carrier transpose");
-}
-
-void directional_right(Context& context,const ExteriorTransform& transform,
-    const ExteriorDirection& direction,linalg::MatrixView primal,
-    linalg::MatrixView tangent,linalg::MatrixView transpose_primal,
-    linalg::MatrixView transpose_tangent,bool adjoint=false) {
-  transpose(context,primal,transpose_primal);
-  transpose(context,tangent,transpose_tangent);
-  transform.apply_directional_left(direction,transpose_primal,transpose_tangent,adjoint);
-  transpose(context,transpose_primal,primal);
-  transpose(context,transpose_tangent,tangent);
 }
 
 constexpr int moment_threads=256;
@@ -284,24 +253,15 @@ struct FramePair {
 
 }  // namespace
 
-SelectedCrossOverlap::SelectedCrossOverlap(Context& context,
-                                           StructureAction& action,
-                                           int active_orbitals,
-                                           ExactMetricInverse exact_inverse,
-                                           MetricPreconditioner preconditioner)
-    : context_(&context), action_(&action), structures_(action.size()),
-      alpha_(action.n_alpha_strings()), beta_(action.n_beta_strings()),
-      active_(active_orbitals), groups_(blas_int(action.n_product_groups())),
+StructureSourceFactors::StructureSourceFactors(Context& context,
+    const StructureAction& action)
+    : context_(&context),action_(&action),structures_(action.size()),
+      alpha_(action.n_alpha_strings()),beta_(action.n_beta_strings()),
+      groups_(blas_int(action.n_product_groups())),
       source_groups_(context,groups_),source_offsets_device_(context,beta_+1),
-      alpha_offsets_device_(context,alpha_+1),
-      diagonal_(context, action.size()),
-      diagonal_h_scratch_(context,action.size(),1),
-      exact_inverse_(std::move(exact_inverse)),
-      preconditioner_(std::move(preconditioner)) {
-  if (structures_ <= 0 || alpha_ <= 0 || beta_ <= 0 || active_ <= 0 || groups_ <= 0)
-    throw std::invalid_argument("invalid selected cross-overlap dimensions");
-  check_cublas(cublasSetPointerMode(context.blas(), CUBLAS_POINTER_MODE_HOST),
-               "transport cuBLAS pointer mode");
+      alpha_offsets_device_(context,alpha_+1) {
+  if (structures_ <= 0 || alpha_ <= 0 || beta_ <= 0 || groups_ <= 0)
+    throw std::invalid_argument("invalid selected source dimensions");
   const auto view=action.orthogonal_view();
   if (view.products.size()!=static_cast<std::size_t>(groups_))
     throw std::invalid_argument("transport source topology mismatch");
@@ -337,6 +297,24 @@ SelectedCrossOverlap::SelectedCrossOverlap(Context& context,
     context.copy_to_device(source_groups_.data(),groups.data(),groups.size()*sizeof(int));
 }
 
+SelectedCrossOverlap::SelectedCrossOverlap(Context& context,
+                                           StructureAction& action,
+                                           int active_orbitals,
+                                           ExactMetricInverse exact_inverse,
+                                           MetricPreconditioner preconditioner)
+    : context_(&context), action_(&action), structures_(action.size()),
+      alpha_(action.n_alpha_strings()), beta_(action.n_beta_strings()),
+      active_(active_orbitals), sources_(context,action),
+      diagonal_(context, action.size()),
+      diagonal_h_scratch_(context,action.size(),1),
+      exact_inverse_(std::move(exact_inverse)),
+      preconditioner_(std::move(preconditioner)) {
+  if (active_<=0)
+    throw std::invalid_argument("invalid selected cross-overlap dimensions");
+  check_cublas(cublasSetPointerMode(context.blas(), CUBLAS_POINTER_MODE_HOST),
+               "transport cuBLAS pointer mode");
+}
+
 void SelectedCrossOverlap::check_frame(linalg::ConstMatrixView frame) const {
   if (frame.rows != active_ || frame.cols != active_ ||
       frame.ld < active_ || frame.data == nullptr)
@@ -359,70 +337,32 @@ void SelectedCrossOverlap::check_gradient(linalg::MatrixView matrix) const {
     throw std::invalid_argument("invalid transport frame gradient");
 }
 
-bool SelectedCrossOverlap::use_product_overlap(int images,bool moments) const {
-  if (images<=0) throw std::invalid_argument("invalid transport resident image count");
-  const auto budget=context_->device_byte_budget();
-  const auto resident=context_->counters().current_device_bytes;
-  if (resident>budget)
-    throw std::runtime_error("transport resident accounting exceeds budget");
-  std::size_t free=0,total=0;
-  check_cuda(cudaMemGetInfo(&free,&total),"query transport resident memory");
-  std::size_t available=std::min(budget-resident,free);
-  if (moments) {
-    // generator_moments stores at most one double2 per orbital channel and
-    // beta column; reserve that temporary before certifying the carriers.
-    const auto channels=static_cast<std::size_t>(active_)*(active_+1)/2;
-    const auto scratch=channels*static_cast<std::size_t>(beta_)*sizeof(double2)+
-        static_cast<std::size_t>(active_)*active_*sizeof(double);
-    if (scratch>available) return false;
-    available-=scratch;
-  }
-  const auto products=static_cast<std::size_t>(alpha_)*beta_;
-  if (products>available/(static_cast<std::size_t>(images)*sizeof(double)))
-    return false;
-  if (static_cast<std::size_t>(groups_)==products) return true;
-  const auto& view=action_->orthogonal_view();
-  const double a=alpha_,b=beta_,r=source_columns_.size();
-  const double sa=view.alpha.shear_pair_count(),sb=view.beta.shear_pair_count();
-  const double product=2*(sa*b+sb*a)+4*a*b;
-  const double factor=2*(sa+sb)*r+2*(a+b)*r+groups_*r;
-  return product<=factor;
-}
-
-void SelectedCrossOverlap::physical_carrier(linalg::ConstMatrixView coefficients,
-    const ExteriorTransform& alpha,const ExteriorTransform& beta,
-    linalg::MatrixView carrier) const {
-  check_structure(coefficients);
-  action_->expand_spin(coefficients,carrier);
-  alpha.apply_left(carrier);
-  beta.apply_right(carrier);
-}
-
-int SelectedCrossOverlap::source_extent() const {
-  const auto& counters=context_->counters();
-  const auto budget=context_->device_byte_budget();
-  if (counters.current_device_bytes>budget)
-    throw std::runtime_error("transport accounting exceeds device budget");
-  std::size_t free=0,total=0;
-  check_cuda(cudaMemGetInfo(&free,&total),"query transport panel memory");
+int StructureSourceFactors::source_extent() const {
   const auto bytes=16ULL*sizeof(double)*
       (static_cast<std::size_t>(alpha_)+beta_);
-  const auto available=std::min(budget-counters.current_device_bytes,free);
+  const auto available=context_->available_device_bytes();
+  // Keep every factor panel narrower than the beta dimension when possible,
+  // even when the device budget could hold all touched source columns.
   const auto width=std::min<std::size_t>({
-      static_cast<std::size_t>(8)*effective_openmp_thread_count(),
-      source_columns_.size(),available/bytes});
+      static_cast<std::size_t>(product_panel_width()),
+      source_columns_.size(),static_cast<std::size_t>(std::max(1,beta_-1)),
+      available/bytes});
   if (!width)
     throw std::length_error("transport cannot hold one factor-seed column");
   return static_cast<int>(width);
 }
 
-void SelectedCrossOverlap::load_sources(int begin,int count,
+void StructureSourceFactors::load(int begin,int count,
     linalg::ConstMatrixView coefficients,linalg::MatrixView alpha,
     linalg::MatrixView beta) const {
-  check_structure(coefficients);
-  if (begin<0 || count<=0 || begin+count>static_cast<int>(source_columns_.size()) ||
+  if (coefficients.rows!=structures_ || coefficients.cols!=1 ||
+      coefficients.ld<structures_ || !coefficients.data)
+    throw std::invalid_argument("invalid selected source coefficients");
+  if (begin<0 || count<=0 || count>std::max(1,beta_-1) ||
+      begin+count>static_cast<int>(source_columns_.size()) ||
       alpha.rows!=alpha_ || alpha.cols!=count ||
-      beta.rows!=beta_ || beta.cols!=count)
+      beta.rows!=beta_ || beta.cols!=count ||
+      alpha.ld<alpha_ || beta.ld<beta_ || !alpha.data || !beta.data)
     throw std::invalid_argument("invalid transport source panel");
   zero(*context_,alpha);zero(*context_,beta);
   source_alpha<<<source_grid(count),256,0,context_->stream()>>>(
@@ -433,10 +373,13 @@ void SelectedCrossOverlap::load_sources(int begin,int count,
   check_cuda(cudaGetLastError(),"transport source panel");
 }
 
-void SelectedCrossOverlap::contract_source(linalg::ConstMatrixView alpha,
+void StructureSourceFactors::contract(linalg::ConstMatrixView alpha,
     linalg::ConstMatrixView beta,linalg::MatrixView image) const {
-  if (alpha.rows!=alpha_ || alpha.cols<=0 || beta.rows!=beta_ ||
-      beta.cols!=alpha.cols)
+  if (alpha.rows!=alpha_ || alpha.cols<=0 ||
+      alpha.cols>std::max(1,beta_-1) || beta.rows!=beta_ ||
+      beta.cols!=alpha.cols || alpha.ld<alpha_ || beta.ld<beta_ ||
+      image.rows!=structures_ || image.cols!=1 || image.ld<structures_ ||
+      !alpha.data || !beta.data || !image.data)
     throw std::invalid_argument("invalid transport contraction panels");
   source_contract<<<source_grid(groups_),256,0,context_->stream()>>>(
       action_->product_indices_data(),action_->term_offsets_data(),
@@ -459,8 +402,9 @@ void SelectedCrossOverlap::seeds(const ExteriorTransform& alpha_map,
   source_seed_rows<<<grid,32,0,context_->stream()>>>(
       action_->product_indices_data(),action_->term_offsets_data(),
       action_->term_structures_data(),action_->term_weights_data(),
-      coefficients.data,alpha_offsets_device_.data(),source_offsets_device_.data(),
-      source_groups_.data(),alpha_,beta_,
+      coefficients.data,sources_.alpha_offsets_device_.data(),
+      sources_.source_offsets_device_.data(),sources_.source_groups_.data(),
+      alpha_,beta_,
       alpha_work,beta_work,alpha_seed.data,beta_seed.data);
   check_cuda(cudaGetLastError(),"transport factor seeds");
   alpha_map.apply_left(alpha_seed);
@@ -496,19 +440,10 @@ void SelectedCrossOverlap::apply(linalg::ConstMatrixView left_frame,
   action_->update_frame(right_frame,right_identity);
   FramePair left(*context_,*action_);
   left.update(left_frame);
-  if (use_product_overlap(1)) {
-    Matrix<double> carrier(*context_,alpha_,beta_);
-    physical_carrier(coefficients,action_->alpha_transform(),
-        action_->beta_transform(),carrier.view());
-    left.beta->apply_right(carrier.view(),true);
-    left.alpha.apply_left(carrier.view(),true);
-    action_->contract_spin(carrier.view(),image);
-    return;
-  }
   const int extent=source_extent();
   Matrix<double> a(*context_,alpha_,extent),b(*context_,beta_,extent);
-  for (int begin=0;begin<static_cast<int>(source_columns_.size());begin+=extent) {
-    const int count=std::min<int>(extent,static_cast<int>(source_columns_.size())-begin);
+  for (int begin=0;begin<source_count();begin+=extent) {
+    const int count=std::min(extent,source_count()-begin);
     auto av=a.view().columns(0,count),bv=b.view().columns(0,count);
     load_sources(begin,count,coefficients,av,bv);
     action_->alpha_transform().apply_left(av);
@@ -535,26 +470,11 @@ void SelectedCrossOverlap::apply_direction(linalg::ConstMatrixView left_frame,
   auto rb=action_->beta_transform().direction(right_frame,right_direction);
   auto la=left.alpha.direction(left_frame,left_direction);
   auto lb=left.beta->direction(left_frame,left_direction);
-  if (use_product_overlap(4)) {
-    Matrix<double> carrier(*context_,alpha_,beta_),tangent(*context_,alpha_,beta_);
-    Matrix<double> scratch_a(*context_,alpha_,beta_),scratch_b(*context_,alpha_,beta_);
-    auto x=carrier.view(),dx=tangent.view();
-    auto tx=linalg::MatrixView{scratch_a.data(),beta_,alpha_,beta_};
-    auto tdx=linalg::MatrixView{scratch_b.data(),beta_,alpha_,beta_};
-    action_->expand_spin(coefficients,x);
-    zero(*context_,dx);
-    action_->alpha_transform().apply_directional_left(ra,x,dx);
-    directional_right(*context_,action_->beta_transform(),rb,x,dx,tx,tdx);
-    directional_right(*context_,*left.beta,lb,x,dx,tx,tdx,true);
-    left.alpha.apply_directional_left(la,x,dx,true);
-    action_->contract_spin(dx,image);
-    return;
-  }
   const int extent=source_extent();
   Matrix<double> a(*context_,alpha_,extent),da(*context_,alpha_,extent);
   Matrix<double> b(*context_,beta_,extent),db(*context_,beta_,extent);
-  for (int begin=0;begin<static_cast<int>(source_columns_.size());begin+=extent) {
-    const int count=std::min<int>(extent,static_cast<int>(source_columns_.size())-begin);
+  for (int begin=0;begin<source_count();begin+=extent) {
+    const int count=std::min(extent,source_count()-begin);
     auto av=a.view().columns(0,count),dav=da.view().columns(0,count);
     auto bv=b.view().columns(0,count),dbv=db.view().columns(0,count);
     load_sources(begin,count,coefficients,av,bv);
@@ -593,25 +513,12 @@ void SelectedCrossOverlap::adjoint(linalg::ConstMatrixView left_frame,
   action_->update_frame(right_frame,right_identity);
   FramePair left(*context_,*action_);
   left.update(left_frame);
-  if (use_product_overlap(2,true)) {
-    Matrix<double> l(*context_,alpha_,beta_),r(*context_,alpha_,beta_);
-    physical_carrier(left_coefficients,left.alpha,*left.beta,l.view());
-    physical_carrier(right_coefficients,action_->alpha_transform(),
-        action_->beta_transform(),r.view());
-    const std::array<linalg::ConstMatrixView,1> lefts{r.view()};
-    const std::array<linalg::MatrixView,1> outputs{ml.view()};
-    action_->carrier_sigma().generator_moments(lefts,l.view(),outputs);
-    transpose(*context_,ml.view(),mr.view());
-    pullback(left_frame,ml.view(),left_gradient);
-    pullback(right_frame,mr.view(),right_gradient);
-    return;
-  }
   const int extent=source_extent();
   Matrix<double> u(*context_,alpha_,extent),v(*context_,beta_,extent);
   Matrix<double> za(*context_,alpha_,extent),zb(*context_,beta_,extent);
   Matrix<double> wa(*context_,alpha_,extent),wb(*context_,beta_,extent);
-  for (int begin=0;begin<static_cast<int>(source_columns_.size());begin+=extent) {
-    const int count=std::min<int>(extent,static_cast<int>(source_columns_.size())-begin);
+  for (int begin=0;begin<source_count();begin+=extent) {
+    const int count=std::min(extent,source_count()-begin);
     auto uv=u.view().columns(0,count),vv=v.view().columns(0,count);
     auto zav=za.view().columns(0,count),zbv=zb.view().columns(0,count);
     auto wav=wa.view().columns(0,count),wbv=wb.view().columns(0,count);
@@ -640,30 +547,13 @@ void SelectedCrossOverlap::transport_image(linalg::ConstMatrixView current,
   oa.update(origin);
   auto da=oa.alpha.direction(origin,direction);
   auto db=oa.beta->direction(origin,direction);
-  if (use_product_overlap(4)) {
-    Matrix<double> reference_image(*context_,alpha_,beta_),tangent(*context_,alpha_,beta_);
-    Matrix<double> scratch_a(*context_,alpha_,beta_),scratch_b(*context_,alpha_,beta_);
-    auto x=reference_image.view(),dx=tangent.view();
-    auto tx=linalg::MatrixView{scratch_a.data(),beta_,alpha_,beta_};
-    auto tdx=linalg::MatrixView{scratch_b.data(),beta_,alpha_,beta_};
-    action_->expand_spin(reference,x);
-    zero(*context_,dx);
-    oa.alpha.apply_directional_left(da,x,dx);
-    directional_right(*context_,*oa.beta,db,x,dx,tx,tdx);
-    physical_carrier(base,oa.alpha,*oa.beta,scratch_a.view());
-    axpy(*context_,scratch_a.view(),1.0,dx);
-    action_->beta_transform().apply_right(scratch_a.view(),true);
-    action_->alpha_transform().apply_left(scratch_a.view(),true);
-    action_->contract_spin(scratch_a.view(),image);
-    return;
-  }
   const int extent=source_extent();
   Matrix<double> u(*context_,alpha_,extent),du(*context_,alpha_,extent),
       ub(*context_,alpha_,extent);
   Matrix<double> v(*context_,beta_,extent),dv(*context_,beta_,extent),
       vb(*context_,beta_,extent);
-  for (int begin=0;begin<static_cast<int>(source_columns_.size());begin+=extent) {
-    const int count=std::min<int>(extent,static_cast<int>(source_columns_.size())-begin);
+  for (int begin=0;begin<source_count();begin+=extent) {
+    const int count=std::min(extent,source_count()-begin);
     auto uv=u.view().columns(0,count),duv=du.view().columns(0,count);
     auto ubv=ub.view().columns(0,count);
     auto vv=v.view().columns(0,count),dvv=dv.view().columns(0,count);
@@ -703,42 +593,6 @@ void SelectedCrossOverlap::transport_gradient(linalg::ConstMatrixView current,
   oa.update(origin);
   auto da=oa.alpha.direction(origin,direction);
   auto db=oa.beta->direction(origin,direction);
-  if (use_product_overlap(5,true)) {
-    Matrix<double> left(*context_,alpha_,beta_),current_image(*context_,alpha_,beta_);
-    Matrix<double> origin_image(*context_,alpha_,beta_),target(*context_,alpha_,beta_);
-    Matrix<double> tangent(*context_,alpha_,beta_),moment_tmp(*context_,active_,active_);
-    auto x=origin_image.view(),dx=tangent.view();
-    auto tx=linalg::MatrixView{left.data(),beta_,alpha_,beta_};
-    auto tdx=linalg::MatrixView{current_image.data(),beta_,alpha_,beta_};
-    action_->expand_spin(reference,x);
-    zero(*context_,dx);
-    oa.alpha.apply_directional_left(da,x,dx);
-    directional_right(*context_,*oa.beta,db,x,dx,tx,tdx);
-    physical_carrier(lambda,action_->alpha_transform(),
-        action_->beta_transform(),left.view());
-    physical_carrier(transported,action_->alpha_transform(),
-        action_->beta_transform(),current_image.view());
-    physical_carrier(base,oa.alpha,*oa.beta,target.view());
-    axpy(*context_,target.view(),1.0,tangent.view());
-    axpy(*context_,target.view(),-1.0,current_image.view());
-    const auto& sigma=action_->carrier_sigma();
-    const auto moment=[&](linalg::ConstMatrixView l,linalg::ConstMatrixView r,
-        linalg::MatrixView output) {
-      const std::array<linalg::ConstMatrixView,1> lefts{l};
-      const std::array<linalg::MatrixView,1> outputs{output};
-      sigma.generator_moments(lefts,r,outputs);
-    };
-    moment(target.view(),left.view(),mc.view());
-    moment(left.view(),current_image.view(),moment_tmp.view());
-    axpy(*context_,mc.view(),-1.0,moment_tmp.view());
-    moment(left.view(),origin_image.view(),mo.view());
-    oa.beta->apply_right(left.view(),true);
-    oa.alpha.apply_left(left.view(),true);
-    action_->contract_spin(left.view(),image);
-    pullback(current,mc.view(),current_gradient);
-    pullback(origin,mo.view(),origin_gradient);
-    return;
-  }
   const int extent=source_extent();
   Matrix<double> u(*context_,alpha_,extent),du(*context_,alpha_,extent),
       ub(*context_,alpha_,extent),uc(*context_,alpha_,extent);
@@ -749,8 +603,8 @@ void SelectedCrossOverlap::transport_gradient(linalg::ConstMatrixView current,
   Matrix<double> first_b(*context_,beta_,extent),second_b(*context_,beta_,extent),
       metric_b(*context_,beta_,extent);
   Matrix<double> wa(*context_,alpha_,extent),wb(*context_,beta_,extent);
-  for (int begin=0;begin<static_cast<int>(source_columns_.size());begin+=extent) {
-    const int count=std::min<int>(extent,static_cast<int>(source_columns_.size())-begin);
+  for (int begin=0;begin<source_count();begin+=extent) {
+    const int count=std::min(extent,source_count()-begin);
     auto uv=u.view().columns(0,count),duv=du.view().columns(0,count);
     auto ubv=ub.view().columns(0,count),ucv=uc.view().columns(0,count);
     auto fav=first_a.view().columns(0,count),sav=second_a.view().columns(0,count);
