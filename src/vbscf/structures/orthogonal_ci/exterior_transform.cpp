@@ -50,10 +50,12 @@ double replacement_sign(std::uint64_t source, int removed, int inserted) {
 
 struct ExteriorOrbitalTransform::RowCache {
   struct TrackedRows {
+    workspace::Reservation residency;
     workspace::Temporary temporary;
     std::shared_ptr<const Eigen::MatrixXd> rows;
-    TrackedRows(std::shared_ptr<const Eigen::MatrixXd> value,std::size_t bytes)
-        : temporary(bytes),rows(std::move(value)) {}
+    TrackedRows(std::shared_ptr<const Eigen::MatrixXd> value,std::size_t bytes,
+        workspace::Reservation reservation)
+        : residency(std::move(reservation)),temporary(bytes),rows(std::move(value)) {}
   };
   struct Entry {
     std::uint64_t key = 0;
@@ -81,8 +83,10 @@ struct ExteriorOrbitalTransform::RowCache {
       std::shared_ptr<const Eigen::MatrixXd> rows) {
     constexpr std::size_t budget=64ULL*1024*1024;
     const std::size_t bytes=sizeof(double)*rows->size();
+    workspace::Reservation residency;
+    if (!residency.try_resize(bytes)) return rows;
     const auto* data=rows.get();
-    auto owner=std::make_shared<TrackedRows>(std::move(rows),bytes);
+    auto owner=std::make_shared<TrackedRows>(std::move(rows),bytes,std::move(residency));
     std::shared_ptr<const Eigen::MatrixXd> tracked(owner,data);
     if (bytes>budget) return tracked;
     std::lock_guard lock(mutex);

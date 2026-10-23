@@ -10,6 +10,7 @@
 #include "core/timing.hpp"
 #include "mcscf/ci/product_support.hpp"
 #include "mcscf/ci/sigma.hpp"
+#include "mcscf/ci/workspace.hpp"
 #include "vbscf/structures/assembly/column_tiles.hpp"
 #include "vbscf/structures/assembly/input_columns.hpp"
 #include "vbscf/structures/orthogonal_ci/exterior_transform.hpp"
@@ -66,6 +67,8 @@ StructureResponseSweep StructureAction::contract_product_tiles(
     const ExteriorOrbitalTransform& alpha_transform,const ExteriorOrbitalTransform& beta_transform,
     const mcscf::DirectCiSigmaAction& sigma,bool overlap_only,std::size_t workspace_bytes,
     bool collect_overlap) const {
+  const mcscf::CiWorkspace operation(workspace_bytes);
+  workspace_bytes=operation.bytes();
   constexpr bool collect_images=true;
   // Opt-in deltas survive an externally bounded diagnostic. Nested phase
   // totals describe call paths; they are not additive stage wall times.
@@ -83,7 +86,8 @@ StructureResponseSweep StructureAction::contract_product_tiles(
       Eigen::MatrixXd{}};
   auto& result=sweep.images;
   // The budget controls residency and RHS batching, never admission to CI.
-  const std::size_t cache_bytes = std::max<std::size_t>(1, workspace_bytes / 4);
+  const std::size_t cache_bytes=std::max<std::size_t>(1,workspace_bytes/4);
+  operation.sigma_budget(cache_bytes);
   const std::size_t pairs = static_cast<std::size_t>(alpha_transform.n_orbitals()) *
       (alpha_transform.n_orbitals() + 1) / 2;
   const std::size_t sigma_vector_bytes = sizeof(double) *
@@ -325,6 +329,7 @@ StructureResponseSweep StructureAction::contract_product_tiles(
       input.prepare(reachable_columns);
     std::vector<int> completed_betas;
     std::vector<ColumnTile> completed_images;
+    std::size_t completed_bytes=0;
     const auto flush_output=[&] {
       if (completed_betas.empty()) return;
       ++result.tiles.hamiltonian_projections;
@@ -343,13 +348,17 @@ StructureResponseSweep StructureAction::contract_product_tiles(
       });
       const auto rows=sample_factors(completed_betas);
       project_pattern(pattern,rows,image,h_products);
-      completed_images.clear(); completed_betas.clear();
+      completed_images.clear(); completed_betas.clear();completed_bytes=0;
     };
     ColumnPanels output(cache_bytes,[&](int beta) -> ColumnTile {
       const auto pattern=pattern_at(beta);
       return {pattern,Eigen::MatrixXd::Zero(pattern->offsets[1],width)};
     },[&](int beta,ColumnTile& tile) {
+      const auto bytes=tile.bytes();
+      if (!completed_images.empty() &&
+          (bytes>cache_bytes || completed_bytes>cache_bytes-bytes)) flush_output();
       completed_betas.push_back(beta);
+      completed_bytes+=bytes;
       completed_images.push_back(std::move(tile));
       if (completed_betas.size()==static_cast<std::size_t>(extent)) flush_output();
     },[&](int beta) {
@@ -444,7 +453,7 @@ StructureResponseSweep StructureAction::contract_product_tiles(
         input.release(beta);
         output.release(beta);
       }
-    },std::max<std::size_t>(1,workspace_bytes/4));
+    },cache_bytes);
     output.finish();
     flush_output();
     // Exchange quotienting may never request some input columns. The overlap

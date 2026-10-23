@@ -10,6 +10,7 @@
 #include "core/timing.hpp"
 #include "mcscf/ci/product_support.hpp"
 #include "mcscf/ci/sigma.hpp"
+#include "mcscf/ci/workspace.hpp"
 #include "vbscf/structures/assembly/column_tiles.hpp"
 #include "vbscf/structures/orthogonal_ci/exterior_transform.hpp"
 
@@ -42,6 +43,7 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
     const ExteriorOrbitalTransform& beta,const mcscf::DirectCiSigmaAction& sigma,
     bool collect_images,StructureIntegralDirection* diagnostic,
     StructureResponseSweep* ci_sweep,const Eigen::MatrixXd* overlap_image) const {
+  const mcscf::CiWorkspace operation;
   const bool joint=ci_sweep!=nullptr;
   if (joint && (!response || !delta_upper || !delta_sigma || !collect_images))
     throw std::invalid_argument("joint product jet requires orbital and CI directions");
@@ -68,6 +70,7 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
   const auto retained_bytes=state.product_images ?
       std::min(state.product_images->budget,total_bytes/4):0;
   const auto work_bytes=(total_bytes-retained_bytes)/4;
+  operation.sigma_budget(work_bytes);
   const auto cache_bytes=state.product_images ?
       std::min(state.product_images->budget,work_bytes):work_bytes;
   const auto projection_bytes=std::min(cache_bytes,work_bytes/4);

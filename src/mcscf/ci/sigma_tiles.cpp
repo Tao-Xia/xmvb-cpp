@@ -1,10 +1,11 @@
 #include "mcscf/ci/sigma.hpp"
+#include "mcscf/ci/workspace.hpp"
+#include "mcscf/ci/scratch.hpp"
 
 #include <algorithm>
 #include <exception>
 #include <limits>
-#include <memory>
-#include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 
@@ -18,76 +19,9 @@
 #include "mcscf/ci/sigma_gather.hpp"
 
 namespace xmvb::mcscf {
-namespace {
+using detail::ChannelWorkspace;
 
-/** @brief Exclusive scratch lease; cache one idle slab, never one per thread.
- * Concurrent or recursive actions still own disjoint buffers. Earlier returns
- * release their buffer while another lease is active, so the idle cache cannot
- * add a slab to the concurrent working set. Only pointer ownership is moved.
- */
-class ChannelWorkspace {
-  struct Storage {
-    workspace::Temporary temporary;
-    std::unique_ptr<double[]> data;
-    std::size_t capacity=0;
-    void swap(Storage& other) noexcept {
-      data.swap(other.data);
-      std::swap(capacity,other.capacity);
-      std::swap(temporary,other.temporary);
-    }
-  };
-  struct Pool {
-    std::mutex mutex;
-    Storage idle;
-    std::size_t active=0;
-  };
-  static Pool& pool() { static Pool shared; return shared; }
-  Storage storage_;
-  std::size_t budget_;
-  bool reused_=false;
-  std::size_t allocations_=0;
 
-public:
-  explicit ChannelWorkspace(std::size_t budget):budget_(budget) {
-    auto& shared=pool();
-    std::lock_guard lock(shared.mutex);
-    ++shared.active;
-    storage_.swap(shared.idle);
-    if (storage_.capacity>budget_/sizeof(double)) {
-      storage_.data.reset();
-      storage_.capacity=0;
-      storage_.temporary.resize(0);
-    }
-    reused_=storage_.capacity!=0;
-  }
-  ~ChannelWorkspace() {
-    auto& shared=pool();
-    std::lock_guard lock(shared.mutex);
-    if (--shared.active==0 && storage_.capacity<=budget_/sizeof(double))
-      storage_.swap(shared.idle);
-  }
-  ChannelWorkspace(const ChannelWorkspace&)=delete;
-  ChannelWorkspace& operator=(const ChannelWorkspace&)=delete;
-
-  void reserve(std::size_t required) {
-    if (required<=storage_.capacity) return;
-    storage_.data.reset();
-    storage_.capacity=0;
-    storage_.temporary.resize(0);
-    const auto capacity=required;
-    storage_.data=std::make_unique_for_overwrite<double[]>(capacity);
-    storage_.capacity=capacity;
-    storage_.temporary.resize(capacity*sizeof(double));
-    ++allocations_;
-  }
-  double* get() const noexcept { return storage_.data.get(); }
-  double& operator[](std::size_t index) const noexcept { return storage_.data[index]; }
-  bool reused() const noexcept { return reused_; }
-  std::size_t allocations() const noexcept { return allocations_; }
-  std::size_t bytes() const noexcept { return storage_.capacity*sizeof(double); }
-};
-
-} // namespace
 
 void DirectCiSigmaAction::apply_tiled(
     int width,
@@ -154,6 +88,14 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
     has_direction=has_direction || direction;
   }
 
+  // Direct kernel callers own one allowance too. Structure actions already
+  // provide a scope and pass this kernel its sigma partition explicitly.
+  std::optional<CiWorkspace> operation;
+  if (!workspace::has_scope()) {
+    operation.emplace(workspace_bytes);
+    workspace_bytes=operation->bytes();
+  }
+
   const auto& beta_graph = beta_connections();
   const int pairs = hamiltonian_pair_kernel_.rows();
   const std::size_t n=n_orbitals_;
@@ -167,6 +109,7 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
   const bool restricted_channels=support && support->has_channel_envelopes() &&
       kernel_bytes<=workspace_bytes/8;
   if (restricted_channels) workspace_bytes-=kernel_bytes;
+  ChannelWorkspace::limit_action(workspace_bytes);
   const detail::ChannelProduct channel_product(hamiltonian_pair_kernel_,n_orbitals_,restricted_channels);
   std::vector<detail::ChannelProduct> directional_products;
   directional_products.reserve(requests.size());
@@ -267,7 +210,7 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
                   (separate_output ? packed_size:0)+channel_size;
               {
                 profiling::ScopedPhase phase(profiling::Phase::CiTileStorage);
-                workspace.reserve(required);
+                workspace.reserve(required,plan.payload_bytes());
               }
               Eigen::Map<Eigen::MatrixXd> input(workspace.get(), n_halo,
                   static_cast<Eigen::Index>(n_columns) * width);

@@ -9,6 +9,7 @@
 #include "parallel/openmp.hpp"
 #include "core/timing.hpp"
 #include "mcscf/ci/factors_internal.hpp"
+#include "mcscf/ci/workspace.hpp"
 
 namespace xmvb::vb {
 
@@ -18,7 +19,8 @@ StructureAction::SourceImageAdjoint StructureAction::project_source_adjoint(
     const mcscf::DirectCiSigmaAction& sigma, const Eigen::MatrixXd* output_generator,
     bool project_output, double residual_energy) const {
   // Image and covector slabs coexist, so partition one budget, not two copies.
-  constexpr std::size_t image_bytes = mcscf::kFactorWorkspaceBytes/2;
+  const mcscf::CiWorkspace operation(mcscf::kFactorWorkspaceBytes,false);
+  const std::size_t image_bytes=operation.bytes()/2;
   mcscf::FactorActionWorkspace workspace(source,sigma.channel_kernel().rows(),
       image_bytes,false,project_output && output_generator ? 2 : 0);
   const int columns = workspace.source_tile()*std::max(1,workspace.channel_tile());

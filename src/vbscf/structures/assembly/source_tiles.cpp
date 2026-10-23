@@ -1,4 +1,5 @@
 #include "vbscf/structures/assembly/action.hpp"
+#include "mcscf/ci/workspace.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -70,6 +71,8 @@ StructureActionResult StructureAction::apply_source_columns(int width,
     const ExteriorOrbitalTransform& alpha, const ExteriorOrbitalTransform& beta,
     const mcscf::DirectCiSigmaAction& sigma, bool overlap_only,
     std::size_t workspace_bytes) const {
+  const mcscf::CiWorkspace operation(workspace_bytes,false);
+  workspace_bytes=operation.bytes();
   const mcscf::SpinFactorSource shape{n_unique_alpha_, n_unique_beta_,
       static_cast<int>(sources_->nodes.size()), {}};
   mcscf::FactorActionWorkspace workspace(shape,sigma.channel_kernel().rows(),workspace_bytes,overlap_only);

@@ -20,6 +20,7 @@
 
 #include "core/pair_index.hpp"
 #include "mcscf/ci/sigma.hpp"
+#include "mcscf/ci/workspace.hpp"
 #include "mcscf/ci/factors.hpp"
 #include "mcscf/ci/product_support.hpp"
 #include "mcscf/ci/sigma_plan.hpp"
@@ -3847,6 +3848,21 @@ int main(int argc, char** argv) {
       // Enough halo scratch for the grouped per-worker Gram, including
       // both exchange parities, multiple RHS and independent HVP adjoints.
       check_supported_sigma(8, 4, 4, 2);
+      {
+        const auto held=xmvb::workspace::retained();
+        const auto available=xmvb::workspace::available();
+        {
+          const xmvb::mcscf::CiWorkspace operation;
+          require(xmvb::workspace::retained()==xmvb::workspace::limit(),
+              "CI action did not reserve its shared allowance");
+          const xmvb::mcscf::CiWorkspace nested(operation.bytes());
+          require(xmvb::workspace::retained()==xmvb::workspace::limit(),
+              "nested CI action spent a second allowance");
+        }
+        require(xmvb::workspace::retained()==held &&
+                xmvb::workspace::available()==available,
+            "idle sigma ownership was not restored after the action");
+      }
       const auto idle_channel_bytes=xmvb::workspace::temporary_bytes();
       check_supported_sigma(8, 4, 4, 2);
       require(xmvb::workspace::temporary_bytes()==idle_channel_bytes,
