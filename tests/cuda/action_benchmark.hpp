@@ -1,10 +1,12 @@
 #pragma once
 
 #include <cuda_profiler_api.h>
+#include <nvtx3/nvtx3.hpp>
 
 #include "core/timing.hpp"
 #include "c12_fixture.hpp"
 #include "cuda/memory/buffer.hpp"
+#include "cuda/vb/product.hpp"
 
 namespace xmvb::cuda::test {
 
@@ -14,6 +16,47 @@ inline Eigen::MatrixXd action_vectors(int rows, int width) {
     for (int i=0;i<rows;++i)
       result(i,j)=std::sin(0.31*(i+1)*(j+2));
   return result;
+}
+
+/** Same-point GPU path comparison; no CPU action or optimizer changes. */
+inline void compare_action_paths(Context& context, const cuda::StructureAction& gpu) {
+  const auto vectors=action_vectors(gpu.n_structures(),1);
+  Matrix<double> x(context,vectors.rows(),1),h(context,vectors.rows(),1),m(context,vectors.rows(),1);
+  copy_to_device(context,x.view(),vectors);
+  Eigen::MatrixXd reference_h(vectors.rows(),1),reference_m(vectors.rows(),1);
+  const auto measure=[&](const char* name,const auto& apply) {
+    context.synchronize();
+    const nvtx3::scoped_range range{name};
+    const auto before=context.counters();
+    const auto start=Clock::now();
+    apply();
+    context.synchronize();
+    const auto after=context.counters();
+    std::cout << name << "_seconds=" << elapsed(start,Clock::now()) << '\n'
+              << name << "_resident_bytes=" << after.current_device_bytes << '\n'
+              << name << "_h2d_bytes=" << after.host_to_device_bytes-before.host_to_device_bytes << '\n';
+  };
+  check_cuda(cudaProfilerStart(),"path profiler start");
+  measure("resident_cold",[&]{gpu.apply(x.view(),h.view(),m.view());});
+  measure("resident_warm",[&]{gpu.apply(x.view(),h.view(),m.view());});
+  copy_to_host(context,reference_h,h.view());copy_to_host(context,reference_m,m.view());
+  // Release the resident graph and its full carriers before the tiled measurement.
+  gpu.reserve_workspace(context.device_byte_budget());
+  auto product=gpu.make_product_contraction();
+  const ProductIncidence incidence{gpu.term_offsets_data(),gpu.term_structures_data(),
+      gpu.term_weights_data(),gpu.n_structures()};
+  const auto selected=[&]{product->apply_selected(incidence,x.view(),gpu.carrier_sigma(),
+      h.view(),m.view(),context.available_device_bytes());};
+  measure("selected_cold",selected);
+  measure("selected_warm",selected);
+  check_cuda(cudaProfilerStop(),"path profiler stop");
+  Eigen::MatrixXd actual_h(vectors.rows(),1),actual_m(vectors.rows(),1);
+  copy_to_host(context,actual_h,h.view());copy_to_host(context,actual_m,m.view());
+  const double he=(actual_h-reference_h).norm()/std::max(1.0,reference_h.norm());
+  const double me=(actual_m-reference_m).norm()/std::max(1.0,reference_m.norm());
+  std::cout << "path_h_relative_error=" << he << '\n' << "path_m_relative_error=" << me << '\n';
+  if (!actual_h.allFinite() || !actual_m.allFinite() || he>2e-9 || me>2e-9)
+    throw std::runtime_error("resident/tiled GPU H/M mismatch");
 }
 
 /** One saved CPU baseline; existing phase scopes may be nested, not additive. */

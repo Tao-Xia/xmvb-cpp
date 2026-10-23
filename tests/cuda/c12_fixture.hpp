@@ -39,7 +39,8 @@ struct C12Fixture {
     const auto after_active = Clock::now();
     const auto& input = loaded.input;
     const int n = input.orbital_preparation_input.n_active_orbitals;
-    if (n != 12) throw std::invalid_argument("C12 fixture requires 12 active orbitals");
+    if (n != 12 && n != 14)
+      throw std::invalid_argument("carbon fixture requires 12 or 14 active orbitals");
     topology = vb::build_orthogonal_spin_topology(
         input.structure_data.alpha(), input.structure_data.beta(), n);
     const auto after_topology = Clock::now();

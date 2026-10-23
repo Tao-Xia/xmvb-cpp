@@ -81,6 +81,7 @@ int main(int argc, char** argv) {
     }
     if (argc != 3 || (std::string(argv[1]) != "--gpu" &&
                       std::string(argv[1]) != "--action" &&
+                      std::string(argv[1]) != "--paths" &&
                       std::string(argv[1]) != "--point" &&
                       std::string(argv[1]) != "--cpu-action" &&
                       std::string(argv[1]) != "--check"))
@@ -105,13 +106,15 @@ int main(int argc, char** argv) {
       xmvb::cuda::test::benchmark_cpu_action(cpu,3);
     } else {
       const auto device_start = Clock::now();
-      xmvb::cuda::Context context(64ULL*1024ULL*1024ULL*1024ULL);
+      xmvb::cuda::Context context;
       xmvb::cuda::StructureAction gpu(context,cpu);
       context.synchronize();
       std::cout << "gpu_action_init_seconds=" << elapsed(device_start,Clock::now()) << '\n';
       std::cout << "gpu_graph_build_seconds=" << gpu.graph_build_seconds() << '\n'
                 << "gpu_graph_nodes=" << gpu.graph_nodes() << '\n';
-      if (mode=="--action") {
+      if (mode=="--paths") {
+        xmvb::cuda::test::compare_action_paths(context,gpu);
+      } else if (mode=="--action") {
         xmvb::cuda::test::benchmark_action(context,gpu,1);
         xmvb::cuda::test::benchmark_action(context,gpu,3);
       } else if (mode=="--check") {
