@@ -34,13 +34,18 @@ class StructureSourceFactors {
   /** Add W^T sum_j alpha_j beta_j^T to the initialized image. */
   void contract(linalg::ConstMatrixView alpha,linalg::ConstMatrixView beta,
                 linalg::MatrixView image) const;
+  /** Add W^T with the raw beta identity columns loaded from [begin,begin+count).
+   * Only groups at those beta sources are visited.
+   */
+  void contract_raw_sources(int begin,linalg::ConstMatrixView alpha,
+                            linalg::MatrixView image) const;
 
  private:
   friend class SelectedCrossOverlap;
   Context* context_;
   const StructureAction* action_;
   int structures_,alpha_,beta_,groups_;
-  std::vector<int> source_columns_;
+  std::vector<int> source_columns_,source_group_counts_;
   Buffer<int> source_groups_,source_columns_device_,source_offsets_device_,
       alpha_offsets_device_;
 };
@@ -146,6 +151,17 @@ class SelectedCrossOverlap {
              linalg::ConstMatrixView alpha,linalg::ConstMatrixView beta,
              linalg::MatrixView alpha_seed,linalg::MatrixView beta_seed,
              linalg::MatrixView alpha_work,linalg::MatrixView beta_work) const;
+  void seeds_three(const ExteriorTransform& alpha_map,
+      const ExteriorTransform& beta_map,linalg::ConstMatrixView coefficients,
+      linalg::ConstMatrixView alpha0,linalg::ConstMatrixView beta0,
+      linalg::ConstMatrixView alpha1,linalg::ConstMatrixView beta1,
+      linalg::ConstMatrixView alpha2,linalg::ConstMatrixView beta2,
+      linalg::MatrixView alpha_seed0,linalg::MatrixView beta_seed0,
+      linalg::MatrixView alpha_seed1,linalg::MatrixView beta_seed1,
+      linalg::MatrixView alpha_seed2,linalg::MatrixView beta_seed2,
+      linalg::MatrixView alpha_work0,linalg::MatrixView beta_work0,
+      linalg::MatrixView alpha_work1,linalg::MatrixView beta_work1,
+      linalg::MatrixView alpha_work2,linalg::MatrixView beta_work2) const;
   void accumulate_moment(const ExteriorTransform& transform,
       linalg::ConstMatrixView seed,linalg::ConstMatrixView image,double scale,
       linalg::MatrixView moment) const;

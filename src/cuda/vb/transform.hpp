@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <span>
 #include <vector>
 
 #include "cuda/memory/buffer.hpp"
@@ -57,6 +58,16 @@ class ExteriorTransform {
   /** Apply it to spin columns in each consecutive RHS block, in place. */
   void apply_right(linalg::MatrixView coefficients, bool adjoint = false,
                    bool inverse = false) const;
+  /** Ordered right action across independent beta-column tiles of one lane.
+   * Tiles have equal alpha row counts and together cover exactly dimension()
+   * columns. A bounded transposed alpha-row stripe is the only numerical work.
+   */
+  void apply_right_tiles(std::span<const linalg::MatrixView> tiles,
+                         bool adjoint=false,bool inverse=false) const;
+  /** Directional counterpart with matching primal and tangent tile layouts. */
+  void apply_directional_right_tiles(const ExteriorDirection& direction,
+      std::span<const linalg::MatrixView> primal,
+      std::span<const linalg::MatrixView> tangent,bool adjoint=false) const;
 
   /** Sample the prepared frame: column j contains T(rows[j],:)^T.
    * Replays the existing ordered adjoint on selected identity columns; no

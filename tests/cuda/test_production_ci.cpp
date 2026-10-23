@@ -1200,6 +1200,118 @@ void check_exterior(int rhs_count,int n=4,int nalpha=2,int nbeta=1) {
           "directional exterior tangent or padding differs from CPU");
     }
   }
+  if (n==4) {
+    const int beta_dim=static_cast<int>(beta.size());
+    const int alpha_dim=static_cast<int>(alpha.size());
+    const std::array<int,3> widths{1,beta_dim-2,1};
+    const Matrix lane=seed.leftCols(beta_dim);
+    const Matrix lane_tangent=0.07*values(alpha_dim,beta_dim,0.82);
+    Matrix dense=Matrix::Identity(beta_dim,beta_dim);
+    cpu_beta.apply_left(&dense);
+
+    std::vector<xmvb::cuda::Matrix<double>> primal_tiles,tangent_tiles;
+    for (int tile=0;tile<3;++tile) {
+      primal_tiles.emplace_back(context,alpha_dim+2+tile,widths[tile]);
+      tangent_tiles.emplace_back(context,alpha_dim+3+tile,widths[tile]);
+    }
+    std::vector<xmvb::linalg::MatrixView> primal_views,tangent_views;
+    for (int tile=0;tile<3;++tile) {
+      primal_views.push_back({primal_tiles[tile].data(),alpha_dim,widths[tile],
+                              primal_tiles[tile].rows()});
+      tangent_views.push_back({tangent_tiles[tile].data(),alpha_dim,widths[tile],
+                               tangent_tiles[tile].rows()});
+    }
+    const auto upload_tiles=[&](const Matrix& full,
+        std::vector<xmvb::cuda::Matrix<double>>& storage,double padding) {
+      int first=0;
+      for (int tile=0;tile<3;++tile) {
+        Matrix panel=Matrix::Constant(storage[tile].rows(),widths[tile],padding);
+        panel.topRows(alpha_dim)=full.middleCols(first,widths[tile]);
+        xmvb::cuda::copy_to_device(context,storage[tile].view(),panel);
+        first+=widths[tile];
+      }
+    };
+    const auto read_tiles=[&](const std::vector<xmvb::cuda::Matrix<double>>& storage,
+        double padding) {
+      Matrix full(alpha_dim,beta_dim);
+      int first=0;
+      for (int tile=0;tile<3;++tile) {
+        const Matrix panel=download(context,storage[tile]);
+        near(panel.bottomRows(panel.rows()-alpha_dim),
+             Matrix::Constant(panel.rows()-alpha_dim,widths[tile],padding),0.0,
+             "CUDA tiled right transform changed padded alpha rows");
+        full.middleCols(first,widths[tile])=panel.topRows(alpha_dim);
+        first+=widths[tile];
+      }
+      return full;
+    };
+
+    upload_tiles(lane,primal_tiles,-11.0);
+    gpu_beta.apply_right_tiles(primal_views);
+    near(read_tiles(primal_tiles,-11.0),Matrix(lane*dense.transpose()),2e-11,
+         "CUDA tiled right transform differs from dense exterior oracle");
+    gpu_beta.apply_right_tiles(primal_views,false,true);
+    near(read_tiles(primal_tiles,-11.0),lane,2e-11,
+         "CUDA tiled inverse right transform did not restore the lane");
+    upload_tiles(lane,primal_tiles,-11.0);
+    gpu_beta.apply_right_tiles(primal_views,true);
+    near(read_tiles(primal_tiles,-11.0),Matrix(lane*dense),2e-11,
+         "CUDA tiled adjoint right transform differs from dense exterior oracle");
+    gpu_beta.apply_right_tiles(primal_views,true,true);
+    near(read_tiles(primal_tiles,-11.0),lane,2e-11,
+         "CUDA tiled inverse adjoint right transform did not restore the lane");
+
+    Matrix delta=Matrix::Zero(n,n);
+    for (int j=0;j<n;++j) for (int i=0;i<=j;++i)
+      delta(i,j)=0.02*std::sin(0.17*(i+1)*(j+2));
+    Matrix dense_direction=Matrix::Identity(beta_dim,beta_dim);
+    Matrix dense_tangent=Matrix::Zero(beta_dim,beta_dim);
+    cpu_beta.apply_directional_left(cpu_beta.direction(delta),
+                                    &dense_direction,&dense_tangent);
+    xmvb::cuda::Matrix<double> upper_device(context,n,n),delta_device(context,n,n);
+    xmvb::cuda::copy_to_device(context,upper_device.view(),upper);
+    xmvb::cuda::copy_to_device(context,delta_device.view(),delta);
+    const auto direction=gpu_beta.direction(upper_device.view(),delta_device.view());
+    for (const bool adjoint:{false,true}) {
+      upload_tiles(lane,primal_tiles,-11.0);
+      upload_tiles(lane_tangent,tangent_tiles,17.0);
+      gpu_beta.apply_directional_right_tiles(direction,primal_views,tangent_views,
+                                             adjoint);
+      const Matrix expected=adjoint ? Matrix(lane*dense_direction):
+          Matrix(lane*dense_direction.transpose());
+      const Matrix expected_tangent=adjoint ?
+          Matrix(lane_tangent*dense_direction+lane*dense_tangent):
+          Matrix(lane_tangent*dense_direction.transpose()+
+                 lane*dense_tangent.transpose());
+      near(read_tiles(primal_tiles,-11.0),expected,3e-11,
+           "CUDA tiled directional right primal differs from dense oracle");
+      near(read_tiles(tangent_tiles,17.0),expected_tangent,3e-11,
+           "CUDA tiled directional right tangent differs from dense oracle");
+    }
+    auto one_row_primal=primal_views;
+    auto one_row_tangent=tangent_views;
+    for (auto& tile:one_row_primal) tile.rows=1;
+    for (auto& tile:one_row_tangent) tile.rows=1;
+    upload_tiles(lane,primal_tiles,-11.0);
+    gpu_beta.apply_right_tiles(one_row_primal);
+    Matrix one_row_expected=lane;
+    one_row_expected.topRows(1)=lane.topRows(1)*dense.transpose();
+    near(read_tiles(primal_tiles,-11.0),one_row_expected,2e-11,
+         "CUDA one-row tiled right transform differs from dense oracle");
+    upload_tiles(lane,primal_tiles,-11.0);
+    upload_tiles(lane_tangent,tangent_tiles,17.0);
+    gpu_beta.apply_directional_right_tiles(direction,one_row_primal,
+                                           one_row_tangent,true);
+    one_row_expected=lane;
+    one_row_expected.topRows(1)=lane.topRows(1)*dense_direction;
+    Matrix one_row_tangent_expected=lane_tangent;
+    one_row_tangent_expected.topRows(1)=
+        lane_tangent.topRows(1)*dense_direction+lane.topRows(1)*dense_tangent;
+    near(read_tiles(primal_tiles,-11.0),one_row_expected,3e-11,
+         "CUDA one-row tiled adjoint right primal differs from dense oracle");
+    near(read_tiles(tangent_tiles,17.0),one_row_tangent_expected,3e-11,
+         "CUDA one-row tiled adjoint right tangent differs from dense oracle");
+  }
 }
 
 void check_cholesky(int rhs_count) {

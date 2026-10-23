@@ -2,13 +2,16 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
+#include <vector>
 
 #include <nvtx3/nvtx3.hpp>
 
 #include "cuda/linalg/blas.hpp"
 #include "cuda/vb/action.hpp"
 #include "cuda/vb/product.hpp"
+#include "cuda/vb/panel.hpp"
 #include "cuda/vb/transport.hpp"
 #include "cuda/vb/transform.hpp"
 
@@ -45,6 +48,30 @@ void clear(Context& context,linalg::MatrixView image) {
       "clear FULL selected product map");
 }
 
+/** Each group owns one raw spin-pair value; tiles never alias. */
+template<bool Project>
+__global__ void selected_tiles(const std::int64_t* offsets,
+    const std::int64_t* products,const std::int64_t* structures,
+    const double* weights,std::int64_t groups,int alpha,int extent,
+    const linalg::MatrixView* tiles,linalg::ConstMatrixView source,
+    linalg::MatrixView image) {
+  for (auto g=static_cast<std::int64_t>(blockIdx.x)*blockDim.x+threadIdx.x;
+       g<groups;g+=static_cast<std::int64_t>(gridDim.x)*blockDim.x) {
+    const auto a=products[g]%alpha,b=products[g]/alpha;
+    const auto tile=tiles[b/extent];
+    auto& value=tile.data[a+tile.ld*(b%extent)];
+    if constexpr (Project) {
+      for (auto t=offsets[g];t<offsets[g+1];++t)
+        atomicAdd(image.data+structures[t],weights[t]*value);
+    } else {
+      double sum=0.0;
+      for (auto t=offsets[g];t<offsets[g+1];++t)
+        sum+=weights[t]*source.data[structures[t]];
+      value=sum;
+    }
+  }
+}
+
 }  // namespace
 
 struct FullAction::Impl {
@@ -69,6 +96,88 @@ struct FullAction::Impl {
     check_cuda(cudaGetLastError(),"CUDA FULL identity frame");
     identity_alpha.update_upper(orbital_identity.view());
     identity_beta.update_upper(orbital_identity.view());
+  }
+
+  /** Same ordered maps as the former carrier implementation, on independent
+   * panels. If the collection cannot fit, the exact source-factor schedule
+   * below provides the same map with a smaller live working set.
+   */
+  bool apply_ordered(ProductMap map,linalg::ConstMatrixView source,
+      linalg::MatrixView image,linalg::ConstMatrixView energies,double shift) const {
+    const auto alpha=action.n_alpha_strings(),beta=action.n_beta_strings();
+    const auto rows=static_cast<std::size_t>(alpha);
+    if (rows>std::numeric_limits<std::size_t>::max()/sizeof(double)/beta)
+      return false;
+    const auto payload=rows*beta*sizeof(double);
+    // Leave room for the transform stripe, diagonal panel and shared sigma
+    // workspace. This changes residency only, not the physical operator.
+    const int extent=std::min(product_panel_width(),std::max(1,beta-1));
+    const auto panels=(static_cast<std::size_t>(beta)+extent-1)/extent;
+    const auto metadata=panels*sizeof(linalg::MatrixView)+
+        static_cast<std::size_t>(beta)*sizeof(double*);
+    const auto allowance=context.available_device_bytes()/4;
+    if (metadata>allowance || payload>allowance-metadata) return false;
+    std::vector<Matrix<double>> owners;
+    std::vector<linalg::MatrixView> views;
+    owners.reserve((beta+extent-1)/extent);
+    views.reserve(owners.capacity());
+    for (int first=0;first<beta;first+=extent) {
+      owners.emplace_back(context,alpha,std::min(extent,beta-first));
+      views.push_back(owners.back().view());
+    }
+    Buffer<linalg::MatrixView> descriptors(context,views.size());
+    context.copy_to_device(descriptors.data(),views.data(),views.size()*sizeof(views.front()));
+    const auto groups=action.n_product_groups();
+    const auto blocks=static_cast<unsigned>(std::min<std::int64_t>(65535,(groups+255)/256));
+    const auto transform=[&](bool adjoint,bool inverse) {
+      for (auto tile:views) action.alpha_transform().apply_left(tile,adjoint,inverse);
+      action.beta_transform().apply_right_tiles(views,adjoint,inverse);
+    };
+    const bool divide=map==ProductMap::IdentityDiagonalInverse ||
+        map==ProductMap::InverseOrbitalDiagonalInverseAdjointOrbital;
+    Matrix<double> diagonal;
+    if (divide) diagonal=Matrix<double>(context,alpha,extent);
+    for (std::int64_t rhs=0;rhs<source.cols;++rhs) {
+      for (auto tile:views) clear(context,tile);
+      selected_tiles<false><<<blocks,256,0,context.stream()>>>(
+          action.term_offsets_data(),action.product_indices_data(),
+          action.term_structures_data(),action.term_weights_data(),groups,
+          alpha,extent,descriptors.data(),source.column(rhs),{});
+      check_cuda(cudaGetLastError(),"FULL selected tile expansion");
+      switch (map) {
+        case ProductMap::Orbital: transform(false,false); break;
+        case ProductMap::InverseOrbital: transform(false,true); break;
+        case ProductMap::AdjointOrbital: transform(true,false); break;
+        case ProductMap::InverseAdjointOrbital: transform(true,true); break;
+        case ProductMap::InverseMetric:
+        case ProductMap::InverseOrbitalDiagonalInverseAdjointOrbital:
+          transform(true,true); break;
+        case ProductMap::IdentityDiagonalInverse: break;
+        default: throw std::invalid_argument("invalid ordered FULL map");
+      }
+      if (divide) {
+        int first=0;
+        for (auto tile:views) {
+          auto values=diagonal.view().columns(0,tile.cols);
+          action.carrier_sigma().diagonal_columns(first,values);
+          const auto elements=tile.rows*tile.cols;
+          divide_diagonal_column<<<(elements+255)/256,256,0,context.stream()>>>(
+              tile,values,energies.column(rhs),shift);
+          check_cuda(cudaGetLastError(),"FULL ordered tile diagonal inverse");
+          first+=tile.cols;
+        }
+      }
+      if (map==ProductMap::InverseMetric ||
+          map==ProductMap::InverseOrbitalDiagonalInverseAdjointOrbital)
+        transform(false,true);
+      clear(context,image.column(rhs));
+      selected_tiles<true><<<blocks,256,0,context.stream()>>>(
+          action.term_offsets_data(),action.product_indices_data(),
+          action.term_structures_data(),action.term_weights_data(),groups,
+          alpha,extent,descriptors.data(),{},image.column(rhs));
+      check_cuda(cudaGetLastError(),"FULL selected tile projection");
+    }
+    return true;
   }
 
   void apply_orbital(ProductMap map,linalg::ConstMatrixView source,
@@ -120,7 +229,7 @@ struct FullAction::Impl {
         divide_diagonal_column<<<(elements+255)/256,256,0,context.stream()>>>(
             a,values,energies.column(column),shift);
         check_cuda(cudaGetLastError(),"CUDA FULL tiled diagonal inverse");
-        sources.contract(a,b,target);
+        sources.contract_raw_sources(first,a,target);
         first+=count;
       }
     }
@@ -223,6 +332,13 @@ void FullAction::apply(ProductMap map,linalg::ConstMatrixView source,
       !std::isfinite(eigenvalue))
     throw std::invalid_argument("CUDA FULL selected product map dimensions");
   const nvtx3::scoped_range range{"ci.full_product_map"};
+  const bool diagonal=map==ProductMap::IdentityDiagonalInverse ||
+      map==ProductMap::InverseOrbitalDiagonalInverseAdjointOrbital;
+  if (diagonal && (energies.rows!=1 || energies.cols!=source.cols ||
+      energies.ld<1 || !energies.data))
+    throw std::invalid_argument("CUDA FULL inverse energies dimensions");
+  if (map!=ProductMap::IdentityHamiltonian &&
+      p.apply_ordered(map,source,image,energies,eigenvalue)) return;
   switch (map) {
     case ProductMap::Orbital:
     case ProductMap::InverseOrbital:
@@ -234,18 +350,12 @@ void FullAction::apply(ProductMap map,linalg::ConstMatrixView source,
       p.apply_hamiltonian(source,image);
       return;
     case ProductMap::IdentityDiagonalInverse:
-      if (energies.rows!=1 || energies.cols!=source.cols || energies.ld<1 ||
-          !energies.data)
-        throw std::invalid_argument("CUDA FULL product inverse energies dimensions");
       p.apply_diagonal(source,image,energies,eigenvalue);
       return;
     case ProductMap::InverseMetric:
       p.apply_inverse_metric(source,image);
       return;
     case ProductMap::InverseOrbitalDiagonalInverseAdjointOrbital:
-      if (energies.rows!=1 || energies.cols!=source.cols || energies.ld<1 ||
-          !energies.data)
-        throw std::invalid_argument("CUDA FULL compound inverse energies dimensions");
       p.apply_compound(source,image,energies,eigenvalue,true);
       return;
   }

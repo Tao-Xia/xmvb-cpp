@@ -18,6 +18,7 @@
 #include "mcscf/ci/column_cache.hpp"
 #include "mcscf/ci/product_support.hpp"
 #include "cuda/vb/panel.hpp"
+#include "vbscf/structures/assembly/column_tiles.hpp"
 
 namespace xmvb::cuda {
 namespace {
@@ -161,6 +162,28 @@ __global__ void contract_groups(ProductIncidence incidence,int begin,int count,
   }
 }
 
+/** Sparse structure incidence against independent bounded beta tiles. Each
+ * group has one raw product coordinate; no contiguous product carrier exists.
+ */
+__global__ void ordered_products_tiles(ProductIncidence incidence,const int* aa,
+    const int* bb,int groups,linalg::ConstMatrixView source,
+    double* const* tiles,int alpha,int extent,linalg::MatrixView target,bool adjoint) {
+  for (auto g=static_cast<std::size_t>(blockIdx.x)*blockDim.x+threadIdx.x;
+       g<groups;g+=static_cast<std::size_t>(gridDim.x)*blockDim.x) {
+    double* const entry=tiles[bb[g]/extent]+aa[g]+static_cast<std::size_t>(alpha)*(bb[g]%extent);
+    if (adjoint) {
+      const double value=*entry;
+      for (auto t=incidence.offsets[g];t<incidence.offsets[g+1];++t)
+        atomicAdd(target.data+incidence.structures[t],incidence.weights[t]*value);
+    } else {
+      double value=0.0;
+      for (auto t=incidence.offsets[g];t<incidence.offsets[g+1];++t)
+        value+=incidence.weights[t]*source.data[incidence.structures[t]];
+      *entry=value;
+    }
+  }
+}
+
 void add(Context& c,linalg::MatrixView target,linalg::ConstMatrixView source,double scale=1.0) {
   if (target.ld==target.rows && source.ld==source.rows) {
     check_cublas(cublasDaxpy(c.blas(),blas_int(target.rows*target.cols),&scale,
@@ -297,6 +320,7 @@ struct ProductContraction::Impl {
   const ExteriorTransform& alpha_transform;
   const ExteriorTransform& beta_transform;
   int alpha,beta,groups,factor_extent=0,mask_extent=0;
+  std::size_t beta_shears;
   const mcscf::ProductSupport* support;
   std::shared_ptr<ProductSymbolic> symbolic;
   cusparseHandle_t sparse=nullptr;
@@ -321,12 +345,13 @@ struct ProductContraction::Impl {
 
   Impl(Context& ctx,const vb::StructureAction::OrthogonalView& view,
       const ExteriorTransform& a,const ExteriorTransform& b,const mcscf::ProductSupport* exact_support)
-      :Impl(ctx,a,b,std::make_shared<ProductSymbolic>(ctx,view,a.dimension(),b.dimension(),exact_support)) {}
+      :Impl(ctx,a,b,std::make_shared<ProductSymbolic>(ctx,view,a.dimension(),b.dimension(),exact_support),
+          view.beta.shear_pair_count()) {}
 
   Impl(Context& ctx,const ExteriorTransform& a,const ExteriorTransform& b,
-      std::shared_ptr<ProductSymbolic> shared)
+      std::shared_ptr<ProductSymbolic> shared,std::size_t shears)
       :c(ctx),alpha_transform(a),beta_transform(b),alpha(shared->alpha),beta(shared->beta),
-       groups(shared->groups),support(shared->support),symbolic(std::move(shared)) {
+       groups(shared->groups),beta_shears(shears),support(shared->support),symbolic(std::move(shared)) {
     if (&symbolic->c!=&c || a.dimension()!=alpha || b.dimension()!=beta)
       throw std::invalid_argument("product symbolic support does not match executor frame");
     sparse_check(cusparseCreate(&sparse),"create product contraction sparse handle");
@@ -349,6 +374,32 @@ struct ProductContraction::Impl {
     std::size_t rows=0;
     for (int key:keys) rows+=pattern(key)->size;
     return keys.size()*sizeof(CiColumnMap)+rows*width*sizeof(double);
+  }
+
+  using OrderedTiles=std::vector<Matrix<double>>;
+
+  OrderedTiles ordered_tiles(int extent) {
+    OrderedTiles tiles;
+    tiles.reserve((beta+extent-1)/extent);
+    for (int first=0;first<beta;first+=extent) {
+      tiles.emplace_back(c,alpha,std::min(extent,beta-first));
+      clear(c,tiles.back().view());
+    }
+    return tiles;
+  }
+
+  std::vector<linalg::MatrixView> ordered_views(OrderedTiles& tiles) {
+    std::vector<linalg::MatrixView> views;
+    views.reserve(tiles.size());
+    for (auto& tile:tiles) views.push_back(tile.view());
+    return views;
+  }
+
+  Buffer<double*> ordered_pointers(OrderedTiles& tiles) {
+    std::vector<double*> pointers;
+    pointers.reserve(tiles.size());
+    for (auto& tile:tiles) pointers.push_back(tile.data());
+    return upload<double*>(c,pointers);
   }
 
   /** Full rows already have dense column-major layout. Borrow their owner
@@ -429,12 +480,12 @@ struct ProductContraction::Impl {
     const nvtx3::scoped_range range{"vb.product_jet"};
     const bool tangent=response.data || delta_upper.data || delta_sigma;
     const bool joint=ci!=nullptr;
-    // Reusing an accepted endpoint must not override the current panel bound.
-    // A smaller workspace simply recomputes the requested source panels.
+    // Accepted images have their own panel geometry. Their reader accepts
+    // arbitrary beta requests, so changing the current workspace extent does
+    // not invalidate a complete accepted Y/(H-E)Y endpoint.
     const auto quarter=std::max<std::size_t>(1,bytes/5);
     const int extent=panel_extent(quarter);
-    const bool cached=tangent && endpoint.images && endpoint.images->complete() &&
-        endpoint.extent==extent;
+    const bool cached=tangent && endpoint.images && endpoint.images->complete();
     const nvtx3::scoped_range cache_range{cached ? "vb.jet.cached":"vb.jet.uncached"};
     if (cached && delta_upper.data && !relative_direction.data)
       throw std::invalid_argument("cached product jet requires its relative frame direction");
@@ -473,6 +524,18 @@ struct ProductContraction::Impl {
     };
     std::vector<bool> reachable_panel(panels,false);
     for (int b:symbolic->reachable) reachable_panel[b/extent]=true;
+    int sampled_beta=0;
+    for (int id=0;id<panels;++id) if (reachable_panel[id]) sampled_beta+=selected(id).size();
+    const bool ordered_beta=vb::detail::prefer_ordered_beta(
+        groups,alpha,beta,beta_shears,sampled_beta);
+    const auto products=static_cast<std::size_t>(alpha)<=
+        std::numeric_limits<std::size_t>::max()/static_cast<std::size_t>(beta) ?
+        static_cast<std::size_t>(alpha)*beta:std::numeric_limits<std::size_t>::max();
+    const auto source_slots=static_cast<std::size_t>(input_width)+
+        (delta_upper.data && !cached ? 2U:0U);
+    const auto source_descriptors=static_cast<std::size_t>(panels)*input_width*sizeof(double*);
+    const bool resident_input=ordered_beta && source_descriptors<quarter/2 &&
+        products<=(quarter/2-source_descriptors)/(sizeof(double)*source_slots);
     symbolic->prepare_patterns(quarter/4);
     // The fixed-point beta rows and the directional beta rows follow exactly
     // the CPU ColumnPanels lifetime; no product-sized factor is introduced.
@@ -501,11 +564,58 @@ struct ProductContraction::Impl {
         linalg::MatrixView values) {
       generate_source(incidence,source,f,values);
     };
+    // The CPU ordered path is retained when all independent narrow tiles fit.
+    // The extra two slots in the source budget cover the directional beta
+    // transform's bounded transpose stripes; no full product array is formed.
+    OrderedTiles resident_y,resident_dy,resident_q;
+    const auto expand=[&](linalg::ConstMatrixView source,OrderedTiles& tiles) {
+      tiles=ordered_tiles(extent);
+      if (!source.data || !groups) return;
+      auto pointers=ordered_pointers(tiles);
+      ordered_products_tiles<<<grid(groups),256,0,c.stream()>>>(incidence,
+          symbolic->raw_alpha.data(),symbolic->raw_beta.data(),groups,source,
+          pointers.data(),alpha,extent,{},false);
+      check_cuda(cudaGetLastError(),"scatter ordered product tiles");
+    };
+    if (resident_input) {
+      if (!cached) {
+        expand(endpoint.coefficients.view(),resident_y);
+        if (tangent) {
+          expand(response,resident_dy);
+          auto y_views=ordered_views(resident_y),dy_views=ordered_views(resident_dy);
+          if (delta_upper.data) {
+            for (int id=0;id<panels;++id)
+              alpha_transform.apply_directional_left(da,y_views[id],dy_views[id]);
+            beta_transform.apply_directional_right_tiles(db,y_views,dy_views);
+          } else {
+            for (int id=0;id<panels;++id) {
+              alpha_transform.apply_left(y_views[id]);
+              alpha_transform.apply_left(dy_views[id]);
+            }
+            beta_transform.apply_right_tiles(y_views);
+            beta_transform.apply_right_tiles(dy_views);
+          }
+        } else {
+          auto y_views=ordered_views(resident_y);
+          for (auto view:y_views) alpha_transform.apply_left(view);
+          beta_transform.apply_right_tiles(y_views);
+        }
+      }
+      if (joint || cached) {
+        expand(response,resident_q);
+        auto q_views=ordered_views(resident_q);
+        for (auto view:q_views) alpha_transform.apply_left(view);
+        beta_transform.apply_right_tiles(q_views);
+      }
+    }
     if (cached && !endpoint.readers) {
-      std::vector<const ProductColumns*> accepted(panels,nullptr);
-      for (int id=0;id<panels;++id)
-        if (reachable_panel[id]) accepted[id]=&endpoint.images->at(id);
-      endpoint.readers=std::make_unique<ProductColumnReadCache>(c,accepted,extent,quarter/8);
+      std::vector<const ProductColumns*> accepted(endpoint.images->size(),nullptr);
+      for (int id=0;id<endpoint.images->size();++id) {
+        const auto& tile=endpoint.images->at(id);
+        if (!tile.patterns.empty()) accepted[id]=&tile;
+      }
+      endpoint.readers=std::make_unique<ProductColumnReadCache>(c,accepted,
+          endpoint.extent,quarter/8);
     }
     const CiTileReader accepted_y=[&](auto betas,auto rows,linalg::MatrixView values) {
       endpoint.readers->read(0,betas,rows,values);
@@ -513,7 +623,7 @@ struct ProductContraction::Impl {
     const CiTileReader accepted_r=[&](auto betas,auto rows,linalg::MatrixView values) {
       endpoint.readers->read(1,betas,rows,values);
     };
-    mcscf::ColumnCache<ProductColumns> input(quarter,[&](int id) {
+    mcscf::ColumnCache<ProductColumns> input(resident_input ? quarter/2:quarter,[&](int id) {
       if (audit) {
         ++builds[source_stage];
         if (generations[id]++) ++rebuilds[source_stage];
@@ -525,7 +635,8 @@ struct ProductContraction::Impl {
       const auto values=dense_panel(block,scratch);
       if (cached) {
         auto dy=values.columns(0,count);
-        generate(response,factors.get(id),dy);transform(dy,id*extent,count,false);
+        if (resident_input) copy_panel(dy,resident_q[id].view());
+        else {generate(response,factors.get(id),dy);transform(dy,id*extent,count,false);}
         if (joint) copy_panel(values.columns(count,count),dy);
         if (delta_upper.data) {
           Matrix<double> orbital(c,alpha,count);
@@ -533,6 +644,13 @@ struct ProductContraction::Impl {
               relative_direction,orbital.view());
           add(c,dy,orbital.view());
         }
+        if (scratch.data()) block.pack(c,values,false);
+        return block;
+      }
+      if (resident_input) {
+        copy_panel(values.columns(0,count),resident_y[id].view());
+        if (tangent) copy_panel(values.columns(count,count),resident_dy[id].view());
+        if (joint) copy_panel(values.columns(2*count,count),resident_q[id].view());
         if (scratch.data()) block.pack(c,values,false);
         return block;
       }
@@ -635,6 +753,14 @@ struct ProductContraction::Impl {
     };
     const auto y=reader(0),dy=reader(tangent ? 1:0),q=joint ? reader(2):CiTileReader{};
     const int targets=joint ? 4:2;
+    const auto projection_slots=static_cast<std::size_t>(targets)*
+        (delta_upper.data && !cached ? 2U:1U)+
+        (delta_upper.data && !cached ? 2U:0U);
+    const auto projection_descriptors=static_cast<std::size_t>(panels)*targets*
+        (delta_upper.data && !cached ? 2U:1U)*sizeof(double*);
+    const bool resident_projection=ordered_beta && projection_descriptors<quarter &&
+        products<=(quarter-projection_descriptors)/(sizeof(double)*projection_slots);
+    std::vector<OrderedTiles> projected(targets),left_projected(targets);
     const std::array<linalg::MatrixView,4> destinations{result.hamiltonian.view(),result.overlap.view(),
         joint ? ci->hamiltonian.view():linalg::MatrixView{},joint ? ci->overlap.view():linalg::MatrixView{}};
     const int group_extent=std::max<std::size_t>(1,std::min<std::size_t>(groups,
@@ -671,6 +797,20 @@ struct ProductContraction::Impl {
       } else {
         // Input and reverse factors borrow the same immutable support mask.
         transform(values,id*extent,count,true);
+      }
+      if (resident_projection) {
+        for (int lane=0;lane<lanes;++lane) {
+          const int destination=target[lane];
+          if (projected[destination].empty()) projected[destination]=ordered_tiles(extent);
+          add(c,projected[destination][id].view(),
+              (differentiate ? delta.view():values).columns(lane*count,count));
+          if (differentiate) {
+            if (left_projected[destination].empty())
+              left_projected[destination]=ordered_tiles(extent);
+            add(c,left_projected[destination][id].view(),values.columns(lane*count,count));
+          }
+        }
+        return;
       }
       const auto& f=factors.get(id);
       for (std::int64_t begin=0;begin<groups;begin+=group_extent) {
@@ -845,12 +985,28 @@ struct ProductContraction::Impl {
       }
     }
     projections.finish();
+    if (resident_projection) for (int k=0;k<targets;++k) if (!projected[k].empty()) {
+      auto views=ordered_views(projected[k]);
+      if (!left_projected[k].empty()) {
+        auto left=ordered_views(left_projected[k]);
+        beta_transform.apply_directional_right_tiles(db,left,views,true);
+      } else beta_transform.apply_right_tiles(views,true);
+      auto pointers=ordered_pointers(projected[k]);
+      if (groups) {
+        ordered_products_tiles<<<grid(groups),256,0,c.stream()>>>(incidence,
+            symbolic->raw_alpha.data(),symbolic->raw_beta.data(),groups,{},
+            pointers.data(),alpha,extent,destinations[k],true);
+        check_cuda(cudaGetLastError(),"contract ordered product tiles");
+      }
+    }
     if (!selected_only) multiply(c,result.generator.view(),2.0);
     if (tangent && !cached) add_upper(c,result.generator.view(),result.one.view(),-4*endpoint.energy);
     if (joint) {multiply(c,ci->generator.view(),2.0);if (!cached) add_upper(c,ci->generator.view(),ci->one.view(),-4*endpoint.energy);}
     if (audit) {
       std::fprintf(stderr,"panel_audit tangent=%d joint=%d cached=%d resident=%d panels=%d input_evictions=%zu output_evictions=%zu input_peak=%zu\n",
-          tangent,joint,cached,0,panels,input.evictions,output.evictions,input.peak_bytes);
+          tangent,joint,cached,resident_input,panels,input.evictions,output.evictions,input.peak_bytes);
+      std::fprintf(stderr,"panel_ordered input=%d projection=%d products=%zu sampled_beta=%d\n",
+          resident_input,resident_projection,products,sampled_beta);
       const char* names[]={"sigma","reverse","terminal"};
       for (int s=0;s<3;++s) std::fprintf(stderr,
           "panel_source stage=%s builds=%zu rebuilds=%zu reads=%zu hits=%zu\n",
@@ -903,7 +1059,7 @@ ProductContraction::ProductContraction(std::unique_ptr<Impl> impl):impl_(std::mo
 ProductContraction::~ProductContraction()=default;
 std::unique_ptr<ProductContraction> ProductContraction::clone() const {
   return std::unique_ptr<ProductContraction>(new ProductContraction(std::make_unique<Impl>(
-      impl_->c,impl_->alpha_transform,impl_->beta_transform,impl_->symbolic)));
+      impl_->c,impl_->alpha_transform,impl_->beta_transform,impl_->symbolic,impl_->beta_shears)));
 }
 void ProductContraction::update_frame() {impl_->factor_cache.reset();}
 void ProductContraction::release_cached_workspace(std::size_t bytes) const {

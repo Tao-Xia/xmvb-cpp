@@ -4,8 +4,11 @@
 #include <algorithm>
 #include <limits>
 #include <stdexcept>
+#include <vector>
 
 #include "cuda/linalg/blas.hpp"
+#include "cuda/memory/upload.hpp"
+#include "cuda/vb/panel.hpp"
 
 namespace xmvb::cuda {
 namespace {
@@ -233,6 +236,77 @@ __global__ void restrict_columns(linalg::MatrixView panel,const std::uint64_t* a
   const auto row=i%panel.rows,column=i/panel.rows;
   if (!(allowed[(column%columns)*words+row/64]&(std::uint64_t{1}<<(row%64))))
     panel.data[row+panel.ld*column]=0.0;
+}
+
+__global__ void transpose_tile_stripe(double* const* columns,
+    linalg::MatrixView stripe,std::int64_t first_row,bool gather) {
+  const auto index=static_cast<std::int64_t>(blockIdx.x)*blockDim.x+threadIdx.x;
+  if (index>=stripe.rows*stripe.cols) return;
+  const auto beta=index%stripe.rows,row=index/stripe.rows;
+  double* const value=columns[beta]+first_row+row;
+  double* const transposed=stripe.data+beta+stripe.ld*row;
+  if (gather) *transposed=*value;
+  else *value=*transposed;
+}
+
+// A one-row tile family has no smaller transposed row stripe. Replay the same
+// ordered factors directly through its beta-column pointers instead.
+__global__ void scale_one_row_tiles(double* const* columns,int dimension,
+    const double* scales,double* const* tangent=nullptr,
+    const double* delta_scales=nullptr) {
+  const int beta=blockIdx.x*blockDim.x+threadIdx.x;
+  if (beta>=dimension) return;
+  const double value=*columns[beta];
+  if (tangent) *tangent[beta]=scales[beta]*(*tangent[beta])+
+      delta_scales[beta]*value;
+  *columns[beta]=scales[beta]*value;
+}
+
+__global__ void shear_one_row_tiles(double* const* columns,const Edge* edges,
+    int count,const double* coefficient,bool adjoint,bool inverse,
+    double* const* tangent=nullptr,const double* delta_coefficient=nullptr) {
+  const int index=blockIdx.x*blockDim.x+threadIdx.x;
+  if (index>=count) return;
+  const Edge edge=edges[index];
+  const int source=adjoint ? edge.target:edge.source;
+  const int target=adjoint ? edge.source:edge.target;
+  if (tangent) *tangent[target]+=edge.sign*
+      ((*delta_coefficient)*(*columns[source])+(*coefficient)*(*tangent[source]));
+  *columns[target]+=(inverse ? -1.0:1.0)*(*coefficient)*edge.sign*
+      (*columns[source]);
+}
+
+std::vector<double*> tile_columns(std::span<const linalg::MatrixView> tiles,
+    int dimension,std::int64_t* rows) {
+  if (tiles.empty()) throw std::invalid_argument("empty CUDA exterior right tiles");
+  *rows=tiles.front().rows;
+  if (*rows<=0) throw std::invalid_argument("invalid CUDA exterior tile rows");
+  std::vector<double*> columns;
+  columns.reserve(dimension);
+  for (const auto tile:tiles) {
+    if (tile.rows!=*rows || tile.cols<=0 || tile.cols>dimension ||
+        (dimension>1 && tile.cols==dimension) || tile.ld<tile.rows ||
+        !tile.data || tile.cols>dimension-static_cast<int>(columns.size()))
+      throw std::invalid_argument("invalid CUDA exterior right tile layout");
+    for (std::int64_t beta=0;beta<tile.cols;++beta)
+      columns.push_back(tile.data+beta*tile.ld);
+  }
+  if (columns.size()!=static_cast<std::size_t>(dimension))
+    throw std::invalid_argument("CUDA exterior right tiles do not cover beta dimension");
+  return columns;
+}
+
+int right_stripe_rows(Context& context,int dimension,std::int64_t alpha_rows,
+    int scratch_count) {
+  const auto row_bytes=static_cast<std::size_t>(dimension)*sizeof(double)*scratch_count;
+  const auto available=context.available_device_bytes();
+  const auto maximum=std::min<std::size_t>({
+      static_cast<std::size_t>(product_panel_width()),
+      static_cast<std::size_t>(alpha_rows>1 ? alpha_rows-1:1),
+      available/row_bytes});
+  if (!maximum)
+    throw std::length_error("CUDA exterior right tiles cannot hold one row stripe");
+  return static_cast<int>(maximum);
 }
 
 }  // namespace
@@ -480,6 +554,111 @@ void ExteriorTransform::apply_right(linalg::MatrixView coefficients,
   }
   if (adjoint != inverse) {
     scale();
+  }
+}
+
+void ExteriorTransform::apply_right_tiles(
+    std::span<const linalg::MatrixView> tiles,bool adjoint,bool inverse) const {
+  std::int64_t rows=0;
+  const auto host_columns=tile_columns(tiles,dimension_,&rows);
+  PinnedUpload pointer_upload(*context_);
+  pointer_upload.assign(std::as_bytes(std::span{host_columns}));
+  auto* const columns=reinterpret_cast<double* const*>(pointer_upload.data());
+  if (rows==1) {
+    const auto scale=[&] {
+      scale_one_row_tiles<<<grid_size(dimension_),256,0,context_->stream()>>>(
+          columns,dimension_,inverse ? inverse_scales_.data():scales_.data());
+      check_cuda(cudaGetLastError(),"scale one-row CUDA exterior tiles");
+    };
+    if (adjoint==inverse) scale();
+    for (std::size_t step=0;step<topology_->shears.size();++step) {
+      const auto index=adjoint!=inverse ? topology_->shears.size()-1-step:step;
+      const auto& shear=topology_->shears[index];
+      if (!shear.count) continue;
+      shear_one_row_tiles<<<grid_size(shear.count),256,0,context_->stream()>>>(
+          columns,topology_->edges.data()+shear.offset,shear.count,
+          shear_coefficients_.data()+index,adjoint,inverse);
+      check_cuda(cudaGetLastError(),"shear one-row CUDA exterior tiles");
+    }
+    if (adjoint!=inverse) scale();
+    return;
+  }
+  const int extent=right_stripe_rows(*context_,dimension_,rows,1);
+  Matrix<double> stripe(*context_,dimension_,extent);
+  for (std::int64_t first=0;first<rows;first+=extent) {
+    const int count=static_cast<int>(std::min<std::int64_t>(extent,rows-first));
+    auto work=stripe.view().columns(0,count);
+    transpose_tile_stripe<<<grid_size(static_cast<std::int64_t>(dimension_)*count),
+        256,0,context_->stream()>>>(columns,work,first,true);
+    check_cuda(cudaGetLastError(),"gather CUDA exterior right tile stripe");
+    apply_left(work,adjoint,inverse);
+    transpose_tile_stripe<<<grid_size(static_cast<std::int64_t>(dimension_)*count),
+        256,0,context_->stream()>>>(columns,work,first,false);
+    check_cuda(cudaGetLastError(),"scatter CUDA exterior right tile stripe");
+  }
+}
+
+void ExteriorTransform::apply_directional_right_tiles(
+    const ExteriorDirection& direction,
+    std::span<const linalg::MatrixView> primal,
+    std::span<const linalg::MatrixView> tangent,bool adjoint) const {
+  if (primal.size()!=tangent.size() ||
+      direction.scales.size()!=static_cast<std::size_t>(dimension_) ||
+      direction.shears.size()!=topology_->shears.size())
+    throw std::invalid_argument("invalid CUDA directional exterior right tiles");
+  std::int64_t rows=0,tangent_rows=0;
+  auto host_columns=tile_columns(primal,dimension_,&rows);
+  auto tangent_columns=tile_columns(tangent,dimension_,&tangent_rows);
+  if (rows!=tangent_rows)
+    throw std::invalid_argument("CUDA directional exterior tile rows disagree");
+  for (std::size_t tile=0;tile<primal.size();++tile)
+    if (primal[tile].cols!=tangent[tile].cols ||
+        primal[tile].data==tangent[tile].data)
+      throw std::invalid_argument("CUDA directional exterior tile layouts disagree");
+  host_columns.insert(host_columns.end(),tangent_columns.begin(),tangent_columns.end());
+  PinnedUpload pointer_upload(*context_);
+  pointer_upload.assign(std::as_bytes(std::span{host_columns}));
+  auto* const columns=reinterpret_cast<double* const*>(pointer_upload.data());
+  if (rows==1) {
+    auto* const derivatives=columns+dimension_;
+    const auto scale=[&] {
+      scale_one_row_tiles<<<grid_size(dimension_),256,0,context_->stream()>>>(
+          columns,dimension_,scales_.data(),derivatives,direction.scales.data());
+      check_cuda(cudaGetLastError(),"scale one-row CUDA directional tiles");
+    };
+    if (!adjoint) scale();
+    for (std::size_t step=0;step<topology_->shears.size();++step) {
+      const auto index=adjoint ? topology_->shears.size()-1-step:step;
+      const auto& shear=topology_->shears[index];
+      if (!shear.count) continue;
+      shear_one_row_tiles<<<grid_size(shear.count),256,0,context_->stream()>>>(
+          columns,topology_->edges.data()+shear.offset,shear.count,
+          shear_coefficients_.data()+index,adjoint,false,derivatives,
+          direction.shears.data()+index);
+      check_cuda(cudaGetLastError(),"shear one-row CUDA directional tiles");
+    }
+    if (adjoint) scale();
+    return;
+  }
+  const int extent=right_stripe_rows(*context_,dimension_,rows,2);
+  Matrix<double> primal_stripe(*context_,dimension_,extent);
+  Matrix<double> tangent_stripe(*context_,dimension_,extent);
+  for (std::int64_t first=0;first<rows;first+=extent) {
+    const int count=static_cast<int>(std::min<std::int64_t>(extent,rows-first));
+    auto p=primal_stripe.view().columns(0,count);
+    auto t=tangent_stripe.view().columns(0,count);
+    const auto work=static_cast<std::int64_t>(dimension_)*count;
+    transpose_tile_stripe<<<grid_size(work),256,0,context_->stream()>>>(
+        columns,p,first,true);
+    transpose_tile_stripe<<<grid_size(work),256,0,context_->stream()>>>(
+        columns+dimension_,t,first,true);
+    check_cuda(cudaGetLastError(),"gather CUDA directional right tile stripes");
+    apply_directional_left(direction,p,t,adjoint);
+    transpose_tile_stripe<<<grid_size(work),256,0,context_->stream()>>>(
+        columns,p,first,false);
+    transpose_tile_stripe<<<grid_size(work),256,0,context_->stream()>>>(
+        columns+dimension_,t,first,false);
+    check_cuda(cudaGetLastError(),"scatter CUDA directional right tile stripes");
   }
 }
 
