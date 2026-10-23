@@ -970,6 +970,9 @@ void SelectedCrossOverlap::solve_metric(linalg::ConstMatrixView frame,
           "exact selected metric inverse failed true-residual certification");
     return;
   }
+  // All iterations share one stream and allocation ledger. Refresh physical
+  // capacity once for this solve, rather than once per overlap application.
+  const CapacityPlan capacity(*context_);
   Matrix<double> r(*context_,structures_,1),z(*context_,structures_,1);
   Matrix<double> p(*context_,structures_,1),ap(*context_,structures_,1);
   Matrix<double> image(*context_,structures_,1);

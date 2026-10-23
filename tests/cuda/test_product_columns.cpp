@@ -338,6 +338,32 @@ void check_reusable_pool_capacity() {
     throw std::runtime_error("CUDA planning excludes reusable pool storage");
 }
 
+void check_capacity_plan() {
+  xmvb::cuda::Context context(160);
+  xmvb::cuda::Buffer<std::byte> retained(context,64);
+  const auto queries=context.counters().device_capacity_queries;
+  {
+    const xmvb::cuda::CapacityPlan plan(context);
+    if (context.available_device_bytes()!=96)
+      throw std::runtime_error("capacity plan lost existing allocations");
+    {
+      const xmvb::cuda::CapacityPlan nested(context);
+      xmvb::cuda::Buffer<std::byte> temporary(context,32);
+      if (context.available_device_bytes()!=64)
+        throw std::runtime_error("nested capacity plan did not debit allocation");
+    }
+    if (context.available_device_bytes()!=96)
+      throw std::runtime_error("capacity plan did not credit queued free");
+    retained={};
+    if (context.available_device_bytes()!=160 ||
+        context.counters().device_capacity_queries!=queries+1)
+      throw std::runtime_error("capacity plan repeated physical queries or lost released storage");
+  }
+  if (context.available_device_bytes()!=160 ||
+      context.counters().device_capacity_queries!=queries+2)
+    throw std::runtime_error("capacity query did not refresh after plan exit");
+}
+
 void check_memory_audit() {
   xmvb::cuda::Context context(256);
   if (context.memory_audit_enabled() || !context.peak_allocation_groups().empty())
@@ -418,6 +444,7 @@ int main() {
   try {
     check(1);check(-1);check_reject_asymmetric();check_read_cache();
     check_pinned_upload();check_context_budget();check_reusable_pool_capacity();
+    check_capacity_plan();
     check_memory_audit();
     std::cout<<"compact product column tests passed\n";
   } catch (const std::exception& error) {

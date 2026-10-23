@@ -42,6 +42,7 @@ struct TransferCounters {
   std::size_t peak_device_bytes = 0;
   std::size_t host_to_device_bytes = 0;
   std::size_t device_to_host_bytes = 0;
+  mutable std::size_t device_capacity_queries = 0;
 };
 
 struct AllocationSite {
@@ -156,8 +157,11 @@ class Context {
     if (resident>device_byte_budget_)
       throw std::logic_error("CUDA Context accounting exceeds byte budget");
     const auto headroom=device_byte_budget_-resident;
+    if (capacity_ceiling_)
+      return std::min(headroom,*capacity_ceiling_>resident ? *capacity_ceiling_-resident:0);
     std::size_t free=0,total=0;
     check_cuda(cudaMemGetInfo(&free,&total),"query CUDA available memory");
+    ++counters_.device_capacity_queries;
     std::uint64_t reserved=0,used=0;
     check_cuda(cudaMemPoolGetAttribute(pool_,cudaMemPoolAttrReservedMemCurrent,&reserved),
         "query CUDA pool reserved memory");
@@ -281,6 +285,8 @@ class Context {
   }
 
  private:
+  friend class CapacityPlan;
+  mutable std::optional<std::size_t> capacity_ceiling_;
   cudaStream_t stream_ = nullptr;
   cudaMemPool_t pool_ = nullptr;
   cublasHandle_t blas_ = nullptr;
@@ -297,6 +303,30 @@ class Context {
   std::unordered_map<void*,LiveAllocation> live_allocations_;
   std::map<AllocationSite,AllocationGroup> current_groups_;
   std::map<AllocationSite,AllocationGroup> peak_groups_;
+};
+
+/** One short allocation plan on this Context's stream. Sample physical/pool
+ * availability at entry; subsequent queries debit live allocations and credit
+ * queued frees without querying the device again. Nested plans borrow that
+ * snapshot. External allocations are observed again after the outer plan ends;
+ * CUDA allocation failures and the Context's hard budget remain enforced.
+ */
+class CapacityPlan {
+ public:
+  explicit CapacityPlan(const Context& context)
+      : context_(context),owns_snapshot_(!context.capacity_ceiling_) {
+    if (owns_snapshot_)
+      context_.capacity_ceiling_=context.counters().current_device_bytes+
+          context.available_device_bytes();
+  }
+  ~CapacityPlan() {
+    if (owns_snapshot_) context_.capacity_ceiling_.reset();
+  }
+  CapacityPlan(const CapacityPlan&)=delete;
+  CapacityPlan& operator=(const CapacityPlan&)=delete;
+ private:
+  const Context& context_;
+  bool owns_snapshot_;
 };
 
 /** Failure context only; no allocation, synchronization, or numerical check. */

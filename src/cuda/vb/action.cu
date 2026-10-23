@@ -305,6 +305,7 @@ const vb::StructureDiagonal& StructureAction::preconditioner_diagonal() const no
 std::uint64_t StructureAction::version() const noexcept { return impl_->version; }
 void StructureAction::reserve_workspace(std::size_t bytes) const {
   auto& p=*impl_;
+  const CapacityPlan capacity(p.context);
   if (bytes<=p.context.available_device_bytes()) return;
   p.sigma.reset_workspace();
   if (bytes>p.context.available_device_bytes() && p.selected_product)

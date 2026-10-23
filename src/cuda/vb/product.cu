@@ -1240,6 +1240,7 @@ std::unique_ptr<ProductContraction> ProductContraction::clone() const {
 void ProductContraction::update_frame() {impl_->factor_cache.reset();}
 void ProductContraction::release_cached_workspace(std::size_t bytes) const {
   auto& p=*impl_;
+  const CapacityPlan capacity(p.c);
   while (bytes>p.c.available_device_bytes()) {
     if (p.factor_cache && p.factor_cache->evict_one()) continue;
     if (p.mask_cache && p.mask_cache->evict_one()) continue;
