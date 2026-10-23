@@ -23,7 +23,7 @@ unsigned grid(std::size_t work) {
 
 struct PackedGroup {
   std::size_t offset;
-  int begin,channels;
+  int begin,channels,selector_offset;
   bool operator==(const PackedGroup&) const = default;
 };
 
@@ -158,8 +158,28 @@ __global__ void add_grouped_gram(const double* scratch,linalg::MatrixView total,
 }
 
 
-/** Inverse image rows are built once per symbolic tile. A panel visits only
- * its own rows, while its channel dimension remains the complete group. */
+__device__ __forceinline__ void scatter_row_channel(TileMap map,linalg::ConstMatrixView input,
+    const int* alpha,const int* beta,int row,int p,std::size_t target,
+    int lanes,std::size_t input_stride,std::size_t output_stride,double* output) {
+  const int t=row%map.count,v=row/map.count;
+  const int a=map.active[t],b=map.betas[t];
+  const int sa=alpha[static_cast<std::size_t>(p)*map.alpha+a];
+  const int sb=beta[static_cast<std::size_t>(p)*map.beta+b];
+  const bool take_a=sa && (abs(sa)-1!=a || map.is_supported(t));
+  const bool take_b=sb && (abs(sb)-1!=b || map.is_supported(t));
+  const auto ia=take_a ? map.halo_row(abs(sa)-1)+input.ld*(map.column(b)*map.width+v):0;
+  const auto ib=take_b ? map.halo_row(a)+input.ld*(map.column(abs(sb)-1)*map.width+v):0;
+  // The excitation and compact-map lookup is common to every physical RHS.
+  for (int lane=0;lane<lanes;++lane) {
+    const auto* source=input.data+lane*input_stride;
+    double value=0;
+    if (take_a) value+=(sa>0 ? 1.0:-1.0)*source[ia];
+    if (take_b) value+=(sb>0 ? 1.0:-1.0)*source[ib];
+    output[target+lane*output_stride]=value;
+  }
+}
+
+/** Inverse image rows are built once per symbolic tile. */
 __global__ void scatter_row_panel(TileMap map,linalg::ConstMatrixView input,
     const int* alpha,const int* beta,const int* inverse,int first,int rows,
     std::size_t packed_origin,int lanes,std::size_t input_stride,
@@ -169,24 +189,31 @@ __global__ void scatter_row_panel(TileMap map,linalg::ConstMatrixView input,
        i<work;i+=static_cast<std::size_t>(gridDim.x)*blockDim.x) {
     const int local_row=i/map.pairs,p=i%map.pairs;
     const int row=inverse ? inverse[first+local_row]:first+local_row;
-    const int t=row%map.count,v=row/map.count;
     const int group=map.group(row),local=map.local[group*map.pairs+p];
     if (local<0) continue;
-    const int a=map.active[t],b=map.betas[t];
-    const int sa=alpha[static_cast<std::size_t>(p)*map.alpha+a];
-    const int sb=beta[static_cast<std::size_t>(p)*map.beta+b];
-    const bool take_a=sa && (abs(sa)-1!=a || map.is_supported(t));
-    const bool take_b=sb && (abs(sb)-1!=b || map.is_supported(t));
-    const auto ia=take_a ? map.halo_row(abs(sa)-1)+input.ld*(map.column(b)*map.width+v):0;
-    const auto ib=take_b ? map.halo_row(a)+input.ld*(map.column(abs(sb)-1)*map.width+v):0;
     const auto target=map.packed_row(first+local_row,group)-packed_origin+local;
-    // The excitation and compact-map lookup is common to every physical RHS.
-    for (int lane=0;lane<lanes;++lane) {
-      const auto* source=input.data+lane*input_stride;
-      double value=0;
-      if (take_a) value+=(sa>0 ? 1.0:-1.0)*source[ia];
-      if (take_b) value+=(sb>0 ? 1.0:-1.0)*source[ib];
-      output[target+lane*output_stride]=value;
+    scatter_row_channel(map,input,alpha,beta,row,p,target,lanes,input_stride,
+        output_stride,output);
+  }
+}
+
+/** One warp owns an image row and visits only its resident group selectors. */
+__global__ void scatter_restricted_row_panel(TileMap map,linalg::ConstMatrixView input,
+    const int* alpha,const int* beta,const int* inverse,const int* selectors,
+    int first,int rows,std::size_t packed_origin,int lanes,
+    std::size_t input_stride,std::size_t output_stride,double* output) {
+  const int warp=threadIdx.x/32,lane=threadIdx.x%32;
+  for (auto local_row=static_cast<std::size_t>(blockIdx.x)*4+warp;
+       local_row<static_cast<std::size_t>(rows);
+       local_row+=static_cast<std::size_t>(gridDim.x)*4) {
+    const int row=inverse[first+local_row];
+    const int group=map.group(row);
+    const auto entry=map.packed_groups[group];
+    const auto base=map.packed_row(first+local_row,group)-packed_origin;
+    for (int local=lane;local<entry.channels;local+=32) {
+      const int p=selectors[entry.selector_offset+local];
+      scatter_row_channel(map,input,alpha,beta,row,p,base+local,lanes,
+          input_stride,output_stride,output);
     }
   }
 }
@@ -625,7 +652,7 @@ void DirectCiSigma::apply_tiled_responses(int width,std::span<const CiTileReques
       inverse[layout.image(row)]=row;
     std::vector<PackedGroup> packed_groups(identity ? 0:selectors.groups());
     if (!identity) for (int g=0;g<selectors.groups();++g)
-      packed_groups[g]={layout.offset(g),layout.begin(g),selectors.channels(g)};
+      packed_groups[g]={layout.offset(g),layout.begin(g),selectors.channels(g),selector_offsets[g]};
     const auto inverse_offset=append(inverse);
     symbols.bind(std::move(metadata),std::move(packed_groups));
     const auto retained_size=static_cast<std::size_t>(halo_slabs)*input_size;
@@ -738,9 +765,16 @@ void DirectCiSigma::apply_tiled_responses(int width,std::span<const CiTileReques
       const auto* device_groups=reinterpret_cast<const GroupTile*>(panel_upload.data());
       {
         const nvtx3::scoped_range range{"ci.tile_scatter"};
-        scatter_row_panel<<<grid(static_cast<std::size_t>(panel_rows)*pairs),256,0,ctx.stream()>>>(
-            map,halo_view(0),alpha_->sources.data(),beta_->sources.data(),inverse_rows,
-            panel_first,panel_rows,packed_origin,input_halos,input_size,panel_capacity,response_channels);
+        if (identity)
+          scatter_row_panel<<<grid(static_cast<std::size_t>(panel_rows)*pairs),256,0,ctx.stream()>>>(
+              map,halo_view(0),alpha_->sources.data(),beta_->sources.data(),inverse_rows,
+              panel_first,panel_rows,packed_origin,input_halos,input_size,panel_capacity,response_channels);
+        else
+          scatter_restricted_row_panel<<<static_cast<unsigned>(std::min<std::size_t>(65535,
+              (static_cast<std::size_t>(panel_rows)+3)/4)),128,0,ctx.stream()>>>(
+              map,halo_view(0),alpha_->sources.data(),beta_->sources.data(),inverse_rows,
+              device_global.data(),panel_first,panel_rows,packed_origin,input_halos,
+              input_size,panel_capacity,response_channels);
       }
       const auto grouped_call=[&](bool gram_call,int begin,int end,const double* source,
           const double* second,const double* full_kernel,double* output,double previous) {

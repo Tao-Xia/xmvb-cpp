@@ -7,6 +7,7 @@
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <vector>
 
 #include <nvtx3/nvtx3.hpp>
 
@@ -276,8 +277,12 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,
     // its next action recaptures against the shared workspace generation.
     action.carrier_sigma().reset_workspace();
     context.set_allocation_phase("CIAH coarse workspace");
+    // A frozen CIAH core admits at most max_cycle images; each supplies one
+    // orbital and one CI sample. These bound storage, not solver iterations.
+    std::vector<DeviceCoarsePreconditioner::SupportRange> coarse_supports;
+    if (ns) coarse_supports={{0,no,ciah.max_cycle},{no,ns,ciah.max_cycle}};
     DeviceCoarsePreconditioner coarse(context,dimension,ns?2*ciah.max_cycle:0,
-        ciah.lindep,ciah.operator_relative_accuracy);
+        ciah.lindep,ciah.operator_relative_accuracy,std::move(coarse_supports));
     ciah.apply_images=[&](View x,Out hx,Out mx) {
       const nvtx3::scoped_range range{"scf.coupled_action"};
       AllocationPhase allocation(context,"coupled orbital-CI HVP");
@@ -330,22 +335,11 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,
       chart.inverse_metric(segment(r,0,no),segment(p,0,no));
       if (ns) copy(context,segment(p,no,ns),segment(r,no,ns));
     };
-    Matrix<double> sample(context,ns ? dimension:0,1),sample_metric(context,ns ? dimension:0,1);
     if (ns) ciah.observe_images=[&](View x,View mx) {
-      check_cuda(cudaMemsetAsync(sample.data(),0,dimension*sizeof(double),context.stream()),
-          "zero split coarse sample");
-      check_cuda(cudaMemsetAsync(sample_metric.data(),0,dimension*sizeof(double),context.stream()),
-          "zero split coarse metric sample");
-      copy(context,segment(sample.view(),0,no),segment(x,0,no));
-      copy(context,segment(sample_metric.view(),0,no),segment(mx,0,no));
-      coarse.observe(sample.view(),orbital_image.view(),sample_metric.view());
-      check_cuda(cudaMemsetAsync(sample.data(),0,no*sizeof(double),context.stream()),
-          "zero coarse orbital sample");
-      check_cuda(cudaMemsetAsync(sample_metric.data(),0,no*sizeof(double),context.stream()),
-          "zero coarse orbital metric sample");
-      copy(context,segment(sample.view(),no,ns),segment(x,no,ns));
-      copy(context,segment(sample_metric.view(),no,ns),segment(mx,no,ns));
-      coarse.observe(sample.view(),structure_image.view(),sample_metric.view());
+      coarse.observe_range(segment(x,0,no),orbital_image.view(),
+          segment(mx,0,no),0);
+      coarse.observe_range(segment(x,no,ns),structure_image.view(),
+          segment(mx,no,ns),no);
     };
     context.set_allocation_phase("CIAH subspace");
     DeviceCiahWorkspace workspace(context,dimension,ciah,seed.view());

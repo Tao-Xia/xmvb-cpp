@@ -243,6 +243,10 @@ void check_product_tiles(int parity,bool covalent,std::size_t budget,int n=4,boo
       std::vector<xmvb::mcscf::ProductIndex>{0,static_cast<xmvb::mcscf::ProductIndex>(bs.size()+1)});
   if (full) require(support->full() && !support->has_channel_envelopes(),
       "CUDA FULL support fixture lost its unrestricted channels");
+  if (covalent) require(support->has_channel_envelopes(),
+      "CUDA covalent tile fixture lost its restricted channel groups");
+  if (!parity && !covalent && !full) require(as.size()!=bs.size(),
+      "CUDA unequal-spin tile fixture became square");
   Matrix left=values(as.size(),bs.size()*width,0.28),right=values(as.size(),bs.size()*width,0.71);
   for (Matrix* values:{&left,&right}) for (int v=0;v<width;++v) {
     if (parity) {
