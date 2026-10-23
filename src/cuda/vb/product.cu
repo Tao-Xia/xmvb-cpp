@@ -7,6 +7,8 @@
 #include <vector>
 #include <array>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <initializer_list>
 #include <cusparse.h>
 #include <nvtx3/nvtx3.hpp>
@@ -447,6 +449,12 @@ struct ProductContraction::Impl {
     const auto row_bytes=sizeof(double)*(12ULL*alpha+8ULL*beta);
     const int extent=cached ? endpoint.extent:std::max<std::size_t>(1,std::min<std::size_t>(beta,quarter/row_bytes));
     const int panels=(beta+extent-1)/extent;
+    // Host-only diagnostics: no device synchronization or numerical changes.
+    const bool audit=std::getenv("CUVB_PANEL_AUDIT")!=nullptr;
+    enum SourceStage { sigma_stage, reverse_stage, terminal_stage };
+    int source_stage=sigma_stage;
+    std::array<std::size_t,3> builds{},rebuilds{},reads{},hits{};
+    std::vector<unsigned> generations(audit ? panels:0,0);
     const nvtx3::scoped_range plan_range{"vb.jet.plan",nvtx3::payload{
         (static_cast<std::uint64_t>(extent)<<32)|static_cast<unsigned>(panels)}};
     std::vector<int> all_beta(beta),all_rows(alpha);
@@ -540,6 +548,10 @@ struct ProductContraction::Impl {
       endpoint.readers->read(1,betas,rows,values);
     };
     mcscf::ColumnCache<ProductColumns> input(resident_input ? quarter/2:quarter,[&](int id) {
+      if (audit) {
+        ++builds[source_stage];
+        if (generations[id]++) ++rebuilds[source_stage];
+      }
       const nvtx3::scoped_range range{"vb.source_panel",nvtx3::payload{static_cast<std::uint64_t>(id)}};
       const auto keys=selected(id);const int count=keys.size();
       auto block=allocate(keys,input_width);
@@ -631,6 +643,7 @@ struct ProductContraction::Impl {
         static_assert(sizeof(ColumnReadIndex)==2*sizeof(int) && alignof(ColumnReadIndex)==alignof(int));
         const auto* columns=reinterpret_cast<const ColumnReadIndex*>(read_plan.indices.data()+rows.size());
         for (const auto& group:read_plan.groups) {
+          if (audit) {++reads[source_stage];hits[source_stage]+=input.contains(group.id);}
           auto& block=input.get(group.id);
           read_columns<<<dim3(group.count,grid(rows.size())),256,0,c.stream()>>>(
               block.maps.data(),block.values.view(),columns+group.offset,
@@ -717,6 +730,8 @@ struct ProductContraction::Impl {
     mcscf::ColumnCache<ProductColumns> output(quarter,[&](int id) {
       auto block=allocate(selected(id),input_width);clear(c,block.values.view());return block;
     },[&](int id,ProductColumns& block) {
+      const int previous_stage=source_stage;
+      source_stage=reverse_stage;
       const nvtx3::scoped_range range{"vb.reverse_panel",nvtx3::payload{static_cast<std::uint64_t>(id)}};
       const int count=selected(id).size(),first=id*extent;
       Matrix<double> scratch;
@@ -778,6 +793,7 @@ struct ProductContraction::Impl {
             joint ? std::initializer_list<int>{0,2}:std::initializer_list<int>{0},false);
         if (delta_upper.data && !cached) project_panel(id,hy,{0},true);
       }
+      source_stage=previous_stage;
     },[&](int id) {return panel_bytes(selected(id),input_width);});
     const auto writer=[&](int lane) -> CiTileWriter {
       return [&,lane](auto betas,auto,const CiTileGather& gather) {
@@ -817,6 +833,7 @@ struct ProductContraction::Impl {
       retain=true;
     }
     output.finish();
+    source_stage=terminal_stage;
     if (retain) endpoint.images->finish();
     Matrix<double> transpose;
     if (cached && delta_upper.data) {
@@ -886,6 +903,14 @@ struct ProductContraction::Impl {
     if (!selected_only) multiply(c,result.generator.view(),2.0);
     if (tangent && !cached) add_upper(c,result.generator.view(),result.one.view(),-4*endpoint.energy);
     if (joint) {multiply(c,ci->generator.view(),2.0);if (!cached) add_upper(c,ci->generator.view(),ci->one.view(),-4*endpoint.energy);}
+    if (audit) {
+      std::fprintf(stderr,"panel_audit tangent=%d joint=%d cached=%d resident=%d panels=%d input_evictions=%zu output_evictions=%zu input_peak=%zu\n",
+          tangent,joint,cached,resident_input,panels,input.evictions,output.evictions,input.peak_bytes);
+      const char* names[]={"sigma","reverse","terminal"};
+      for (int s=0;s<3;++s) std::fprintf(stderr,
+          "panel_source stage=%s builds=%zu rebuilds=%zu reads=%zu hits=%zu\n",
+          names[s],builds[s],rebuilds[s],reads[s],hits[s]);
+    }
     return result;
   }
 

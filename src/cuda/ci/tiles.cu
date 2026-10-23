@@ -162,7 +162,8 @@ __global__ void add_grouped_gram(const double* scratch,linalg::MatrixView total,
  * its own rows, while its channel dimension remains the complete group. */
 __global__ void scatter_row_panel(TileMap map,linalg::ConstMatrixView input,
     const int* alpha,const int* beta,const int* inverse,int first,int rows,
-    std::size_t packed_origin,double* output) {
+    std::size_t packed_origin,int lanes,std::size_t input_stride,
+    std::size_t output_stride,double* output) {
   const auto work=static_cast<std::size_t>(rows)*map.pairs;
   for (auto i=static_cast<std::size_t>(blockIdx.x)*blockDim.x+threadIdx.x;
        i<work;i+=static_cast<std::size_t>(gridDim.x)*blockDim.x) {
@@ -174,14 +175,19 @@ __global__ void scatter_row_panel(TileMap map,linalg::ConstMatrixView input,
     const int a=map.active[t],b=map.betas[t];
     const int sa=alpha[static_cast<std::size_t>(p)*map.alpha+a];
     const int sb=beta[static_cast<std::size_t>(p)*map.beta+b];
-    double value=0;
-    if (sa && (abs(sa)-1!=a || map.is_supported(t)))
-      value+=(sa>0 ? 1.0:-1.0)*input.data[
-          map.halo_row(abs(sa)-1)+input.ld*(map.column(b)*map.width+v)];
-    if (sb && (abs(sb)-1!=b || map.is_supported(t)))
-      value+=(sb>0 ? 1.0:-1.0)*input.data[
-          map.halo_row(a)+input.ld*(map.column(abs(sb)-1)*map.width+v)];
-    output[map.packed_row(first+local_row,group)-packed_origin+local]=value;
+    const bool take_a=sa && (abs(sa)-1!=a || map.is_supported(t));
+    const bool take_b=sb && (abs(sb)-1!=b || map.is_supported(t));
+    const auto ia=take_a ? map.halo_row(abs(sa)-1)+input.ld*(map.column(b)*map.width+v):0;
+    const auto ib=take_b ? map.halo_row(a)+input.ld*(map.column(abs(sb)-1)*map.width+v):0;
+    const auto target=map.packed_row(first+local_row,group)-packed_origin+local;
+    // The excitation and compact-map lookup is common to every physical RHS.
+    for (int lane=0;lane<lanes;++lane) {
+      const auto* source=input.data+lane*input_stride;
+      double value=0;
+      if (take_a) value+=(sa>0 ? 1.0:-1.0)*source[ia];
+      if (take_b) value+=(sb>0 ? 1.0:-1.0)*source[ib];
+      output[target+lane*output_stride]=value;
+    }
   }
 }
 
@@ -501,7 +507,7 @@ void DirectCiSigma::apply_tiled_responses(int width,std::span<const CiTileReques
   if (fixed_numeric_bytes>=workspace_bytes)
     throw std::length_error("sigma panel fixed scratch exceeds tile workspace");
   workspace_bytes-=fixed_numeric_bytes;
-  const int slabs=separate ? 3:2,packed_slabs=restricted ? (separate ? 2:1):0;
+  const int slabs=input_halos+1,packed_slabs=restricted ? input_halos:0;
   const mcscf::detail::SigmaTileBudget budget{
       width,n_channels_,slabs,workspace_bytes,packed_slabs,halo_slabs};
   const bool replay=symbols.matches(support,budget,static_cast<bool>(release));
@@ -627,7 +633,7 @@ void DirectCiSigma::apply_tiled_responses(int width,std::span<const CiTileReques
     const auto fixed_bytes=symbols.device.size()+adjoint_bytes+
         panel_descriptor_bytes+
         (collect ? sizeof(double)*pairs*pairs:0);
-    const auto row_bytes=sizeof(double)*pairs*(separate ? 3:2);
+    const auto row_bytes=sizeof(double)*pairs*slabs;
     if (fixed_bytes>=replay_bytes || retained_size*sizeof(double)>=replay_bytes-fixed_bytes ||
         row_bytes>replay_bytes-fixed_bytes-retained_size*sizeof(double))
       throw std::length_error("sigma tile retained halos leave no numerical row panel");
@@ -638,7 +644,7 @@ void DirectCiSigma::apply_tiled_responses(int width,std::span<const CiTileReques
         static_cast<std::size_t>(count)*width,std::min(available_rows,cache_rows)));
     const auto panel_capacity=static_cast<std::size_t>(panel_limit)*pairs;
     const auto pointer_capacity=allow_grouping ? 3*static_cast<std::size_t>(selectors.groups()):0;
-    const auto required=retained_size+(separate ? 3:2)*panel_capacity+
+    const auto required=retained_size+slabs*panel_capacity+
         pointer_capacity+(collect ? pairs*pairs:0);
     if (required!=numerical.size()) {
       numerical=Buffer<double>();numerical=Buffer<double>(ctx,required);
@@ -704,8 +710,8 @@ void DirectCiSigma::apply_tiled_responses(int width,std::span<const CiTileReques
       const auto packed_origin=layout.offset(first_group.group)+
           static_cast<std::size_t>(panel_first-layout.begin(first_group.group))*first_group.channels;
       double* response_channels=numerical.data()+retained_size;
-      double* state_channels=separate ? response_channels+panel_capacity:response_channels;
-      double* transformed=response_channels+(separate ? 2:1)*panel_capacity;
+      double* state_channels=response_channels+state_slot*panel_capacity;
+      double* transformed=response_channels+input_halos*panel_capacity;
       auto* pointer_bytes=transformed+panel_capacity;
       const double** left_ptrs=allow_grouping ?
           reinterpret_cast<const double**>(pointer_bytes):nullptr;
@@ -730,12 +736,12 @@ void DirectCiSigma::apply_tiled_responses(int width,std::span<const CiTileReques
         std::memcpy(bytes.data(),live_groups.data(),live_groups.size()*sizeof(GroupTile));
       });
       const auto* device_groups=reinterpret_cast<const GroupTile*>(panel_upload.data());
-      const auto scatter_panel=[&](linalg::ConstMatrixView input,double* output) {
+      {
         const nvtx3::scoped_range range{"ci.tile_scatter"};
         scatter_row_panel<<<grid(static_cast<std::size_t>(panel_rows)*pairs),256,0,ctx.stream()>>>(
-            map,input,alpha_->sources.data(),beta_->sources.data(),inverse_rows,
-            panel_first,panel_rows,packed_origin,output);
-      };
+            map,halo_view(0),alpha_->sources.data(),beta_->sources.data(),inverse_rows,
+            panel_first,panel_rows,packed_origin,input_halos,input_size,panel_capacity,response_channels);
+      }
       const auto grouped_call=[&](bool gram_call,int begin,int end,const double* source,
           const double* second,const double* full_kernel,double* output,double previous) {
         const int batch=end-begin;
@@ -752,12 +758,9 @@ void DirectCiSigma::apply_tiled_responses(int width,std::span<const CiTileReques
         check_cuda(cudaGetLastError(),"prepare grouped row-panel GEMM pointers");
         grouped_gemm.run(ctx,left_ptrs,right_ptrs,result_ptrs);
       };
-      if (separate) scatter_panel(halo_view(state_slot),state_channels);
       for (std::size_t r=0;r<requests.size();++r) {
         const auto& request=requests[r];
-        double* response=separate && request.response_is_state ? state_channels:response_channels;
-        if (response!=state_channels || !separate)
-          scatter_panel(halo_view(r),response);
+        double* response=response_channels+r*panel_capacity;
         const double* gram_right=separate ? state_channels:response;
         if (request.one_adjoint.data) {
           if (exchange_parity_) {
