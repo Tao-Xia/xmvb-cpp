@@ -2111,12 +2111,15 @@ void check_sigma_tile_plan() {
   const ProductSupport support(4,masks,masks,{3,12});
   for (const ProductSupport* selected:std::array<const ProductSupport*,2>{nullptr,&support})
     for (int parity:{0,1,-1})
-      for (const std::size_t bytes:{800U,8192U}) {
+      for (const std::size_t bytes:{800U,8192U})
+       for (const int max_groups:{0,1,2}) {
         detail::SigmaTilePlan plan(graph,graph,selected,parity,
-            {2,10,2,bytes},true);
+            {2,10,2,bytes,0,1,max_groups},true);
         std::array<int,16> visits{};
         std::array<bool,4> retired{};
         while (plan.next()) {
+          require(!max_groups || plan.groups.size()<=static_cast<std::size_t>(max_groups),
+              "sigma plan exceeds its consumer panel extent");
           check_sigma_payload(plan,{2,10,2,bytes},4);
           check_sigma_metadata(plan,parity);
           require(plan.payload_bytes()<=bytes,"sigma plan exceeds numeric payload budget");

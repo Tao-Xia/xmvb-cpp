@@ -15,7 +15,7 @@ SigmaTilePlan::SigmaTilePlan(const SpinConnections& alpha,const SpinConnections&
       alpha_seen_(alpha.n_strings(),0) {
   halo_index.assign(alpha.n_strings(),-1);column_index.assign(beta.n_strings(),-1);
   if (budget.width<=0 || budget.pairs<=0 || budget.slabs<=0 ||
-      budget.halo_slabs<=0 || !budget.bytes)
+      budget.halo_slabs<=0 || budget.max_groups<0 || !budget.bytes)
     throw std::invalid_argument("invalid sigma tile budget");
   if (budget.packed_slabs<0 || budget.packed_slabs>budget.slabs ||
       (budget.packed_slabs && (!support || !support->has_channel_envelopes())))
@@ -153,6 +153,11 @@ bool SigmaTilePlan::next() {
   while (pull(node)) {
     new_alpha_.clear(); new_beta_.clear();
     const bool new_group=groups.empty() || groups.back().beta!=node.beta;
+    if (new_group && budget_.max_groups &&
+        groups.size()>=static_cast<std::size_t>(budget_.max_groups)) {
+      pending_=node;
+      break;
+    }
     const auto include=[](int id,const std::vector<int>& index,std::vector<int>& added) {
       if (index[id]<0) added.push_back(id);
     };

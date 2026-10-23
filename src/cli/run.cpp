@@ -28,7 +28,7 @@ namespace xmvb::cli {
 namespace fs = std::filesystem;
 
 int run(Options command_line) {
-  workspace::set_limit(command_line.ci_workspace_bytes);
+  memory::configure(command_line.ci_workspace_bytes);
   const std::string& input_path = command_line.input_path;
   const auto deck = vb::parse_input_deck_model(input_path);
   if (deck.metadata.electronic_method == vb::ElectronicMethod::Dft) {

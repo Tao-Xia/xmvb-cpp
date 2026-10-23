@@ -39,6 +39,12 @@ int main() {
       "optimizer API must default to P-LBFGS");
   const auto defaults = parse({"xmvb-cpp.exe", "unused.xmi"});
   require(defaults.has_value(), "default CLI options must parse");
+  require(!defaults->ci_workspace_bytes, "CPU workspace must default to automatic resources");
+  const auto workspace = parse({"xmvb-cpp.exe", "unused.xmi", "--ci-workspace-mib", "8192"});
+  require(workspace && workspace->ci_workspace_bytes == 8192ULL*1024*1024,
+      "explicit workspace upper bound was lost");
+  require(!parse({"xmvb-cpp.exe", "unused.xmi", "--ci-workspace-mib", "0"}),
+      "zero workspace upper bound must be rejected");
   require(api_defaults.structure_eigensolver == xmvb::vb::StructureEigensolver::Davidson &&
           defaults->optimizer.structure_eigensolver == xmvb::vb::StructureEigensolver::Davidson,
       "API and CLI must default to matrix-free Davidson");

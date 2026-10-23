@@ -15,6 +15,8 @@ struct SigmaTileBudget {
   std::size_t bytes;
   int packed_slabs=0;
   int halo_slabs=1;
+  /** Consumer panel extent; zero leaves only resource-byte admission. */
+  int max_groups=0;
 };
 
 /** Exact target boundary for the same support, links and source layout.

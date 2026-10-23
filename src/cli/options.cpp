@@ -129,7 +129,7 @@ void print_usage() {
                " [--gradient-tolerance <value>]"
                " [--energy-tolerance <value>]"
                " [--exact-exchange-memory-mib <nonnegative integer>]"
-               " [--ci-workspace-mib <positive integer, shared CI/RI/DFT budget, default 4096>]"
+               " [--ci-workspace-mib <positive integer, shared CI/RI/DFT upper bound, default automatic>]"
                "\n"
                " [--standard-two-electron-mode auto|exact|ri]"
                " [--skip-orbital-guess true|false]"
@@ -140,7 +140,7 @@ void print_usage() {
                " [--dump-final-orbital-value-table-bin <path>]\n"
                "input optimizer: ISCF=7 selects TNHVP; ISCF=8 selects P-LBFGS; ISCF=9 selects CIAH\n"
                "input eigensolver: EIGENSOLVER=DAVIDSON|DENSE (default DAVIDSON)\n"
-               "--ci-workspace-mib sets the shared CI/RI payload allowance (not RSS).\n";
+               "--ci-workspace-mib limits the automatic shared CPU workspace (not RSS).\n";
 }
 
 }  // namespace
@@ -177,7 +177,7 @@ std::optional<Options> parse_options(int argc, char** argv) {
   bool user_specified_structure_eigensolver = false;
   bool user_specified_max_iterations = false;
   std::size_t exchange_budget = 64 * 1024 * 1024;
-  std::size_t ci_budget = workspace::default_bytes;
+  std::optional<std::size_t> ci_budget;
   for (int argument_index = 2; argument_index < argc; argument_index += 2) {
     const std::string argument_name = argv[argument_index];
     const std::string argument_value = argv[argument_index + 1];

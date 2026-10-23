@@ -23,6 +23,7 @@
 #include "vbscf/orbitals/preparation/cholesky.hpp"
 #include "vbscf/determinants/pairs/same_spin_cache.hpp"
 #include "core/pair_index.hpp"
+#include "core/memory.hpp"
 #include "vbscf/derivatives/hessian/context/accepted_point.hpp"
 #include "vbscf/derivatives/gradient/active_space/helpers.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin/backward.hpp"
@@ -179,6 +180,15 @@ xmvb::linalg::DavidsonResult solve_selected_structure_roots(
           structure_solve_accuracy.energy_tolerance,
           structure_solve_accuracy.gradient_tolerance,
           structure_solve_accuracy.stationarity_tolerance());
+  // The existing Davidson policy fixes the maximum basis dimension. Leave
+  // room for its V/HV/MV arrays, restart/root/correction images and projected
+  // eigensolver work before allowing the CI tile cache to consume headroom.
+  // This accounts for storage only; it does not change the Davidson space.
+  const long double n=n_structures, k=options.max_subspace_dimension, r=n_roots;
+  const long double solver_bytes=sizeof(double)*(3*n*(2*k+6*r+4)+12*k*k);
+  if (solver_bytes>std::numeric_limits<std::size_t>::max())
+    throw std::length_error("Davidson memory estimate overflow");
+  memory::prepare_ci(static_cast<std::size_t>(solver_bytes));
   options.physical_residual_norm = std::move(physical_residual_norm);
   options.residual_preconditioner = std::move(residual_preconditioner);
   options.identity_overlap=identity_overlap;

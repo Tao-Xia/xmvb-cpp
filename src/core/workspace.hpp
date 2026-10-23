@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/memory.hpp"
+
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
@@ -18,9 +20,8 @@ namespace detail { inline thread_local Reservation* current = nullptr; }
  * Consumers share bounded partitions; idle scratch is reclaimable. Static AO
  * integrals, immutable excitation links and eigensolver vectors are separate.
  */
-inline constexpr std::size_t default_bytes = 4ULL * 1024 * 1024 * 1024;
 namespace detail {
-inline std::atomic<std::size_t> limit{default_bytes};
+inline std::atomic<std::size_t> limit{0};
 inline std::atomic<std::size_t> retained{0};
 inline std::atomic<std::size_t> temporary{0};
 inline std::atomic<std::size_t> temporary_peak{0};
@@ -28,7 +29,15 @@ inline std::atomic<std::size_t> reusable{0};
 inline std::atomic<void(*)()> reclaim{nullptr};
 }
 
-inline std::size_t limit() noexcept { return detail::limit.load(); }
+inline std::size_t limit() {
+  auto bytes=detail::limit.load();
+  if (!bytes) {
+    const auto detected=memory::default_workspace();
+    detail::limit.compare_exchange_strong(bytes,detected);
+    bytes=detail::limit.load();
+  }
+  return bytes;
+}
 inline std::size_t retained() noexcept { return detail::retained.load(); }
 inline bool has_scope() noexcept { return detail::current!=nullptr; }
 /** One shared idle scratch pool. Its bytes remain charged until released;
@@ -37,6 +46,11 @@ inline void set_reusable(std::size_t bytes,void(*release)()) noexcept {
   detail::reclaim.store(release);
   detail::reusable.store(bytes);
 }
+/** Discard idle pooled scratch at a quiescent planning boundary. */
+inline void reclaim_idle() {
+  if (has_scope()) throw std::logic_error("cannot reclaim workspace during an action");
+  if (const auto release=detail::reclaim.load()) release();
+}
 inline std::size_t temporary_bytes() noexcept { return detail::temporary.load(); }
 inline std::size_t peak_temporary_bytes() noexcept { return detail::temporary_peak.load(); }
 
@@ -44,7 +58,7 @@ inline std::size_t peak_temporary_bytes() noexcept { return detail::temporary_pe
 inline void reset_temporary_peak() noexcept {
   detail::temporary_peak.store(temporary_bytes());
 }
-inline std::size_t available() noexcept;
+inline std::size_t available();
 
 /** @brief Configure before work; existing reservations remain charged. */
 inline void set_limit(std::size_t bytes) {
@@ -125,10 +139,13 @@ class Reservation {
       return true;
     }
     const auto increment = bytes - bytes_;
+    // Allocation admission remains noexcept, including first-use discovery.
+    std::size_t cap;
+    try { cap=limit(); } catch (...) { return false; }
     auto used = retained();
     bool reclaimed=false;
     for (;;) {
-      const auto cap = limit();
+      cap=detail::limit.load();
       if (used > cap || increment > cap - used) {
         const auto release=detail::reclaim.load();
         if (!reclaimed && release && detail::reusable.load()) {
@@ -146,7 +163,7 @@ class Reservation {
   std::size_t bytes_ = 0;
 };
 
-inline std::size_t available() noexcept {
+inline std::size_t available() {
   if (detail::current) return detail::current->bytes();
   const auto cap=limit(),held=retained();
   const auto used=held-std::min(held,detail::reusable.load());

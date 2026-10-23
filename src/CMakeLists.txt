@@ -61,6 +61,7 @@ set(XMVB_INTEGRAL_SOURCES
   integrals/response/generated_rows.cpp)
 
 set(XMVB_LINALG_SOURCES
+  core/memory.cpp
   core/pair_index.cpp
   linalg/exponential.cpp
   linalg/eigensolver.cpp
@@ -347,7 +348,11 @@ if (XMVB_BUILD_DEV_TARGETS)
   include(${CMAKE_SOURCE_DIR}/tests/mcscf/targets.cmake)
   add_executable(test_workspace ${CMAKE_SOURCE_DIR}/tests/core/test_workspace.cpp)
   target_include_directories(test_workspace PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${EIGEN3_INCLUDE_DIR})
+  target_link_libraries(test_workspace PRIVATE xmvb_linalg)
+  add_executable(test_memory ${CMAKE_SOURCE_DIR}/tests/core/test_memory.cpp)
+  target_link_libraries(test_memory PRIVATE xmvb_linalg)
   if (BUILD_TESTING)
+    add_test(NAME memory COMMAND test_memory)
     add_test(NAME workspace COMMAND test_workspace)
   endif()
   add_executable(test_openmp ${CMAKE_SOURCE_DIR}/tests/parallel/test_openmp.cpp)

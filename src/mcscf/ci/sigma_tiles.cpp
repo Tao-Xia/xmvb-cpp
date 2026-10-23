@@ -136,8 +136,14 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
       static_cast<std::size_t>(row_limit) * width * pairs);
 
   struct Incoming { int group, pair; double sign; };
+  // Match the existing product-column consumer's parallel panel extent.
+  // More resource headroom permits tile reuse; it must not inflate one
+  // channel tensor over the entire product sector. A beta panel already
+  // exposes alpha-row parallelism and the same fused contractions.
+  const int panel_columns=static_cast<int>(std::min<std::size_t>(n_beta_,
+      static_cast<std::size_t>(cooperative_openmp_thread_count())*(64/sizeof(double))));
   detail::SigmaTilePlan plan(*alpha_,beta_graph,support,exchange_parity,
-      {width,pairs,slab_factor,workspace_bytes,packed_slabs},
+      {width,pairs,slab_factor,workspace_bytes,packed_slabs,1,panel_columns},
       static_cast<bool>(release));
   auto& groups=plan.groups;
   auto& active=plan.active;
