@@ -143,11 +143,7 @@ void validate_image(ConstPairPanel exchange,int nbf,int n) {
 } // namespace
 
 std::size_t ExactAoPairOperator::response_capacity() const {
-  std::size_t free=0,total=0;
-  check_cuda(cudaMemGetInfo(&free,&total),"query CUDA exact response workspace memory");
-  const auto budget=context_->device_byte_budget(),used=context_->counters().current_device_bytes;
-  if (used>budget) throw std::runtime_error("CUDA exact response accounting exceeds budget");
-  return std::min(free,budget-used);
+  return context_->available_device_bytes();
 }
 
 Buffer<double> ExactAoPairOperator::prepare_exchange(View c,Matrix<double>* projection,

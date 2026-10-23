@@ -6,6 +6,7 @@
 #include <memory>
 
 #include "core/timing.hpp"
+#include "core/workspace.hpp"
 #include "parallel/openmp.hpp"
 
 namespace xmvb::vb {
@@ -48,6 +49,7 @@ ExteriorRowPlan::Rows ExteriorRowPlan::apply(const Eigen::MatrixXd& upper,
       std::min(rows.size(),std::max<std::size_t>(1,
           scratch_bytes/(2*sizeof(double)*dimension))));
   auto scratch=std::make_unique_for_overwrite<double[]>(2*dimension*workers);
+  workspace::Temporary scratch_temporary(2*dimension*workers*sizeof(double));
   cooperative_openmp_for(workers,workers,[&](std::ptrdiff_t part) {
     std::array<int,63> occupied{},indices{};
     for (std::size_t row=rows.size()*part/workers;row<rows.size()*(part+1)/workers;++row) {

@@ -11,6 +11,7 @@
 #include "parallel/openmp.hpp"
 #include "core/pair_index.hpp"
 #include "core/timing.hpp"
+#include "core/workspace.hpp"
 #include "mcscf/ci/product_support.hpp"
 #include "mcscf/ci/sigma_plan.hpp"
 #include "mcscf/ci/channel_product.hpp"
@@ -26,11 +27,13 @@ namespace {
  */
 class ChannelWorkspace {
   struct Storage {
+    workspace::Temporary temporary;
     std::unique_ptr<double[]> data;
     std::size_t capacity=0;
     void swap(Storage& other) noexcept {
       data.swap(other.data);
       std::swap(capacity,other.capacity);
+      std::swap(temporary,other.temporary);
     }
   };
   struct Pool {
@@ -53,6 +56,7 @@ public:
     if (storage_.capacity>budget_/sizeof(double)) {
       storage_.data.reset();
       storage_.capacity=0;
+      storage_.temporary.resize(0);
     }
     reused_=storage_.capacity!=0;
   }
@@ -69,9 +73,11 @@ public:
     if (required<=storage_.capacity) return;
     storage_.data.reset();
     storage_.capacity=0;
+    storage_.temporary.resize(0);
     const auto capacity=required;
     storage_.data=std::make_unique_for_overwrite<double[]>(capacity);
     storage_.capacity=capacity;
+    storage_.temporary.resize(capacity*sizeof(double));
     ++allocations_;
   }
   double* get() const noexcept { return storage_.data.get(); }
@@ -170,6 +176,8 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
   std::vector<Eigen::MatrixXd> kernel_adjoints(requests.size());
   if (collect_integrals) for (auto& gradient:kernel_adjoints)
     gradient=Eigen::MatrixXd::Zero(pairs,pairs);
+  workspace::Temporary adjoint_temporary(collect_integrals ?
+      sizeof(double)*static_cast<std::size_t>(pairs)*pairs*requests.size():0);
   // Source and state are ragged; images retain all channels. Directional
   // forcing normally adds directly into the image. Only an explicit forcing
   // consumer needs to expand the consumed source slab into a second image.

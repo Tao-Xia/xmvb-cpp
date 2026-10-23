@@ -220,12 +220,7 @@ __global__ void assemble(linalg::ConstMatrixView hmo,
 
 std::int64_t pair_tile_rows(Context& context,std::int64_t pair_rows,
     int channels) {
-  std::size_t free_bytes=0,total_bytes=0;
-  check_cuda(cudaMemGetInfo(&free_bytes,&total_bytes),
-      "CUDA Hessian diagonal free memory query");
-  const auto budget=context.device_byte_budget();
-  const auto used=context.counters().current_device_bytes;
-  const std::size_t available=std::min(free_bytes,budget-used);
+  const std::size_t available=context.available_device_bytes();
   const std::size_t row_bytes=static_cast<std::size_t>(channels)*sizeof(double);
   if (row_bytes==0 || available/2<row_bytes)
     throw std::runtime_error("CUDA Hessian diagonal cannot fit one AO-pair row");
@@ -359,10 +354,7 @@ Matrix<double> build_analytic_rotation_diagonal(Context& context,
   int width=2*active;
   Matrix<double> densities,responses;
   if (!exchange_products.data) {
-    std::size_t free=0,total=0;
-    check_cuda(cudaMemGetInfo(&free,&total),"query analytic diagonal batch memory");
-    const auto available=std::min(free,context.device_byte_budget()-
-        context.counters().current_device_bytes);
+    const auto available=context.available_device_bytes();
     // Only the streamed representation needs full density slabs. The
     // retained-image route above has already completed every K projection.
     const auto channel_bytes=4*static_cast<std::size_t>(nbf)*nbf*sizeof(double);

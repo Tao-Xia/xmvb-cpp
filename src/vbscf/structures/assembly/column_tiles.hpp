@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <initializer_list>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include <Eigen/Core>
@@ -40,8 +41,29 @@ struct ColumnPattern {
 
 /** @brief Values only on the symbolic support; RHSs share the row indices. */
 struct ColumnTile {
+  enum class Storage { Temporary, Retained };
+  // Destroy the payload before releasing its charge.
+  workspace::Temporary temporary;
   std::shared_ptr<const ColumnPattern> pattern;
   Eigen::MatrixXd values;
+
+  ColumnTile()=default;
+  ColumnTile(std::shared_ptr<const ColumnPattern> p,Eigen::MatrixXd v,
+      Storage storage=Storage::Temporary)
+      : pattern(std::move(p)),values(std::move(v)) {
+    if (storage==Storage::Temporary) temporary.resize(sizeof(double)*values.size());
+  }
+  ColumnTile(const ColumnTile&)=delete;
+  ColumnTile& operator=(const ColumnTile&)=delete;
+  ColumnTile(ColumnTile&&)=default;
+  ColumnTile& operator=(ColumnTile&& other) noexcept {
+    if (this!=&other) {
+      pattern.swap(other.pattern);
+      values.swap(other.values);
+      std::swap(temporary,other.temporary);
+    }
+    return *this;
+  }
 
   /** @brief Conservative retained payload, charging even shared metadata. */
   std::size_t bytes() const noexcept { return sizeof(double)*values.size()+pattern->bytes(); }

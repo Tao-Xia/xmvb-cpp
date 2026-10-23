@@ -183,6 +183,8 @@ FactorActionWorkspace::FactorActionWorkspace(const SpinFactorSource& source, int
     aq_.resize(n_alpha_, source_tile_ * channel_tile_);
     bq_.resize(n_beta_, source_tile_ * channel_tile_);
   }
+  temporary_.resize(sizeof(double)*static_cast<std::size_t>(alpha_.size()+beta_.size()+
+      ha_.size()+hb_.size()+ap_.size()+bp_.size()+va_.size()+vb_.size()+aq_.size()+bq_.size()));
 }
 
 FactorActionWork FactorActionWorkspace::apply(const DirectCiSigmaAction& sigma,
@@ -279,6 +281,9 @@ DirectCiIntegralAdjoint factor_integral_adjoint(const DirectCiSigmaAction& sigma
   Eigen::MatrixXd rq_a(left.n_alpha, p < d ? nr * p : 0);
   Eigen::MatrixXd rq_b(left.n_beta, p < d ? nr * p : 0);
   Eigen::MatrixXd ca(left.n_alpha, nr * p), cb(left.n_beta, nr * p);
+  workspace::Temporary temporary(sizeof(double)*static_cast<std::size_t>(
+      ra.size()+rb.size()+wa.size()+wb.size()+rp_a.size()+rp_b.size()+
+      rq_a.size()+rq_b.size()+ca.size()+cb.size()));
   for (int r = 0; r < ket.count; r += nr) {
     const int wr = std::min(nr, ket.count - r);
     auto a = ra.leftCols(wr), b = rb.leftCols(wr);

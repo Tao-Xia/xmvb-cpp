@@ -1388,6 +1388,55 @@ void check_column_cache_allocation_order() {
   require(live==0,"cache finish retained a tile payload");
 }
 
+void check_column_temporary_ownership() {
+  using xmvb::vb::detail::ColumnTile;
+  const auto baseline=xmvb::workspace::temporary_bytes();
+  auto pattern=std::make_shared<xmvb::vb::detail::ColumnPattern>();
+  pattern->offsets.resize(2); pattern->offsets<<0,3;
+  pattern->full=true;
+  const std::size_t payload=3*2*sizeof(double);
+  const std::size_t tile_bytes=payload+pattern->bytes();
+  std::vector<ColumnTile> pending;
+  {
+    xmvb::mcscf::ColumnCache<ColumnTile> cache(2*tile_bytes,[&](int) {
+      return ColumnTile{pattern,Eigen::MatrixXd::Ones(3,2)};
+    },[&](int,ColumnTile& tile) { pending.push_back(std::move(tile)); },
+        [&](int) { return tile_bytes; });
+    cache.get(0); cache.get(1);
+    require(xmvb::workspace::temporary_bytes()==baseline+2*payload,
+        "cached columns did not own their temporary values");
+    cache.get(2);
+    require(pending.size()==1 && xmvb::workspace::temporary_bytes()==baseline+3*payload,
+        "evicted column lost its pending temporary ownership");
+    pending.clear();
+    require(xmvb::workspace::temporary_bytes()==baseline+2*payload,
+        "clearing pending columns did not release temporary values");
+    cache.finish();
+    require(xmvb::workspace::temporary_bytes()==baseline+2*payload,
+        "cache finish did not transfer temporary ownership");
+    pending.clear();
+  }
+  require(xmvb::workspace::temporary_bytes()==baseline,
+      "column temporary values survived their owner");
+  {
+    ColumnTile source{pattern,Eigen::MatrixXd::Ones(3,2)};
+    ColumnTile destination{pattern,Eigen::MatrixXd::Ones(3,1)};
+    destination=std::move(source);
+    require(destination.values.size()==6 && source.values.size()==3 &&
+        xmvb::workspace::temporary_bytes()==baseline+9*sizeof(double),
+        "nonempty column assignment lost ownership of swapped Eigen storage");
+  }
+  require(xmvb::workspace::temporary_bytes()==baseline,
+      "swapped column storage outlived its charge");
+  {
+    xmvb::workspace::Reservation retained;
+    require(retained.try_resize(tile_bytes),"retained tile reservation failed");
+    ColumnTile accepted{pattern,Eigen::MatrixXd::Ones(3,2),ColumnTile::Storage::Retained};
+    require(xmvb::workspace::temporary_bytes()==baseline &&
+        accepted.values.size()==6,"retained tile was charged as temporary");
+  }
+}
+
 void check_input_columns() {
   constexpr int n_alpha=7,width=2;
   const std::vector<std::uint8_t> support{1,1,1,1,1,1,0,1,1,1};
@@ -3668,6 +3717,7 @@ int main(int argc, char** argv) {
       std::cout << "channel layout: PASS\n";
     } else if (argc == 2 && std::string(argv[1]) == "--cache-order") {
       check_column_cache_allocation_order();
+      check_column_temporary_ownership();
       check_input_columns();
       check_product_response(0,true);
       std::cout << "cache order: PASS\n";
@@ -3797,6 +3847,10 @@ int main(int argc, char** argv) {
       // Enough halo scratch for the grouped per-worker Gram, including
       // both exchange parities, multiple RHS and independent HVP adjoints.
       check_supported_sigma(8, 4, 4, 2);
+      const auto idle_channel_bytes=xmvb::workspace::temporary_bytes();
+      check_supported_sigma(8, 4, 4, 2);
+      require(xmvb::workspace::temporary_bytes()==idle_channel_bytes,
+          "reused idle sigma channel changed temporary ownership");
       check_generic_product_support();
       check_supported_sigma(5, 2, 1, 2, {3 * 5 + 2, 6 * 5 + 0});
       check_covalent_subset(1, false);

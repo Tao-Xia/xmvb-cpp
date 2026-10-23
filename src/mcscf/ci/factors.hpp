@@ -7,6 +7,7 @@
 #include <Eigen/Core>
 
 #include "mcscf/ci/sigma.hpp"
+#include "core/workspace.hpp"
 
 namespace xmvb::mcscf {
 
@@ -54,6 +55,7 @@ private:
   const SpinFactorSource& source_;
   int width_;
   bool mapped_;
+  workspace::Temporary temporary_;
   Eigen::MatrixXd a_, b_, moment_;
   std::size_t loads_ = 0, columns_ = 0;
 };
@@ -118,6 +120,7 @@ private:
   std::size_t load_rows_;
   bool overlap_only_;
   int reserved_channel_panels_;
+  workspace::Temporary temporary_;
   Eigen::MatrixXd alpha_, beta_, ha_, hb_;
   Eigen::MatrixXd ap_, bp_, va_, vb_, aq_, bq_;
 };

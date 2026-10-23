@@ -129,10 +129,13 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
   const Eigen::MatrixXd generator=delta_upper ? Eigen::MatrixXd(
       alpha.orbital_transform().transpose().triangularView<Eigen::Lower>()
           .solve(delta_upper->transpose()).transpose()):Eigen::MatrixXd{};
+  workspace::Temporary generator_temporary(sizeof(double)*generator.size());
   // Differentiated beta rows are shared by generation and left projection.
   detail::ColumnPanels beta_directions(factor_bytes,[&](int panel) {
     const int first=panel*extent,count=std::min(extent,n_unique_beta_-first);
     Eigen::MatrixXd rows=Eigen::MatrixXd::Zero(count,n_unique_beta_),dr=rows;
+    workspace::Temporary rows_temporary(sizeof(double)*rows.size());
+    workspace::Temporary dr_temporary(sizeof(double)*dr.size());
     rows.middleCols(first,count).setIdentity();
     beta.apply_directional_adjoint_right(db,&rows,&dr);
     auto p=std::make_shared<detail::ColumnPattern>();
@@ -160,16 +163,20 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
     const bool resident_input=!anchored && ordered_beta &&
         product_count<=cache_bytes/(input_width*sizeof(double));
     Eigen::MatrixXd primal_image,direction_image,ci_image;
+    workspace::Temporary primal_temporary,direction_temporary,ci_temporary;
     std::size_t input_bytes=0;
     if (resident_input) {
       // Apply the ordered exterior jet once, instead of multiplying each beta
       // row panel by all original products. No orbital inverse is introduced.
       if (!cached || delta_upper)
         primal_image=expand_structure_block(state.structure_coefficients.col(state_id));
+      primal_temporary.resize(sizeof(double)*primal_image.size());
       if (tangent) direction_image=response && !joint ? expand_structure_block(response->col(state_id)):
           Eigen::MatrixXd::Zero(n_unique_alpha_,n_unique_beta_);
+      direction_temporary.resize(sizeof(double)*direction_image.size());
       if (joint) {
         ci_image=expand_structure_block(response->col(state_id));
+        ci_temporary.resize(sizeof(double)*ci_image.size());
         alpha.apply_left(&ci_image); beta.apply_right(&ci_image);
       }
       if (delta_upper) {
@@ -181,12 +188,15 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
       }
       input_bytes=sizeof(double)*(primal_image.size()+direction_image.size()+ci_image.size());
       if (cached) primal_image.resize(0,0);
+      primal_temporary.resize(sizeof(double)*primal_image.size());
     }
     Eigen::VectorXd coefficients;
     if (!resident_input && !anchored && (!cached || delta_upper))
       coefficients=expand_support(state.structure_coefficients.col(state_id));
     Eigen::VectorXd q;
     if (response && !resident_input) q=expand_support(response->col(state_id));
+    workspace::Temporary coefficients_temporary(sizeof(double)*coefficients.size());
+    workspace::Temporary q_temporary(sizeof(double)*q.size());
     const auto accepted_column=[&](int b) -> mcscf::DirectCiColumnView {
       if (!reachable_mask[b/extent]) return {nullptr,nullptr,0};
       const auto& tile=state.product_images->states[state_id][b/extent];
@@ -201,6 +211,7 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
       const int first=panel*extent,count=std::min(extent,n_unique_beta_-first);
       const auto rows=(!anchored || response) ? beta.row_block(first,count):nullptr;
       Eigen::MatrixXd primal=cached ? Eigen::MatrixXd{}:Eigen::MatrixXd::Zero(n_unique_alpha_,count);
+      workspace::Temporary primal_panel_temporary(sizeof(double)*primal.size());
       const bool generator_only=anchored && (!response || joint);
       Eigen::MatrixXd dy;
       if (tangent) {
@@ -208,9 +219,12 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
         else dy=Eigen::MatrixXd::Zero(n_unique_alpha_,count);
       }
       Eigen::MatrixXd dq=joint ? Eigen::MatrixXd::Zero(n_unique_alpha_,count):Eigen::MatrixXd{};
+      workspace::Temporary dy_temporary(sizeof(double)*dy.size());
+      workspace::Temporary dq_temporary(sizeof(double)*dq.size());
       auto& response_image=joint ? dq:dy;
       Eigen::MatrixXd dr;
       if (delta_upper && !anchored) dr=beta_directions.get(panel).unpack(n_unique_beta_).transpose();
+      workspace::Temporary dr_temporary(sizeof(double)*dr.size());
       const int workers=coarse_openmp_thread_count(cooperative_openmp_thread_count(),
           static_cast<std::size_t>(n_unique_alpha_)*count);
       if (coefficients.size() || response) cooperative_openmp_for(n_unique_alpha_,workers,[&](std::ptrdiff_t a) {
@@ -236,6 +250,7 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
           if (spin_exchange_parity_) dy*=2.0;
         } else {
           Eigen::MatrixXd generator_image(n_unique_alpha_,count);
+          workspace::Temporary generator_image_temporary(sizeof(double)*generator_image.size());
           sigma.apply_one_body_generator_columns(first,accepted_column,generator,generator_image,
               spin_exchange_parity_!=0);
           dy.noalias()+=(spin_exchange_parity_ ? 2.0:1.0)*generator_image;
@@ -265,10 +280,16 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
         }
       }
       if (cached) {
-        if (!joint) return detail::pack_columns(std::move(dy),pattern);
+        if (!joint) {
+          if (pattern->full) dy_temporary.resize(0);
+          return detail::pack_columns(std::move(dy),pattern);
+        }
         return detail::pack_columns({&dy,&dq},pattern);
       }
-      if (!tangent) return detail::pack_columns(std::move(primal),pattern);
+      if (!tangent) {
+        if (pattern->full) primal_panel_temporary.resize(0);
+        return detail::pack_columns(std::move(primal),pattern);
+      }
       if (joint) return detail::pack_columns({&primal,&dy,&dq},pattern);
       return detail::pack_columns({&primal,&dy},pattern);
     },{},[&](int panel) {
@@ -405,6 +426,8 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
         ordered_beta && products<=projection_bytes/
             (sizeof(double)*projection_count*(delta_upper ? 2:1));
     std::vector<Eigen::MatrixXd> projected(projection_count),left_projected(projection_count);
+    std::vector<workspace::Temporary> projected_temporary(projection_count),
+        left_projected_temporary(projection_count);
     const auto group_extent=std::max<std::size_t>(1,std::min<std::size_t>(
         static_cast<std::size_t>(n_unique_alpha_)*extent,
         projection_bytes/(sizeof(double)*projection_count)));
@@ -438,9 +461,12 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
         std::initializer_list<double*> targets,bool differentiate=false) {
       profiling::ScopedPhase phase(profiling::Phase::CiProductProjection);
       const int first=panel*extent,count=values.cols()/targets.size();
+      workspace::Temporary values_temporary(sizeof(double)*values.size());
       Eigen::MatrixXd dvalues;
+      workspace::Temporary dvalues_temporary;
       if (differentiate) {
         dvalues=Eigen::MatrixXd::Zero(values.rows(),values.cols());
+        dvalues_temporary.resize(sizeof(double)*dvalues.size());
         alpha.apply_directional_adjoint_left(da,&values,&dvalues);
       } else {
         const auto pattern=pattern_at(panel);
@@ -461,12 +487,14 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
           const int target_id=target_ids[v];
           if (!projected[target_id].size()) {
             projected[target_id]=Eigen::MatrixXd::Zero(n_unique_alpha_,n_unique_beta_);
+            projected_temporary[target_id].resize(sizeof(double)*projected[target_id].size());
           }
           projected[target_id].middleCols(first,count)+=differentiate ?
               dvalues.middleCols(v*count,count):values.middleCols(v*count,count);
           if (differentiate) {
             if (!left_projected[target_id].size())
               left_projected[target_id]=Eigen::MatrixXd::Zero(n_unique_alpha_,n_unique_beta_);
+            left_projected_temporary[target_id].resize(sizeof(double)*left_projected[target_id].size());
             left_projected[target_id].middleCols(first,count)+=values.middleCols(v*count,count);
           }
         }
@@ -475,6 +503,7 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
       const auto rows=beta.row_block(first,count);
       Eigen::MatrixXd dr;
       if (differentiate) dr=beta_directions.get(panel).unpack(n_unique_beta_).transpose();
+      workspace::Temporary dr_temporary(sizeof(double)*dr.size());
       for (std::size_t begin=0;begin<spin_products_.size();begin+=group_extent) {
         auto& tile=projections.get(begin/group_extent);
         const auto size=std::min(group_extent,spin_products_.size()-begin);
@@ -562,7 +591,8 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
           // Store Y and (H-E)Y on the exact support, sharing one pattern.
           // The next coefficient response then needs neither a new Y
           // transform nor a separate -E*D(Y,q) generator contraction.
-          detail::ColumnTile accepted{tile.pattern,Eigen::MatrixXd(tile.values.rows(),2)};
+          detail::ColumnTile accepted{tile.pattern,Eigen::MatrixXd(tile.values.rows(),2),
+              detail::ColumnTile::Storage::Retained};
           if (resident_input) {
             // Missing raw products may leave holes in the exact output
             // support. A contiguous prefix would shift subsequent columns.
@@ -717,12 +747,14 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
       // transforms again. Only their ordinary selected-space projection remains;
       // no closure of the selected VB space is assumed.
       const Eigen::MatrixXd dual_generator=generator.transpose();
+      workspace::Temporary dual_generator_temporary(sizeof(double)*dual_generator.size());
       const auto& images=state.product_images->states[state_id];
       for (const int panel:reachable) {
         if (!images[panel].pattern) continue;
         const int first=panel*extent;
         const int count=images[panel].pattern->columns();
         Eigen::MatrixXd values(n_unique_alpha_,2*count);
+        workspace::Temporary values_temporary(sizeof(double)*values.size());
         sigma.apply_one_body_generator_columns(first,y_column,dual_generator,
             values.leftCols(count),spin_exchange_parity_!=0);
         sigma.apply_one_body_generator_columns(first,residual_column,dual_generator,
@@ -734,6 +766,7 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
         values.rightCols(count).noalias()+=energy*values.leftCols(count);
         if (capture) project(panel,values.rightCols(count),
             {diagnostic->connection->representation_forcing.col(state_id).data()});
+        values_temporary.resize(0);
         project(panel,std::move(values),{result.images.overlap.col(state_id).data(),
             result.images.hamiltonian.col(state_id).data()});
       }
@@ -753,6 +786,8 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
         y(betas,all_rows,values);
       }
       if (tangent) directions.resize(n_unique_alpha_,(joint ? 2:1)*count);
+      workspace::Temporary values_temporary(sizeof(double)*values.size());
+      workspace::Temporary directions_temporary(sizeof(double)*directions.size());
       auto dv=directions.leftCols(tangent ? count:0);
       auto dq=directions.rightCols(joint ? count:0);
       if (tangent) dy(betas,all_rows,dv);

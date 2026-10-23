@@ -15,6 +15,7 @@
 
 #include "parallel/openmp.hpp"
 #include "core/timing.hpp"
+#include "core/workspace.hpp"
 #include "vbscf/structures/orthogonal_ci/exterior_rows.hpp"
 
 namespace xmvb::vb {
@@ -48,6 +49,12 @@ double replacement_sign(std::uint64_t source, int removed, int inserted) {
 }  // namespace
 
 struct ExteriorOrbitalTransform::RowCache {
+  struct TrackedRows {
+    workspace::Temporary temporary;
+    std::shared_ptr<const Eigen::MatrixXd> rows;
+    TrackedRows(std::shared_ptr<const Eigen::MatrixXd> value,std::size_t bytes)
+        : temporary(bytes),rows(std::move(value)) {}
+  };
   struct Entry {
     std::uint64_t key = 0;
     std::shared_ptr<const Eigen::MatrixXd> rows;
@@ -74,7 +81,10 @@ struct ExteriorOrbitalTransform::RowCache {
       std::shared_ptr<const Eigen::MatrixXd> rows) {
     constexpr std::size_t budget=64ULL*1024*1024;
     const std::size_t bytes=sizeof(double)*rows->size();
-    if (bytes>budget) return rows;
+    const auto* data=rows.get();
+    auto owner=std::make_shared<TrackedRows>(std::move(rows),bytes);
+    std::shared_ptr<const Eigen::MatrixXd> tracked(owner,data);
+    if (bytes>budget) return tracked;
     std::lock_guard lock(mutex);
     const auto found=index.find(key);
     if (found!=index.end()) {
@@ -89,11 +99,13 @@ struct ExteriorOrbitalTransform::RowCache {
       entries.erase(last);
     }
     cached_bytes.store(resident,std::memory_order_relaxed);
-    entries.push_front({key,rows,bytes});
+    // A borrowed row block may outlive eviction. Keep its numerical charge
+    // with the shared owner, including when the cache no longer retains it.
+    entries.push_front({key,tracked,bytes});
     try { index.emplace(key,entries.begin()); }
     catch (...) { entries.pop_front(); throw; }
     cached_bytes.store(resident+bytes,std::memory_order_relaxed);
-    return rows;
+    return tracked;
   }
 };
 
@@ -172,6 +184,7 @@ ExteriorOrbitalTransform::ExteriorOrbitalTransform(
   // Applying the inverses in elimination order evaluates U on a vector
   // because matrix factors act from right to left.
   Eigen::MatrixXd unit_upper = upper_orbital_transform;
+  workspace::Temporary unit_upper_temporary(sizeof(double)*unit_upper.size());
   for (int column = 0; column < n_orbitals_; ++column) {
     unit_upper.col(column) /= upper_orbital_transform(column, column);
   }
@@ -365,6 +378,8 @@ void ExteriorOrbitalTransform::apply_supported_left(
   cooperative_openmp_for(workers,workers,[&](std::ptrdiff_t part) {
     std::vector<std::uint8_t> allowed(dimension());
     std::vector<std::uint64_t> words((dimension()+63)/64);
+    workspace::Temporary support_temporary(allowed.size()*sizeof(std::uint8_t)+
+        words.size()*sizeof(std::uint64_t));
     const int first=beta_count*part/workers;
     const int last=beta_count*(part+1)/workers;
     for (int beta=first;beta<last;++beta) {
@@ -461,6 +476,7 @@ Eigen::SparseMatrix<double> ExteriorOrbitalTransform::generate_rows(std::span<co
   // A cached factor is contiguous by row. Assemble it in the same ordering;
   // converting the complete panel once avoids per-row scattered stores.
   ExteriorRowPlan::Rows result(rows.size(),dimension());
+  workspace::Temporary result_temporary(sizeof(double)*result.size());
   std::vector<int> missing,positions;
   for (int i=0;i<static_cast<int>(rows.size());++i) {
     if (auto value=row_cache_->find(RowCache::key(rows[i],1))) result.row(i)=value->row(0);
@@ -468,6 +484,7 @@ Eigen::SparseMatrix<double> ExteriorOrbitalTransform::generate_rows(std::span<co
   }
   if (!missing.empty()) {
     const auto values=row_plan_->apply(orbital_transform_,masks_,missing);
+    workspace::Temporary values_temporary(sizeof(double)*values.size());
     for (int i=0;i<static_cast<int>(missing.size());++i) {
       result.row(positions[i])=values.row(i);
       // Cache immutable orbital factors, not state-dependent CI columns.
@@ -479,6 +496,7 @@ Eigen::SparseMatrix<double> ExteriorOrbitalTransform::generate_rows(std::span<co
   // Convert the assembled panel once, then count/pack independent CSC
   // columns in parallel. No per-spin-product allocation or serial sparse scan.
   const Eigen::MatrixXd dense=result;
+  workspace::Temporary dense_temporary(sizeof(double)*dense.size());
   Eigen::SparseMatrix<double> factors(dense.rows(),dense.cols());
   int* offsets=factors.outerIndexPtr();
   offsets[0]=0;
@@ -648,6 +666,8 @@ ExteriorTransformDirection ExteriorOrbitalTransform::direction(
 
   Eigen::MatrixXd unit_upper = orbital_transform_;
   Eigen::MatrixXd delta_unit_upper = delta_orbital_transform;
+  workspace::Temporary unit_upper_temporary(sizeof(double)*unit_upper.size());
+  workspace::Temporary delta_unit_upper_temporary(sizeof(double)*delta_unit_upper.size());
   for (int column = 0; column < n_orbitals_; ++column) {
     const double diagonal = orbital_transform_(column, column);
     const double delta_diagonal = delta_orbital_transform(column, column);
@@ -838,6 +858,8 @@ Eigen::MatrixXd ExteriorOrbitalTransform::generator_pullback(
   }
   Eigen::MatrixXd g = Eigen::MatrixXd::Zero(n_orbitals_, n_orbitals_);
   Eigen::MatrixXd dg = g;
+  workspace::Temporary g_temporary(sizeof(double)*g.size());
+  workspace::Temporary dg_temporary(sizeof(double)*dg.size());
   const auto contract = [&](int target, int source, bool tangent) -> double {
     double value=0;
     for (const auto& term:terms)
@@ -851,6 +873,8 @@ Eigen::MatrixXd ExteriorOrbitalTransform::generator_pullback(
       columns*(static_cast<std::size_t>(dimension())+shear_pair_count()));
   std::vector<Eigen::MatrixXd> diagonals(workers,
       Eigen::MatrixXd::Zero(n_orbitals_,directional ? 2:1));
+  workspace::Temporary diagonals_temporary(sizeof(double)*static_cast<std::size_t>(workers)*
+      n_orbitals_*(directional ? 2:1));
   cooperative_openmp_for(workers,workers,[&](std::ptrdiff_t part) {
     auto& diagonal=diagonals[part];
     for (int string=dimension()*part/workers;string<dimension()*(part+1)/workers;++string) {
@@ -890,9 +914,11 @@ Eigen::MatrixXd ExteriorOrbitalTransform::moment_pullback(
   xmvb::profiling::ScopedPhase phase(xmvb::profiling::Phase::CiExteriorMomentPullback);
   const Eigen::MatrixXd inverse = orbital_transform_.triangularView<Eigen::Upper>()
       .solve(Eigen::MatrixXd::Identity(n_orbitals_, n_orbitals_)).transpose();
+  workspace::Temporary inverse_temporary(sizeof(double)*inverse.size());
   Eigen::MatrixXd result;
   if (delta_upper) {
     const Eigen::MatrixXd di = -inverse * delta_upper->transpose() * inverse;
+    workspace::Temporary di_temporary(sizeof(double)*di.size());
     result = *delta_moment * inverse + moment * di;
   } else {
     result = moment * inverse;

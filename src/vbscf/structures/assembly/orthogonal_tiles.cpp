@@ -157,17 +157,21 @@ StructureResponseSweep StructureAction::contract_product_tiles(
     // Replace the input/output LRU payloads within the same workspace quarters.
     // Zero-scattering a selected raw support does not assume CAS completeness.
     Eigen::MatrixXd input_image,h_image;
+    workspace::Temporary input_temporary,h_temporary;
     if (ordered) {
       profiling::ScopedPhase phase(profiling::Phase::CiProductGenerate);
       input_image=expand_structure_block(vectors.middleCols(vector_begin,width));
+      input_temporary.resize(sizeof(double)*input_image.size());
       alpha_transform.apply_left(&input_image);
       for (int v=0;v<width;++v)
         beta_transform.apply_right_block(input_image.middleCols(v*n_unique_beta_,n_unique_beta_));
       if (!overlap_only) h_image=Eigen::MatrixXd::Zero(input_image.rows(),input_image.cols());
+      h_temporary.resize(sizeof(double)*h_image.size());
     }
     // Expand once per RHS, not once per beta panel. For a covalent space
     // these groups are exactly (A, complement(A)): only O(U) coefficients.
     Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(ordered ? 0:spin_products_.size(), width);
+    workspace::Temporary coefficients_temporary(sizeof(double)*coefficients.size());
 #pragma omp parallel for schedule(static) if(spin_products_.size() > 32)
     for (int group = 0; group < coefficients.rows(); ++group)
       for (int vector = 0; vector < width; ++vector)
@@ -177,6 +181,8 @@ StructureResponseSweep StructureAction::contract_product_tiles(
               vectors(spin_terms_[term].structure, vector_begin + vector);
     Eigen::MatrixXd h_products = Eigen::MatrixXd::Zero(!ordered ? spin_products_.size():0, width);
     Eigen::MatrixXd m_products = Eigen::MatrixXd::Zero(!ordered && collect_overlap ? spin_products_.size():0, width);
+    workspace::Temporary h_products_temporary(sizeof(double)*h_products.size());
+    workspace::Temporary m_products_temporary(sizeof(double)*m_products.size());
     const auto project_pattern = [&](const ColumnPattern& pattern, const Eigen::SparseMatrix<double>& rows,
                              Eigen::MatrixXd& image, Eigen::MatrixXd& target) {
       profiling::ScopedPhase phase(profiling::Phase::CiProductProjection);
@@ -262,6 +268,7 @@ StructureResponseSweep StructureAction::contract_product_tiles(
       const auto pattern=merge_patterns(column_patterns);
       const auto rows=sample_factors(betas);
       Eigen::MatrixXd values = Eigen::MatrixXd::Zero(n_unique_alpha_, width * rows.rows());
+      workspace::Temporary values_temporary(sizeof(double)*values.size());
       // Each alpha owns its row. CSR maps structures straight to strings;
       // no determinant vector or full raw spin-product grid is formed.
       cooperative_openmp_for(n_unique_alpha_,workers,[&](std::ptrdiff_t alpha) {
@@ -283,6 +290,7 @@ StructureResponseSweep StructureAction::contract_product_tiles(
       if (need_overlap) {
         ++result.tiles.overlap_projections;
         Eigen::MatrixXd overlap=values;
+        workspace::Temporary overlap_temporary(sizeof(double)*overlap.size());
         for (int b=0;b<cols;++b)
           if (overlap_consumed[betas[b]])
             for (int v=0;v<width;++v) overlap.col(v*cols+b).setZero();
@@ -325,6 +333,7 @@ StructureResponseSweep StructureAction::contract_product_tiles(
       for (const auto& image:completed_images) column_patterns.push_back(image.pattern);
       const auto pattern=merge_patterns(column_patterns);
       Eigen::MatrixXd image=Eigen::MatrixXd::Zero(n_unique_alpha_,width*cols);
+      workspace::Temporary image_temporary(sizeof(double)*image.size());
       cooperative_openmp_for(cols*width,cooperative_openmp_thread_count(),[&](std::ptrdiff_t packed) {
         const int b=packed%cols,v=packed/cols;
         const auto& tile=completed_images[b];

@@ -52,6 +52,8 @@ StructureAction::SourceImageAdjoint StructureAction::project_source_adjoint(
   Eigen::MatrixXd moment(resident ? columns:0,resident ? right.count:0);
   Eigen::MatrixXd za=Eigen::MatrixXd::Zero(n_unique_alpha_,resident ? right.count:columns);
   Eigen::MatrixXd zb=Eigen::MatrixXd::Zero(n_unique_beta_,resident ? right.count:columns);
+  workspace::Temporary temporary(sizeof(double)*static_cast<std::size_t>(
+      a.size()+b.size()+moment.size()+za.size()+zb.size()));
   if (resident) right.load(0,right.count,a,b);
   const auto consume = [&](const Eigen::Ref<const Eigen::MatrixXd>& x,
         const Eigen::Ref<const Eigen::MatrixXd>& y, double scale) {

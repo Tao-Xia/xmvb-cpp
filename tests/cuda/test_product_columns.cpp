@@ -314,6 +314,30 @@ void check_context_budget() {
     throw std::runtime_error("CUDA byte budget did not recover after a stream-ordered free");
 }
 
+void check_reusable_pool_capacity() {
+  constexpr std::size_t cushion=8ULL*1024*1024;
+  constexpr std::size_t tile=32ULL*1024*1024;
+  std::size_t free_before=0,total=0;
+  xmvb::cuda::check_cuda(cudaMemGetInfo(&free_before,&total),
+      "query reusable-pool test memory");
+  if (free_before<tile+cushion) return;
+  // Only a small tile is allocated. A near-free explicit limit exposes the
+  // distinction between free outside the pool and reusable pages inside it.
+  xmvb::cuda::Context context(free_before-cushion);
+  {
+    xmvb::cuda::Buffer<std::byte> scratch(context,tile);
+  }
+  context.synchronize();
+  std::size_t free_after=0;
+  xmvb::cuda::check_cuda(cudaMemGetInfo(&free_after,&total),
+      "query retained CUDA pool memory");
+  const auto retained_drop=free_before>free_after ? free_before-free_after:0;
+  if (retained_drop>=tile/2 && retained_drop<=2*tile &&
+      free_after<context.device_byte_budget() &&
+      context.available_device_bytes()<=free_after)
+    throw std::runtime_error("CUDA planning excludes reusable pool storage");
+}
+
 void check_memory_audit() {
   xmvb::cuda::Context context(256);
   if (context.memory_audit_enabled() || !context.peak_allocation_groups().empty())
@@ -393,7 +417,8 @@ void check_memory_audit() {
 int main() {
   try {
     check(1);check(-1);check_reject_asymmetric();check_read_cache();
-    check_pinned_upload();check_context_budget();check_memory_audit();
+    check_pinned_upload();check_context_budget();check_reusable_pool_capacity();
+    check_memory_audit();
     std::cout<<"compact product column tests passed\n";
   } catch (const std::exception& error) {
     std::cerr<<error.what()<<'\n';return 1;

@@ -24,15 +24,21 @@ namespace xmvb::cuda {
 namespace {
 unsigned grid(std::size_t n) {return static_cast<unsigned>(std::min<std::size_t>(65535,(n+255)/256));}
 template<class Tile>
-void free_cache_for_allocation(Context& c,mcscf::ColumnCache<Tile>& cache,std::size_t bytes) {
-  const auto available=[&] {
-    const auto resident=c.counters().current_device_bytes;
-    const auto budget=c.device_byte_budget();
-    // The shared allocator already accounts for live payload. Device-wide
-    // free memory excludes reusable pool storage and is not this budget.
-    return resident<=budget ? budget-resident:std::size_t{0};
+void free_cache_for_allocation(Context& c,mcscf::ColumnCache<Tile>& cache,std::size_t bytes,
+    std::size_t& available,std::size_t& resident) {
+  const auto refresh=[&] {
+    const auto current=c.counters().current_device_bytes;
+    if (current>resident) available-=std::min(available,current-resident);
+    else available+=resident-current;
+    resident=current;
   };
-  while (bytes>available() && cache.evict_one()) {}
+  refresh();
+  while (bytes>available) {
+    if (!cache.evict_one()) break;
+    // Evictions queue frees on the same stream. Their payload becomes reusable
+    // for this allocation without another device-wide memory query.
+    refresh();
+  }
 }
 void sparse_check(cusparseStatus_t result,const char* operation) {
   if (result!=CUSPARSE_STATUS_SUCCESS)
@@ -503,13 +509,18 @@ struct ProductContraction::Impl {
     if (!factor_cache) factor_cache=std::make_unique<mcscf::ColumnCache<Factors>>(budget,[this](int id) {
       const nvtx3::scoped_range range{"vb.factor_sample",nvtx3::payload{static_cast<std::uint64_t>(id)}};
       const int first=id*factor_extent,count=std::min(factor_extent,beta-first);
-      free_cache_for_allocation(c,*factor_cache,static_cast<std::size_t>(beta)*count*sizeof(double));
+      auto available=c.available_device_bytes();
+      auto resident=c.counters().current_device_bytes;
+      const auto free_for=[&](std::size_t bytes) {
+        free_cache_for_allocation(c,*factor_cache,bytes,available,resident);
+      };
+      free_for(static_cast<std::size_t>(beta)*count*sizeof(double));
       Matrix<double> values(c,beta,count);
       beta_transform.sample_rows(first,values.view());
-      free_cache_for_allocation(c,*factor_cache,(static_cast<std::size_t>(beta)+1)*sizeof(int));
+      free_for((static_cast<std::size_t>(beta)+1)*sizeof(int));
       return Factors(c,sparse,values.view(),
           [this](std::size_t bytes) {factor_cache->reserve(bytes);},
-          [this](std::size_t bytes) {free_cache_for_allocation(c,*factor_cache,bytes);});
+          free_for);
     },mcscf::ColumnCache<Factors>::Consume{},[this](int id) {
       return (static_cast<std::size_t>(beta)+1)*sizeof(int);
     });
@@ -611,13 +622,18 @@ struct ProductContraction::Impl {
     mcscf::ColumnCache<Factors> delta_factors(quarter/4,[&](int id) {
       const nvtx3::scoped_range range{"vb.factor_direction",nvtx3::payload{static_cast<std::uint64_t>(id)}};
       auto keys=selected(id);
-      free_cache_for_allocation(c,delta_factors,2*static_cast<std::size_t>(beta)*keys.size()*sizeof(double));
+      auto available=c.available_device_bytes();
+      auto resident=c.counters().current_device_bytes;
+      const auto free_for=[&](std::size_t bytes) {
+        free_cache_for_allocation(c,delta_factors,bytes,available,resident);
+      };
+      free_for(2*static_cast<std::size_t>(beta)*keys.size()*sizeof(double));
       Matrix<double> values(c,beta,keys.size()),delta(c,beta,keys.size());
       beta_transform.sample_directional_rows(db,id*extent,values.view(),delta.view());
-      free_cache_for_allocation(c,delta_factors,(static_cast<std::size_t>(beta)+1)*sizeof(int));
+      free_for((static_cast<std::size_t>(beta)+1)*sizeof(int));
       return Factors(c,sparse,delta.view(),
           [&](std::size_t bytes) {delta_factors.reserve(bytes);},
-          [&](std::size_t bytes) {free_cache_for_allocation(c,delta_factors,bytes);});
+          free_for);
     },{},[&](int id) {
       return (static_cast<std::size_t>(beta)+1)*sizeof(int);
     });

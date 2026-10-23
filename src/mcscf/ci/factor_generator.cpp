@@ -16,6 +16,7 @@ SpinAmplitudeWorkspace::SpinAmplitudeWorkspace(const SpinFactorSource& source, i
         a_(source.n_alpha,mapped_ ? 0:width),
         b_(source.n_beta,mapped_ ? 0:width), moment_(mapped_ ? 0:width,mapped_ ? 0:columns) {
     if (width <= 0 || columns <= 0) throw std::invalid_argument("invalid amplitude panel dimensions");
+    temporary_.resize(sizeof(double)*static_cast<std::size_t>(a_.size()+b_.size()+moment_.size()));
     if (mapped_) return;
     if (width_ == source_.count) {
       source_.load(0,width_,a_,b_); loads_ = 1; columns_ = width_;
@@ -80,6 +81,8 @@ Eigen::MatrixXd generator_adjoint(const DirectCiSigmaAction& sigma,
   Eigen::MatrixXd a(left.n_alpha,nr), b(left.n_beta,nr);
   Eigen::MatrixXd wa(left.n_alpha,nr), wb(left.n_beta,nr);
   Eigen::MatrixXd ca(left.n_alpha,hamiltonian ? nr : 0), cb(left.n_beta,hamiltonian ? nr : 0);
+  workspace::Temporary temporary(sizeof(double)*static_cast<std::size_t>(
+      a.size()+b.size()+wa.size()+wb.size()+ca.size()+cb.size()));
   const SpinFactorSource shape{left.n_alpha,left.n_beta,nr,{}};
   std::unique_ptr<FactorActionWorkspace> sweep;
   if (hamiltonian)

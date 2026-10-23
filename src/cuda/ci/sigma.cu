@@ -281,7 +281,7 @@ void validate_output(linalg::MatrixView output,std::int64_t rows,
 // its maximum size, but no full-carrier channel is allocated or reserved.
 std::int64_t source_tile_rows(Context& context,std::int64_t products,
     int channels,int capacity,int panels,std::size_t extra=0) {
-  const auto available=context.device_byte_budget()-context.counters().current_device_bytes;
+  const auto available=context.available_device_bytes();
   const auto row_bytes=static_cast<std::size_t>(panels)*channels*sizeof(double);
   if (extra>available || row_bytes>available-extra)
     throw std::runtime_error("CUDA direct-CI budget cannot hold one complete source row");
@@ -383,8 +383,7 @@ void DirectCiSigma::prepare(int block_width) const {
   if (workspace_->products==products && scattered_.rows()>0 &&
       transformed_.rows()==scattered_.rows() && transformed_.cols()==n_channels_) return;
   reset_workspace();
-  const std::size_t available=context_->device_byte_budget()-
-      context_->counters().current_device_bytes;
+  const std::size_t available=context_->available_device_bytes();
   const std::size_t per_channel=2*static_cast<std::size_t>(products)*sizeof(double);
   int tile=static_cast<int>(std::min<std::size_t>(
       {static_cast<std::size_t>(n_channels_),static_cast<std::size_t>(channel_capacity_),

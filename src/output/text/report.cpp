@@ -1,6 +1,7 @@
 #include "output/text/report.hpp"
 #include "output/text/sections.hpp"
 #include "vbscf/core/contracts/orbital_type.hpp"
+#include "core/workspace.hpp"
 
 #include <array>
 #include <cerrno>
@@ -512,6 +513,10 @@ void print_summary(
   print_log_field(
       "End-to-end wall time",
       format_seconds(total_job_wall_time_seconds));
+  if (const auto bytes=workspace::peak_temporary_bytes()) {
+    print_log_field("Tracked CI temporary peak (GiB)",
+        format_fixed_double(static_cast<double>(bytes)/(1024.0*1024.0*1024.0),6));
+  }
   std::cout << "\n        Wall time for the job: "
             << std::fixed << std::setprecision(3)
             << total_job_wall_time_seconds << " seconds.\n";

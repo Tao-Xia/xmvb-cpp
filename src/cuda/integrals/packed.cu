@@ -232,10 +232,7 @@ PackedAoPairMatrix::PackedAoPairMatrix(
 
   if (unique) {
     if (graph.integral_count()==0) {prepare_nonzero();return;}
-    std::size_t free=0,total=0;
-    check_cuda(cudaMemGetInfo(&free,&total),"CUDA unique ERI staging capacity");
-    const auto available=std::min(free,context.device_byte_budget()-
-        context.counters().current_device_bytes);
+    const auto available=context.available_device_bytes();
     // One block-row worth of input is sufficient to stream the conversion;
     // tighter budgets split that row further. There is no full input copy.
     std::size_t largest=0;
@@ -266,8 +263,7 @@ PackedAoPairMatrix::PackedAoPairMatrix(
   // before the next chunk. A row is never split, preserving a simple CSR map.
   std::int64_t begin = 0;
   while (begin < n_pairs_) {
-    const auto available = context.device_byte_budget() -
-                           context.counters().current_device_bytes;
+    const auto available=context.available_device_bytes();
     std::int64_t end = begin;
     while (end < n_pairs_ && end - begin < edge_) {
       const auto edges = static_cast<std::int64_t>(graph.row_offsets[end + 1]) -

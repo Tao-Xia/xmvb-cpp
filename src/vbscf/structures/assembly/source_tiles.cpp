@@ -77,6 +77,7 @@ StructureActionResult StructureAction::apply_source_columns(int width,
                               Eigen::MatrixXd::Zero(n_structures_,width)};
   for (int column = 0; column < width; ++column) {
     const Eigen::VectorXd values = support_column(column);
+    workspace::Temporary values_temporary(sizeof(double)*static_cast<std::size_t>(values.size()));
     const auto source = sources_->orthogonal_source(spin_products_,values,alpha,beta);
     const auto image = project_factor_source(source,workspace,alpha,beta,sigma,overlap_only);
     result.hamiltonian.col(column) = image.hamiltonian.col(0);
@@ -113,6 +114,7 @@ StructureActionResult StructureAction::project_factor_source(const mcscf::SpinFa
   const int extra = project_output && output_generator ?
       2*workspace.source_tile()*std::max(1,workspace.channel_tile()) : 0;
   Eigen::MatrixXd ga(n_unique_alpha_,extra), gb(n_unique_beta_,extra);
+  workspace::Temporary pullback_temporary(sizeof(double)*static_cast<std::size_t>(ga.size()+gb.size()));
   const auto pullback = [&](bool spin, Eigen::Ref<Eigen::MatrixXd> value,
                             Eigen::Ref<Eigen::MatrixXd> tangent) {
     const auto& transform = spin ? beta : alpha;
@@ -125,6 +127,7 @@ StructureActionResult StructureAction::project_factor_source(const mcscf::SpinFa
   };
   {
     Eigen::VectorXd h_products = Eigen::VectorXd::Zero(project_output ? spin_products_.size() : 0), m_products = h_products;
+    workspace::Temporary products_temporary(sizeof(double)*static_cast<std::size_t>(h_products.size()+m_products.size()));
     ++result.tiles.expansions;
 
     const auto cross = [&](mcscf::FactorCrossBlock block) {

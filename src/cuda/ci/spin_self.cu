@@ -137,7 +137,7 @@ void SpinSelf::update(View frame,View kernel) {
   const int n=orbitals_,k=occupied_;
   const std::size_t per_string=(2ULL*n*k+2ULL*k*k+1ULL*n*n)*sizeof(double)+
       2*sizeof(double*)+(k+1)*sizeof(int);
-  const auto available=c.device_byte_budget()-c.counters().current_device_bytes;
+  const auto available=c.available_device_bytes();
   const int tile=static_cast<int>(std::min<std::size_t>(strings_,available/per_string));
   if (!tile) throw std::runtime_error("spin-self workspace cannot fit one string");
   Matrix<double> factors(c,n,k*tile),lu(c,k,k*tile),inverse(c,k,k*tile),

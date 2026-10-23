@@ -523,15 +523,7 @@ void complete_pair_direction(Context& context, linalg::ConstMatrixView unsymmetr
 std::int64_t tile_size(Context& context, std::int64_t n_ao_pairs,
                        std::int64_t active_pairs, int images,
                        std::int64_t output_elements) {
-  const auto& counters = context.counters();
-  const std::size_t budget = context.device_byte_budget();
-  if (counters.current_device_bytes > budget)
-    throw std::runtime_error("CUDA integral device accounting exceeds budget");
-  std::size_t device_free = 0, device_total = 0;
-  check_cuda(cudaMemGetInfo(&device_free, &device_total),
-             "query CUDA integral free memory");
-  const std::size_t available = std::min(
-      budget - counters.current_device_bytes, device_free);
+  const std::size_t available=context.available_device_bytes();
   // The requested output is already live. Reserve its measured size once more
   // for library/reduction scratch; fixed intermediates are allocated before
   // calling this function and are reflected in the live counters/free bytes.
@@ -869,14 +861,7 @@ void ExactAoPairOperator::generated_rows_impl(
     // Full AO rows admit a library graph action per active-pair channel slab. The
     // generated CSR kernel below is retained for row subsets, where a full
     // source feature panel would repeat work and increase residency.
-    std::size_t device_free=0,device_total=0;
-    check_cuda(cudaMemGetInfo(&device_free,&device_total),
-               "query CUDA generated AO-pair free memory");
-    const auto resident=context_->counters().current_device_bytes;
-    const auto budget=context_->device_byte_budget();
-    if (resident>budget)
-      throw std::runtime_error("CUDA generated AO-pair accounting exceeds budget");
-    const auto available=std::min(budget-resident,device_free);
+    const auto available=context_->available_device_bytes();
     const auto channel_bytes=static_cast<std::size_t>(
         checked_product(n_pairs_,sizeof(double)));
     const auto max_channels=static_cast<int>(std::min<std::size_t>(
@@ -960,14 +945,9 @@ void ExactAoPairOperator::generated_rows(
 Buffer<double> ExactAoPairOperator::reserve_products(int n_active) const {
   const auto count=checked_product(n_pairs_,active_pairs(n_active));
   const auto bytes=static_cast<std::size_t>(checked_product(count,sizeof(double)));
-  std::size_t free=0,total=0;
-  check_cuda(cudaMemGetInfo(&free,&total),"query accepted AO-pair products memory");
-  const auto used=context_->counters().current_device_bytes;
-  const auto budget=context_->device_byte_budget();
-  if (used>budget) throw std::runtime_error("CUDA accepted pair accounting exceeds budget");
   // One retained image, another physical point, and two full response panels.
   // Streaming remains entirely on device when this complete working set cannot fit.
-  if (bytes>std::min(free,budget-used)/4) return {};
+  if (bytes>context_->available_device_bytes()/4) return {};
   return Buffer<double>(*context_,count);
 }
 
@@ -995,11 +975,7 @@ void ExactAoPairOperator::forward(linalg::ConstMatrixView c,
     // SpMM source instead of regenerating the same active-pair features.
     bool direct_action=false;
     if (n_integrals_ != 0 && begin == 0 && count == n_pairs_) {
-      std::size_t device_free=0,device_total=0;
-      check_cuda(cudaMemGetInfo(&device_free,&device_total),
-                 "query CUDA forward SpMM free memory");
-      const auto available=std::min(context_->device_byte_budget()-
-          context_->counters().current_device_bytes,device_free);
+      const auto available=context_->available_device_bytes();
       direct_action=apply_workspace({bp.data,bp.rows,bp.cols,bp.ld},pp)<=available;
     }
     if (direct_action) apply({bp.data,bp.rows,bp.cols,bp.ld},pp);

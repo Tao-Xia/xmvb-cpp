@@ -4,6 +4,7 @@
 #include <span>
 #include <vector>
 #include <Eigen/Core>
+#include "core/workspace.hpp"
 
 namespace xmvb::mcscf::detail {
 
@@ -41,6 +42,7 @@ public:
 /** @brief Host numerical panels on the shared symbolic channel selectors. */
 class ChannelProduct : public ChannelSelectors {
   const Eigen::MatrixXd& kernel_;
+  workspace::Temporary temporary_;
   std::vector<Eigen::MatrixXd> kernels_;
 public:
   ChannelProduct(const Eigen::MatrixXd& kernel,int orbitals,bool restricted)
@@ -50,6 +52,9 @@ public:
       panel.resize(kernel.rows(),channels(group));
       for (int k=0;k<channels(group);++k) panel.col(k)=kernel.col(global(group,k));
     }
+    std::size_t bytes=0;
+    for (const auto& panel:kernels_) bytes+=sizeof(double)*panel.size();
+    temporary_.resize(bytes);
   }
   const Eigen::MatrixXd& kernel(int group) const noexcept { return group ? kernels_[group]:kernel_; }
 };
