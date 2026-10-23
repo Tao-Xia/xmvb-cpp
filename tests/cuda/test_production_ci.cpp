@@ -1200,7 +1200,7 @@ void check_exterior(int rhs_count,int n=4,int nalpha=2,int nbeta=1) {
           "directional exterior tangent or padding differs from CPU");
     }
   }
-  if (n==4) {
+  if (n==4 || n==12) {
     const int beta_dim=static_cast<int>(beta.size());
     const int alpha_dim=static_cast<int>(alpha.size());
     const std::array<int,3> widths{1,beta_dim-2,1};

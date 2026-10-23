@@ -11,6 +11,8 @@
 
 namespace xmvb::cuda {
 
+class PinnedUpload;
+
 /** CPU ExteriorTransformDirection, stored on the device. One instance is
  * reused by every primal/adjoint column panel at a fixed directional point.
  */
@@ -30,6 +32,7 @@ class ExteriorTransform {
   ExteriorTransform(Context& context, const vb::ExteriorOrbitalTransform& source);
   /** Independent numerical frame with borrowed immutable spin topology. */
   ExteriorTransform(Context& context, const ExteriorTransform& reference);
+  ~ExteriorTransform();
   ExteriorTransform(const ExteriorTransform&) = delete;
   ExteriorTransform& operator=(const ExteriorTransform&) = delete;
 
@@ -60,7 +63,8 @@ class ExteriorTransform {
                    bool inverse = false) const;
   /** Ordered right action across independent beta-column tiles of one lane.
    * Tiles have equal alpha row counts and together cover exactly dimension()
-   * columns. A bounded transposed alpha-row stripe is the only numerical work.
+   * columns. Small spin spaces run directly from the tile columns; larger
+   * spaces use bounded transposed alpha-row stripes.
    */
   void apply_right_tiles(std::span<const linalg::MatrixView> tiles,
                          bool adjoint=false,bool inverse=false) const;
@@ -101,10 +105,13 @@ class ExteriorTransform {
            (topology_.use_count()==1 ?
                topology_->occupations.size()*sizeof(std::uint64_t)+
                topology_->schedule.size()*sizeof(Shear)+
-               topology_->edges.size()*sizeof(vb::ExteriorOrbitalTransform::ShearEdge):0);
+               topology_->edges.size()*sizeof(vb::ExteriorOrbitalTransform::ShearEdge):0) +
+           (right_pointer_upload_ ? right_pointer_upload_bytes() : 0);
   }
 
  private:
+  double* const* upload_right_columns(const std::vector<double*>& columns) const;
+  std::size_t right_pointer_upload_bytes() const noexcept;
   struct Topology {
     explicit Topology(Context& context,std::size_t strings)
         : occupations(context,strings) {}
@@ -122,6 +129,8 @@ class ExteriorTransform {
   Buffer<double> shear_coefficients_;
   std::shared_ptr<Topology> topology_;
   Matrix<double> unit_upper_;
+  mutable std::unique_ptr<PinnedUpload> right_pointer_upload_;
+  mutable std::vector<double*> right_columns_;
 };
 
 }  // namespace xmvb::cuda

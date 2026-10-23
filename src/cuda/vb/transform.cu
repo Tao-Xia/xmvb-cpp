@@ -5,6 +5,7 @@
 #include <limits>
 #include <stdexcept>
 #include <vector>
+#include <nvtx3/nvtx3.hpp>
 
 #include "cuda/linalg/blas.hpp"
 #include "cuda/memory/upload.hpp"
@@ -93,6 +94,12 @@ int left_tile_lanes(std::int64_t rhs,int dimension,int shared_values) {
       {32,rhs,shared_values/dimension}));
 }
 
+int right_tile_lanes(int dimension,int shared_values,int arrays=1) {
+  int lanes=1;
+  while (lanes<32 && 2*lanes<=shared_values/(arrays*dimension)) lanes*=2;
+  return lanes;
+}
+
 // An elementary orbital shear has disjoint determinant source/target pairs.
 // Thus each updated element has one owner, while the complete ordered product
 // still follows the CPU factorization exactly.
@@ -146,17 +153,20 @@ __global__ void shear_right(linalg::MatrixView coefficients,
 // for the complete ordered exterior product: sources and targets of one
 // elementary shear are disjoint, and the barrier orders consecutive shears.
 // This is not a new factorization, truncation, or full product-space cache.
-template<bool Right,bool Tangent=false>
+template<bool Right,bool Tangent=false,bool Indirect=false>
 __global__ void exterior_tile(linalg::MatrixView panel,const Edge* edges,
     const ExteriorTransform::Shear* schedule,int steps,const double* coefficients,const double* scales,
     int dimension,int lanes,bool adjoint,bool inverse,const std::uint64_t* allowed=nullptr,
     int support_columns=0,int words=0,linalg::MatrixView tangent={},
-    const double* delta_scales=nullptr,const double* delta_coefficients=nullptr) {
+    const double* delta_scales=nullptr,const double* delta_coefficients=nullptr,
+    double* const* columns=nullptr,double* const* tangent_columns=nullptr) {
+  static_assert(!Indirect || Right);
   extern __shared__ double values[];
   const auto row_tiles=(panel.rows+lanes-1)/lanes;
-  const auto column=Right ? blockIdx.x/row_tiles*dimension:
+  const auto column=Right ? (Indirect ? 0 : blockIdx.x/row_tiles*dimension):
       (support_columns ? blockIdx.x%support_columns:blockIdx.x);
-  const auto row_begin=Right ? blockIdx.x%row_tiles*lanes:0;
+  const auto row_begin=Right ? (Indirect ? static_cast<std::int64_t>(blockIdx.x)*lanes:
+      blockIdx.x%row_tiles*lanes):0;
   // Supported left panels are RHS-major: lane l owns support column
   // `column` in a different RHS, so every lane uses the same edge mask.
   const auto left_begin=support_columns ?
@@ -170,9 +180,17 @@ __global__ void exterior_tile(linalg::MatrixView panel,const Edge* edges,
     const auto col=Right ? column+spin:
         left_begin+static_cast<std::int64_t>(lane)*left_stride;
     const bool valid=row<panel.rows && col<panel.cols;
-    double v=valid ? panel.data[row+panel.ld*col]:0.0;
+    double v=0.0;
+    if (valid) {
+      if constexpr (Indirect) v=columns[spin][row];
+      else v=panel.data[row+panel.ld*col];
+    }
     if constexpr (Tangent) {
-      double dv=valid ? tangent.data[row+tangent.ld*col]:0.0;
+      double dv=0.0;
+      if (valid) {
+        if constexpr (Indirect) dv=tangent_columns[spin][row];
+        else dv=tangent.data[row+tangent.ld*col];
+      }
       if (!adjoint) dv=scales[spin]*dv+delta_scales[spin]*v;
       values[work+k]=dv;
     }
@@ -211,10 +229,16 @@ __global__ void exterior_tile(linalg::MatrixView panel,const Edge* edges,
     if constexpr (Tangent) {
       double dv=values[work+k];
       if (adjoint) dv=scales[spin]*dv+delta_scales[spin]*v;
-      if (row<panel.rows && col<panel.cols) tangent.data[row+tangent.ld*col]=dv;
+      if (row<panel.rows && col<panel.cols) {
+        if constexpr (Indirect) tangent_columns[spin][row]=dv;
+        else tangent.data[row+tangent.ld*col]=dv;
+      }
     }
     if (adjoint!=inverse) v*=scales[spin];
-    if (row<panel.rows && col<panel.cols) panel.data[row+panel.ld*col]=v;
+    if (row<panel.rows && col<panel.cols) {
+      if constexpr (Indirect) columns[spin][row]=v;
+      else panel.data[row+panel.ld*col]=v;
+    }
   }
 }
 
@@ -376,6 +400,24 @@ ExteriorTransform::ExteriorTransform(Context& context,
       shear_coefficients_.size());
 }
 
+ExteriorTransform::~ExteriorTransform() = default;
+
+std::size_t ExteriorTransform::right_pointer_upload_bytes() const noexcept {
+  return right_pointer_upload_->size();
+}
+
+double* const* ExteriorTransform::upload_right_columns(
+    const std::vector<double*>& columns) const {
+  if (!right_pointer_upload_)
+    right_pointer_upload_=std::make_unique<PinnedUpload>(*context_);
+  if (columns!=right_columns_) {
+    right_columns_.clear();
+    right_pointer_upload_->assign(std::as_bytes(std::span{columns}));
+    right_columns_=columns;
+  }
+  return reinterpret_cast<double* const*>(right_pointer_upload_->data());
+}
+
 void ExteriorTransform::update_upper(linalg::ConstMatrixView upper) {
   if (upper.rows!=n_orbitals_ || upper.cols!=n_orbitals_ ||
       upper.ld<upper.rows || !upper.data)
@@ -519,8 +561,7 @@ void ExteriorTransform::apply_right(linalg::MatrixView coefficients,
     throw std::invalid_argument("invalid CUDA exterior right panel");
   const std::int64_t rhs = coefficients.cols/dimension_;
   if (!topology_->shears.empty() && dimension_<=shared_values_) {
-    int lanes=1;
-    while (lanes<32 && 2*lanes<=shared_values_/dimension_) lanes*=2;
+    const int lanes=right_tile_lanes(dimension_,shared_values_);
     const auto tiles=((coefficients.rows+lanes-1)/lanes)*rhs;
     exterior_tile<true><<<grid_size(tiles*256),256,
         static_cast<std::size_t>(dimension_)*lanes*sizeof(double),context_->stream()>>>(
@@ -559,11 +600,22 @@ void ExteriorTransform::apply_right(linalg::MatrixView coefficients,
 
 void ExteriorTransform::apply_right_tiles(
     std::span<const linalg::MatrixView> tiles,bool adjoint,bool inverse) const {
+  const nvtx3::scoped_range range{"exterior.right_tiles"};
   std::int64_t rows=0;
   const auto host_columns=tile_columns(tiles,dimension_,&rows);
-  PinnedUpload pointer_upload(*context_);
-  pointer_upload.assign(std::as_bytes(std::span{host_columns}));
-  auto* const columns=reinterpret_cast<double* const*>(pointer_upload.data());
+  auto* const columns=upload_right_columns(host_columns);
+  if (!topology_->shears.empty() && dimension_<=shared_values_) {
+    const int lanes=right_tile_lanes(dimension_,shared_values_);
+    const auto row_tiles=(rows+lanes-1)/lanes;
+    exterior_tile<true,false,true><<<tile_grid(row_tiles),256,
+        static_cast<std::size_t>(dimension_)*lanes*sizeof(double),context_->stream()>>>(
+        {nullptr,rows,dimension_,0},topology_->edges.data(),topology_->schedule.data(),
+        topology_->shears.size(),shear_coefficients_.data(),
+        inverse ? inverse_scales_.data():scales_.data(),dimension_,lanes,adjoint,inverse,
+        nullptr,0,0,{},nullptr,nullptr,columns);
+    check_cuda(cudaGetLastError(),"CUDA fused exterior right tiles");
+    return;
+  }
   if (rows==1) {
     const auto scale=[&] {
       scale_one_row_tiles<<<grid_size(dimension_),256,0,context_->stream()>>>(
@@ -586,6 +638,7 @@ void ExteriorTransform::apply_right_tiles(
   const int extent=right_stripe_rows(*context_,dimension_,rows,1);
   Matrix<double> stripe(*context_,dimension_,extent);
   for (std::int64_t first=0;first<rows;first+=extent) {
+    const nvtx3::scoped_range stripe_range{"exterior.right_stripe"};
     const int count=static_cast<int>(std::min<std::int64_t>(extent,rows-first));
     auto work=stripe.view().columns(0,count);
     transpose_tile_stripe<<<grid_size(static_cast<std::int64_t>(dimension_)*count),
@@ -602,6 +655,7 @@ void ExteriorTransform::apply_directional_right_tiles(
     const ExteriorDirection& direction,
     std::span<const linalg::MatrixView> primal,
     std::span<const linalg::MatrixView> tangent,bool adjoint) const {
+  const nvtx3::scoped_range range{"exterior.directional_right_tiles"};
   if (primal.size()!=tangent.size() ||
       direction.scales.size()!=static_cast<std::size_t>(dimension_) ||
       direction.shears.size()!=topology_->shears.size())
@@ -616,9 +670,19 @@ void ExteriorTransform::apply_directional_right_tiles(
         primal[tile].data==tangent[tile].data)
       throw std::invalid_argument("CUDA directional exterior tile layouts disagree");
   host_columns.insert(host_columns.end(),tangent_columns.begin(),tangent_columns.end());
-  PinnedUpload pointer_upload(*context_);
-  pointer_upload.assign(std::as_bytes(std::span{host_columns}));
-  auto* const columns=reinterpret_cast<double* const*>(pointer_upload.data());
+  auto* const columns=upload_right_columns(host_columns);
+  if (!topology_->shears.empty() && dimension_<=shared_values_/2) {
+    const int lanes=right_tile_lanes(dimension_,shared_values_,2);
+    const auto row_tiles=(rows+lanes-1)/lanes;
+    exterior_tile<true,true,true><<<tile_grid(row_tiles),256,
+        2ULL*dimension_*lanes*sizeof(double),context_->stream()>>>(
+        {nullptr,rows,dimension_,0},topology_->edges.data(),topology_->schedule.data(),
+        topology_->shears.size(),shear_coefficients_.data(),scales_.data(),
+        dimension_,lanes,adjoint,false,nullptr,0,0,{nullptr,rows,dimension_,0},
+        direction.scales.data(),direction.shears.data(),columns,columns+dimension_);
+    check_cuda(cudaGetLastError(),"CUDA fused directional exterior right tiles");
+    return;
+  }
   if (rows==1) {
     auto* const derivatives=columns+dimension_;
     const auto scale=[&] {
@@ -644,6 +708,7 @@ void ExteriorTransform::apply_directional_right_tiles(
   Matrix<double> primal_stripe(*context_,dimension_,extent);
   Matrix<double> tangent_stripe(*context_,dimension_,extent);
   for (std::int64_t first=0;first<rows;first+=extent) {
+    const nvtx3::scoped_range stripe_range{"exterior.directional_right_stripe"};
     const int count=static_cast<int>(std::min<std::int64_t>(extent,rows-first));
     auto p=primal_stripe.view().columns(0,count);
     auto t=tangent_stripe.view().columns(0,count);
