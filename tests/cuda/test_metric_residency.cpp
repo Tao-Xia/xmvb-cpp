@@ -57,6 +57,29 @@ void check_full_constructor_residency() {
   }
   if (context.counters().current_device_bytes!=before)
     throw std::runtime_error("FULL metric did not release its structure workspace");
+
+  xmvb::cuda::Matrix<double> vector(context,3,1),hamiltonian(context,3,1),metric(context,3,1);
+  Eigen::MatrixXd seed=Eigen::MatrixXd::Zero(3,1);
+  seed(0,0)=1.0;
+  xmvb::cuda::copy_to_device(context,vector.view(),seed);
+  action.apply(vector.view(),hamiltonian.view(),metric.view());
+  if (action.graph_nodes()==0)
+    throw std::runtime_error("FULL pressure fixture did not capture an action graph");
+  Eigen::MatrixXd first_h(3,1),first_m(3,1),second_h(3,1),second_m(3,1);
+  xmvb::cuda::copy_to_host(context,first_h,hamiltonian.view());
+  xmvb::cuda::copy_to_host(context,first_m,metric.view());
+  const auto available=context.available_device_bytes();
+  action.reserve_workspace(available);
+  if (action.graph_nodes()==0)
+    throw std::runtime_error("FULL reserve evicted a fitting action graph");
+  action.reserve_workspace(available+1);
+  if (action.graph_nodes()!=0 || context.available_device_bytes()<=available)
+    throw std::runtime_error("FULL reserve retained an idle action graph under pressure");
+  action.apply(vector.view(),hamiltonian.view(),metric.view());
+  xmvb::cuda::copy_to_host(context,second_h,hamiltonian.view());
+  xmvb::cuda::copy_to_host(context,second_m,metric.view());
+  if (!first_h.isApprox(second_h,0.0) || !first_m.isApprox(second_m,0.0))
+    throw std::runtime_error("FULL pressure replay changed the numerical action");
 }
 
 }  // namespace

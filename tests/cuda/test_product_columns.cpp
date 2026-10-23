@@ -5,6 +5,7 @@
 #include <iostream>
 #include <memory>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -282,12 +283,41 @@ void check_pinned_upload() {
   if (observed_a!=expected_a || observed_b!=b || observed_c!=c)
     throw std::runtime_error("pinned upload overwrote a queued consumer");
 }
+
+void check_context_budget() {
+  xmvb::cuda::Context automatic;
+  const auto free=automatic.initial_device_free_bytes();
+  if (!free || automatic.device_byte_budget()!=free-free/10-(free%10!=0) ||
+      automatic.available_device_bytes()>automatic.device_byte_budget())
+    throw std::runtime_error("automatic CUDA budget does not reserve 10% of free memory");
+
+  xmvb::cuda::Context explicit_budget(160);
+  if (explicit_budget.device_byte_budget()!=160 ||
+      explicit_budget.available_device_bytes()!=160)
+    throw std::runtime_error("explicit CUDA budget was not preserved");
+  {
+    xmvb::cuda::Buffer<std::byte> live(explicit_budget,64);
+    if (explicit_budget.counters().current_device_bytes!=64 ||
+        explicit_budget.available_device_bytes()!=96)
+      throw std::runtime_error("CUDA available bytes do not track live allocations");
+    try {
+      xmvb::cuda::Buffer<std::byte> excess(explicit_budget,97);
+      throw std::runtime_error("CUDA byte budget admitted an oversized allocation");
+    } catch (const std::runtime_error& error) {
+      if (std::string(error.what()).find("exceeds byte budget")==std::string::npos)
+        throw;
+    }
+  }
+  if (explicit_budget.counters().current_device_bytes!=0 ||
+      explicit_budget.available_device_bytes()!=160)
+    throw std::runtime_error("CUDA byte budget did not recover after a stream-ordered free");
+}
 } // namespace
 
 int main() {
   try {
     check(1);check(-1);check_reject_asymmetric();check_read_cache();
-    check_pinned_upload();
+    check_pinned_upload();check_context_budget();
     std::cout<<"compact product column tests passed\n";
   } catch (const std::exception& error) {
     std::cerr<<error.what()<<'\n';return 1;

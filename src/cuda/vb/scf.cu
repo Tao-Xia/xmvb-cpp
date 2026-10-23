@@ -163,7 +163,13 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,
     const nvtx3::scoped_range range{"scf.relax_ci"};
     Trial trial;trial.raw=std::move(trial_raw);trial.point=new_point();
     trial.point->prepare(trial.raw.view());
-    trial.ci=guess.data ? ci_solver.solve_device(guess,ci_options) : ci_solver.solve_device(ci_options);
+    {
+      AllocationPhase phase(context,"CI relaxation");
+      const auto ci_start=Clock::now();
+      trial.ci=guess.data ? ci_solver.solve_device(guess,ci_options) : ci_solver.solve_device(ci_options);
+      if (!guess.data)
+        result.initial_ci_seconds=std::chrono::duration<double>(Clock::now()-ci_start).count();
+    }
     result.ci_actions+=trial.ci.block_actions;
     finish(trial,guess);
     return trial;

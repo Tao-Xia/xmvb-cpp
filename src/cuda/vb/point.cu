@@ -255,7 +255,7 @@ double VbPoint::evaluate_coefficients(View coefficients) {
 }
 
 std::size_t VbPoint::product_workspace_bytes() const {
-  return context_->device_byte_budget()-context_->counters().current_device_bytes;
+  return context_->available_device_bytes();
 }
 
 void VbPoint::gradient(Out orbital,Out structure) const {

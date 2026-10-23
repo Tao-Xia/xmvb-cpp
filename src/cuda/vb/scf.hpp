@@ -22,6 +22,8 @@ struct ScfResult {
   std::string reason;
   double energy=0.0,gradient_inf=0.0,seconds=0.0;
   double ao_upload_seconds=0.0,host_integral_release_seconds=0.0;
+  /** Initial CI relaxation, excluding orbital/integral preparation and gradient. */
+  double initial_ci_seconds=0.0;
   int iterations=0,hvp=0,ci_actions=0;
   std::uint64_t ci_prepared_points=0,selected_metric_builds=0;
   std::vector<ScfIteration> trace;

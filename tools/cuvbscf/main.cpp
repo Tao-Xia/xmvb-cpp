@@ -24,7 +24,7 @@ int main(int argc,char** argv) {
     options.orbital_preconditioner=xmvb::vb::OrbitalPreconditioner::HessianDiagonal;
     options.max_iterations=loaded.requested_scf_max_iterations;
     const auto context_start=std::chrono::steady_clock::now();
-    xmvb::cuda::Context context(4ULL*1024ULL*1024ULL*1024ULL);
+    xmvb::cuda::Context context;
     const double context_seconds=std::chrono::duration<double>(
         std::chrono::steady_clock::now()-context_start).count();
     std::cout<<"method=cuvbscf_ciah\npreconditioner=analytic_hessian_diagonal\n"
@@ -42,6 +42,12 @@ int main(int argc,char** argv) {
              <<"input_pair_graph_seconds="<<loaded.ao_integral_input_build_seconds<<'\n'
              <<"input_orbital_guess_seconds="<<loaded.orbital_guess_seconds<<'\n'
              <<"input_structure_expansion_seconds="<<loaded.structure_expansion_seconds<<'\n'
+             <<"gpu_initial_free_bytes="<<context.initial_device_free_bytes()<<'\n'
+             <<"gpu_initial_free_gib="
+             <<static_cast<double>(context.initial_device_free_bytes())/(1024.0*1024.0*1024.0)<<'\n'
+             <<"gpu_device_budget_bytes="<<context.device_byte_budget()<<'\n'
+             <<"gpu_device_budget_gib="
+             <<static_cast<double>(context.device_byte_budget())/(1024.0*1024.0*1024.0)<<'\n'
              <<"iteration,energy,delta_energy,gradient_inf,hvp,ci_actions,keyframes,seconds\n";
     const auto solve_start=std::chrono::steady_clock::now();
     auto result=xmvb::cuda::solve_scf(context,loaded.input,
@@ -71,6 +77,7 @@ int main(int argc,char** argv) {
              <<"orbital_hvp_actions="<<result.hvp<<'\n'
              <<"ci_block_actions="<<result.ci_actions<<'\n'
              <<"ci_prepared_points="<<result.ci_prepared_points<<'\n'
+             <<"initial_ci_seconds="<<result.initial_ci_seconds<<'\n'
              <<"selected_metric_builds="<<result.selected_metric_builds<<'\n'
              <<"gradient_inf="<<result.gradient_inf<<'\n'
              <<"scf_seconds="<<result.seconds<<'\n'

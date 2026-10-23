@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <memory>
 
 #include "cuda/ci/sigma.hpp"
@@ -46,6 +47,10 @@ public:
   /** Independent numerical executor sharing this action's immutable product support. */
   std::unique_ptr<ProductContraction> clone() const;
   void update_frame();
+  /** Evict only this executor's reconstructible factor and mask cache entries
+   * until the requested temporary allocation fits or both caches are empty.
+   */
+  void release_cached_workspace(std::size_t bytes) const;
   /** Finish the accepted CPU-style Y/(H-E)Y panels after Rayleigh evaluation. */
   void accept(ProductEndpoint&,double energy) const;
   /** Selected-space H/M without a complete product source or group image. */

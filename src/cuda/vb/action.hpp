@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <memory>
 #include <cstdint>
 #include <Eigen/Core>
@@ -55,6 +56,11 @@ class StructureAction {
    */
   void build_selected_metric(linalg::MatrixView overlap) const;
   std::uint64_t version() const noexcept;
+  /** Return idle action workspaces to the stream-ordered pool when a FULL
+   * temporary carrier cannot fit. Immutable topology and point-owned images
+   * remain resident.
+   */
+  void reserve_workspace(std::size_t bytes) const;
   /** Change the orbital frame without modifying the current sigma kernel.
    * A nonempty identity certifies immutable frame contents and permits reuse.
    * Without one, every call updates the frame conservatively.
@@ -88,6 +94,7 @@ class StructureAction {
   void apply_adjoint_orbital_transform(linalg::MatrixView carrier) const;
   void apply_carrier_hamiltonian(linalg::ConstMatrixView carrier,
                                 linalg::MatrixView image) const;
+  bool has_carrier_diagonal() const noexcept;
   /** Maximum orthogonal-carrier amplitude of a structure response.
    * Matches direct-CI CIAH clipping using bounded source-factor panels.
    * Caller must select the intended orbital frame first.

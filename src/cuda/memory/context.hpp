@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <limits>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -45,9 +45,17 @@ struct TransferCounters {
  */
 class Context {
  public:
-  explicit Context(
-      std::size_t device_byte_budget = std::numeric_limits<std::size_t>::max())
-      : device_byte_budget_(device_byte_budget) {
+  /** Use 90% of device memory free after CUDA and vendor handles are ready.
+   * The remaining 10% is reserved for CUDA libraries, runtime work, and
+   * allocations outside this Context. Explicit budgets remain available for
+   * tests and callers with a stricter resource policy.
+   */
+  Context() : Context(std::nullopt) {}
+  explicit Context(std::size_t device_byte_budget)
+      : Context(std::optional<std::size_t>(device_byte_budget)) {}
+
+ private:
+  explicit Context(std::optional<std::size_t> requested_budget) {
     check_cuda(cudaStreamCreateWithFlags(&stream_, cudaStreamNonBlocking),
                "cudaStreamCreateWithFlags");
     try {
@@ -58,15 +66,22 @@ class Context {
       properties.location.type=cudaMemLocationTypeDevice;
       properties.location.id=device;
       check_cuda(cudaMemPoolCreate(&pool_,&properties),"cudaMemPoolCreate");
-      std::uint64_t release_threshold=device_byte_budget_;
-      check_cuda(cudaMemPoolSetAttribute(pool_,cudaMemPoolAttrReleaseThreshold,
-          &release_threshold),"cudaMemPoolSetAttribute");
       check_cublas(cublasCreate(&blas_), "cublasCreate");
       check_cublas(cublasSetStream(blas_, stream_), "cublasSetStream");
       check_cublas(cublasSetMathMode(blas_, CUBLAS_DEFAULT_MATH),
                    "cublasSetMathMode");
       check_cusolver(cusolverDnCreate(&solver_),"cusolverDnCreate Context");
       check_cusolver(cusolverDnSetStream(solver_,stream_),"cusolverDnSetStream Context");
+      std::size_t total=0;
+      check_cuda(cudaMemGetInfo(&initial_device_free_bytes_,&total),
+          "query initial CUDA free memory");
+      // Subtract a rounded-up reserve without multiplying a large byte count.
+      const auto reserve=initial_device_free_bytes_/10+
+          (initial_device_free_bytes_%10!=0);
+      device_byte_budget_=requested_budget.value_or(initial_device_free_bytes_-reserve);
+      std::uint64_t release_threshold=device_byte_budget_;
+      check_cuda(cudaMemPoolSetAttribute(pool_,cudaMemPoolAttrReleaseThreshold,
+          &release_threshold),"cudaMemPoolSetAttribute");
     } catch (...) {
       if (solver_ != nullptr) cusolverDnDestroy(solver_);
       if (blas_ != nullptr) cublasDestroy(blas_);
@@ -76,6 +91,7 @@ class Context {
     }
   }
 
+ public:
   Context(const Context&) = delete;
   Context& operator=(const Context&) = delete;
   Context(Context&&) = delete;
@@ -99,6 +115,30 @@ class Context {
   }
   [[nodiscard]] std::size_t device_byte_budget() const noexcept {
     return device_byte_budget_;
+  }
+  [[nodiscard]] std::size_t initial_device_free_bytes() const noexcept {
+    return initial_device_free_bytes_;
+  }
+  /** Budget headroom limited by currently available device storage. The pool's
+   * reserved but unused bytes are reusable even though cudaMemGetInfo reports
+   * them as occupied. All Context work uses one stream, so queued frees can be
+   * reused in stream order without a host synchronization.
+   */
+  [[nodiscard]] std::size_t available_device_bytes() const {
+    const auto resident=counters_.current_device_bytes;
+    if (resident>device_byte_budget_)
+      throw std::logic_error("CUDA Context accounting exceeds byte budget");
+    const auto headroom=device_byte_budget_-resident;
+    std::size_t free=0,total=0;
+    check_cuda(cudaMemGetInfo(&free,&total),"query CUDA available memory");
+    std::uint64_t reserved=0,used=0;
+    check_cuda(cudaMemPoolGetAttribute(pool_,cudaMemPoolAttrReservedMemCurrent,&reserved),
+        "query CUDA pool reserved memory");
+    check_cuda(cudaMemPoolGetAttribute(pool_,cudaMemPoolAttrUsedMemCurrent,&used),
+        "query CUDA pool used memory");
+    const auto outside_pool=std::min(headroom,free);
+    const auto reusable=reserved>used ? reserved-used:0;
+    return outside_pool+std::min<std::uint64_t>(headroom-outside_pool,reusable);
   }
   [[nodiscard]] const char* allocation_phase() const noexcept { return allocation_phase_; }
   void set_allocation_phase(const char* phase) noexcept { allocation_phase_=phase; }
@@ -177,7 +217,8 @@ class Context {
   cudaMemPool_t pool_ = nullptr;
   cublasHandle_t blas_ = nullptr;
   cusolverDnHandle_t solver_ = nullptr;
-  std::size_t device_byte_budget_;
+  std::size_t device_byte_budget_=0;
+  std::size_t initial_device_free_bytes_=0;
   TransferCounters counters_;
   const char* allocation_phase_="unspecified";
 };

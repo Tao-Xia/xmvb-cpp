@@ -351,13 +351,7 @@ struct StructureAction::Impl {
   }
 
   std::size_t available_bytes() const {
-    const auto budget=context.device_byte_budget();
-    const auto resident=context.counters().current_device_bytes;
-    if (resident>budget)
-      throw std::runtime_error("CUDA structure action accounting exceeds budget");
-    std::size_t free=0,total=0;
-    check_cuda(cudaMemGetInfo(&free,&total),"query CUDA structure action free memory");
-    return std::min(budget-resident,free);
+    return context.available_device_bytes();
   }
 
   ProductContraction& selected_contraction() const {
@@ -489,6 +483,19 @@ const vb::StructureDiagonal& StructureAction::preconditioner_diagonal() const no
   return impl_->diagonal;
 }
 std::uint64_t StructureAction::version() const noexcept { return impl_->version; }
+void StructureAction::reserve_workspace(std::size_t bytes) const {
+  auto& p=*impl_;
+  if (bytes<=p.context.available_device_bytes()) return;
+  if (p.graph) {
+    // A captured graph owns the addresses of both graph and sigma workspaces.
+    // Finish its queued launch before destroying the graph or its buffers.
+    p.context.synchronize();
+    p.clear_graph_storage();
+  }
+  p.sigma.reset_workspace();
+  if (bytes>p.context.available_device_bytes() && p.selected_product)
+    p.selected_product->release_cached_workspace(bytes);
+}
 void StructureAction::diagonal_model(linalg::MatrixView h,
     linalg::MatrixView m) const {
   auto& p=*impl_;
@@ -543,14 +550,7 @@ void StructureAction::build_selected_metric(linalg::MatrixView output) const {
           "clear empty selected metric");
     return;
   }
-  const auto& counters=p.context.counters();
-  const auto budget=p.context.device_byte_budget();
-  if (counters.current_device_bytes>budget)
-    throw std::runtime_error("CUDA selected metric accounting exceeds budget");
-  std::size_t device_free=0,device_total=0;
-  check_cuda(cudaMemGetInfo(&device_free,&device_total),
-             "query CUDA selected metric free memory");
-  const auto available=std::min(budget-counters.current_device_bytes,device_free);
+  const auto available=p.context.available_device_bytes();
   const auto elements_per_column=static_cast<std::size_t>(p.alpha)+p.beta+
       static_cast<std::size_t>(p.groups)+2*static_cast<std::size_t>(p.structures);
   if (elements_per_column>std::numeric_limits<std::size_t>::max()/sizeof(double))
@@ -575,11 +575,7 @@ void StructureAction::build_selected_metric(linalg::MatrixView output) const {
           proposed_product.view().columns(0,tail),
           proposed_selected.view().columns(0,tail)));
     if (scratch>p.sparse_workspace.size()) {
-      std::size_t free_after=0,total_after=0;
-      check_cuda(cudaMemGetInfo(&free_after,&total_after),
-                 "query CUDA selected metric scratch memory");
-      const auto budget_after=budget-p.context.counters().current_device_bytes;
-      if (scratch>std::min(budget_after,free_after)) continue;
+      if (scratch>p.context.available_device_bytes()) continue;
       extra_workspace=Buffer<std::byte>(p.context,scratch);
     }
     spin_grams=std::move(proposed_grams);
@@ -754,6 +750,9 @@ void StructureAction::apply_adjoint_orbital_transform(linalg::MatrixView carrier
 }
 void StructureAction::apply_carrier_hamiltonian(linalg::ConstMatrixView carrier,
     linalg::MatrixView image) const { impl_->sigma.apply(carrier,image); }
+bool StructureAction::has_carrier_diagonal() const noexcept {
+  return impl_->carrier_diagonal.rows()!=0;
+}
 
 double StructureAction::maximum_orthogonal_component(
     linalg::ConstMatrixView structure) const {

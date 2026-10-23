@@ -131,6 +131,15 @@ void check_panel(linalg::ConstMatrixView input,linalg::MatrixView output,int row
     throw std::invalid_argument("CUDA spin metric panel dimensions");
 }
 
+std::size_t full_carrier_bytes(const StructureAction& action,std::size_t count) {
+  const auto alpha=static_cast<std::size_t>(action.n_alpha_strings());
+  const auto beta=static_cast<std::size_t>(action.n_beta_strings());
+  const auto maximum=std::numeric_limits<std::size_t>::max();
+  if (!alpha || !beta || !count || alpha>maximum/sizeof(double)/beta/count)
+    throw std::overflow_error("CUDA FULL carrier size overflow");
+  return alpha*beta*sizeof(double)*count;
+}
+
 }  // namespace
 
 SelectedMetric::SelectedMetric(Context& context,Matrix<double> gram)
@@ -402,7 +411,9 @@ void FullMetric::validate(linalg::ConstMatrixView input,
 
 void FullMetric::to_ci_coordinates(linalg::ConstMatrixView structure,
                                    linalg::MatrixView coordinates) const {
+  AllocationPhase phase(*context_,"FULL to CI coordinates");
   validate(structure,coordinates);
+  action_->reserve_workspace(full_carrier_bytes(*action_,1));
   Matrix<double> carrier(*context_,action_->n_alpha_strings(),action_->n_beta_strings());
   for (std::int64_t column=0;column<structure.cols;++column) {
     action_->expand_spin(structure.column(column),carrier.view());
@@ -414,7 +425,9 @@ void FullMetric::to_ci_coordinates(linalg::ConstMatrixView structure,
 
 void FullMetric::from_ci_coordinates(linalg::ConstMatrixView coordinates,
                                      linalg::MatrixView structure) const {
+  AllocationPhase phase(*context_,"FULL from CI coordinates");
   validate(coordinates,structure);
+  action_->reserve_workspace(full_carrier_bytes(*action_,1));
   Matrix<double> carrier(*context_,action_->n_alpha_strings(),action_->n_beta_strings());
   for (std::int64_t column=0;column<coordinates.cols;++column) {
     spin_->solve(coordinates.column(column),structure_.view(),SpinMetric::Part::Upper);
@@ -427,7 +440,9 @@ void FullMetric::from_ci_coordinates(linalg::ConstMatrixView coordinates,
 
 void FullMetric::ci_covector_to_structure(linalg::ConstMatrixView covector,
                                           linalg::MatrixView structure) const {
+  AllocationPhase phase(*context_,"FULL CI covector to structure");
   validate(covector,structure);
+  action_->reserve_workspace(full_carrier_bytes(*action_,1));
   Matrix<double> carrier(*context_,action_->n_alpha_strings(),action_->n_beta_strings());
   for (std::int64_t column=0;column<covector.cols;++column) {
     spin_->solve(covector.column(column),structure_.view(),SpinMetric::Part::Upper);
@@ -439,8 +454,10 @@ void FullMetric::ci_covector_to_structure(linalg::ConstMatrixView covector,
 
 void FullMetric::inverse_metric(linalg::ConstMatrixView covector,
                                 linalg::MatrixView structure) const {
+  AllocationPhase phase(*context_,"FULL inverse metric");
   validate(covector,structure);
   // Match the factorized CPU FULL inverse: G^-1 W^T T^-1 T^-T W G^-1.
+  action_->reserve_workspace(full_carrier_bytes(*action_,1));
   Matrix<double> carrier(*context_,action_->n_alpha_strings(),action_->n_beta_strings());
   for (std::int64_t column=0;column<covector.cols;++column) {
     spin_->solve(covector.column(column),structure_.view(),SpinMetric::Part::Gram);
@@ -456,12 +473,15 @@ void FullMetric::apply_structure_carrier_inverse(
     linalg::ConstMatrixView covector,
     linalg::ConstMatrixView selected_energy,double eigenvalue,
     linalg::MatrixView structure) const {
+  AllocationPhase phase(*context_,"FULL structure carrier inverse");
   validate(covector,structure);
   if (selected_energy.rows!=1 || selected_energy.cols!=1 ||
       selected_energy.ld<1 || !selected_energy.data || !std::isfinite(eigenvalue))
     throw std::invalid_argument("CUDA FULL structure AH inverse scalar dimensions");
   // This is the original-structure-coordinate counterpart of the isometric
   // CI inverse: G^-1 W^T T^-1 D^-1 T^-T W G^-1.
+  action_->reserve_workspace(full_carrier_bytes(*action_,
+      action_->has_carrier_diagonal() ? 1:2));
   Matrix<double> carrier(*context_,action_->n_alpha_strings(),action_->n_beta_strings());
   for (std::int64_t column=0;column<covector.cols;++column) {
     spin_->solve(covector.column(column),structure_.view(),SpinMetric::Part::Gram);
@@ -476,8 +496,10 @@ void FullMetric::apply_structure_carrier_inverse(
 
 void FullMetric::apply_ci_hamiltonian(linalg::ConstMatrixView coordinates,
                                       linalg::MatrixView image) const {
+  AllocationPhase phase(*context_,"FULL CI Hamiltonian");
   validate(coordinates,image);
   // The exact sigma retains its input while writing the output carrier.
+  action_->reserve_workspace(full_carrier_bytes(*action_,2));
   Matrix<double> carrier(*context_,action_->n_alpha_strings(),action_->n_beta_strings());
   Matrix<double> carrier_image(*context_,action_->n_alpha_strings(),action_->n_beta_strings());
   for (std::int64_t column=0;column<coordinates.cols;++column) {
@@ -492,10 +514,13 @@ void FullMetric::apply_ci_hamiltonian(linalg::ConstMatrixView coordinates,
 void FullMetric::apply_ci_preconditioner(linalg::ConstMatrixView covector,
     linalg::ConstMatrixView energies,double eigenvalue,
     linalg::MatrixView result) const {
+  AllocationPhase phase(*context_,"FULL CI preconditioner");
   validate(covector,result);
   if (energies.rows!=1 || energies.cols!=covector.cols ||
       energies.ld<energies.rows || !energies.data || !std::isfinite(eigenvalue))
     throw std::invalid_argument("CUDA FULL preconditioner energies dimensions");
+  action_->reserve_workspace(full_carrier_bytes(*action_,
+      action_->has_carrier_diagonal() ? 1:2));
   Matrix<double> carrier(*context_,action_->n_alpha_strings(),action_->n_beta_strings());
   for (std::int64_t column=0;column<covector.cols;++column) {
     spin_->solve(covector.column(column),structure_.view(),SpinMetric::Part::Upper);

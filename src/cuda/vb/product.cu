@@ -935,6 +935,14 @@ std::unique_ptr<ProductContraction> ProductContraction::clone() const {
       impl_->c,impl_->alpha_transform,impl_->beta_transform,impl_->symbolic,impl_->beta_shears)));
 }
 void ProductContraction::update_frame() {impl_->factor_cache.reset();}
+void ProductContraction::release_cached_workspace(std::size_t bytes) const {
+  auto& p=*impl_;
+  while (bytes>p.c.available_device_bytes()) {
+    if (p.factor_cache && p.factor_cache->evict_one()) continue;
+    if (p.mask_cache && p.mask_cache->evict_one()) continue;
+    break;
+  }
+}
 void ProductContraction::accept(ProductEndpoint& endpoint,double energy) const {
   endpoint.energy=energy;
   if (!endpoint.images || !endpoint.images->complete()) return;
