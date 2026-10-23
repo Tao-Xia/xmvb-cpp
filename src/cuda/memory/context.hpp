@@ -3,9 +3,13 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <optional>
+#include <source_location>
 #include <stdexcept>
 #include <string>
+#include <tuple>
+#include <unordered_map>
 
 #include <cublas_v2.h>
 #include <cuda_runtime_api.h>
@@ -38,6 +42,21 @@ struct TransferCounters {
   std::size_t peak_device_bytes = 0;
   std::size_t host_to_device_bytes = 0;
   std::size_t device_to_host_bytes = 0;
+};
+
+struct AllocationSite {
+  std::string file;
+  std::uint_least32_t line = 0;
+  std::string phase;
+
+  [[nodiscard]] bool operator<(const AllocationSite& other) const noexcept {
+    return std::tie(file,line,phase)<std::tie(other.file,other.line,other.phase);
+  }
+};
+
+struct AllocationGroup {
+  std::size_t bytes = 0;
+  std::size_t allocations = 0;
 };
 
 /** Owns a non-default stream and its serialized cuBLAS/cuSOLVER handles.
@@ -113,6 +132,14 @@ class Context {
   [[nodiscard]] const TransferCounters& counters() const noexcept {
     return counters_;
   }
+  void enable_memory_audit() {
+    if (counters_.peak_device_bytes != 0)
+      throw std::logic_error("CUDA memory audit must start before device allocations");
+    memory_audit_enabled_ = true;
+  }
+  [[nodiscard]] bool memory_audit_enabled() const noexcept { return memory_audit_enabled_; }
+  [[nodiscard]] const std::map<AllocationSite,AllocationGroup>&
+  peak_allocation_groups() const noexcept { return peak_groups_; }
   [[nodiscard]] std::size_t device_byte_budget() const noexcept {
     return device_byte_budget_;
   }
@@ -144,7 +171,8 @@ class Context {
   void set_allocation_phase(const char* phase) noexcept { allocation_phase_=phase; }
   void synchronize() const { check_cuda(cudaStreamSynchronize(stream_), "CUDA stream synchronization"); }
 
-  void* allocate(std::size_t bytes) {
+  void* allocate(std::size_t bytes,
+      std::source_location location=std::source_location::current()) {
     if (bytes == 0) return nullptr;
     if (bytes > device_byte_budget_ - counters_.current_device_bytes) {
       throw std::runtime_error("CUDA device allocation exceeds byte budget: requested="+
@@ -154,6 +182,34 @@ class Context {
     void* pointer = nullptr;
     check_cuda(cudaMallocFromPoolAsync(&pointer,bytes,pool_,stream_),
                "cudaMallocFromPoolAsync");
+    if (memory_audit_enabled_) {
+      try {
+        const AllocationSite site{location.file_name(),location.line(),allocation_phase_};
+        live_allocations_.emplace(pointer,LiveAllocation{site,bytes});
+        try {
+          auto group=current_groups_.try_emplace(site).first;
+          group->second.bytes+=bytes;
+          ++group->second.allocations;
+          try {
+            if (counters_.current_device_bytes+bytes>counters_.peak_device_bytes) {
+              auto snapshot=current_groups_;
+              peak_groups_.swap(snapshot);
+            }
+          } catch (...) {
+            group->second.bytes-=bytes;
+            --group->second.allocations;
+            if (!group->second.allocations) current_groups_.erase(group);
+            throw;
+          }
+        } catch (...) {
+          live_allocations_.erase(pointer);
+          throw;
+        }
+      } catch (...) {
+        cudaFreeAsync(pointer,stream_);
+        throw;
+      }
+    }
     counters_.current_device_bytes += bytes;
     counters_.peak_device_bytes =
         std::max(counters_.peak_device_bytes, counters_.current_device_bytes);
@@ -162,6 +218,18 @@ class Context {
 
   void deallocate(void* pointer, std::size_t bytes) noexcept {
     if (pointer == nullptr) return;
+    if (memory_audit_enabled_) {
+      const auto live=live_allocations_.find(pointer);
+      if (live!=live_allocations_.end()) {
+        const auto group=current_groups_.find(live->second.site);
+        if (group!=current_groups_.end()) {
+          group->second.bytes-=live->second.bytes;
+          --group->second.allocations;
+          if (!group->second.allocations) current_groups_.erase(group);
+        }
+        live_allocations_.erase(live);
+      }
+    }
     // The stream dependency preserves every preceding consumer and lets CUDA
     // reuse the storage for subsequent work without a host/device barrier.
     cudaFreeAsync(pointer,stream_);
@@ -221,6 +289,14 @@ class Context {
   std::size_t initial_device_free_bytes_=0;
   TransferCounters counters_;
   const char* allocation_phase_="unspecified";
+  struct LiveAllocation {
+    AllocationSite site;
+    std::size_t bytes;
+  };
+  bool memory_audit_enabled_=false;
+  std::unordered_map<void*,LiveAllocation> live_allocations_;
+  std::map<AllocationSite,AllocationGroup> current_groups_;
+  std::map<AllocationSite,AllocationGroup> peak_groups_;
 };
 
 /** Failure context only; no allocation, synchronization, or numerical check. */

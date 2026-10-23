@@ -1,13 +1,27 @@
 #include <chrono>
+#include <cstdlib>
 #include <exception>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 
 #include "cuda/vb/scf.hpp"
 #include "input/loading/loader.hpp"
 #include "output/orbitals/writer.hpp"
+
+namespace {
+void write_csv_field(std::ostream& output,std::string_view value) {
+  output<<'"';
+  for (char character:value) {
+    if (character=='"') output<<'"';
+    output<<character;
+  }
+  output<<'"';
+}
+}
 
 int main(int argc,char** argv) {
   try {
@@ -25,6 +39,9 @@ int main(int argc,char** argv) {
     options.max_iterations=loaded.requested_scf_max_iterations;
     const auto context_start=std::chrono::steady_clock::now();
     xmvb::cuda::Context context;
+    const char* audit_setting=std::getenv("CUVB_MEMORY_AUDIT");
+    if (audit_setting!=nullptr && std::string_view(audit_setting)=="1")
+      context.enable_memory_audit();
     const double context_seconds=std::chrono::duration<double>(
         std::chrono::steady_clock::now()-context_start).count();
     std::cout<<"method=cuvbscf_ciah\npreconditioner=analytic_hessian_diagonal\n"
@@ -92,6 +109,25 @@ int main(int argc,char** argv) {
              <<"gpu_peak_device_bytes="<<counters.peak_device_bytes<<'\n'
              <<"gpu_host_to_device_bytes="<<counters.host_to_device_bytes<<'\n'
              <<"gpu_device_to_host_bytes="<<counters.device_to_host_bytes<<'\n';
+    if (context.memory_audit_enabled()) {
+      constexpr const char* report_path="gpu_peak_allocations.csv";
+      std::ofstream report(report_path);
+      if (!report) throw std::runtime_error("cannot open GPU memory audit CSV");
+      report<<"phase,file,line,allocations,bytes\n";
+      std::size_t grouped_bytes=0;
+      for (const auto& [site,group]:context.peak_allocation_groups()) {
+        write_csv_field(report,site.phase);
+        report<<',';
+        write_csv_field(report,site.file);
+        report<<','<<site.line<<','<<group.allocations<<','<<group.bytes<<'\n';
+        grouped_bytes+=group.bytes;
+      }
+      if (grouped_bytes!=counters.peak_device_bytes)
+        throw std::logic_error("GPU memory audit does not sum to peak device bytes");
+      report.close();
+      if (!report) throw std::runtime_error("cannot write GPU memory audit CSV");
+      std::cout<<"gpu_memory_audit_csv="<<report_path<<'\n';
+    }
     return result.converged?0:2;
   } catch (const std::exception& error) {
     std::cerr<<"cuvbscf: "<<error.what()<<'\n';return 1;

@@ -12,6 +12,7 @@
 #include <Eigen/Core>
 
 #include "cuda/vb/columns.hpp"
+#include "cuda/memory/buffer.hpp"
 #include "cuda/memory/upload.hpp"
 
 namespace {
@@ -312,12 +313,87 @@ void check_context_budget() {
       explicit_budget.available_device_bytes()!=160)
     throw std::runtime_error("CUDA byte budget did not recover after a stream-ordered free");
 }
+
+void check_memory_audit() {
+  xmvb::cuda::Context context(256);
+  if (context.memory_audit_enabled() || !context.peak_allocation_groups().empty())
+    throw std::runtime_error("CUDA memory audit is enabled by default");
+  context.enable_memory_audit();
+
+  xmvb::cuda::Buffer<std::byte> resident;
+  std::uint_least32_t resident_line=0;
+  {
+    xmvb::cuda::AllocationPhase phase(context,"resident");
+    resident_line=__LINE__+1;
+    resident=xmvb::cuda::Buffer<std::byte>(context,40);
+  }
+  {
+    xmvb::cuda::AllocationPhase phase(context,"released before peak");
+    const auto matrix_line=__LINE__+1;
+    xmvb::cuda::Matrix<double> temporary(context,2,2);
+    if (context.counters().peak_device_bytes!=72)
+      throw std::runtime_error("CUDA memory audit setup missed temporary peak");
+    bool found_matrix=false;
+    for (const auto& [site,group]:context.peak_allocation_groups())
+      if (site.phase=="released before peak" && site.file==__FILE__ &&
+          site.line==matrix_line && group.bytes==32 && group.allocations==1)
+        found_matrix=true;
+    if (!found_matrix)
+      throw std::runtime_error("CUDA memory audit lost Matrix caller site");
+  }
+
+  xmvb::cuda::Buffer<std::byte> first,second;
+  std::uint_least32_t shared_line=0;
+  {
+    xmvb::cuda::AllocationPhase phase(context,"shared source");
+    shared_line=__LINE__+1;
+    auto make_buffer=[&]() { return xmvb::cuda::Buffer<std::byte>(context,32); };
+    first=make_buffer();
+    second=make_buffer();
+  }
+  if (context.counters().peak_device_bytes!=104 ||
+      context.counters().current_device_bytes!=104)
+    throw std::runtime_error("CUDA memory audit missed simultaneous live peak");
+  bool rejected=false;
+  try {
+    xmvb::cuda::Buffer<std::byte> excess(context,153);
+  } catch (const std::runtime_error& error) {
+    rejected=std::string(error.what()).find("exceeds byte budget")!=std::string::npos;
+  }
+  if (!rejected || context.counters().current_device_bytes!=104)
+    throw std::runtime_error("CUDA memory audit changed after a rejected allocation");
+  const auto& groups=context.peak_allocation_groups();
+  if (groups.size()!=2)
+    throw std::runtime_error("CUDA memory audit peak included a released allocation");
+  std::size_t grouped_bytes=0;
+  for (const auto& [site,group]:groups) {
+    if (site.file!=__FILE__)
+      throw std::runtime_error("CUDA memory audit lost caller file");
+    grouped_bytes+=group.bytes;
+    if (site.phase=="resident") {
+      if (site.line!=resident_line || group.bytes!=40 || group.allocations!=1)
+        throw std::runtime_error("CUDA memory audit lost Buffer caller site");
+    } else if (site.phase=="shared source") {
+      if (site.line!=shared_line || group.bytes!=64 || group.allocations!=2)
+        throw std::runtime_error("CUDA memory audit did not group identical sites");
+    } else {
+      throw std::runtime_error("CUDA memory audit retained an unexpected phase");
+    }
+  }
+  if (grouped_bytes!=context.counters().peak_device_bytes)
+    throw std::runtime_error("CUDA memory audit groups do not sum to peak");
+  resident=xmvb::cuda::Buffer<std::byte>();
+  first=xmvb::cuda::Buffer<std::byte>();
+  second=xmvb::cuda::Buffer<std::byte>();
+  if (context.counters().current_device_bytes!=0 || groups.size()!=2)
+    throw std::runtime_error("CUDA memory audit lost its historical peak snapshot");
+}
 } // namespace
 
 int main() {
   try {
     check(1);check(-1);check_reject_asymmetric();check_read_cache();
-    check_pinned_upload();check_context_budget();
+    check_pinned_upload();check_context_budget();check_memory_audit();
     std::cout<<"compact product column tests passed\n";
   } catch (const std::exception& error) {
     std::cerr<<error.what()<<'\n';return 1;

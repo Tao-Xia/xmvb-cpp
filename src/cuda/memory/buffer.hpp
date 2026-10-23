@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <source_location>
 #include <stdexcept>
 #include <utility>
 
@@ -17,11 +18,13 @@ template <class T>
 class Buffer {
  public:
   Buffer() = default;
-  Buffer(Context& context, std::size_t count) : context_(&context), count_(count) {
+  Buffer(Context& context, std::size_t count,
+      std::source_location location=std::source_location::current())
+      : context_(&context), count_(count) {
     if (count > std::numeric_limits<std::size_t>::max() / sizeof(T)) {
       throw std::overflow_error("CUDA buffer size overflow");
     }
-    data_ = static_cast<T*>(context.allocate(count * sizeof(T)));
+    data_ = static_cast<T*>(context.allocate(count * sizeof(T),location));
   }
   Buffer(const Buffer&) = delete;
   Buffer& operator=(const Buffer&) = delete;
@@ -58,8 +61,9 @@ template <class T>
 class Matrix {
  public:
   Matrix() = default;
-  Matrix(Context& context, std::int64_t rows, std::int64_t cols)
-      : rows_(rows), cols_(cols), storage_(context, checked_count(rows, cols)) {}
+  Matrix(Context& context, std::int64_t rows, std::int64_t cols,
+      std::source_location location=std::source_location::current())
+      : rows_(rows), cols_(cols), storage_(context, checked_count(rows, cols),location) {}
   Matrix(const Matrix&) = delete;
   Matrix& operator=(const Matrix&) = delete;
   Matrix(Matrix&&) noexcept = default;
