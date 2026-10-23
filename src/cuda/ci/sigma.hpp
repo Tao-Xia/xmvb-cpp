@@ -118,8 +118,10 @@ class DirectCiSigma {
              linalg::MatrixView image, bool add = false) const;
 
   /** CPU SigmaTilePlan, exact channel envelopes and release schedule, executed
-   * on device. Responses share the state scatter, one input halo, two ragged
-   * source slabs and one full-channel image, never a product-sized carrier.
+   * on device. Each distinct input and writer retains one bounded tile halo;
+   * L2-sized numerical row panels reuse state channels across responses.
+   * Source slabs follow ragged channel groups and images have full channels;
+   * no product-sized carrier is allocated here.
    * All integral adjoints and H*response+dH*state images are device-resident.
    * workspace_bytes controls tiling only, not physical-space admission.
    */

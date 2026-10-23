@@ -14,13 +14,14 @@ SigmaTilePlan::SigmaTilePlan(const SpinConnections& alpha,const SpinConnections&
     : alpha_(alpha),beta_(beta),support_(support),parity_(parity),budget_(budget),
       alpha_seen_(alpha.n_strings(),0) {
   halo_index.assign(alpha.n_strings(),-1);column_index.assign(beta.n_strings(),-1);
-  if (budget.width<=0 || budget.pairs<=0 || budget.slabs<=0 || !budget.bytes)
+  if (budget.width<=0 || budget.pairs<=0 || budget.slabs<=0 ||
+      budget.halo_slabs<=0 || !budget.bytes)
     throw std::invalid_argument("invalid sigma tile budget");
   if (budget.packed_slabs<0 || budget.packed_slabs>budget.slabs ||
       (budget.packed_slabs && (!support || !support->has_channel_envelopes())))
     throw std::invalid_argument("packed sigma channels require a certified support");
   const auto width=static_cast<Bytes>(budget.width);
-  column_bytes_=sizeof(double)*width;
+  column_bytes_=sizeof(double)*width*budget.halo_slabs;
   group_bytes_=sizeof(int)*width;
   entry_bytes_=sizeof(double)*width*budget.packed_slabs;
   row_bytes_=sizeof(SigmaGatherRow)+sizeof(double)*width*

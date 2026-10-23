@@ -60,13 +60,16 @@ void check_packed_blocks(const xmvb::vb::StructureAction& source,const Eigen::Ma
       Eigen::MatrixXd result(source.n_structures(),width);
       xmvb::cuda::copy_to_host(context,result,device.view());return result;
     };
-    for (std::size_t budget:{std::size_t{width==3 ? 6400U:3200U},std::size_t{1024*1024}}) {
+    // The row-panel executor retains an input and an output halo instead of
+    // overwriting the input after a full-channel scatter.
+    const std::size_t small_budget=width==3 ? 12800U:6400U;
+    for (std::size_t budget:{small_budget,std::size_t{1024*1024}}) {
       product->apply_selected(incidence,x.view(),sigma,h.view(),m.view(),budget);
       require((host(h)-expected.hamiltonian).norm()<2e-10,
           "packed product H block differs from selected CPU action");
       require((host(m)-expected.overlap).norm()<2e-10,
           "packed product overlap block differs from selected CPU action");
-      if (width==1 && budget==3200) {
+      if (width==1 && budget==small_budget) {
         const auto first_factor_upload=context.counters().host_to_device_bytes;
         sibling->apply_selected(incidence,x.view(),sigma,h.view(),m.view(),budget);
         require(context.counters().host_to_device_bytes>first_factor_upload,
@@ -223,15 +226,22 @@ void check_product_jet(const xmvb::vb::StructureAction& source,
   const auto fresh=product->jet(incidence,sigma,uncached,r.view(),dq.view(),dr.view(),nullptr,
       budget,&uncached_ci,rel.view());
   compare(fresh,uncached_ci,plus,minus);
-  // At 3200 bytes, the joint three-lane full-support output panels cannot
-  // all fit in their one-fifth cache share; consume partial panels on eviction.
+  // The former 3200-byte allowance did not price the channel cotangents.
+  // Enforce the resource error, then test the same jet with room for its
+  // fixed integral-space scratch and retained input/output halos.
   xmvb::cuda::ProductEndpoint streaming{xmvb::cuda::Matrix<double>(context,count,1)};
   xmvb::cuda::copy_to_device(context,streaming.coefficients.view(),c);
   streaming.energy=energy;
   xmvb::cuda::ProductJet streaming_ci;
-  const auto evicted=product->jet(incidence,sigma,streaming,r.view(),dq.view(),dr.view(),
-      nullptr,3200,&streaming_ci,rel.view());
-  compare(evicted,streaming_ci,plus,minus);
+  bool limited=false;
+  try {
+    product->jet(incidence,sigma,streaming,r.view(),dq.view(),dr.view(),
+        nullptr,3200,&streaming_ci,rel.view());
+  } catch (const std::length_error&) { limited=true; }
+  require(limited,"undersized joint sigma workspace was not rejected");
+  const auto bounded=product->jet(incidence,sigma,streaming,r.view(),dq.view(),dr.view(),
+      nullptr,32ULL*1024,&streaming_ci,rel.view());
+  compare(bounded,streaming_ci,plus,minus);
   if (view.exchange_parity) {
     xmvb::cuda::Matrix<double> delta_h(context,upper.rows(),upper.cols()),
         delta_g(context,channels,channels);

@@ -228,16 +228,21 @@ void check_directional_derivative(
  * out-of-support halo targets, exchange weights and two fused response lanes.
  * Full carriers are test oracles only; tile callbacks move device values.
  */
-void check_product_tiles(int parity,bool covalent,std::size_t budget,int n=4) {
+void check_product_tiles(int parity,bool covalent,std::size_t budget,int n=4,bool full=false) {
   constexpr int width=2;
   const xmvb::mcscf::SpinStrings as(n,n/2),bs(n,parity || covalent ? n/2:n/2-1);
   const auto base=active_integrals(n,false),delta=active_integrals(n,true);
   const xmvb::mcscf::DirectCiSigmaAction cpu(as.occupations(),bs.occupations(),base);
   const xmvb::mcscf::DirectCiSigmaAction change(cpu,delta);
   std::unique_ptr<xmvb::mcscf::ProductSupport> support;
-  if (covalent) support=std::make_unique<xmvb::mcscf::ProductSupport>(n,as.masks(),bs.masks());
+  if (full) support=std::make_unique<xmvb::mcscf::ProductSupport>(n,as.masks(),bs.masks(),
+      std::vector<xmvb::mcscf::ProductIndex>{
+          static_cast<xmvb::mcscf::ProductIndex>(as.size()*bs.size()-1)});
+  else if (covalent) support=std::make_unique<xmvb::mcscf::ProductSupport>(n,as.masks(),bs.masks());
   else support=std::make_unique<xmvb::mcscf::ProductSupport>(n,as.masks(),bs.masks(),
       std::vector<xmvb::mcscf::ProductIndex>{0,static_cast<xmvb::mcscf::ProductIndex>(bs.size()+1)});
+  if (full) require(support->full() && !support->has_channel_envelopes(),
+      "CUDA FULL support fixture lost its unrestricted channels");
   Matrix left=values(as.size(),bs.size()*width,0.28),right=values(as.size(),bs.size()*width,0.71);
   for (Matrix* values:{&left,&right}) for (int v=0;v<width;++v) {
     if (parity) {
@@ -291,18 +296,20 @@ void check_product_tiles(int parity,bool covalent,std::size_t budget,int n=4) {
   xmvb::cuda::ProductColumns compact(context,std::move(patterns),width);
   xmvb::cuda::check_cuda(cudaMemsetAsync(compact.values.data(),0,
       compact.values.rows()*width*sizeof(double),context.stream()),"clear compact gather oracle");
-  const auto device_reader=[&](xmvb::linalg::ConstMatrixView source) -> xmvb::cuda::CiTileReader {
-    return [&,source](auto betas,auto rows,xmvb::linalg::MatrixView target) {
+  const auto device_reader=[&](xmvb::linalg::ConstMatrixView source,int* calls) -> xmvb::cuda::CiTileReader {
+    return [&,source,calls](auto betas,auto rows,xmvb::linalg::MatrixView target) {
+      if (calls) ++*calls;
       for (int b=0;b<betas.size();++b) for (int v=0;v<width;++v) for (int a=0;a<rows.size();++a)
         xmvb::cuda::check_cuda(cudaMemcpyAsync(target.data+a+target.ld*(b*width+v),
             source.data+rows[a]+source.ld*(v*bs.size()+betas[b]),sizeof(double),
             cudaMemcpyDeviceToDevice,context.stream()),"test tile reader");
     };
   };
-  const auto device_writer=[&](xmvb::linalg::MatrixView destination) -> xmvb::cuda::CiTileWriter {
+  const auto device_writer=[&](xmvb::linalg::MatrixView destination,int* calls) -> xmvb::cuda::CiTileWriter {
     xmvb::cuda::check_cuda(cudaMemsetAsync(destination.data,0,destination.rows*destination.cols*sizeof(double),
         context.stream()),"clear tile oracle");
-    return [&,destination](auto betas,auto rows,const xmvb::cuda::CiTileGather& gather) {
+    return [&,destination,calls](auto betas,auto rows,const xmvb::cuda::CiTileGather& gather) {
+      if (calls) ++*calls;
       xmvb::cuda::Matrix<double> tile(context,rows.size(),betas.size()*width);
       const xmvb::cuda::CiTileColumn target{-1,nullptr,tile.view()};
       gather.columns({&target,1},false);
@@ -315,10 +322,18 @@ void check_product_tiles(int parity,bool covalent,std::size_t budget,int n=4) {
             destination.data+rows[a]+destination.ld*(v*bs.size()+betas[b]),1),"test tile writer");
     };
   };
+  std::array<int,3> reads{};
+  std::array<int,2> writes{};
   const std::array<xmvb::cuda::CiTileRequest,2> requests{{
-      {device_reader(dl.view()),device_writer(out.view()),&direction,dh.view(),dg.view()},
-      {device_reader(dl.view()),device_writer(second.view()),nullptr,h2.view(),g2.view()}}};
-  gpu.apply_tiled_responses(width,requests,device_reader(dr.view()),support.get(),budget);
+      {device_reader(dl.view(),&reads[0]),device_writer(out.view(),&writes[0]),&direction,dh.view(),dg.view()},
+      {device_reader(dl.view(),&reads[1]),device_writer(second.view(),&writes[1]),nullptr,h2.view(),g2.view()}}};
+  gpu.apply_tiled_responses(width,requests,device_reader(dr.view(),&reads[2]),support.get(),budget);
+  require(writes[0]>0 && writes[0]==writes[1] &&
+      reads[0]==writes[0] && reads[1]==writes[0] && reads[2]==writes[0],
+      "CUDA tile callbacks were repeated inside a symbolic tile");
+  if (budget>=64ULL*1024*1024)
+    require(writes[0]==1,"CUDA wide-tile fixture was unexpectedly partitioned");
+  const Matrix tiled_directional=full ? download(context,out):Matrix{};
   near(download(context,out),expected,3e-10,"GPU directional product tiles differ from CPU");
   near(download(context,dh),expected_adjoint.one_electron,3e-10,"GPU tiled h adjoint differs from CPU");
   near(download(context,dg),expected_adjoint.pair_kernel,3e-10,"GPU tiled g adjoint differs from CPU");
@@ -333,12 +348,43 @@ void check_product_tiles(int parity,bool covalent,std::size_t budget,int n=4) {
       "device-map reverse sigma differs on sparse, empty or multi-RHS columns");
   near(download(context,h2),expected_adjoint.one_electron,3e-10,"GPU second response adjoint differs");
   near(download(context,g2),expected_adjoint.pair_kernel,3e-10,"GPU second response pair adjoint differs");
+  // The first response can own the common state slab. Its reader is called
+  // once, and the separate state callback must not reread the same tile.
+  const Matrix left_expected=expected;
+  expected.setZero();
+  const auto state_adjoint=cpu.apply_tiled_direction(width,host_reader(right),host_reader(right),change,
+      host_writer,{},support.get(),parity,{},budget);
+  reads.fill(0);writes.fill(0);
+  xmvb::cuda::check_cuda(cudaMemsetAsync(compact.values.data(),0,
+      compact.values.rows()*width*sizeof(double),context.stream()),"clear reused compact gather oracle");
+  const std::array<xmvb::cuda::CiTileRequest,2> shared_state_requests{{
+      {device_reader(dr.view(),&reads[0]),device_writer(out.view(),&writes[0]),
+          &direction,dh.view(),dg.view(),{},true},
+      {device_reader(dl.view(),&reads[1]),device_writer(second.view(),&writes[1]),
+          nullptr,h2.view(),g2.view()}}};
+  gpu.apply_tiled_responses(width,shared_state_requests,
+      device_reader(dr.view(),&reads[2]),support.get(),budget);
+  require(writes[0]>0 && writes[0]==writes[1] &&
+      reads[0]==writes[0] && reads[1]==writes[0] && reads[2]==0,
+      "CUDA same-source tile reread state or repeated a callback");
+  near(download(context,out),expected,3e-10,"GPU shared-state directional tiles differ from CPU");
+  near(download(context,second),left_expected,3e-10,"GPU shared-state second response differs from CPU");
+  near(download(context,dh),state_adjoint.one_electron,3e-10,
+      "GPU shared-state one-electron adjoint differs from CPU");
+  near(download(context,dg),state_adjoint.pair_kernel,3e-10,
+      "GPU shared-state pair adjoint differs from CPU");
+  near(download(context,h2),expected_adjoint.one_electron,3e-10,
+      "GPU shared-state second one-electron adjoint differs from CPU");
+  near(download(context,g2),expected_adjoint.pair_kernel,3e-10,
+      "GPU shared-state second pair adjoint differs from CPU");
   const std::array<xmvb::cuda::CiCarrierRequest,2> carriers{{
       {dl.view(),out.view(),&direction,dh.view(),dg.view()},
       {dl.view(),second.view(),nullptr,h2.view(),g2.view()}}};
   gpu.apply_supported_responses(carriers,dr.view(),*support,budget);
   near(download(context,out),cpu.apply(left)+change.apply(right),3e-10,
       "supported resident HVP endpoint is not the full physical image");
+  if (full) near(download(context,out),tiled_directional,3e-10,
+      "CUDA FULL carrier endpoint differs from the tile writer");
   near(download(context,second),cpu.apply(left),3e-10,
       "supported resident CI endpoint is not the full physical image");
   const auto full_adjoint=cpu.integral_adjoint(left,right);
@@ -357,6 +403,80 @@ void check_product_tiles(int parity,bool covalent,std::size_t budget,int n=4) {
   near(download(context,out),-0.7*cpu.apply(right),3e-10,"reused tile retained old amplitudes");
   near(download(context,dh),0.49*density.one_electron,3e-10,"reused weighted Gram retained old h density");
   near(download(context,dg),0.49*density.pair_kernel,3e-10,"reused weighted Gram retained old g density");
+}
+
+/** A FULL n=10 tile has more channel rows than the production row-panel cache
+ * allowance. Bulk callbacks keep this a test of sigma, not thousands of
+ * individual PCIe copies. The CPU full-carrier action is the oracle. */
+void check_fragmented_full_tile() {
+  constexpr int n=10,width=2;
+  const xmvb::mcscf::SpinStrings strings(n,n/2);
+  const int dim=strings.size(),pairs=n*(n+1)/2;
+  const auto base=active_integrals(n,false),delta=active_integrals(n,true);
+  const xmvb::mcscf::DirectCiSigmaAction cpu(strings.occupations(),strings.occupations(),base);
+  const xmvb::mcscf::DirectCiSigmaAction change(cpu,delta);
+  const xmvb::mcscf::ProductSupport support(n,strings.masks(),strings.masks(),
+      std::vector<xmvb::mcscf::ProductIndex>{
+          static_cast<xmvb::mcscf::ProductIndex>(dim*dim-1)});
+  require(support.full() && !support.has_channel_envelopes(),
+      "CUDA fragmented FULL fixture lost unrestricted channels");
+  const Matrix left=values(dim,dim*width,0.28),right=values(dim,dim*width,0.71);
+  const auto oracle=cpu.apply_with_adjoint(left,right);
+  const Matrix directional=oracle.sigma+change.apply(right);
+  xmvb::cuda::Context context(512ULL*1024*1024);
+  const auto full_slabs=3ULL*dim*dim*width*pairs*sizeof(double);
+  int device=0,l2_bytes=0;
+  xmvb::cuda::check_cuda(cudaGetDevice(&device),"query fragmented FULL device");
+  xmvb::cuda::check_cuda(cudaDeviceGetAttribute(&l2_bytes,cudaDevAttrL2CacheSize,device),
+      "query fragmented FULL L2 size");
+  require(l2_bytes>0 && full_slabs>static_cast<std::size_t>(l2_bytes),
+      "CUDA FULL fixture does not require more than one numerical row panel");
+  xmvb::cuda::DirectCiSigma gpu(context,cpu,1),gpu_direction(context,gpu);
+  xmvb::cuda::Matrix<double> dh(context,n,n),dg(context,pairs,pairs),carrier(context,dim,dim*width);
+  xmvb::cuda::copy_to_device(context,dh.view(),delta.one_electron);
+  xmvb::cuda::copy_to_device(context,dg.view(),delta.pair_kernel);
+  gpu_direction.update_integrals(dh.view(),dg.view());
+  xmvb::cuda::check_cuda(cudaMemsetAsync(carrier.data(),0,carrier.rows()*carrier.cols()*sizeof(double),
+      context.stream()),"clear fragmented FULL carrier");
+  const auto reader=[&](const Matrix& source,int* calls) -> xmvb::cuda::CiTileReader {
+    return [&,source=&source,calls](auto betas,auto rows,xmvb::linalg::MatrixView target) {
+      ++*calls;
+      Matrix packed(rows.size(),betas.size()*width);
+      for (int b=0;b<betas.size();++b) for (int v=0;v<width;++v)
+        for (int a=0;a<rows.size();++a)
+          packed(a,b*width+v)=(*source)(rows[a],v*dim+betas[b]);
+      xmvb::cuda::copy_to_device(context,target,packed);
+    };
+  };
+  Matrix image=Matrix::Zero(dim,dim*width);
+  int response_reads=0,carrier_reads=0,state_reads=0,writes=0;
+  const xmvb::cuda::CiTileWriter writer=[&](auto betas,auto rows,
+      const xmvb::cuda::CiTileGather& gather) {
+    ++writes;
+    xmvb::cuda::Matrix<double> tile(context,rows.size(),betas.size()*width);
+    const xmvb::cuda::CiTileColumn target{-1,nullptr,tile.view()};
+    gather.columns({&target,1},false);
+    const Matrix host=download(context,tile);
+    for (int b=0;b<betas.size();++b) for (int v=0;v<width;++v)
+      for (int a=0;a<rows.size();++a)
+        image(rows[a],v*dim+betas[b])+=host(a,b*width+v);
+  };
+  const std::array<xmvb::cuda::CiTileRequest,2> requests{{
+      {reader(left,&response_reads),writer,&gpu_direction,dh.view(),dg.view()},
+      {reader(left,&carrier_reads),{},nullptr,{},{},carrier.view()}}};
+  const auto resident=context.counters().current_device_bytes;
+  gpu.apply_tiled_responses(width,requests,reader(right,&state_reads),&support,256ULL*1024*1024);
+  require(writes==1 && response_reads==1 && carrier_reads==1 && state_reads==1,
+      "CUDA fragmented FULL tile repeated an outer callback");
+  near(image,directional,3e-10,"CUDA fragmented FULL directional sigma differs from CPU");
+  near(download(context,carrier),cpu.apply(left),3e-10,
+      "CUDA fragmented FULL carrier differs from CPU");
+  near(download(context,dh),oracle.integrals.one_electron,3e-10,
+      "CUDA fragmented FULL one-electron adjoint differs from CPU");
+  near(download(context,dg),oracle.integrals.pair_kernel,3e-10,
+      "CUDA fragmented FULL pair adjoint differs from CPU");
+  require(context.counters().peak_device_bytes-resident<full_slabs,
+      "CUDA fragmented FULL tile retained three full channel slabs");
 }
 
 void check_sigma(int rhs_count,bool rotated,int maximum_tile=3,bool one_product=false,int n=4) {
@@ -1203,13 +1323,17 @@ void check_full_metric(int rhs_count) {
 int main() {
   try {
     check_compact_endpoints();
-    for (int parity:{0,1,-1}) for (std::size_t budget:{std::size_t{4096},std::size_t{1024*1024}})
+    // Two responses retain their input/output halos and the shared state;
+    // include this storage as well as channel cotangents in the tiny budget.
+    for (int parity:{0,1,-1}) for (std::size_t budget:{std::size_t{8192},std::size_t{1024*1024}})
       check_product_tiles(parity,parity!=0,budget);
     check_product_tiles(0,true,1024*1024);
+    check_product_tiles(0,false,1024*1024,4,true);
     // One wide tile with several covalent channel groups fits all Grams in
     // its dead halo. No standalone Gram is ever allocated; final integral
     // pullback must also borrow consumed numerical scratch, not a null owner.
     check_product_tiles(1,true,64ULL*1024*1024,8);
+    check_fragmented_full_tile();
     for (bool rotated : {false, true})
       for (int rhs_count : {1, 3}) {
         check_sigma(rhs_count,rotated);

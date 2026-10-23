@@ -14,6 +14,7 @@ struct SigmaTileBudget {
   int width,pairs,slabs;
   std::size_t bytes;
   int packed_slabs=0;
+  int halo_slabs=1;
 };
 
 /** Exact target boundary for the same support, links and source layout.
