@@ -265,8 +265,8 @@ int validate_adjoint_panels(linalg::ConstMatrixView left,
       left.ld<left.rows || right.ld<right.rows ||
       left.data==nullptr || right.data==nullptr)
     throw std::invalid_argument("invalid CUDA direct-CI adjoint product panels");
-  if (left.cols>std::numeric_limits<int>::max()/n_alpha)
-    throw std::overflow_error("CUDA direct-CI adjoint panel exceeds cuBLAS range");
+  if (left.cols/n_beta>std::numeric_limits<int>::max())
+    throw std::overflow_error("CUDA direct-CI adjoint RHS count exceeds integer range");
   return static_cast<int>(left.cols/n_beta);
 }
 
@@ -287,7 +287,7 @@ std::int64_t source_tile_rows(Context& context,std::int64_t products,
     throw std::runtime_error("CUDA direct-CI budget cannot hold one complete source row");
   const auto maximum=std::max<std::int64_t>(1,
       products*std::min(channels,capacity)/channels);
-  auto rows=std::min({products,maximum,
+  auto rows=std::min({products,maximum,static_cast<std::int64_t>(std::numeric_limits<int>::max()),
       static_cast<std::int64_t>((available-extra)/row_bytes)});
   if (rows>=32) rows=(rows/32)*32;
   return rows;
@@ -398,6 +398,8 @@ void DirectCiSigma::prepare(int block_width) const {
   // caller grows other vectors. Keep that persistent-cache plan separate
   // from the fully consumed temporary adjoint panels below.
   auto rows=std::min(products,std::max<std::int64_t>(1,products*tile/n_channels_));
+  // cuBLAS receives only this tile, not the complete logical product space.
+  rows=std::min(rows,static_cast<std::int64_t>(std::numeric_limits<int>::max()));
   constexpr int warp_rows=32;
   if (rows>=warp_rows) rows=(rows/warp_rows)*warp_rows;
   if ((static_cast<std::size_t>(rows)*n_channels_+
@@ -453,8 +455,8 @@ void DirectCiSigma::apply(linalg::ConstMatrixView coefficients,
       coefficients.data == nullptr || image.data == nullptr ||
       coefficients.data == image.data)
     throw std::invalid_argument("invalid CUDA direct-CI product panels");
-  if (coefficients.cols > std::numeric_limits<int>::max() / n_alpha_)
-    throw std::overflow_error("CUDA direct-CI product panel exceeds cuBLAS range");
+  if (coefficients.cols/n_beta_ > std::numeric_limits<int>::max())
+    throw std::overflow_error("CUDA direct-CI RHS count exceeds integer range");
   const std::int64_t products=contraction_rows(static_cast<int>(coefficients.cols/n_beta_));
   prepare(static_cast<int>(coefficients.cols/n_beta_));
   if (!add) clear_image(*context_,image);

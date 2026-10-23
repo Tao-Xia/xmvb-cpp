@@ -3652,6 +3652,16 @@ void benchmark_temporal12() {
 }  // namespace
 
 int main(int argc, char** argv) {
+  // Sparse CAS(18,18) support above INT_MAX: no full product allocation.
+  {
+    constexpr int strings = 48620;
+    const std::vector<xmvb::mcscf::ProductIndex> products{
+        xmvb::mcscf::product_index(strings - 1, strings - 1, strings)};
+    const xmvb::vb::SpinSources plan(products, strings, strings);
+    if (plan.nodes.size() != 1 || plan.offsets.back() != 1 ||
+        plan.groups.front() != 0 || plan.nodes.front().string != strings - 1)
+      throw std::runtime_error("wide spin-product source index was truncated");
+  }
   try {
     if (argc == 2 && std::string(argv[1]) == "--channel-layout") {
       check_full_channel_image_layout();

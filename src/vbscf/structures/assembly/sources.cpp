@@ -142,7 +142,7 @@ SpinSources::SpinSources(const std::vector<mcscf::ProductIndex>& products, int n
       column_source[b] = nodes.size(); nodes.push_back({b, true});
     }
   offsets.assign(nodes.size() + 1, 0);
-  for (const int product : products) {
+  for (const mcscf::ProductIndex product : products) {
     const int a = product / nb, b = product % nb;
     if (representative(a, b))
       ++offsets[(row_source[a] >= 0 ? row_source[a] : column_source[b]) + 1];
