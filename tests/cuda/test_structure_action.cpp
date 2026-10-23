@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cmath>
 #include <iostream>
@@ -234,6 +235,26 @@ void check_product_jet(const xmvb::vb::StructureAction& source,
   const auto fresh=product->jet(incidence,sigma,uncached,r.view(),dq.view(),dr.view(),nullptr,
       budget,&uncached_ci,rel.view());
   compare(fresh,uncached_ci,plus,minus);
+  // A cached orbital-only action contains G Y, not a CI-response lane.
+  // Check it separately from the joint q/GY reader and against the same
+  // action without retained accepted images.
+  const auto orbital_cached=product->jet(incidence,sigma,accepted,r.view(),{},dr.view(),
+      nullptr,budget,nullptr,rel.view());
+  const auto orbital_fresh=product->jet(incidence,sigma,uncached,r.view(),{},dr.view(),
+      nullptr,budget,nullptr,rel.view());
+  for (const auto& pair:std::array{
+      std::pair{host(orbital_cached.hamiltonian),host(orbital_fresh.hamiltonian)},
+      std::pair{host(orbital_cached.overlap),host(orbital_fresh.overlap)},
+      std::pair{host(orbital_cached.one),host(orbital_fresh.one)},
+      std::pair{host(orbital_cached.pair),host(orbital_fresh.pair)}})
+    require((pair.first-pair.second).norm()<3e-8*std::max(1.0,pair.second.norm()),
+        "cached orbital-only product reader differs from fresh action");
+  const auto cached_generator=host(orbital_cached.generator);
+  const auto fresh_generator=host(orbital_fresh.generator);
+  for (int j=0;j<cached_generator.cols();++j)
+    for (int i=0;i<=j;++i)
+      require(std::abs(cached_generator(i,j)-fresh_generator(i,j))<3e-8,
+          "cached orbital-only generator differs from fresh action");
   // The former 3200-byte allowance did not price the channel cotangents.
   // Enforce the resource error, then test the same jet with room for its
   // fixed integral-space scratch and retained input/output halos.

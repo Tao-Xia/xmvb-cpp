@@ -208,6 +208,55 @@ void multiply(Context& c,linalg::MatrixView target,double scale) {
 
 struct ColumnReadIndex {int local,destination;};
 
+/** One beta column of an ordered, independently allocated source tile. The
+ * dense values borrow the tile; rows still describe the exact CI support. */
+struct ResidentColumn {
+  const double* values;
+  const int* rows;
+  int size;
+};
+
+struct ResidentMaps {
+  std::vector<std::shared_ptr<const ProductColumnPattern>> patterns;
+  Buffer<ResidentColumn> columns;
+  std::size_t charged_bytes=0;
+  std::size_t bytes() const {return charged_bytes;}
+};
+
+__global__ void read_resident_columns(const ResidentColumn* sources,
+    const ColumnReadIndex* columns,const int* requested,int count,
+    linalg::MatrixView output) {
+  const auto column=columns[blockIdx.x];
+  const auto source=sources[column.local];
+  for (auto i=static_cast<std::size_t>(blockIdx.y)*blockDim.x+threadIdx.x;
+       i<static_cast<std::size_t>(count);i+=static_cast<std::size_t>(gridDim.y)*blockDim.x) {
+    const int r=i,a=requested[r];
+    bool present=a>=0 && a<source.size;
+    if (source.rows) {
+      int first=0,last=source.size;
+      while (first<last) {
+        const int mid=first+(last-first)/2;
+        if (source.rows[mid]<a) first=mid+1;else last=mid;
+      }
+      present=first<source.size && source.rows[first]==a;
+    }
+    output.data[r+output.ld*column.destination]=present && source.values ?
+        source.values[a]:0.0;
+  }
+}
+
+__global__ void pack_resident_column(const CiColumnMap* maps,
+    linalg::ConstMatrixView resident,linalg::MatrixView compact) {
+  const int b=blockIdx.x;
+  const auto column=maps[b];
+  for (auto i=static_cast<std::size_t>(blockIdx.y)*blockDim.x+threadIdx.x;
+       i<static_cast<std::size_t>(column.size);
+       i+=static_cast<std::size_t>(gridDim.y)*blockDim.x) {
+    const int a=column.rows ? column.rows[i]:static_cast<int>(i);
+    compact.data[column.offset+i]=resident.data[a+resident.ld*b];
+  }
+}
+
 __global__ void read_columns(const CiColumnMap* maps,linalg::ConstMatrixView packed,
     const ColumnReadIndex* columns,const int* requested,int count,int lane,
     linalg::MatrixView output) {
@@ -533,7 +582,8 @@ struct ProductContraction::Impl {
         static_cast<std::size_t>(alpha)*beta:std::numeric_limits<std::size_t>::max();
     const auto source_slots=static_cast<std::size_t>(input_width)+
         (delta_upper.data && !cached ? 2U:0U);
-    const auto source_descriptors=static_cast<std::size_t>(panels)*input_width*sizeof(double*);
+    const auto source_descriptors=static_cast<std::size_t>(panels)*input_width*sizeof(double*)+
+        static_cast<std::size_t>(beta)*input_width*sizeof(ResidentColumn);
     const bool resident_input=ordered_beta && source_descriptors<quarter/2 &&
         products<=(quarter/2-source_descriptors)/(sizeof(double)*source_slots);
     symbolic->prepare_patterns(quarter/4);
@@ -623,7 +673,53 @@ struct ProductContraction::Impl {
     const CiTileReader accepted_r=[&](auto betas,auto rows,linalg::MatrixView values) {
       endpoint.readers->read(1,betas,rows,values);
     };
-    mcscf::ColumnCache<ProductColumns> input(resident_input ? quarter/2:quarter,[&](int id) {
+    if (resident_input && cached) {
+      // Cached dy is transformed q plus the orbital generator. In a joint
+      // response q remains an independent lane; otherwise it becomes dy.
+      if (joint) {
+        resident_dy=ordered_tiles(extent);
+        for (int id=0;id<panels;++id) if (reachable_panel[id])
+          copy_panel(resident_dy[id].view(),resident_q[id].view());
+      }
+      if (delta_upper.data) {
+        auto& dy_tiles=joint ? resident_dy:resident_q;
+        for (int id=0;id<panels;++id) if (reachable_panel[id]) {
+          const int count=selected(id).size();
+          Matrix<double> orbital(c,alpha,count);
+          sigma.apply_one_body_generator_columns(id*extent,count,accepted_y,
+              relative_direction,orbital.view());
+          add(c,dy_tiles[id].view(),orbital.view());
+        }
+      }
+    }
+    mcscf::ColumnCache<ResidentMaps> resident_maps(quarter/8,[&](int id) {
+      const auto keys=selected(id);
+      ResidentMaps result;
+      result.patterns.reserve(keys.size());
+      std::vector<ResidentColumn> columns(static_cast<std::size_t>(input_width)*keys.size());
+      for (int local=0;local<keys.size();++local) {
+        const auto& column=result.patterns.emplace_back(pattern(keys[local]));
+        result.charged_bytes+=column->device_rows.size()*sizeof(int);
+        for (int lane=0;lane<input_width;++lane) {
+          const auto& tiles=cached ? (lane==0 ? (joint ? resident_dy:resident_q):resident_q):
+              (lane==0 ? resident_y:(lane==1 ? resident_dy:resident_q));
+          columns[static_cast<std::size_t>(lane)*keys.size()+local]={
+              tiles[id].data()+static_cast<std::size_t>(alpha)*local,
+              column->full ? nullptr:column->device_rows.data(),column->size};
+        }
+      }
+      result.columns=upload<ResidentColumn>(c,columns);
+      result.charged_bytes+=columns.size()*sizeof(ResidentColumn);
+      return result;
+    },{},[&](int id) {
+      // Reserve without generating patterns twice. A sparse column owns at
+      // most alpha exact row indices; actual bytes() is charged on insertion.
+      return static_cast<std::size_t>(selected(id).size())*
+          (input_width*sizeof(ResidentColumn)+
+              (support && !support->full() ? static_cast<std::size_t>(alpha)*sizeof(int):0));
+    });
+    mcscf::ColumnCache<ProductColumns> input(quarter,[&](int id) {
+      if (resident_input) throw std::logic_error("resident product source must bypass compact cache");
       if (audit) {
         ++builds[source_stage];
         if (generations[id]++) ++rebuilds[source_stage];
@@ -635,8 +731,7 @@ struct ProductContraction::Impl {
       const auto values=dense_panel(block,scratch);
       if (cached) {
         auto dy=values.columns(0,count);
-        if (resident_input) copy_panel(dy,resident_q[id].view());
-        else {generate(response,factors.get(id),dy);transform(dy,id*extent,count,false);}
+        generate(response,factors.get(id),dy);transform(dy,id*extent,count,false);
         if (joint) copy_panel(values.columns(count,count),dy);
         if (delta_upper.data) {
           Matrix<double> orbital(c,alpha,count);
@@ -644,13 +739,6 @@ struct ProductContraction::Impl {
               relative_direction,orbital.view());
           add(c,dy,orbital.view());
         }
-        if (scratch.data()) block.pack(c,values,false);
-        return block;
-      }
-      if (resident_input) {
-        copy_panel(values.columns(0,count),resident_y[id].view());
-        if (tangent) copy_panel(values.columns(count,count),resident_dy[id].view());
-        if (joint) copy_panel(values.columns(2*count,count),resident_q[id].view());
         if (scratch.data()) block.pack(c,values,false);
         return block;
       }
@@ -742,12 +830,19 @@ struct ProductContraction::Impl {
         static_assert(sizeof(ColumnReadIndex)==2*sizeof(int) && alignof(ColumnReadIndex)==alignof(int));
         const auto* columns=reinterpret_cast<const ColumnReadIndex*>(read_plan.indices.data()+rows.size());
         for (const auto& group:read_plan.groups) {
-          if (audit) {++reads[source_stage];hits[source_stage]+=input.contains(group.id);}
-          auto& block=input.get(group.id);
-          read_columns<<<dim3(group.count,grid(rows.size())),256,0,c.stream()>>>(
-              block.maps.data(),block.values.view(),columns+group.offset,
-              read_plan.indices.data(),
-              rows.size(),input_lane,values);
+          if (resident_input) {
+            auto& maps=resident_maps.get(group.id);
+            read_resident_columns<<<dim3(group.count,grid(rows.size())),256,0,c.stream()>>>(
+                maps.columns.data()+static_cast<std::size_t>(input_lane)*selected(group.id).size(),
+                columns+group.offset,read_plan.indices.data(),rows.size(),values);
+            check_cuda(cudaGetLastError(),"read resident product tiles");
+          } else {
+            if (audit) {++reads[source_stage];hits[source_stage]+=input.contains(group.id);}
+            auto& block=input.get(group.id);
+            read_columns<<<dim3(group.count,grid(rows.size())),256,0,c.stream()>>>(
+                block.maps.data(),block.values.view(),columns+group.offset,
+                read_plan.indices.data(),rows.size(),input_lane,values);
+          }
         }
       };
     };
@@ -844,9 +939,16 @@ struct ProductContraction::Impl {
               static_cast<std::size_t>(block.values.rows())*2*sizeof(double);
           if (!endpoint.images->prepare(id,state_bytes)) retaining=false;
           if (retaining) {
-            auto& source=input.get(id);
             ProductColumns state(c,block.patterns,2);
-            copy_panel(state.values.view().columns(0,1),source.values.view().columns(0,1));
+            if (resident_input) {
+              pack_resident_column<<<dim3(count,grid(alpha)),256,0,c.stream()>>>(
+                  state.maps.data(),static_cast<linalg::ConstMatrixView>(resident_y[id].view()),
+                  state.values.view());
+              check_cuda(cudaGetLastError(),"pack resident accepted product source");
+            } else {
+              auto& source=input.get(id);
+              copy_panel(state.values.view().columns(0,1),source.values.view().columns(0,1));
+            }
             copy_panel(state.values.view().columns(1,1),block.values.view().columns(0,1));
             retaining=endpoint.images->retain(id,std::move(state));
           }
