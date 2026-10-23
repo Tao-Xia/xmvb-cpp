@@ -464,9 +464,9 @@ private:
 };
 
 void validate_full_determinant_input(
-    const std::vector<std::vector<int>>& alpha_det,
-    const std::vector<std::vector<int>>& beta_det,
-    const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
+    SpinStringRows alpha_det,
+    SpinStringRows beta_det,
+    StructureIncidence determinant_to_structure_terms,
     int n_orbitals,
     int n_structures) {
   const int n_determinants = static_cast<int>(alpha_det.size());
@@ -503,8 +503,8 @@ template <typename TwoElectronInput>
 void collect_pair_evaluations(
     const SameSpinPairCacheContext* same_spin_pair_cache,
     const DeterminantPairEvaluator& pair_evaluator,
-    const std::vector<std::vector<int>>& alpha_det,
-    const std::vector<std::vector<int>>& beta_det,
+    SpinStringRows alpha_det,
+    SpinStringRows beta_det,
     const std::vector<double>& ovlp_act,
     const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_orbitals,
@@ -1019,7 +1019,7 @@ ForwardStructurePairResult contract_forward_structure_pair(
 
 template <typename TwoElectronInput>
 StructureAccumulationResult build_tiled_matrix_form_structure_matrices(
-    const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
+    StructureIncidence determinant_to_structure_terms,
     int n_structures,
     const SpinDeterminantReuseTable& alpha_reuse_table,
     const SpinDeterminantReuseTable& beta_reuse_table,
@@ -1328,8 +1328,7 @@ double exact_spin_overlap(
 }
 
 Eigen::VectorXd build_exact_structure_overlap_diagonal(
-    const std::vector<std::vector<StructureExpansionTerm>>&
-        determinant_to_structure_terms,
+    StructureIncidence determinant_to_structure_terms,
     int n_structures,
     const SpinDeterminantReuseTable& alpha_reuse_table,
     const SpinDeterminantReuseTable& beta_reuse_table,
@@ -1458,7 +1457,7 @@ Eigen::VectorXd build_exact_structure_overlap_diagonal(
 
 template <typename TwoElectronInput>
 StructureDiagonal build_determinant_diagonal_jacobi_preconditioner(
-    const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
+    StructureIncidence determinant_to_structure_terms,
     int n_structures,
     const SpinDeterminantReuseTable& alpha_reuse_table,
     const SpinDeterminantReuseTable& beta_reuse_table,
@@ -1614,7 +1613,7 @@ StructureDiagonal build_determinant_diagonal_jacobi_preconditioner(
 
 template <typename TwoElectronInput>
 StructureDiagonal build_demand_driven_structure_diagonal(
-    const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
+    StructureIncidence determinant_to_structure_terms,
     int n_structures,
     const SpinDeterminantReuseTable& alpha_reuse_table,
     const SpinDeterminantReuseTable& beta_reuse_table,
@@ -1724,9 +1723,9 @@ FullDeterminantStructureHamiltonianOverlapBuilder::FullDeterminantStructureHamil
 
 
 StructureAccumulationResult FullDeterminantStructureHamiltonianOverlapBuilder::build(
-    const std::vector<std::vector<int>>& alpha_det,
-    const std::vector<std::vector<int>>& beta_det,
-    const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
+    SpinStringRows alpha_det,
+    SpinStringRows beta_det,
+    StructureIncidence determinant_to_structure_terms,
     const std::vector<double>& ovlp_act,
     const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_orbitals,
@@ -1747,9 +1746,9 @@ StructureAccumulationResult FullDeterminantStructureHamiltonianOverlapBuilder::b
 }
 
 StructureAccumulationResult FullDeterminantStructureHamiltonianOverlapBuilder::build(
-    const std::vector<std::vector<int>>& alpha_det,
-    const std::vector<std::vector<int>>& beta_det,
-    const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
+    SpinStringRows alpha_det,
+    SpinStringRows beta_det,
+    StructureIncidence determinant_to_structure_terms,
     const std::vector<double>& ovlp_act,
     const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_orbitals,
@@ -1770,9 +1769,9 @@ StructureAccumulationResult FullDeterminantStructureHamiltonianOverlapBuilder::b
 }
 
 StructureAccumulationResult FullDeterminantStructureHamiltonianOverlapBuilder::build(
-    const std::vector<std::vector<int>>& alpha_det,
-    const std::vector<std::vector<int>>& beta_det,
-    const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
+    SpinStringRows alpha_det,
+    SpinStringRows beta_det,
+    StructureIncidence determinant_to_structure_terms,
     const std::vector<double>& ovlp_act,
     const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_orbitals,
@@ -1794,9 +1793,9 @@ StructureAccumulationResult FullDeterminantStructureHamiltonianOverlapBuilder::b
 }
 
 StructureAccumulationResult FullDeterminantStructureHamiltonianOverlapBuilder::build(
-    const std::vector<std::vector<int>>& alpha_det,
-    const std::vector<std::vector<int>>& beta_det,
-    const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
+    SpinStringRows alpha_det,
+    SpinStringRows beta_det,
+    StructureIncidence determinant_to_structure_terms,
     const std::vector<double>& ovlp_act,
     const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_orbitals,
@@ -1819,9 +1818,9 @@ StructureAccumulationResult FullDeterminantStructureHamiltonianOverlapBuilder::b
 
 StructureDiagonal
 FullDeterminantStructureHamiltonianOverlapBuilder::build_diagonal(
-    const std::vector<std::vector<int>>& alpha_det,
-    const std::vector<std::vector<int>>& beta_det,
-    const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
+    SpinStringRows alpha_det,
+    SpinStringRows beta_det,
+    StructureIncidence determinant_to_structure_terms,
     const std::vector<double>& ovlp_act,
     const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_orbitals,
@@ -1871,9 +1870,9 @@ FullDeterminantStructureHamiltonianOverlapBuilder::build_diagonal(
 StructureDiagonal
 FullDeterminantStructureHamiltonianOverlapBuilder::
 build_davidson_jacobi_preconditioner(
-    const std::vector<std::vector<int>>& alpha_det,
-    const std::vector<std::vector<int>>& beta_det,
-    const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
+    SpinStringRows alpha_det,
+    SpinStringRows beta_det,
+    StructureIncidence determinant_to_structure_terms,
     const std::vector<double>& ovlp_act,
     const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_orbitals,
@@ -1917,10 +1916,9 @@ build_davidson_jacobi_preconditioner(
 Eigen::VectorXd
 FullDeterminantStructureHamiltonianOverlapBuilder::
 build_exact_overlap_diagonal(
-    const std::vector<std::vector<int>>& alpha_det,
-    const std::vector<std::vector<int>>& beta_det,
-    const std::vector<std::vector<StructureExpansionTerm>>&
-        determinant_to_structure_terms,
+    SpinStringRows alpha_det,
+    SpinStringRows beta_det,
+    StructureIncidence determinant_to_structure_terms,
     const std::vector<double>& active_overlap,
     int n_orbitals,
     int n_structures,
@@ -1957,9 +1955,9 @@ FullDeterminantStructureHamiltonianOverlapBuilder::make_pair_evaluator() const {
 
 FullDeterminantStructureBuildResult
 FullDeterminantStructureHamiltonianOverlapBuilder::build_impl(
-    const std::vector<std::vector<int>>& alpha_det,
-    const std::vector<std::vector<int>>& beta_det,
-    const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
+    SpinStringRows alpha_det,
+    SpinStringRows beta_det,
+    StructureIncidence determinant_to_structure_terms,
     const std::vector<double>& ovlp_act,
     const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_orbitals,
@@ -2057,9 +2055,9 @@ FullDeterminantStructureHamiltonianOverlapBuilder::build_impl(
 
 FullDeterminantStructureBuildResult
 FullDeterminantStructureHamiltonianOverlapBuilder::build_impl(
-    const std::vector<std::vector<int>>& alpha_det,
-    const std::vector<std::vector<int>>& beta_det,
-    const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
+    SpinStringRows alpha_det,
+    SpinStringRows beta_det,
+    StructureIncidence determinant_to_structure_terms,
     const std::vector<double>& ovlp_act,
     const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_orbitals,
@@ -2165,9 +2163,9 @@ FullDeterminantStructureHamiltonianOverlapBuilder::build_impl(
 
 FullDeterminantStructureBuildResult
 FullDeterminantStructureHamiltonianOverlapBuilder::build_with_pair_evaluations(
-    const std::vector<std::vector<int>>& alpha_det,
-    const std::vector<std::vector<int>>& beta_det,
-    const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
+    SpinStringRows alpha_det,
+    SpinStringRows beta_det,
+    StructureIncidence determinant_to_structure_terms,
     const std::vector<double>& ovlp_act,
     const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_orbitals,

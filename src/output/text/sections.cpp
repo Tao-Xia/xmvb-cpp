@@ -130,7 +130,7 @@ int structure_ionic_order(
 void print_ionic_class_summary(
     std::ostream& output,
     const vb::RawStructureData& structures,
-    const vb::FullDeterminantStructureData& determinants) {
+    const vb::StructureExpansion& determinants) {
   struct IonicClass {
     int n_structures = 0;
     int n_determinants = 0;
@@ -149,7 +149,7 @@ void print_ionic_class_summary(
     ionic_class.last_structure = structure + 1;
     ++ionic_class.n_structures;
   }
-  for (const auto& terms : determinants.determinant_to_structure_terms) {
+  for (const auto& terms : determinants.incidence()) {
     for (const auto& term : terms) {
       if (term.structure_index < 0 ||
           term.structure_index >= structures.n_structures) {
@@ -337,12 +337,12 @@ std::string determinant_spin_string(
 void print_determinant_coefficients(
     std::ostream& output,
     const Eigen::VectorXd& structure_coefficients,
-    const vb::FullDeterminantStructureData& determinants,
+    const vb::StructureExpansion& determinants,
     int n_inactive) {
-  const int n_determinants = static_cast<int>(determinants.alpha_det.size());
-  if (determinants.beta_det.size() != determinants.alpha_det.size() ||
-      determinants.determinant_to_structure_terms.size() !=
-          determinants.alpha_det.size()) {
+  const int n_determinants = static_cast<int>(determinants.alpha().size());
+  if (determinants.beta().size() != determinants.alpha().size() ||
+      determinants.incidence().size() !=
+          determinants.alpha().size()) {
     throw std::invalid_argument(
         "final determinant topology has inconsistent dimensions");
   }
@@ -357,9 +357,9 @@ void print_determinant_coefficients(
       display_order.end(),
       [&determinants](int left, int right) {
         const auto& left_terms =
-            determinants.determinant_to_structure_terms[left];
+            determinants.incidence()[left];
         const auto& right_terms =
-            determinants.determinant_to_structure_terms[right];
+            determinants.incidence()[right];
         const int left_structure = left_terms.empty()
             ? std::numeric_limits<int>::max()
             : left_terms.front().structure_index;
@@ -369,13 +369,13 @@ void print_determinant_coefficients(
         if (left_structure != right_structure) {
           return left_structure < right_structure;
         }
-        return determinants.alpha_det[left] > determinants.alpha_det[right];
+        return determinants.alpha()[left] > determinants.alpha()[right];
       });
   for (int display_index = 0; display_index < n_determinants; ++display_index) {
     const int determinant = display_order[display_index];
     double coefficient = 0.0;
     for (const auto& term :
-         determinants.determinant_to_structure_terms[determinant]) {
+         determinants.incidence()[determinant]) {
       if (term.structure_index < 0 ||
           term.structure_index >= structure_coefficients.size()) {
         throw std::out_of_range(
@@ -387,10 +387,10 @@ void print_determinant_coefficients(
     output << std::setw(8) << display_index + 1
            << std::fixed << std::setprecision(8) << std::setw(17)
            << coefficient << "  ******    "
-           << determinant_spin_string(determinants.alpha_det[determinant], n_inactive)
+           << determinant_spin_string(determinants.alpha()[determinant], n_inactive)
            << '\n'
            << std::string(37, ' ')
-           << determinant_spin_string(determinants.beta_det[determinant], n_inactive)
+           << determinant_spin_string(determinants.beta()[determinant], n_inactive)
            << '\n';
   }
 }

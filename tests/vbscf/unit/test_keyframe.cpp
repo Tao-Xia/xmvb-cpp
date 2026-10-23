@@ -148,7 +148,7 @@ void benchmark_accepted_state16(bool check_hvp = false) {
   raw.n_structures = 1;
   raw.n_total_electrons = raw.n_active_electrons = n;
   for (int i = 1; i <= n; ++i) raw.raw_structure_orbitals.push_back(i);
-  input.structure_data = xmvb::vb::FullDeterminantStructureExpander().expand(raw);
+  input.structure_data = xmvb::vb::StructureExpander().expand(raw);
   const auto start = std::chrono::steady_clock::now();
   const auto gradient = xmvb::vb::OrbitalGradientEvaluator().evaluate_without_reference_energy_gradient(
       input,{0},{1.0},0.0,xmvb::vb::StructureEigensolver::Davidson,{1e-7,1e-3},Eigen::MatrixXd{});
@@ -306,11 +306,17 @@ void check_keyframe(bool complete_carrier) {
   }
   ao.pair_graph = xmvb::integrals::build_ao_pair_graph(left, right, values, 3);
   auto& data = input.structure_data;
+  data.alpha_strings = complete_carrier
+      ? std::vector<std::vector<int>>{{0}, {1}}
+      : std::vector<std::vector<int>>{{0}};
+  data.beta_strings = {{0}, {1}};
+  data.offsets = {0};
   for (int a = 0; a < (complete_carrier ? 2 : 1); ++a) {
     for (int b = 0; b < 2; ++b) {
-      data.alpha_det.push_back({a});
-      data.beta_det.push_back({b});
-      data.determinant_to_structure_terms.push_back({{data.n_structures++, 1.0}});
+      data.pair_alpha.push_back(a);
+      data.pair_beta.push_back(b);
+      data.terms.push_back({data.n_structures++, 1.0});
+      data.offsets.push_back(data.terms.size());
     }
   }
   Eigen::MatrixXd c(data.n_structures, 2);

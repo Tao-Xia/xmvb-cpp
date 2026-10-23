@@ -58,7 +58,7 @@ int main(int argc, char** argv) {
           xmvb::vb::parse_input_deck_model(input_path);
       const auto raw = build_active_structure_space(deck);
       const auto structures =
-          xmvb::vb::FullDeterminantStructureExpander().expand(raw);
+          xmvb::vb::StructureExpander().expand(raw);
       const auto spin = xmvb::vb::analyze_structure_spin(
           structures,
           raw.spin_multiplicity);

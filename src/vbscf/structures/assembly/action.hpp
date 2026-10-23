@@ -174,8 +174,7 @@ public:
   OrthogonalView orthogonal_view() const;
 
   StructureAction(
-      const std::vector<std::vector<StructureExpansionTerm>>&
-          determinant_to_structure_terms,
+      StructureIncidence determinant_to_structure_terms,
       int n_structures,
       const SameSpinPairCacheContext& same_spin_pair_cache,
       const std::vector<double>& active_overlap,

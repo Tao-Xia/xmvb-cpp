@@ -693,7 +693,7 @@ VbScfInputLoadResult load_vbscf_input_with_timings(
 
   if (options.expand_selected_raw_structures) {
     const auto structure_expansion_start_time = std::chrono::steady_clock::now();
-    FullDeterminantStructureExpander expander;
+    StructureExpander expander;
     result.structure_data = expander.expand(selected_raw_structure_data);
     load_result.structure_expansion_seconds =
         std::chrono::duration<double>(

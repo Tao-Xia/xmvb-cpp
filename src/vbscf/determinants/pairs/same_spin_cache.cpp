@@ -83,9 +83,10 @@ int same_spin_pair_cache_thread_count(int n_unique_determinants) {
 }
 
 bool can_reuse_close_shell_same_spin_pair_cache(
-    const std::vector<std::vector<int>>& alpha_det,
-    const std::vector<std::vector<int>>& beta_det) {
-  return alpha_det == beta_det;
+    SpinStringRows alpha_det,
+    SpinStringRows beta_det) {
+  return alpha_det.size()==beta_det.size() &&
+      std::equal(alpha_det.begin(),alpha_det.end(),beta_det.begin());
 }
 
 struct SpinDeterminantHasher {
@@ -100,7 +101,7 @@ struct SpinDeterminantHasher {
 };
 
 bool try_build_reuse_table_in_reference_basis(
-    const std::vector<std::vector<int>>& spin_determinants,
+    SpinStringRows spin_determinants,
     const SpinDeterminantReuseTable& reference_reuse_table,
     SpinDeterminantReuseTable* mapped_reuse_table) {
   if (mapped_reuse_table == nullptr) {
@@ -129,20 +130,23 @@ bool try_build_reuse_table_in_reference_basis(
       reference_reuse_table.unique_determinants.size(),
       0u);
 
-  for (std::size_t determinant_index = 0;
-       determinant_index < spin_determinants.size();
-       ++determinant_index) {
+  const auto source=build_spin_determinant_reuse_table(spin_determinants);
+  std::vector<int> remap(source.unique_determinants.size());
+  for (std::size_t unique_index=0;unique_index<remap.size();++unique_index) {
     const auto iterator =
         reference_unique_id_by_determinant.find(
-            spin_determinants[determinant_index]);
+            source.unique_determinants[unique_index]);
     if (iterator == reference_unique_id_by_determinant.end()) {
       mapped_reuse_table->unique_determinants.clear();
       mapped_reuse_table->determinant_to_unique_id.clear();
       return false;
     }
-    mapped_reuse_table->determinant_to_unique_id[determinant_index] =
-        iterator->second;
-    touched_unique_ids[iterator->second] = 1u;
+    remap[unique_index]=iterator->second;
+  }
+  for (std::size_t i=0;i<source.determinant_to_unique_id.size();++i) {
+    const int id=remap[source.determinant_to_unique_id[i]];
+    mapped_reuse_table->determinant_to_unique_id[i]=id;
+    touched_unique_ids[id]=1u;
   }
 
   for (const unsigned char touched : touched_unique_ids) {
@@ -664,8 +668,14 @@ void complete_same_spin_pair_evaluation(
 }
 
 SpinDeterminantReuseTable build_spin_determinant_reuse_table(
-    const std::vector<std::vector<int>>& spin_determinants) {
+    SpinStringRows spin_determinants) {
   SpinDeterminantReuseTable reuse_table;
+  if (!spin_determinants.indices().empty()) {
+    reuse_table.unique_determinants=spin_determinants.strings();
+    reuse_table.determinant_to_unique_id.assign(
+        spin_determinants.indices().begin(),spin_determinants.indices().end());
+    return reuse_table;
+  }
   reuse_table.determinant_to_unique_id.resize(spin_determinants.size(), -1);
   std::unordered_map<std::vector<int>, int, SpinDeterminantHasher>
       determinant_to_unique_id;
@@ -793,28 +803,30 @@ std::uint64_t checked_spin_mask(const std::vector<int>& occupied,
 }
 
 SpinDeterminantReuseTable complete_spin_reuse_table(
-    const std::vector<std::vector<int>>& determinants, int n_orbitals) {
+    SpinStringRows determinants, int n_orbitals) {
   if (determinants.empty())
     throw std::invalid_argument("orthogonal spin topology requires determinants");
   const int n_electrons = static_cast<int>(determinants.front().size());
   SpinDeterminantReuseTable table =
       build_spin_determinant_reuse_table(determinants);
-  for (const auto& determinant : determinants)
+  for (const auto& determinant : table.unique_determinants)
     checked_spin_mask(determinant, n_orbitals, n_electrons);
   if (table.unique_determinants.size() ==
       mcscf::string_count(n_orbitals, n_electrons))
     return table;
 
   const mcscf::SpinStrings full_strings(n_orbitals, n_electrons);
+  std::vector<int> remap(table.unique_determinants.size());
+  for (std::size_t i=0;i<remap.size();++i)
+    remap[i]=full_strings.index(checked_spin_mask(
+        table.unique_determinants[i],n_orbitals,n_electrons));
+  for (auto& id:table.determinant_to_unique_id) id=remap[id];
   table.unique_determinants = full_strings.occupations();
-  for (std::size_t i = 0; i < determinants.size(); ++i)
-    table.determinant_to_unique_id[i] = full_strings.index(
-        checked_spin_mask(determinants[i], n_orbitals, n_electrons));
   return table;
 }
 
 SpinDeterminantReuseTable map_spin_reuse_table_to_complete_basis(
-    const std::vector<std::vector<int>>& determinants,
+    SpinStringRows determinants,
     const SpinDeterminantReuseTable& reference) {
   std::unordered_map<std::vector<int>, int, SpinDeterminantHasher> indices;
   indices.reserve(reference.unique_determinants.size());
@@ -823,21 +835,25 @@ SpinDeterminantReuseTable map_spin_reuse_table_to_complete_basis(
 
   SpinDeterminantReuseTable table;
   table.unique_determinants = reference.unique_determinants;
-  table.determinant_to_unique_id.reserve(determinants.size());
-  for (const auto& determinant : determinants) {
+  const auto source=build_spin_determinant_reuse_table(determinants);
+  std::vector<int> remap(source.unique_determinants.size());
+  for (std::size_t i=0;i<remap.size();++i) {
+    const auto& determinant=source.unique_determinants[i];
     const auto found = indices.find(determinant);
     if (found == indices.end())
       throw std::invalid_argument("spin determinant is outside complete basis");
-    table.determinant_to_unique_id.push_back(found->second);
+    remap[i]=found->second;
   }
+  table.determinant_to_unique_id=source.determinant_to_unique_id;
+  for (auto& id:table.determinant_to_unique_id) id=remap[id];
   return table;
 }
 
 }  // namespace
 
 SameSpinPairCacheContext build_same_spin_pair_topology(
-    const std::vector<std::vector<int>>& alpha_det,
-    const std::vector<std::vector<int>>& beta_det,
+    SpinStringRows alpha_det,
+    SpinStringRows beta_det,
     int n_orbitals) {
   if (alpha_det.size() != beta_det.size()) {
     throw std::invalid_argument("alpha_det and beta_det must have the same size");
@@ -862,8 +878,8 @@ SameSpinPairCacheContext build_same_spin_pair_topology(
 }
 
 SameSpinPairCacheContext build_orthogonal_spin_topology(
-    const std::vector<std::vector<int>>& alpha_det,
-    const std::vector<std::vector<int>>& beta_det,
+    SpinStringRows alpha_det,
+    SpinStringRows beta_det,
     int n_orbitals) {
   if (alpha_det.size() != beta_det.size())
     throw std::invalid_argument("alpha_det and beta_det must have the same size");
@@ -883,8 +899,8 @@ SameSpinPairCacheContext build_orthogonal_spin_topology(
 }
 
 SameSpinPairCacheContext build_same_spin_pair_cache_context(
-    const std::vector<std::vector<int>>& alpha_det,
-    const std::vector<std::vector<int>>& beta_det,
+    SpinStringRows alpha_det,
+    SpinStringRows beta_det,
     const DeterminantPairEvaluator& pair_evaluator,
     const std::vector<double>& ovlp_act,
     const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
@@ -902,8 +918,8 @@ SameSpinPairCacheContext build_same_spin_pair_cache_context(
 }
 
 SameSpinPairCacheContext build_same_spin_pair_cache_context(
-    const std::vector<std::vector<int>>& alpha_det,
-    const std::vector<std::vector<int>>& beta_det,
+    SpinStringRows alpha_det,
+    SpinStringRows beta_det,
     const DeterminantPairEvaluator& pair_evaluator,
     const std::vector<double>& ovlp_act,
     const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
@@ -957,8 +973,8 @@ SameSpinPairCacheContext build_same_spin_pair_cache_context(
 }
 
 SameSpinPairCacheContext build_same_spin_pair_cache_context(
-    const std::vector<std::vector<int>>& alpha_det,
-    const std::vector<std::vector<int>>& beta_det,
+    SpinStringRows alpha_det,
+    SpinStringRows beta_det,
     const DeterminantPairEvaluator& pair_evaluator,
     const std::vector<double>& ovlp_act,
     const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
@@ -976,8 +992,8 @@ SameSpinPairCacheContext build_same_spin_pair_cache_context(
 }
 
 SameSpinPairCacheContext build_same_spin_pair_cache_context(
-    const std::vector<std::vector<int>>& alpha_det,
-    const std::vector<std::vector<int>>& beta_det,
+    SpinStringRows alpha_det,
+    SpinStringRows beta_det,
     const DeterminantPairEvaluator& pair_evaluator,
     const std::vector<double>& ovlp_act,
     const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
@@ -1110,8 +1126,8 @@ void populate_same_spin_phi_cache(
 DeterminantPairEvaluation evaluate_full_determinant_pair_with_optional_same_spin_cache(
     const SameSpinPairCacheContext* same_spin_pair_cache,
     const DeterminantPairEvaluator& pair_evaluator,
-    const std::vector<std::vector<int>>& alpha_det,
-    const std::vector<std::vector<int>>& beta_det,
+    SpinStringRows alpha_det,
+    SpinStringRows beta_det,
     int determinant_index_left,
     int determinant_index_right,
     const std::vector<double>& ovlp_act,
@@ -1213,8 +1229,8 @@ DeterminantPairEvaluation evaluate_full_determinant_pair_with_optional_same_spin
 DeterminantPairEvaluation evaluate_full_determinant_pair_with_optional_same_spin_cache(
     const SameSpinPairCacheContext* same_spin_pair_cache,
     const DeterminantPairEvaluator& pair_evaluator,
-    const std::vector<std::vector<int>>& alpha_det,
-    const std::vector<std::vector<int>>& beta_det,
+    SpinStringRows alpha_det,
+    SpinStringRows beta_det,
     int determinant_index_left,
     int determinant_index_right,
     const std::vector<double>& ovlp_act,

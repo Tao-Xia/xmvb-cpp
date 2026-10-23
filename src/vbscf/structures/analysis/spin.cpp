@@ -51,18 +51,18 @@ void validate_spin_string(const std::vector<int>& occupied) {
 }  // namespace
 
 StructureSpinAnalysis analyze_structure_spin(
-    const FullDeterminantStructureData& structures,
+    const StructureExpansion& structures,
     int spin_multiplicity) {
   if (spin_multiplicity <= 0 || structures.n_structures <= 0 ||
-      structures.alpha_det.empty() ||
-      structures.alpha_det.size() != structures.beta_det.size() ||
-      structures.alpha_det.size() !=
-          structures.determinant_to_structure_terms.size()) {
+      structures.alpha().empty() ||
+      structures.alpha().size() != structures.beta().size() ||
+      structures.alpha().size() !=
+          structures.incidence().size()) {
     throw std::invalid_argument("structure spin dimensions are inconsistent");
   }
 
-  const int n_alpha = static_cast<int>(structures.alpha_det.front().size());
-  const int n_beta = static_cast<int>(structures.beta_det.front().size());
+  const int n_alpha = static_cast<int>(structures.alpha().front().size());
+  const int n_beta = static_cast<int>(structures.beta().front().size());
   if (n_alpha - n_beta != spin_multiplicity - 1) {
     throw std::invalid_argument(
         "determinant spin projection differs from the requested multiplicity");
@@ -71,10 +71,10 @@ StructureSpinAnalysis analyze_structure_spin(
   std::vector<std::vector<DeterminantTerm>> structure_terms(
       structures.n_structures);
   for (int determinant = 0;
-       determinant < static_cast<int>(structures.alpha_det.size());
+       determinant < static_cast<int>(structures.alpha().size());
        ++determinant) {
-    const auto& alpha = structures.alpha_det[determinant];
-    const auto& beta = structures.beta_det[determinant];
+    const auto& alpha = structures.alpha()[determinant];
+    const auto& beta = structures.beta()[determinant];
     validate_spin_string(alpha);
     validate_spin_string(beta);
     if (static_cast<int>(alpha.size()) != n_alpha ||
@@ -83,7 +83,7 @@ StructureSpinAnalysis analyze_structure_spin(
           "structure expansion mixes electron-number sectors");
     }
     for (const StructureExpansionTerm& term :
-         structures.determinant_to_structure_terms[determinant]) {
+         structures.incidence()[determinant]) {
       if (term.structure_index < 0 ||
           term.structure_index >= structures.n_structures ||
           !std::isfinite(term.coefficient)) {
@@ -106,8 +106,8 @@ StructureSpinAnalysis analyze_structure_spin(
     std::unordered_map<RaisedDeterminant, double, RaisedDeterminantHash>
         raised_coefficients;
     for (const DeterminantTerm& term : structure_terms[structure]) {
-      const auto& alpha = structures.alpha_det[term.determinant];
-      const auto& beta = structures.beta_det[term.determinant];
+      const auto& alpha = structures.alpha()[term.determinant];
+      const auto& beta = structures.beta()[term.determinant];
       for (int beta_position = 0;
            beta_position < static_cast<int>(beta.size());
            ++beta_position) {

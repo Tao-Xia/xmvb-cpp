@@ -32,10 +32,10 @@ StructureNorms structure_norms(const vb::VbScfOptimizerResult& result) {
     // Only topology is prepared, once per report; no physical pair cache is
     // rebuilt or retained, and no exported orbital frame is re-evaluated.
     const auto topology = vb::build_same_spin_pair_topology(
-        input.structure_data.alpha_det, input.structure_data.beta_det, n_active);
+        input.structure_data.alpha(), input.structure_data.beta(), n_active);
     diagonal = vb::FullDeterminantStructureHamiltonianOverlapBuilder{}.build_exact_overlap_diagonal(
-        input.structure_data.alpha_det, input.structure_data.beta_det,
-        input.structure_data.determinant_to_structure_terms,
+        input.structure_data.alpha(), input.structure_data.beta(),
+        input.structure_data.incidence(),
         result.active_orbital_overlap_matrix, n_active, n_str, topology);
   }
   StructureNorms norms;

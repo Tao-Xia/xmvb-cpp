@@ -885,14 +885,14 @@ int main(int argc, char** argv) {
         packed_active_two_electron_size(n_active_orbitals),
         0.0);
 
-    xmvb::vb::FullDeterminantStructureExpander expander;
+    xmvb::vb::StructureExpander expander;
     const auto subset_structure_data =
         expander.expand_subset(raw_structure_data, selected_structure_indices);
     xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder structure_builder;
     const auto exact_overlap_result = structure_builder.build(
-        subset_structure_data.alpha_det,
-        subset_structure_data.beta_det,
-        subset_structure_data.determinant_to_structure_terms,
+        subset_structure_data.alpha(),
+        subset_structure_data.beta(),
+        subset_structure_data.incidence(),
         active_overlap_matrix,
         zero_h1e,
         n_active_orbitals,

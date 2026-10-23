@@ -215,9 +215,9 @@ int main(int argc, char** argv) {
     xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder structure_builder;
     const auto exact_build_started_at = std::chrono::steady_clock::now();
     const auto exact_structure_matrices = structure_builder.build(
-        input.structure_data.alpha_det,
-        input.structure_data.beta_det,
-        input.structure_data.determinant_to_structure_terms,
+        input.structure_data.alpha(),
+        input.structure_data.beta(),
+        input.structure_data.incidence(),
         prepared_active_space.orbital_result.active_orbital_overlap_matrix,
         prepared_active_space.active_space_one_electron_result.h1e_act,
         n_active_orbitals,
@@ -408,7 +408,7 @@ int main(int argc, char** argv) {
     std::cout << "experimental_screening_scope = structure_overlap_only\n";
     std::cout << "structure_count = " << n_structures << '\n';
     std::cout << "expanded_determinant_count = "
-              << input.structure_data.alpha_det.size() << '\n';
+              << input.structure_data.alpha().size() << '\n';
     std::cout << "pair_count_with_diagonal = " << total_pairs << '\n';
     std::cout << "load_input_wall_time_seconds = "
               << load_result.total_seconds << '\n';

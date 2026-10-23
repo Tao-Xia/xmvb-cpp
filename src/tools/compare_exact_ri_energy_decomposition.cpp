@@ -41,9 +41,9 @@ double evaluate_active_eigenvalue(
     const std::vector<double>& packed_active_eri) {
   xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder structure_builder;
   const auto structure_matrices = structure_builder.build(
-      input.structure_data.alpha_det,
-      input.structure_data.beta_det,
-      input.structure_data.determinant_to_structure_terms,
+      input.structure_data.alpha(),
+      input.structure_data.beta(),
+      input.structure_data.incidence(),
       orbital_result.active_orbital_overlap_matrix,
       active_h1e,
       input.orbital_preparation_input.n_active_orbitals,

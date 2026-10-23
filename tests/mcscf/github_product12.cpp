@@ -252,11 +252,24 @@ void run(int count, const std::string& binary_path) {
   const Eigen::MatrixXd c = test_vectors(count);
   constexpr double energy = -5.3;
 
-  xmvb::vb::FullDeterminantStructureData determinant_data;
+  xmvb::vb::StructureExpansion determinant_data;
   determinant_data.n_structures = count;
-  determinant_data.alpha_det = expansion.product_alpha;
-  determinant_data.beta_det = expansion.product_beta;
-  determinant_data.determinant_to_structure_terms = expansion.terms;
+  determinant_data.alpha_strings = fixture.alpha;
+  determinant_data.beta_strings = fixture.beta;
+  std::map<std::vector<int>, int> alpha_ids, beta_ids;
+  for (int i = 0; i < static_cast<int>(fixture.alpha.size()); ++i)
+    alpha_ids.emplace(fixture.alpha[i], i);
+  for (int i = 0; i < static_cast<int>(fixture.beta.size()); ++i)
+    beta_ids.emplace(fixture.beta[i], i);
+  determinant_data.offsets.push_back(0);
+  for (std::size_t pair = 0; pair < expansion.terms.size(); ++pair) {
+    determinant_data.pair_alpha.push_back(alpha_ids.at(expansion.product_alpha[pair]));
+    determinant_data.pair_beta.push_back(beta_ids.at(expansion.product_beta[pair]));
+    determinant_data.terms.insert(determinant_data.terms.end(),
+                                  expansion.terms[pair].begin(),
+                                  expansion.terms[pair].end());
+    determinant_data.offsets.push_back(determinant_data.terms.size());
+  }
 
   const auto total_start = Clock::now();
   const auto construct_start = Clock::now();

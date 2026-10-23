@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <iostream>
 #include <map>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -63,16 +64,16 @@ std::vector<int> raw_occupation(
 }
 
 std::vector<int> determinant_occupation(
-    const xmvb::vb::FullDeterminantStructureData& expansion,
+    const xmvb::vb::StructureExpansion& expansion,
     int determinant,
     int n_active_orbitals) {
   std::vector<int> occupation(n_active_orbitals, 0);
-  for (const int orbital : expansion.alpha_det[determinant]) {
+  for (const int orbital : expansion.alpha()[determinant]) {
     require(orbital >= 0 && orbital < n_active_orbitals,
             "alpha string contains an out-of-range orbital");
     ++occupation[orbital];
   }
-  for (const int orbital : expansion.beta_det[determinant]) {
+  for (const int orbital : expansion.beta()[determinant]) {
     require(orbital >= 0 && orbital < n_active_orbitals,
             "beta string contains an out-of-range orbital");
     ++occupation[orbital];
@@ -130,12 +131,12 @@ void check_case(const Case& test) {
   require(raw.n_structures == test.structures,
           std::string(test.name) + ": wrong FULL structure count");
   const auto expansion =
-      xmvb::vb::FullDeterminantStructureExpander().expand(raw);
-  require(static_cast<int>(expansion.alpha_det.size()) == test.determinants,
+      xmvb::vb::StructureExpander().expand(raw);
+  require(static_cast<int>(expansion.alpha().size()) == test.determinants,
           std::string(test.name) + ": wrong determinant count");
-  require(expansion.alpha_det.size() == expansion.beta_det.size() &&
-              expansion.alpha_det.size() ==
-                  expansion.determinant_to_structure_terms.size(),
+  require(expansion.alpha().size() == expansion.beta().size() &&
+              expansion.alpha().size() ==
+                  expansion.incidence().size(),
           std::string(test.name) + ": inconsistent expansion dimensions");
 
   const auto spin =
@@ -154,11 +155,11 @@ void check_case(const Case& test) {
     const auto sector = sectors.find(occupation);
     require(sector != sectors.end(),
             std::string(test.name) + ": determinant has no structure sector");
-    require(!expansion.determinant_to_structure_terms[determinant].empty(),
+    require(!expansion.incidence()[determinant].empty(),
             std::string(test.name) + ": determinant has no expansion term");
     sector->second.determinants.push_back(determinant);
     for (const auto& term :
-         expansion.determinant_to_structure_terms[determinant]) {
+         expansion.incidence()[determinant]) {
       require(term.structure_index >= 0 &&
                   term.structure_index < raw.n_structures,
               std::string(test.name) + ": invalid structure index");
@@ -195,7 +196,7 @@ void check_case(const Case& test) {
     for (int row = 0; row < determinant_dimension; ++row) {
       const int determinant = sector.determinants[row];
       for (const auto& term :
-           expansion.determinant_to_structure_terms[determinant]) {
+           expansion.incidence()[determinant]) {
         const auto column = local_structure.find(term.structure_index);
         require(column != local_structure.end(),
                 std::string(test.name) + ": term crosses sector columns");
@@ -217,9 +218,96 @@ void check_case(const Case& test) {
             << certified_dimension << " independent spin-adapted structures\n";
 }
 
+xmvb::vb::RawStructureData raw_structures(
+    int active_electrons,
+    int multiplicity,
+    const std::vector<std::vector<int>>& orbitals) {
+  xmvb::vb::RawStructureData raw;
+  raw.n_structures = static_cast<int>(orbitals.size());
+  raw.n_total_electrons = active_electrons;
+  raw.n_active_electrons = active_electrons;
+  raw.spin_multiplicity = multiplicity;
+  for (const auto& structure : orbitals) {
+    require(static_cast<int>(structure.size()) == active_electrons,
+            "small structure has the wrong electron count");
+    raw.raw_structure_orbitals.insert(raw.raw_structure_orbitals.end(),
+                                      structure.begin(), structure.end());
+  }
+  return raw;
+}
+
+struct ExpectedPair {
+  std::vector<int> alpha;
+  std::vector<int> beta;
+  std::vector<std::pair<int, double>> terms;
+};
+
+void check_exact_pairs(const xmvb::vb::StructureExpansion& expansion,
+                       const std::vector<ExpectedPair>& expected) {
+  require(expansion.alpha().size() == expected.size() &&
+              expansion.beta().size() == expected.size() &&
+              expansion.incidence().size() == expected.size(),
+          "small expansion has the wrong pair count");
+  require(expansion.offsets.size() == expected.size() + 1 &&
+              expansion.offsets.front() == 0 &&
+              expansion.offsets.back() == expansion.terms.size(),
+          "small expansion has invalid CSR offsets");
+  require(std::set<std::vector<int>>(expansion.alpha_strings.begin(),
+                                     expansion.alpha_strings.end()).size() ==
+              expansion.alpha_strings.size() &&
+              std::set<std::vector<int>>(expansion.beta_strings.begin(),
+                                         expansion.beta_strings.end()).size() ==
+                  expansion.beta_strings.size(),
+          "small expansion repeats a spin string");
+  for (std::size_t pair = 0; pair < expected.size(); ++pair) {
+    require(expansion.alpha()[pair] == expected[pair].alpha &&
+                expansion.beta()[pair] == expected[pair].beta,
+            "small expansion changed pair ordering");
+    const auto row = expansion.incidence()[pair];
+    require(row.size() == expected[pair].terms.size(),
+            "small expansion changed incidence row length");
+    for (std::size_t term = 0; term < row.size(); ++term) {
+      require(row[term].structure_index == expected[pair].terms[term].first &&
+                  row[term].coefficient == expected[pair].terms[term].second,
+              "small expansion changed an exact incidence sign");
+    }
+  }
+}
+
+void check_small_exact_signs() {
+  const xmvb::vb::StructureExpander expander;
+  check_exact_pairs(expander.expand(raw_structures(2, 1, {{1, 1}, {1, 2}})),
+                    {{{0}, {0}, {{0, 1.0}}},
+                     {{0}, {1}, {{1, 1.0}}},
+                     {{1}, {0}, {{1, 1.0}}}});
+  check_exact_pairs(expander.expand(raw_structures(3, 4, {{2, 1, 3}})),
+                    {{{0, 1, 2}, {}, {{0, -1.0}}}});
+  check_exact_pairs(expander.expand(raw_structures(2, 3, {{65, 64}, {64, 65}})),
+                    {{{63, 64}, {}, {{0, -1.0}, {1, 1.0}}}});
+
+  const auto ionic = raw_structures(2, 1, {{1, 1}, {1, 2}, {2, 2}});
+  check_exact_pairs(expander.expand_subset(ionic, {2, 0}),
+                    {{{1}, {1}, {{0, 1.0}}},
+                     {{0}, {0}, {{1, 1.0}}}});
+
+  const auto crossing = expander.expand(
+      raw_structures(4, 1, {{1, 2, 3, 4}, {1, 4, 3, 2}}));
+  check_exact_pairs(crossing,
+                    {{{0, 2}, {1, 3}, {{0, 1.0}, {1, -1.0}}},
+                     {{1, 2}, {0, 3}, {{0, 1.0}}},
+                     {{0, 3}, {1, 2}, {{0, 1.0}}},
+                     {{1, 3}, {0, 2}, {{0, 1.0}, {1, -1.0}}},
+                     {{2, 3}, {0, 1}, {{1, -1.0}}},
+                     {{0, 1}, {2, 3}, {{1, -1.0}}}});
+  const auto shared_pair = crossing.incidence()[0];
+  require(shared_pair[0].coefficient + shared_pair[1].coefficient == 0.0,
+          "crossing structures do not cancel on their shared pair");
+}
+
 }  // namespace
 
 int main() {
+  check_small_exact_signs();
   check_case({"FeCl2 CAS(10,8) quintet", 8, 10, 5, 0, 420, 448});
   check_case({"pyrrole CAS(11,10) doublet", 10, 11, 2, 0, 27720, 52920});
   check_case({"singlet CAS(4,4)", 4, 4, 1, 0, 20, 36});

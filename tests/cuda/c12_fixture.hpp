@@ -41,19 +41,19 @@ struct C12Fixture {
     const int n = input.orbital_preparation_input.n_active_orbitals;
     if (n != 12) throw std::invalid_argument("C12 fixture requires 12 active orbitals");
     topology = vb::build_orthogonal_spin_topology(
-        input.structure_data.alpha_det, input.structure_data.beta_det, n);
+        input.structure_data.alpha(), input.structure_data.beta(), n);
     const auto after_topology = Clock::now();
     const auto& active = prepared.prepared_active_space;
     const auto diagonal = vb::FullDeterminantStructureHamiltonianOverlapBuilder{}
         .build_davidson_jacobi_preconditioner(
-            input.structure_data.alpha_det, input.structure_data.beta_det,
-            input.structure_data.determinant_to_structure_terms,
+            input.structure_data.alpha(), input.structure_data.beta(),
+            input.structure_data.incidence(),
             active.orbital_result.active_orbital_overlap_matrix,
             active.active_space_one_electron_result.h1e_act, n,
             active.active_space_two_electron_result,
             input.structure_data.n_structures, topology);
     action = std::make_unique<vb::StructureAction>(
-        input.structure_data.determinant_to_structure_terms,
+        input.structure_data.incidence(),
         input.structure_data.n_structures, topology,
         active.orbital_result.active_orbital_overlap_matrix,
         active.active_space_one_electron_result.h1e_act,

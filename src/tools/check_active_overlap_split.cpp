@@ -2,6 +2,7 @@
 #include <cmath>
 #include <iomanip>
 #include <iostream>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -98,8 +99,8 @@ double structure_upper_overlap_weight(
 }
 
 StructurePairAdjoints determinant_pair_structure_adjoints(
-    const std::vector<xmvb::vb::StructureExpansionTerm>& determinant_to_structures_left,
-    const std::vector<xmvb::vb::StructureExpansionTerm>& determinant_to_structures_right,
+    std::span<const xmvb::vb::StructureExpansionTerm> determinant_to_structures_left,
+    std::span<const xmvb::vb::StructureExpansionTerm> determinant_to_structures_right,
     const std::vector<double>& eigenvector_matrix,
     const std::vector<double>& eigenvalues,
     int n_structures) {
@@ -153,7 +154,7 @@ int main(int argc, char** argv) {
             frame);
     const int n_active_orbitals = load_result.input.orbital_preparation_input.n_active_orbitals;
     const int n_determinants = static_cast<int>(
-        load_result.input.structure_data.alpha_det.size());
+        load_result.input.structure_data.alpha().size());
 
     std::vector<double> overlap_only_gradient(
         baseline.active_orbital_overlap_matrix.size(),
@@ -168,8 +169,8 @@ int main(int argc, char** argv) {
            determinant_index_right < n_determinants;
            ++determinant_index_right) {
         const auto pair_adjoints = determinant_pair_structure_adjoints(
-            load_result.input.structure_data.determinant_to_structure_terms[determinant_index_left],
-            load_result.input.structure_data.determinant_to_structure_terms[determinant_index_right],
+            load_result.input.structure_data.incidence()[determinant_index_left],
+            load_result.input.structure_data.incidence()[determinant_index_right],
             baseline.scf_result.eigenvector_matrix,
             baseline.scf_result.electronic_state_energies,
             load_result.input.structure_data.n_structures);
@@ -179,13 +180,13 @@ int main(int argc, char** argv) {
         }
 
         const auto alpha_overlap_submatrix = xmvb::vb::build_overlap_submatrix(
-            load_result.input.structure_data.alpha_det[determinant_index_left],
-            load_result.input.structure_data.alpha_det[determinant_index_right],
+            load_result.input.structure_data.alpha()[determinant_index_left],
+            load_result.input.structure_data.alpha()[determinant_index_right],
             baseline.active_orbital_overlap_matrix,
             n_active_orbitals);
         const auto beta_overlap_submatrix = xmvb::vb::build_overlap_submatrix(
-            load_result.input.structure_data.beta_det[determinant_index_left],
-            load_result.input.structure_data.beta_det[determinant_index_right],
+            load_result.input.structure_data.beta()[determinant_index_left],
+            load_result.input.structure_data.beta()[determinant_index_right],
             baseline.active_orbital_overlap_matrix,
             n_active_orbitals);
         const auto alpha_result =
@@ -202,8 +203,8 @@ int main(int argc, char** argv) {
         Matrix beta_opposite_spin_inverse_overlap_gradient;
         xmvb::vb::SameSpinPhiResult alpha_phi_result =
             xmvb::vb::compute_same_spin_original_phi(
-                load_result.input.structure_data.alpha_det[determinant_index_left],
-                load_result.input.structure_data.alpha_det[determinant_index_right],
+                load_result.input.structure_data.alpha()[determinant_index_left],
+                load_result.input.structure_data.alpha()[determinant_index_right],
                 raw_one_electron,
                 n_active_orbitals,
                 raw_two_electron,
@@ -211,8 +212,8 @@ int main(int argc, char** argv) {
                 &alpha_same_spin_inverse_overlap_gradient);
         xmvb::vb::SameSpinPhiResult beta_phi_result =
             xmvb::vb::compute_same_spin_original_phi(
-                load_result.input.structure_data.beta_det[determinant_index_left],
-                load_result.input.structure_data.beta_det[determinant_index_right],
+                load_result.input.structure_data.beta()[determinant_index_left],
+                load_result.input.structure_data.beta()[determinant_index_right],
                 raw_one_electron,
                 n_active_orbitals,
                 raw_two_electron,
@@ -220,11 +221,11 @@ int main(int argc, char** argv) {
                 &beta_same_spin_inverse_overlap_gradient);
         const double opposite_spin_phi =
             xmvb::vb::compute_opposite_spin_original_phi(
-                load_result.input.structure_data.alpha_det[determinant_index_left],
-                load_result.input.structure_data.alpha_det[determinant_index_right],
+                load_result.input.structure_data.alpha()[determinant_index_left],
+                load_result.input.structure_data.alpha()[determinant_index_right],
                 alpha_result,
-                load_result.input.structure_data.beta_det[determinant_index_left],
-                load_result.input.structure_data.beta_det[determinant_index_right],
+                load_result.input.structure_data.beta()[determinant_index_left],
+                load_result.input.structure_data.beta()[determinant_index_right],
                 beta_result,
                 raw_two_electron,
                 &alpha_opposite_spin_inverse_overlap_gradient,
@@ -248,24 +249,24 @@ int main(int argc, char** argv) {
             Matrix::Zero(beta_inverse_overlap_gradient.rows(), beta_inverse_overlap_gradient.cols());
 
         xmvb::vb::accumulate_spin_overlap_gradient(
-            load_result.input.structure_data.alpha_det[determinant_index_left],
-            load_result.input.structure_data.alpha_det[determinant_index_right],
+            load_result.input.structure_data.alpha()[determinant_index_left],
+            load_result.input.structure_data.alpha()[determinant_index_right],
             alpha_result,
             pair_adjoints.overlap_weight * beta_result.overlap_determinant,
             zero_alpha_inverse,
             n_active_orbitals,
             &overlap_only_gradient);
         xmvb::vb::accumulate_spin_overlap_gradient(
-            load_result.input.structure_data.beta_det[determinant_index_left],
-            load_result.input.structure_data.beta_det[determinant_index_right],
+            load_result.input.structure_data.beta()[determinant_index_left],
+            load_result.input.structure_data.beta()[determinant_index_right],
             beta_result,
             pair_adjoints.overlap_weight * alpha_result.overlap_determinant,
             zero_beta_inverse,
             n_active_orbitals,
             &overlap_only_gradient);
         xmvb::vb::accumulate_spin_overlap_gradient(
-            load_result.input.structure_data.alpha_det[determinant_index_left],
-            load_result.input.structure_data.alpha_det[determinant_index_right],
+            load_result.input.structure_data.alpha()[determinant_index_left],
+            load_result.input.structure_data.alpha()[determinant_index_right],
             alpha_result,
             alpha_ham_det_weight,
             pair_adjoints.hamiltonian_weight * beta_result.overlap_determinant *
@@ -273,8 +274,8 @@ int main(int argc, char** argv) {
             n_active_orbitals,
             &hamiltonian_only_gradient);
         xmvb::vb::accumulate_spin_overlap_gradient(
-            load_result.input.structure_data.beta_det[determinant_index_left],
-            load_result.input.structure_data.beta_det[determinant_index_right],
+            load_result.input.structure_data.beta()[determinant_index_left],
+            load_result.input.structure_data.beta()[determinant_index_right],
             beta_result,
             beta_ham_det_weight,
             pair_adjoints.hamiltonian_weight * alpha_result.overlap_determinant *
@@ -318,18 +319,18 @@ int main(int argc, char** argv) {
       minus_overlap[entry_index] -= options.step;
 
       const auto plus_structure = structure_builder.build(
-          load_result.input.structure_data.alpha_det,
-          load_result.input.structure_data.beta_det,
-          load_result.input.structure_data.determinant_to_structure_terms,
+          load_result.input.structure_data.alpha(),
+          load_result.input.structure_data.beta(),
+          load_result.input.structure_data.incidence(),
           plus_overlap,
           raw_one_electron,
           n_active_orbitals,
           raw_two_electron,
           load_result.input.structure_data.n_structures);
       const auto minus_structure = structure_builder.build(
-          load_result.input.structure_data.alpha_det,
-          load_result.input.structure_data.beta_det,
-          load_result.input.structure_data.determinant_to_structure_terms,
+          load_result.input.structure_data.alpha(),
+          load_result.input.structure_data.beta(),
+          load_result.input.structure_data.incidence(),
           minus_overlap,
           raw_one_electron,
           n_active_orbitals,

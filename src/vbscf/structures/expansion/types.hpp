@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstddef>
+#include <iterator>
+#include <span>
 #include <vector>
 
 #include <Eigen/Core>
@@ -8,9 +10,9 @@
 namespace xmvb::vb {
 
 /**
- * @brief One determinant-to-structure expansion term.
+ * @brief One spin-string-pair-to-structure expansion term.
  *
- * Each determinant can contribute to one or more structures with a signed
+ * Each spin-string pair can contribute to one or more structures with a signed
  * coefficient. This structure makes that mapping explicit.
  */
 struct StructureExpansionTerm {
@@ -20,12 +22,139 @@ struct StructureExpansionTerm {
   int structure_index = 0;
 
   /**
-   * @brief Signed coefficient contributed by the determinant to the structure.
+   * @brief Signed coefficient contributed by the spin-string pair to the structure.
    *
    * The current expansion uses `+1` or `-1`, but this representation
    * intentionally allows any real coefficient.
    */
   double coefficient = 0.0;
+};
+
+/** Borrowed rows of spin strings, either interned by pair ID or supplied directly. */
+class SpinStringRows {
+public:
+  SpinStringRows(const std::vector<std::vector<int>>& strings,
+                 const std::vector<int>& pair_ids)
+      : strings_(&strings), pair_ids_(&pair_ids) {}
+
+  SpinStringRows(const std::vector<std::vector<int>>& rows)
+      : strings_(&rows) {}
+
+  std::size_t size() const { return pair_ids_ ? pair_ids_->size() : strings_->size(); }
+  bool empty() const { return size() == 0; }
+  const std::vector<std::vector<int>>& strings() const { return *strings_; }
+  std::span<const int> indices() const {
+    return pair_ids_ ? std::span<const int>(*pair_ids_) : std::span<const int>();
+  }
+  const std::vector<int>& operator[](std::size_t index) const {
+    return (*strings_)[pair_ids_ ? static_cast<std::size_t>((*pair_ids_)[index]) : index];
+  }
+  const std::vector<int>& front() const { return (*this)[0]; }
+
+  class Iterator {
+  public:
+    using iterator_category = std::forward_iterator_tag;
+    using value_type = std::vector<int>;
+    using difference_type = std::ptrdiff_t;
+    using reference = const value_type&;
+    using pointer = const value_type*;
+
+    Iterator(const std::vector<std::vector<int>>* strings,
+             const std::vector<int>* pair_ids, std::size_t index)
+        : strings_(strings), pair_ids_(pair_ids), index_(index) {}
+    reference operator*() const {
+      return (*strings_)[pair_ids_ ? static_cast<std::size_t>((*pair_ids_)[index_]) : index_];
+    }
+    pointer operator->() const { return &**this; }
+    Iterator& operator++() { ++index_; return *this; }
+    Iterator operator++(int) { auto previous = *this; ++*this; return previous; }
+    bool operator==(const Iterator& other) const {
+      return strings_ == other.strings_ && pair_ids_ == other.pair_ids_ &&
+             index_ == other.index_;
+    }
+
+  private:
+    const std::vector<std::vector<int>>* strings_;
+    const std::vector<int>* pair_ids_;
+    std::size_t index_;
+  };
+
+  Iterator begin() const { return {strings_, pair_ids_, 0}; }
+  Iterator end() const { return {strings_, pair_ids_, size()}; }
+
+  friend bool operator==(const SpinStringRows& left, const SpinStringRows& right) {
+    if (left.size() != right.size()) return false;
+    for (std::size_t index = 0; index < left.size(); ++index) {
+      if (left[index] != right[index]) return false;
+    }
+    return true;
+  }
+
+private:
+  const std::vector<std::vector<int>>* strings_;
+  const std::vector<int>* pair_ids_ = nullptr;
+};
+
+/** Borrowed pair-to-structure rows backed by CSR or existing row storage. */
+class StructureIncidence {
+public:
+  StructureIncidence(const std::vector<std::size_t>& offsets,
+                     const std::vector<StructureExpansionTerm>& terms)
+      : offsets_(&offsets), terms_(&terms) {}
+
+  StructureIncidence(const std::vector<std::vector<StructureExpansionTerm>>& rows)
+      : rows_(&rows) {}
+
+  std::size_t size() const {
+    return rows_ ? rows_->size() :
+        (offsets_->empty() ? 0 : offsets_->size() - 1);
+  }
+  bool empty() const { return size() == 0; }
+  std::span<const StructureExpansionTerm> operator[](std::size_t index) const {
+    if (rows_) return (*rows_)[index];
+    return std::span<const StructureExpansionTerm>(*terms_).subspan(
+        (*offsets_)[index], (*offsets_)[index + 1] - (*offsets_)[index]);
+  }
+  std::span<const StructureExpansionTerm> front() const { return (*this)[0]; }
+
+  class Iterator {
+  public:
+    using iterator_category = std::forward_iterator_tag;
+    using value_type = std::span<const StructureExpansionTerm>;
+    using difference_type = std::ptrdiff_t;
+    using reference = value_type;
+
+    Iterator(const std::vector<std::size_t>* offsets,
+             const std::vector<StructureExpansionTerm>* terms,
+             const std::vector<std::vector<StructureExpansionTerm>>* rows,
+             std::size_t index)
+        : offsets_(offsets), terms_(terms), rows_(rows), index_(index) {}
+    reference operator*() const {
+      if (rows_) return (*rows_)[index_];
+      return std::span<const StructureExpansionTerm>(*terms_).subspan(
+          (*offsets_)[index_], (*offsets_)[index_ + 1] - (*offsets_)[index_]);
+    }
+    Iterator& operator++() { ++index_; return *this; }
+    Iterator operator++(int) { auto previous = *this; ++*this; return previous; }
+    bool operator==(const Iterator& other) const {
+      return offsets_ == other.offsets_ && terms_ == other.terms_ &&
+             rows_ == other.rows_ && index_ == other.index_;
+    }
+
+  private:
+    const std::vector<std::size_t>* offsets_;
+    const std::vector<StructureExpansionTerm>* terms_;
+    const std::vector<std::vector<StructureExpansionTerm>>* rows_;
+    std::size_t index_;
+  };
+
+  Iterator begin() const { return {offsets_, terms_, rows_, 0}; }
+  Iterator end() const { return {offsets_, terms_, rows_, size()}; }
+
+private:
+  const std::vector<std::size_t>* offsets_ = nullptr;
+  const std::vector<StructureExpansionTerm>* terms_ = nullptr;
+  const std::vector<std::vector<StructureExpansionTerm>>* rows_ = nullptr;
 };
 
 /**
@@ -133,33 +262,44 @@ struct RawStructureData {
 };
 
 /**
- * @brief Combinatorial expansion of VB structures into full determinants.
+ * @brief Compact combinatorial expansion into unique spin-string pairs.
  *
- * This object owns topology only: occupied-orbital index lists and the sparse
- * determinant-to-structure incidence relation. Physical overlap, Hamiltonian,
+ * This object owns topology only: unique occupied spin strings, pair IDs, and
+ * the sparse pair-to-structure incidence relation. Physical overlap, Hamiltonian,
  * and integral data are supplied separately through their Eigen-based
  * numerical contracts.
  */
-struct FullDeterminantStructureData {
+struct StructureExpansion {
   /**
    * @brief Number of VB structures.
    */
   int n_structures = 0;
 
   /**
-   * @brief Zero-based alpha occupied orbitals for each full determinant.
+   * @brief Unique zero-based alpha occupied spin strings.
    */
-  std::vector<std::vector<int>> alpha_det;
+  std::vector<std::vector<int>> alpha_strings;
 
   /**
-   * @brief Zero-based beta occupied orbitals for each full determinant.
+   * @brief Unique zero-based beta occupied spin strings.
    */
-  std::vector<std::vector<int>> beta_det;
+  std::vector<std::vector<int>> beta_strings;
+
+  /** Spin-string table indices for each unique pair. */
+  std::vector<int> pair_alpha;
+  std::vector<int> pair_beta;
+
+  /** CSR row boundaries for pair-to-structure terms. */
+  std::vector<std::size_t> offsets;
 
   /**
-   * @brief Determinant-to-structure expansion coefficients.
+   * @brief Contiguous pair-to-structure expansion coefficients.
    */
-  std::vector<std::vector<StructureExpansionTerm>> determinant_to_structure_terms;
+  std::vector<StructureExpansionTerm> terms;
+
+  SpinStringRows alpha() const { return {alpha_strings, pair_alpha}; }
+  SpinStringRows beta() const { return {beta_strings, pair_beta}; }
+  StructureIncidence incidence() const { return {offsets, terms}; }
 };
 
 }  // namespace xmvb::vb

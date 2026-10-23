@@ -10,9 +10,9 @@ StructureAccumulationResult StructureMatrixEvaluator::evaluate(
     const VbScfInput& input,
     const PreparedActiveSpaceContext& prepared_active_space) const {
   return structure_builder_.build(
-      input.structure_data.alpha_det,
-      input.structure_data.beta_det,
-      input.structure_data.determinant_to_structure_terms,
+      input.structure_data.alpha(),
+      input.structure_data.beta(),
+      input.structure_data.incidence(),
       prepared_active_space.orbital_result.active_orbital_overlap_matrix,
       prepared_active_space.active_space_one_electron_result.h1e_act,
       input.orbital_preparation_input.n_active_orbitals,
@@ -39,8 +39,8 @@ SameSpinPairCacheContext StructureMatrixEvaluator::build_pair_cache(
     cache_h1e = &raw_h1e;
   }
   return build_same_spin_pair_cache_context(
-      input.structure_data.alpha_det,
-      input.structure_data.beta_det,
+      input.structure_data.alpha(),
+      input.structure_data.beta(),
       structure_builder_.make_pair_evaluator(),
       prepared_active_space.orbital_result.active_orbital_overlap_matrix,
       *cache_h1e,

@@ -38,7 +38,7 @@ struct VbScfInput {
   /**
    * @brief Expanded determinant/structure data derived from the raw VB structures.
    */
-  FullDeterminantStructureData structure_data;
+  StructureExpansion structure_data;
 
   /**
    * @brief Sparse orbital coefficients and AO overlap used to rebuild auxiliary orbitals.

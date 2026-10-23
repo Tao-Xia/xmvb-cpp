@@ -12,27 +12,27 @@ void require(bool condition, const char* message) {
   }
 }
 
-xmvb::vb::FullDeterminantStructureData singlet_pair() {
-  xmvb::vb::FullDeterminantStructureData data;
+xmvb::vb::StructureExpansion singlet_pair() {
+  xmvb::vb::StructureExpansion data;
   data.n_structures = 1;
-  data.alpha_det = {{0}, {1}};
-  data.beta_det = {{1}, {0}};
-  data.determinant_to_structure_terms = {
-      {{0, 1.0}},
-      {{0, 1.0}},
-  };
+  data.alpha_strings = {{0}, {1}};
+  data.beta_strings = {{1}, {0}};
+  data.pair_alpha = {0, 1};
+  data.pair_beta = {0, 1};
+  data.offsets = {0, 1, 2};
+  data.terms = {{0, 1.0}, {0, 1.0}};
   return data;
 }
 
-xmvb::vb::FullDeterminantStructureData doublet_pair() {
-  xmvb::vb::FullDeterminantStructureData data;
+xmvb::vb::StructureExpansion doublet_pair() {
+  xmvb::vb::StructureExpansion data;
   data.n_structures = 1;
-  data.alpha_det = {{0, 2}, {1, 2}};
-  data.beta_det = {{1}, {0}};
-  data.determinant_to_structure_terms = {
-      {{0, 1.0}},
-      {{0, 1.0}},
-  };
+  data.alpha_strings = {{0, 2}, {1, 2}};
+  data.beta_strings = {{1}, {0}};
+  data.pair_alpha = {0, 1};
+  data.pair_beta = {0, 1};
+  data.offsets = {0, 1, 2};
+  data.terms = {{0, 1.0}, {0, 1.0}};
   return data;
 }
 
@@ -51,9 +51,10 @@ int main() {
             "doublet spin square is wrong");
 
     auto contaminated = singlet_pair();
-    contaminated.alpha_det.resize(1);
-    contaminated.beta_det.resize(1);
-    contaminated.determinant_to_structure_terms.resize(1);
+    contaminated.pair_alpha.resize(1);
+    contaminated.pair_beta.resize(1);
+    contaminated.offsets.resize(2);
+    contaminated.terms.resize(1);
     const auto impure = xmvb::vb::analyze_structure_spin(contaminated, 1);
     require(!impure.spin_adapted(),
             "spin-contaminated determinant passed the raising test");

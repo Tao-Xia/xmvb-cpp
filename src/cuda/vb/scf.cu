@@ -76,16 +76,16 @@ struct Trial {
 /** W and spin links only. Zero integral tensors are topology sentinels, never
  * physical CPU evaluations; the first actual orbital/integral point is GPU.
  */
-std::unique_ptr<vb::StructureAction> make_topology(const vb::VbScfInput& input) {
+std::unique_ptr<vb::StructureAction> make_topology(
+    const vb::VbScfInput& input,
+    const vb::SameSpinPairCacheContext& topology) {
   const int na=input.orbital_preparation_input.n_active_orbitals;
-  const auto topology=vb::build_orthogonal_spin_topology(input.structure_data.alpha_det,
-      input.structure_data.beta_det,na);
   Eigen::MatrixXd identity=Eigen::MatrixXd::Identity(na,na);
   std::vector<double> overlap(identity.data(),identity.data()+identity.size());
   integrals::ActiveSpaceTwoElectronResult two;
   two.packed_active_two_electron_integrals.assign(
       integrals::packed_active_two_electron_integral_count(na),0.0);
-  return std::make_unique<vb::StructureAction>(input.structure_data.determinant_to_structure_terms,
+  return std::make_unique<vb::StructureAction>(input.structure_data.incidence(),
       input.structure_data.n_structures,topology,overlap,Eigen::MatrixXd::Zero(na,na),two,na,
       nullptr,vb::StructureActionMode::ActionOnly);
 }
@@ -113,10 +113,10 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,
   const double release_seconds=std::chrono::duration<double>(Clock::now()-release_start).count();
   // Release the large host payload before preparing structure topology.
   const AoMetric ao_metric(context,orbital.ao_overlap_matrix);
-  auto metadata=make_topology(input);
+  const auto topology=vb::build_orthogonal_spin_topology(input.structure_data.alpha(),
+      input.structure_data.beta(),na);
+  auto metadata=make_topology(input,topology);
   StructureAction action(context,*metadata);
-  const auto topology=vb::build_orthogonal_spin_topology(input.structure_data.alpha_det,
-      input.structure_data.beta_det,na);
   SpinMetric spin(context,*metadata,topology.alpha_reuse_table.unique_determinants,
       topology.beta_reuse_table.unique_determinants,context.device_byte_budget());
   StructureCi ci_solver(context,action,spin,input.complete_active_space);

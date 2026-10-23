@@ -174,8 +174,8 @@ int main(int argc, char** argv) {
     xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder structure_builder;
     const auto pair_evaluator = structure_builder.make_pair_evaluator();
     const auto same_spin_pair_cache = xmvb::vb::build_same_spin_pair_cache_context(
-        load_result.input.structure_data.alpha_det,
-        load_result.input.structure_data.beta_det,
+        load_result.input.structure_data.alpha(),
+        load_result.input.structure_data.beta(),
         pair_evaluator,
         prepared_active_space.orbital_result.active_orbital_overlap_matrix,
         prepared_active_space.active_space_one_electron_result.h1e_act,
@@ -184,9 +184,9 @@ int main(int argc, char** argv) {
         xmvb::vb::SameSpinPairCacheBuildOptions{});
     const auto fast_start = std::chrono::high_resolution_clock::now();
     const auto fast_result = structure_builder.build(
-        load_result.input.structure_data.alpha_det,
-        load_result.input.structure_data.beta_det,
-        load_result.input.structure_data.determinant_to_structure_terms,
+        load_result.input.structure_data.alpha(),
+        load_result.input.structure_data.beta(),
+        load_result.input.structure_data.incidence(),
         prepared_active_space.orbital_result.active_orbital_overlap_matrix,
         prepared_active_space.active_space_one_electron_result.h1e_act,
         load_result.input.orbital_preparation_input.n_active_orbitals,
@@ -206,7 +206,7 @@ int main(int argc, char** argv) {
     const auto structure_action_setup_start =
         std::chrono::high_resolution_clock::now();
     const xmvb::vb::StructureAction structure_action(
-        load_result.input.structure_data.determinant_to_structure_terms,
+        load_result.input.structure_data.incidence(),
         n_structures,
         same_spin_pair_cache,
         prepared_active_space.orbital_result.active_orbital_overlap_matrix,
@@ -278,8 +278,8 @@ int main(int argc, char** argv) {
     }
     const auto compact_pair_cache =
         xmvb::vb::build_same_spin_pair_cache_context(
-            load_result.input.structure_data.alpha_det,
-            load_result.input.structure_data.beta_det,
+            load_result.input.structure_data.alpha(),
+            load_result.input.structure_data.beta(),
             pair_evaluator,
             prepared_active_space.orbital_result.active_orbital_overlap_matrix,
             prepared_active_space.active_space_one_electron_result.h1e_act,
@@ -290,7 +290,7 @@ int main(int argc, char** argv) {
     const auto compact_action_setup_start =
         std::chrono::high_resolution_clock::now();
     const xmvb::vb::StructureAction compact_structure_action(
-        load_result.input.structure_data.determinant_to_structure_terms,
+        load_result.input.structure_data.incidence(),
         n_structures,
         compact_pair_cache,
         prepared_active_space.orbital_result.active_orbital_overlap_matrix,
@@ -400,8 +400,8 @@ int main(int argc, char** argv) {
             .cwiseAbs()
             .maxCoeff();
     const auto exact_same_spin_pair_cache = xmvb::vb::build_same_spin_pair_cache_context(
-        load_result.input.structure_data.alpha_det,
-        load_result.input.structure_data.beta_det,
+        load_result.input.structure_data.alpha(),
+        load_result.input.structure_data.beta(),
         pair_evaluator,
         prepared_active_space.orbital_result.active_orbital_overlap_matrix,
         prepared_active_space.active_space_one_electron_result.h1e_act,
@@ -410,9 +410,9 @@ int main(int argc, char** argv) {
         xmvb::vb::SameSpinPairCacheBuildOptions{});
     const auto fast_exact_start = std::chrono::high_resolution_clock::now();
     const auto fast_exact_result = structure_builder.build(
-        load_result.input.structure_data.alpha_det,
-        load_result.input.structure_data.beta_det,
-        load_result.input.structure_data.determinant_to_structure_terms,
+        load_result.input.structure_data.alpha(),
+        load_result.input.structure_data.beta(),
+        load_result.input.structure_data.incidence(),
         prepared_active_space.orbital_result.active_orbital_overlap_matrix,
         prepared_active_space.active_space_one_electron_result.h1e_act,
         load_result.input.orbital_preparation_input.n_active_orbitals,
@@ -422,9 +422,9 @@ int main(int argc, char** argv) {
     const auto fast_exact_end = std::chrono::high_resolution_clock::now();
     const auto reference_start = std::chrono::high_resolution_clock::now();
     const auto reference_result = structure_builder.build_with_pair_evaluations(
-        load_result.input.structure_data.alpha_det,
-        load_result.input.structure_data.beta_det,
-        load_result.input.structure_data.determinant_to_structure_terms,
+        load_result.input.structure_data.alpha(),
+        load_result.input.structure_data.beta(),
+        load_result.input.structure_data.incidence(),
         prepared_active_space.orbital_result.active_orbital_overlap_matrix,
         prepared_active_space.active_space_one_electron_result.h1e_act,
         load_result.input.orbital_preparation_input.n_active_orbitals,
@@ -440,7 +440,7 @@ int main(int argc, char** argv) {
     std::cout << "cache_enabled = "
               << (same_spin_pair_cache.enabled() ? "true" : "false") << '\n';
     std::cout << "n_determinants = "
-              << load_result.input.structure_data.alpha_det.size() << '\n';
+              << load_result.input.structure_data.alpha().size() << '\n';
     std::cout << "n_structures = " << n_structures << '\n';
     std::cout << "n_unique_alpha = "
               << same_spin_pair_cache.alpha_reuse_table.unique_determinants.size() << '\n';

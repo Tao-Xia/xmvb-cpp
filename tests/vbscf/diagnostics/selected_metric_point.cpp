@@ -45,17 +45,17 @@ void inspect_ci_diagonal(const xmvb::vb::VbScfInput& input,
   std::vector<Occupation> occupations(action.n_structures());
   std::vector<int> ionic_orders(action.n_structures());
   const auto& expansion=input.structure_data;
-  for (std::size_t p=0;p<expansion.determinant_to_structure_terms.size();++p) {
-    if (expansion.determinant_to_structure_terms[p].empty()) continue;
+  for (std::size_t p=0;p<expansion.incidence().size();++p) {
+    if (expansion.incidence()[p].empty()) continue;
     int doubles=0;
     std::uint64_t alpha_mask=0,beta_mask=0;
-    const auto& beta=expansion.beta_det[p];
+    const auto& beta=expansion.beta()[p];
     for (int i:beta) beta_mask|=std::uint64_t{1}<<i;
-    for (int i:expansion.alpha_det[p]) {
+    for (int i:expansion.alpha()[p]) {
       alpha_mask|=std::uint64_t{1}<<i;
       doubles+=std::find(beta.begin(),beta.end(),i)!=beta.end();
     }
-    for (const auto& term:expansion.determinant_to_structure_terms[p])
+    for (const auto& term:expansion.incidence()[p])
       if (!seen[term.structure_index] && term.coefficient!=0.0) {
         sectors[doubles].push_back(term.structure_index);
         seen[term.structure_index]=true;

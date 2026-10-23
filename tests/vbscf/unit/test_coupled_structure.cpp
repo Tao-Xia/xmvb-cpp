@@ -646,11 +646,15 @@ xmvb::vb::VbScfInput coupling_input() {
   }
   ao.pair_graph = xmvb::integrals::build_ao_pair_graph(left, right, values, 3);
   auto& data = input.structure_data;
+  data.alpha_strings = {{0}, {1}};
+  data.beta_strings = {{0}, {1}};
+  data.offsets = {0};
   for (int a = 0; a < 2; ++a) {
     for (int b = 0; b < 2; ++b) {
-      data.alpha_det.push_back({a});
-      data.beta_det.push_back({b});
-      data.determinant_to_structure_terms.push_back({{data.n_structures++, 1.0}});
+      data.pair_alpha.push_back(a);
+      data.pair_beta.push_back(b);
+      data.terms.push_back({data.n_structures++, 1.0});
+      data.offsets.push_back(data.terms.size());
     }
   }
   return input;
@@ -720,7 +724,8 @@ void check_affine_keyframe_hvp(int n_states, bool selected, bool stationary) {
   auto input = coupling_input();
   if (selected) {
     // Three of four products: the selected subspace is not orbital-transform closed.
-    input.structure_data.determinant_to_structure_terms.back().clear();
+    input.structure_data.terms.pop_back();
+    input.structure_data.offsets.back() = input.structure_data.terms.size();
     input.structure_data.n_structures = 3;
   }
   const auto& orbitals = input.orbital_preparation_input;

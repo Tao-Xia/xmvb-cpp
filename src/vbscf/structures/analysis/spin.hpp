@@ -25,7 +25,7 @@ struct StructureSpinAnalysis {
 };
 
 StructureSpinAnalysis analyze_structure_spin(
-    const FullDeterminantStructureData& structures,
+    const StructureExpansion& structures,
     int spin_multiplicity);
 
 }  // namespace xmvb::vb

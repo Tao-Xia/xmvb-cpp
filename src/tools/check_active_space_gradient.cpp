@@ -129,9 +129,9 @@ double evaluate_total_energy_from_active_space(
     double nuclear_repulsion_energy) {
   xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder structure_builder;
   const auto structure_matrices = structure_builder.build(
-      input.structure_data.alpha_det,
-      input.structure_data.beta_det,
-      input.structure_data.determinant_to_structure_terms,
+      input.structure_data.alpha(),
+      input.structure_data.beta(),
+      input.structure_data.incidence(),
       active_orbital_overlap_matrix,
       h1e_act,
       input.orbital_preparation_input.n_active_orbitals,

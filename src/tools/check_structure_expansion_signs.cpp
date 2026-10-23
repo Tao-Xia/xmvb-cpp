@@ -2,6 +2,7 @@
 #include <cmath>
 #include <iomanip>
 #include <iostream>
+#include <map>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -274,7 +275,7 @@ bool should_canonicalize_spin_strings(SignMode sign_mode) {
   throw std::invalid_argument("unknown sign mode");
 }
 
-xmvb::vb::FullDeterminantStructureData expand_with_sign_mode(
+xmvb::vb::StructureExpansion expand_with_sign_mode(
     const xmvb::vb::RawStructureData& raw_structure_data,
     SignMode sign_mode) {
   if (raw_structure_data.n_total_electrons <= 0 || raw_structure_data.n_active_electrons <= 0) {
@@ -287,8 +288,10 @@ xmvb::vb::FullDeterminantStructureData expand_with_sign_mode(
   const int n_active_beta_electrons =
       (raw_structure_data.n_active_electrons - n_spin_open_shell_electrons) / 2;
 
-  xmvb::vb::FullDeterminantStructureData result;
+  xmvb::vb::StructureExpansion result;
   result.n_structures = raw_structure_data.n_structures;
+  std::vector<std::vector<int>> alpha_rows, beta_rows;
+  std::vector<std::vector<xmvb::vb::StructureExpansionTerm>> incidence_rows;
 
   std::unordered_map<DeterminantKey, int, DeterminantKeyHasher> determinant_to_index;
   for (int structure_index = 0;
@@ -344,18 +347,34 @@ xmvb::vb::FullDeterminantStructureData expand_with_sign_mode(
       const auto [determinant_iterator, inserted] =
           determinant_to_index.emplace(
               determinant_key,
-              static_cast<int>(result.alpha_det.size()));
+              static_cast<int>(alpha_rows.size()));
       if (inserted) {
-        result.alpha_det.push_back(alpha_orbitals);
-        result.beta_det.push_back(beta_orbitals);
-        result.determinant_to_structure_terms.push_back({});
+        alpha_rows.push_back(alpha_orbitals);
+        beta_rows.push_back(beta_orbitals);
+        incidence_rows.push_back({});
       }
-      result.determinant_to_structure_terms[determinant_iterator->second]
+      incidence_rows[determinant_iterator->second]
           .push_back(
               xmvb::vb::StructureExpansionTerm{
                   structure_index,
                   coefficient});
     }
+  }
+
+  std::map<std::vector<int>, int> alpha_ids, beta_ids;
+  result.offsets.push_back(0);
+  for (std::size_t pair = 0; pair < alpha_rows.size(); ++pair) {
+    const auto [alpha_iterator, alpha_inserted] = alpha_ids.emplace(
+        alpha_rows[pair], static_cast<int>(result.alpha_strings.size()));
+    if (alpha_inserted) result.alpha_strings.push_back(alpha_rows[pair]);
+    const auto [beta_iterator, beta_inserted] = beta_ids.emplace(
+        beta_rows[pair], static_cast<int>(result.beta_strings.size()));
+    if (beta_inserted) result.beta_strings.push_back(beta_rows[pair]);
+    result.pair_alpha.push_back(alpha_iterator->second);
+    result.pair_beta.push_back(beta_iterator->second);
+    result.terms.insert(result.terms.end(), incidence_rows[pair].begin(),
+                        incidence_rows[pair].end());
+    result.offsets.push_back(result.terms.size());
   }
 
   return result;
@@ -447,9 +466,9 @@ int main(int argc, char** argv) {
       const auto structure_data =
           expand_with_sign_mode(load_result.raw_structure_data, sign_mode);
       auto structure_matrices = structure_builder.build(
-          structure_data.alpha_det,
-          structure_data.beta_det,
-          structure_data.determinant_to_structure_terms,
+          structure_data.alpha(),
+          structure_data.beta(),
+          structure_data.incidence(),
           prepared_active_space.orbital_result.active_orbital_overlap_matrix,
           prepared_active_space.active_space_one_electron_result.h1e_act,
           load_result.input.orbital_preparation_input.n_active_orbitals,
@@ -475,7 +494,7 @@ int main(int argc, char** argv) {
 
       std::cout << '\n';
       std::cout << "sign_mode = " << sign_mode_name(sign_mode) << '\n';
-      std::cout << "expanded_determinant_count = " << structure_data.alpha_det.size() << '\n';
+      std::cout << "expanded_determinant_count = " << structure_data.alpha().size() << '\n';
       std::cout << "overlap_offdiag_nnz = " << overlap_stats.nnz << '\n';
       std::cout << "overlap_max_abs_offdiag = " << overlap_stats.max_abs << '\n';
       std::cout << "hamiltonian_offdiag_nnz = " << hamiltonian_stats.nnz << '\n';

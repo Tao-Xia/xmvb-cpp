@@ -36,10 +36,13 @@ void check_selected_open_shell() {
   result.scf_result.structure_overlap_diagonal.assign(3, 99.0); // Not exact.
   auto& data = result.optimized_input.structure_data;
   data.n_structures = 3;
-  data.alpha_det = {{0, 1}, {0, 2}, {1, 2}};
-  data.beta_det = {{0}, {1}, {2}};
-  data.determinant_to_structure_terms = {
-      {{0, 1.0}, {1, -0.5}}, {{0, 0.3}, {1, 0.8}}, {{1, -0.2}, {2, 1.3}}};
+  data.alpha_strings = {{0, 1}, {0, 2}, {1, 2}};
+  data.beta_strings = {{0}, {1}, {2}};
+  data.pair_alpha = {0, 1, 2};
+  data.pair_beta = {0, 1, 2};
+  data.offsets = {0, 2, 4, 6};
+  data.terms = {{0, 1.0}, {1, -0.5}, {0, 0.3},
+                {1, 0.8}, {1, -0.2}, {2, 1.3}};
   result.optimized_input.orbital_preparation_input.n_active_orbitals = 3;
   Eigen::Matrix3d s;
   s << 1.1, 0.2, -0.1, 0.2, 1.3, 0.15, -0.1, 0.15, 0.9;
@@ -50,11 +53,11 @@ void check_selected_open_shell() {
   Eigen::Matrix3d product_overlap;
   for (int i = 0; i < 3; ++i)
     for (int j = 0; j < 3; ++j) {
-      const auto& a = data.alpha_det[i];
-      const auto& b = data.alpha_det[j];
+      const auto& a = data.alpha()[i];
+      const auto& b = data.alpha()[j];
       product_overlap(i, j) =
           (s(a[0], b[0]) * s(a[1], b[1]) - s(a[0], b[1]) * s(a[1], b[0])) *
-          s(data.beta_det[i][0], data.beta_det[j][0]);
+          s(data.beta()[i][0], data.beta()[j][0]);
     }
   Eigen::Matrix3d w;
   w << 1.0, -0.5, 0.0, 0.3, 0.8, 0.0, 0.0, -0.2, 1.3;

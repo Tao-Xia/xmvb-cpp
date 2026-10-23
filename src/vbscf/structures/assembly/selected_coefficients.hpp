@@ -71,7 +71,7 @@ struct SelectedStateDeterminantMatrices {
  * @brief Builds `c_d^(n)` and `C^(n)` from raw (possibly unnormalized) weights.
  */
 SelectedStateDeterminantMatrices build_selected_state_determinant_matrices(
-    const FullDeterminantStructureData& full_determinant_data,
+    const StructureExpansion& full_determinant_data,
     const std::vector<double>& eigenvector_matrix,
     const std::vector<int>& selected_state_indices,
     const std::vector<double>& state_average_weights,
@@ -84,7 +84,7 @@ SelectedStateDeterminantMatrices build_selected_state_determinant_matrices(
  */
 SelectedStateDeterminantMatrices
 build_selected_state_determinant_matrices_from_normalized_weights(
-    const FullDeterminantStructureData& full_determinant_data,
+    const StructureExpansion& full_determinant_data,
     const std::vector<double>& eigenvector_matrix,
     const std::vector<int>& selected_state_indices,
     const std::vector<double>& normalized_state_weights,
@@ -100,7 +100,7 @@ build_selected_state_determinant_matrices_from_normalized_weights(
  */
 SelectedStateDeterminantMatrices
 build_selected_state_determinant_matrices_from_selected_columns(
-    const FullDeterminantStructureData& full_determinant_data,
+    const StructureExpansion& full_determinant_data,
     const Eigen::MatrixXd& selected_state_columns,
     const std::vector<int>& selected_state_indices,
     const std::vector<double>& normalized_state_weights,

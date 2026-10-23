@@ -275,9 +275,9 @@ int main(int argc, char** argv) {
             baseline.active_space_two_electron_result.packed_active_two_electron_integrals,
             frame);
     const auto& alpha_occupied_by_determinant =
-        load_result.input.structure_data.alpha_det;
+        load_result.input.structure_data.alpha();
     const auto& beta_occupied_by_determinant =
-        load_result.input.structure_data.beta_det;
+        load_result.input.structure_data.beta();
     const auto& occupied_by_determinant =
         (options.spin == Spin::Alpha)
             ? alpha_occupied_by_determinant

@@ -172,7 +172,7 @@ inline void trim_zero_structure_support(StructureCoefficientBlock* block) {
  * reuse tables and blockwise selected-structure contractions.
  */
 inline std::vector<StructureCoefficientBlock> build_structure_coefficient_blocks(
-    const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
+    StructureIncidence determinant_to_structure_terms,
     const std::vector<int>& structure_to_block_index,
     int n_blocks,
     const SpinDeterminantReuseTable& alpha_reuse_table,
@@ -317,7 +317,7 @@ inline std::vector<StructureCoefficientBlock> build_structure_coefficient_blocks
 }
 
 inline std::vector<StructureCoefficientBlock> build_structure_coefficient_blocks(
-    const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
+    StructureIncidence determinant_to_structure_terms,
     int n_structures,
     const SpinDeterminantReuseTable& alpha_reuse_table,
     const SpinDeterminantReuseTable& beta_reuse_table,

@@ -234,7 +234,7 @@ ExactHvpOperator::State::outer_response_context() const {
   if (accepted_outer_response_context_ == nullptr) {
     if (!accepted_point_context_->structure_action.has_value()) {
       accepted_point_context_->structure_action.emplace(
-          current_input_->structure_data.determinant_to_structure_terms,
+          current_input_->structure_data.incidence(),
           current_input_->structure_data.n_structures,
           accepted_point_context_->same_spin_pair_cache,
           accepted_point_context_->prepared_active_space.orbital_result

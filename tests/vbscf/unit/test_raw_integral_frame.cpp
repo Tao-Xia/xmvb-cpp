@@ -71,9 +71,12 @@ void check_raw_consumers(
     const xmvb::integrals::ActiveSpaceTwoElectronResult& raw) {
   xmvb::vb::VbScfInput input;
   input.structure_data.n_structures = 1;
-  input.structure_data.alpha_det = {{0, 1}};
-  input.structure_data.beta_det = {{1, 2}};
-  input.structure_data.determinant_to_structure_terms = {{{0, 1.0}}};
+  input.structure_data.alpha_strings = {{0, 1}};
+  input.structure_data.beta_strings = {{1, 2}};
+  input.structure_data.pair_alpha = {0};
+  input.structure_data.pair_beta = {0};
+  input.structure_data.offsets = {0, 1};
+  input.structure_data.terms = {{0, 1.0}};
   input.orbital_preparation_input.n_active_orbitals = n;
   xmvb::vb::PreparedActiveSpaceContext prepared;
   const Eigen::MatrixXd overlap =
@@ -125,14 +128,14 @@ void check_raw_consumers(
             "raw pair-cache adapter changed beta contractions");
 
   const auto topology = xmvb::vb::build_same_spin_pair_topology(
-      input.structure_data.alpha_det, input.structure_data.beta_det, n);
+      input.structure_data.alpha(), input.structure_data.beta(), n);
   const xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder builder;
   const auto diagonal = [&](
       const xmvb::integrals::ActiveSpaceTwoElectronResult& integrals,
       const Eigen::MatrixXd& one_electron) {
-    return builder.build_diagonal(input.structure_data.alpha_det,
-        input.structure_data.beta_det,
-        input.structure_data.determinant_to_structure_terms,
+    return builder.build_diagonal(input.structure_data.alpha(),
+        input.structure_data.beta(),
+        input.structure_data.incidence(),
         prepared.orbital_result.active_orbital_overlap_matrix,
         one_electron,
         n, integrals, 1, topology);
@@ -148,9 +151,9 @@ void check_raw_consumers(
       const xmvb::integrals::ActiveSpaceTwoElectronResult& integrals,
       const Eigen::MatrixXd& one_electron) {
     return builder.build_davidson_jacobi_preconditioner(
-        input.structure_data.alpha_det,
-        input.structure_data.beta_det,
-        input.structure_data.determinant_to_structure_terms,
+        input.structure_data.alpha(),
+        input.structure_data.beta(),
+        input.structure_data.incidence(),
         prepared.orbital_result.active_orbital_overlap_matrix,
         one_electron,
         n, integrals, 1, topology);

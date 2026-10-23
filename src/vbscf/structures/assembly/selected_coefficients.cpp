@@ -87,7 +87,7 @@ void validate_selected_state_indices(
 
 
 void validate_input_shapes(
-    const FullDeterminantStructureData& full_determinant_data,
+    const StructureExpansion& full_determinant_data,
     const std::vector<double>& eigenvector_matrix,
     const std::vector<int>& selected_state_indices,
     const std::vector<double>& state_average_weights,
@@ -97,12 +97,12 @@ void validate_input_shapes(
     throw std::invalid_argument("full_determinant_data.n_structures must be positive");
   }
 
-  const std::size_t n_determinants = full_determinant_data.alpha_det.size();
+  const std::size_t n_determinants = full_determinant_data.alpha().size();
   if (n_determinants == 0) {
     throw std::invalid_argument("full_determinant_data must contain at least one determinant");
   }
-  if (full_determinant_data.beta_det.size() != n_determinants ||
-      full_determinant_data.determinant_to_structure_terms.size() != n_determinants) {
+  if (full_determinant_data.beta().size() != n_determinants ||
+      full_determinant_data.incidence().size() != n_determinants) {
     throw std::invalid_argument(
         "alpha_det, beta_det, and determinant_to_structure_terms sizes must match");
   }
@@ -133,7 +133,7 @@ void validate_input_shapes(
 }
 
 void validate_selected_state_column_matrix_input_shapes(
-    const FullDeterminantStructureData& full_determinant_data,
+    const StructureExpansion& full_determinant_data,
     const Eigen::MatrixXd& selected_state_columns,
     const std::vector<int>& selected_state_indices,
     const std::vector<double>& state_average_weights,
@@ -142,12 +142,12 @@ void validate_selected_state_column_matrix_input_shapes(
   if (n_structures <= 0) {
     throw std::invalid_argument("full_determinant_data.n_structures must be positive");
   }
-  const std::size_t n_determinants = full_determinant_data.alpha_det.size();
+  const std::size_t n_determinants = full_determinant_data.alpha().size();
   if (n_determinants == 0) {
     throw std::invalid_argument("full_determinant_data must contain at least one determinant");
   }
-  if (full_determinant_data.beta_det.size() != n_determinants ||
-      full_determinant_data.determinant_to_structure_terms.size() != n_determinants) {
+  if (full_determinant_data.beta().size() != n_determinants ||
+      full_determinant_data.incidence().size() != n_determinants) {
     throw std::invalid_argument(
         "alpha_det, beta_det, and determinant_to_structure_terms sizes must match");
   }
@@ -198,13 +198,13 @@ void validate_normalized_weights(
 template <typename ColumnProvider>
 SelectedStateDeterminantMatrices
 build_selected_state_determinant_matrices_from_column_provider_impl(
-    const FullDeterminantStructureData& full_determinant_data,
+    const StructureExpansion& full_determinant_data,
     const std::vector<int>& selected_state_indices,
     const std::vector<double>& normalized_state_weights,
     const SameSpinPairCacheContext& same_spin_pair_cache,
     ColumnProvider&& column_provider) {
   const int n_structures = full_determinant_data.n_structures;
-  const int n_determinants = static_cast<int>(full_determinant_data.alpha_det.size());
+  const int n_determinants = static_cast<int>(full_determinant_data.alpha().size());
   const int n_unique_alpha = static_cast<int>(
       same_spin_pair_cache.alpha_reuse_table.unique_determinants.size());
   const int n_unique_beta = static_cast<int>(
@@ -280,7 +280,7 @@ build_selected_state_determinant_matrices_from_column_provider_impl(
            determinant_index < n_determinants;
            ++determinant_index) {
         const auto& structure_terms =
-            full_determinant_data.determinant_to_structure_terms[
+            full_determinant_data.incidence()[
                 determinant_index];
         double coefficient = 0.0;
         bool valid = true;
@@ -517,7 +517,7 @@ build_selected_state_determinant_matrices_from_column_provider_impl(
 }
 
 SelectedStateDeterminantMatrices build_selected_state_determinant_matrices_impl(
-    const FullDeterminantStructureData& full_determinant_data,
+    const StructureExpansion& full_determinant_data,
     const std::vector<double>& eigenvector_matrix,
     const std::vector<int>& selected_state_indices,
     const std::vector<double>& normalized_state_weights,
@@ -541,7 +541,7 @@ SelectedStateDeterminantMatrices build_selected_state_determinant_matrices_impl(
 
 
 SelectedStateDeterminantMatrices build_selected_state_determinant_matrices(
-    const FullDeterminantStructureData& full_determinant_data,
+    const StructureExpansion& full_determinant_data,
     const std::vector<double>& eigenvector_matrix,
     const std::vector<int>& selected_state_indices,
     const std::vector<double>& state_average_weights,
@@ -564,7 +564,7 @@ SelectedStateDeterminantMatrices build_selected_state_determinant_matrices(
 
 SelectedStateDeterminantMatrices
 build_selected_state_determinant_matrices_from_normalized_weights(
-    const FullDeterminantStructureData& full_determinant_data,
+    const StructureExpansion& full_determinant_data,
     const std::vector<double>& eigenvector_matrix,
     const std::vector<int>& selected_state_indices,
     const std::vector<double>& normalized_state_weights,
@@ -586,7 +586,7 @@ build_selected_state_determinant_matrices_from_normalized_weights(
 
 SelectedStateDeterminantMatrices
 build_selected_state_determinant_matrices_from_selected_columns(
-    const FullDeterminantStructureData& full_determinant_data,
+    const StructureExpansion& full_determinant_data,
     const Eigen::MatrixXd& selected_state_columns,
     const std::vector<int>& selected_state_indices,
     const std::vector<double>& normalized_state_weights,

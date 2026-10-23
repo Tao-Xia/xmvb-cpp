@@ -149,7 +149,7 @@ void retain_structure_action(
     }
   }
   context->structure_action = std::make_unique<StructureAction>(
-      input.structure_data.determinant_to_structure_terms,
+      input.structure_data.incidence(),
       input.structure_data.n_structures,
       context->same_spin_pair_cache,
       prepared.orbital_result.active_orbital_overlap_matrix,
@@ -340,9 +340,9 @@ void solve_structure_problem(
 
   if (use_materialized_operator) {
     context->structure_matrices = structure_builder.build(
-        input.structure_data.alpha_det,
-        input.structure_data.beta_det,
-        input.structure_data.determinant_to_structure_terms,
+        input.structure_data.alpha(),
+        input.structure_data.beta(),
+        input.structure_data.incidence(),
         prepared.orbital_result.active_orbital_overlap_matrix,
         prepared.active_space_one_electron_result.h1e_act,
         input.orbital_preparation_input.n_active_orbitals,
@@ -406,9 +406,9 @@ void solve_structure_problem(
     if (!context->same_spin_pair_cache.enabled()) {
       jacobi_diagonal =
           structure_builder.build_davidson_jacobi_preconditioner(
-              input.structure_data.alpha_det,
-              input.structure_data.beta_det,
-              input.structure_data.determinant_to_structure_terms,
+              input.structure_data.alpha(),
+              input.structure_data.beta(),
+              input.structure_data.incidence(),
               prepared.orbital_result.active_orbital_overlap_matrix,
               prepared.active_space_one_electron_result.h1e_act,
               input.orbital_preparation_input.n_active_orbitals,
@@ -417,7 +417,7 @@ void solve_structure_problem(
               context->same_spin_pair_cache);
     }
     context->structure_action = std::make_unique<StructureAction>(
-        input.structure_data.determinant_to_structure_terms,
+        input.structure_data.incidence(),
         n_structures,
         context->same_spin_pair_cache,
         prepared.orbital_result.active_orbital_overlap_matrix,
@@ -557,8 +557,8 @@ ActiveSpaceGradientForwardContext build_active_space_gradient_forward_context(
       prepare_timed_active_space_context(input);
 
   context.same_spin_pair_cache = build_orthogonal_spin_topology(
-      input.structure_data.alpha_det,
-      input.structure_data.beta_det,
+      input.structure_data.alpha(),
+      input.structure_data.beta(),
       input.orbital_preparation_input.n_active_orbitals);
   solve_structure_problem(
       input,
@@ -585,8 +585,8 @@ ActiveSpaceGradientForwardContext build_active_space_gradient_forward_context(
   context.timed_active_space_context = std::move(timed_active_space_context);
 
   context.same_spin_pair_cache = build_orthogonal_spin_topology(
-      input.structure_data.alpha_det,
-      input.structure_data.beta_det,
+      input.structure_data.alpha(),
+      input.structure_data.beta(),
       input.orbital_preparation_input.n_active_orbitals);
 
   solve_structure_problem(
@@ -1159,8 +1159,8 @@ ActiveSpaceGradientEvaluator::evaluate_fixed_structure(
   const auto& prepared =
       context.timed_active_space_context.prepared_active_space;
   context.same_spin_pair_cache = build_orthogonal_spin_topology(
-      input.structure_data.alpha_det,
-      input.structure_data.beta_det,
+      input.structure_data.alpha(),
+      input.structure_data.beta(),
       input.orbital_preparation_input.n_active_orbitals);
 
   const auto structure_start_time = std::chrono::steady_clock::now();
@@ -1169,15 +1169,15 @@ ActiveSpaceGradientEvaluator::evaluate_fixed_structure(
   std::optional<StructureDiagonal> diagonal;
   if (retain_context)
     diagonal = structure_builder_.build_davidson_jacobi_preconditioner(
-        input.structure_data.alpha_det, input.structure_data.beta_det,
-        input.structure_data.determinant_to_structure_terms,
+        input.structure_data.alpha(), input.structure_data.beta(),
+        input.structure_data.incidence(),
         prepared.orbital_result.active_orbital_overlap_matrix,
         prepared.active_space_one_electron_result.h1e_act,
         input.orbital_preparation_input.n_active_orbitals,
         prepared.active_space_two_electron_result,
         input.structure_data.n_structures, context.same_spin_pair_cache);
   context.structure_action = std::make_unique<StructureAction>(
-      input.structure_data.determinant_to_structure_terms,
+      input.structure_data.incidence(),
       input.structure_data.n_structures,
       context.same_spin_pair_cache,
       prepared.orbital_result.active_orbital_overlap_matrix,

@@ -5,31 +5,31 @@
 namespace xmvb::vb {
 
 /**
- * @brief Expands raw VB structures into unique full determinants.
+ * @brief Expands raw VB structures into unique spin-string pairs.
  *
- * This class replaces the determinant/structure bookkeeping part of
+ * This class replaces the pair/structure bookkeeping part of
  * `rdm_vbscf.F90`. It currently supports the determinant expansion path used by
  * the existing full-VBSCF real-case regression, namely:
  * - `vb_function_type == VbFunctionType::Determinant`
  * - `wavefunction_type != WavefunctionType::Determinant`
  *
- * The implementation is fully in C++ and produces the determinant occupations
- * and signed structure expansion terms consumed by the Hamiltonian
+ * The implementation produces unique spin strings, pair IDs, and signed
+ * structure expansion terms consumed by the Hamiltonian
  * builder.
  */
-class FullDeterminantStructureExpander {
+class StructureExpander {
 public:
   /**
-   * @brief Expands raw structure definitions into unique determinants.
+   * @brief Expands raw structure definitions into unique spin-string pairs.
    *
-   * The returned object only fills determinant occupations and signed
+   * The returned object only fills spin-string occupations and signed
    * structure-expansion terms. Integral matrices remain empty and must be
    * populated by a separate input-preparation stage.
    *
    * @param raw_structure_data Raw structure definitions.
-   * @return FullDeterminantStructureData Determinants and expansion terms.
+   * @return StructureExpansion Spin-string pairs and expansion terms.
    */
-  FullDeterminantStructureData expand(
+  StructureExpansion expand(
       const RawStructureData& raw_structure_data) const;
 
   /**
@@ -40,9 +40,9 @@ public:
    *
    * @param raw_structure_data Raw structure definitions.
    * @param selected_structure_indices Zero-based structure indices to keep.
-   * @return FullDeterminantStructureData Determinants and remapped expansion terms.
+   * @return StructureExpansion Spin-string pairs and remapped terms.
    */
-  FullDeterminantStructureData expand_subset(
+  StructureExpansion expand_subset(
       const RawStructureData& raw_structure_data,
       const std::vector<int>& selected_structure_indices) const;
 };
