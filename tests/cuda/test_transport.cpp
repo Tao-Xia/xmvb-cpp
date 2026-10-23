@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <iostream>
 #include <memory>
@@ -289,11 +290,82 @@ void check_selected_transport() {
           "residual-balanced origin mixed Hessian was not affine");
 }
 
+void check_wide_transport_sources() {
+  // Unequal spin sectors and >128 source columns exercise every register
+  // lane, the second RHS batch, sparse incidence and the final short tile.
+  constexpr int n=10,structures=7;
+  Strings alpha,beta,products_alpha,products_beta;
+  for (unsigned mask=0;mask<(1u<<n);++mask) {
+    if (std::popcount(mask)!=5 && std::popcount(mask)!=4) continue;
+    std::vector<int> occupied;
+    for (int p=0;p<n;++p) if (mask&(1u<<p)) occupied.push_back(p);
+    (occupied.size()==5 ? alpha:beta).push_back(std::move(occupied));
+  }
+  Terms terms(alpha.size()*beta.size());
+  for (const auto& a:alpha) for (const auto& b:beta) {
+    products_alpha.push_back(a);products_beta.push_back(b);
+  }
+  for (int b=0;b<static_cast<int>(beta.size());++b)
+    for (int path=0;path<3;++path) {
+      auto& group=terms[((3*b+path)%alpha.size())*beta.size()+b];
+      group.push_back({b%structures,1.0});
+      group.push_back({b%structures,0.17});
+      group.push_back({(b+3)%structures,-0.25});
+    }
+  Matrix origin=Matrix::Identity(n,n),direction=Matrix::Zero(n,n);
+  for (int j=0;j<n;++j) for (int i=0;i<=j;++i) {
+    if (i==j) origin(i,j)=1.02+0.002*i;
+    else origin(i,j)=0.01*std::sin(0.23*(i+1)*(j+2));
+    direction(i,j)=0.015*std::cos(0.31*(i+2)*(j+1));
+  }
+  const Matrix current=origin+0.03*direction,zero=Matrix::Zero(n,n);
+  const Matrix gram=origin.transpose()*origin;
+  const std::vector<double> flat(gram.data(),gram.data()+gram.size());
+  xmvb::integrals::ActiveSpaceTwoElectronResult eri;
+  eri.packed_active_two_electron_integrals.resize(
+      xmvb::integrals::packed_active_two_electron_integral_count(n),0.0);
+  const auto topology=xmvb::vb::build_orthogonal_spin_topology(products_alpha,products_beta,n);
+  const Matrix h=Matrix::Identity(n,n);
+  const xmvb::vb::StructureAction cpu(terms,structures,topology,flat,h,eri,n,
+      nullptr,xmvb::vb::StructureActionMode::ActionOnly);
+  xmvb::vb::RepresentationOverlap reference(cpu,
+      topology.alpha_reuse_table.unique_determinants,
+      topology.beta_reuse_table.unique_determinants,n);
+  xmvb::cuda::Context context(256ULL*1024*1024);
+  xmvb::cuda::StructureAction action(context,cpu);
+  xmvb::cuda::SelectedCrossOverlap overlap(context,action,n);
+  Vector lambda(structures),base(structures),ref(structures),transported(structures);
+  for (int i=0;i<structures;++i) {
+    lambda[i]=std::sin(0.31*(i+1));base[i]=std::cos(0.27*(i+2));
+    ref[i]=std::sin(0.19*(i+3));transported[i]=std::cos(0.13*(i+4));
+  }
+  const auto upload=[&](const Matrix& x) {
+    xmvb::cuda::Matrix<double> result(context,x.rows(),x.cols());
+    xmvb::cuda::copy_to_device(context,result.view(),x);return result;
+  };
+  auto dcurrent=upload(current),dorigin=upload(origin),ddirection=upload(direction);
+  auto dlambda=upload(lambda),dbase=upload(base),dref=upload(ref),dt=upload(transported);
+  xmvb::cuda::Matrix<double> left(context,n,n),right(context,n,n),image(context,structures,1);
+  overlap.transport_gradient(dcurrent.view(),dorigin.view(),ddirection.view(),
+      dlambda.view(),dbase.view(),dref.view(),dt.view(),left.view(),right.view(),image.view());
+  const auto a=reference.adjoint(current,origin,lambda,base);
+  const auto b=reference.adjoint_direction(current,origin,zero,direction,lambda,ref);
+  const auto m=reference.adjoint(current,current,lambda,transported);
+  const auto o=reference.adjoint(current,origin,lambda,ref);
+  near(download(context,left.view()),a.left+b.left-m.left-m.right,4e-8,
+      "wide source current cotangent differs from CPU");
+  near(download(context,right.view()),o.right,4e-8,
+      "wide source origin cotangent differs from CPU");
+  near(download(context,image.view()),reference.apply(origin,current,lambda),3e-9,
+      "wide source image differs from CPU");
+}
+
 }  // namespace
 
 int main() {
   try {
     check_selected_transport();
+    check_wide_transport_sources();
     std::cout<<"CUDA selected CI transport and residual-balanced model: PASS\n";
   } catch (const std::exception& error) {
     std::cerr<<error.what()<<'\n';

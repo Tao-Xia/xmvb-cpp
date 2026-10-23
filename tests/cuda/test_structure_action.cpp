@@ -158,6 +158,14 @@ void check_product_jet(const xmvb::vb::StructureAction& source,
   xmvb::cuda::ProductEndpoint accepted{xmvb::cuda::Matrix<double>(context,count,1)};
   xmvb::cuda::copy_to_device(context,accepted.coefficients.view(),c);
   const std::size_t budget=8ULL*1024*1024;
+  Eigen::MatrixXd transformed=source.expand_structure_block(c);
+  view.alpha.apply_left(&transformed);
+  view.beta.apply_right(&transformed);
+  const double expected_maximum=transformed.cwiseAbs().maxCoeff();
+  for (const auto workspace:{std::size_t{512},budget})
+    require(std::abs(product->maximum_orthogonal_component(incidence,dc.view(),workspace)-
+        expected_maximum)<2e-10*std::max(1.0,expected_maximum),
+        "sampled/ordered selected maximum differs from explicit CPU transform");
   const auto primal=product->jet(incidence,sigma,accepted,r.view(),{},{},nullptr,budget);
   const auto host=[&](const auto& device) {
     Eigen::MatrixXd result(device.rows(),device.cols());

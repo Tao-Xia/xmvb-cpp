@@ -31,6 +31,15 @@ class StructureSourceFactors {
   /** Form W C as alpha coefficients times raw beta identity columns. */
   void load(int begin,int count,linalg::ConstMatrixView coefficients,
             linalg::MatrixView alpha,linalg::MatrixView beta) const;
+  /** Form three source panels in one group traversal. The middle beta identity
+   * is omitted because the finite transport pullback does not consume it.
+   */
+  void load_three(int begin,int count,linalg::ConstMatrixView coefficients0,
+                  linalg::ConstMatrixView coefficients1,
+                  linalg::ConstMatrixView coefficients2,
+                  linalg::MatrixView alpha0,linalg::MatrixView alpha1,
+                  linalg::MatrixView alpha2,linalg::MatrixView beta0,
+                  linalg::MatrixView beta2) const;
   /** Add W^T sum_j alpha_j beta_j^T to the initialized image. */
   void contract(linalg::ConstMatrixView alpha,linalg::ConstMatrixView beta,
                 linalg::MatrixView image) const;

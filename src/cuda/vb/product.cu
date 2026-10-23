@@ -184,6 +184,17 @@ __global__ void ordered_products_tiles(ProductIncidence incidence,const int* aa,
   }
 }
 
+__global__ void restrict_maximum_tile(linalg::MatrixView values,
+    const std::uint64_t* allowed,int words) {
+  const auto size=static_cast<std::size_t>(values.rows)*values.cols;
+  for (auto i=static_cast<std::size_t>(blockIdx.x)*blockDim.x+threadIdx.x;
+       i<size;i+=static_cast<std::size_t>(gridDim.x)*blockDim.x) {
+    const auto row=i%values.rows,column=i/values.rows;
+    if (!(allowed[column*words+row/64]&(std::uint64_t{1}<<(row%64))))
+      values.data[row+values.ld*column]=0.0;
+  }
+}
+
 void add(Context& c,linalg::MatrixView target,linalg::ConstMatrixView source,double scale=1.0) {
   if (target.ld==target.rows && source.ld==source.rows) {
     check_cublas(cublasDaxpy(c.blas(),blas_int(target.rows*target.cols),&scale,
@@ -1125,10 +1136,65 @@ struct ProductContraction::Impl {
   }
 
   double maximum(ProductIncidence incidence,linalg::ConstMatrixView source,std::size_t bytes) {
+    const nvtx3::scoped_range range{"vb.product_maximum"};
     if (source.rows!=incidence.size || source.cols!=1 || source.ld<source.rows)
       throw std::invalid_argument("invalid selected product maximum source");
     const auto allowance=std::max<std::size_t>(1,bytes/5);
     const int extent=panel_extent(allowance);
+    const auto reduce=[&](linalg::ConstMatrixView values) {
+      int index=0;
+      check_cublas(cublasSetPointerMode(c.blas(),CUBLAS_POINTER_MODE_HOST),
+          "product panel maximum pointer mode");
+      check_cublas(cublasIdamax(c.blas(),blas_int(values.rows*values.cols),
+          values.data,1,&index),"product panel maximum index");
+      if (index<=0) throw std::runtime_error("empty product panel maximum");
+      double value=0.0;c.copy_to_host(&value,values.data+index-1,sizeof(double));
+      if (!std::isfinite(value)) throw std::runtime_error("non-finite product panel maximum");
+      return std::abs(value);
+    };
+    const auto alpha_size=static_cast<std::size_t>(alpha);
+    const auto beta_size=static_cast<std::size_t>(beta);
+    const auto tile_count=(beta_size-1)/extent+1;
+    const auto pointer_bytes=(tile_count+2*beta_size)*sizeof(double*);
+    const auto stripe_bytes=beta_size*std::min<std::size_t>(
+        product_panel_width(),alpha>1 ? alpha_size-1:0)*sizeof(double);
+    // Leave workspace for support metadata and the large-spin stripe fallback.
+    const bool fits=alpha_size<=(allowance/2)/(beta_size*sizeof(double)) &&
+        pointer_bytes+stripe_bytes<=allowance/4 &&
+        alpha_size*beta_size*sizeof(double)<=c.available_device_bytes()/2;
+    if (fits) {
+      if (support && !support->full()) {
+        symbolic->prepare_patterns(allowance/4);
+        prepare_masks(extent,allowance/4);
+      }
+      auto tiles=ordered_tiles(extent);
+      if (source.data && groups) {
+        auto pointers=ordered_pointers(tiles);
+        ordered_products_tiles<<<grid(groups),256,0,c.stream()>>>(incidence,
+            symbolic->raw_alpha.data(),symbolic->raw_beta.data(),groups,source,
+            pointers.data(),alpha,extent,{},false);
+        check_cuda(cudaGetLastError(),"scatter maximum ordered products");
+      }
+      auto views=ordered_views(tiles);
+      for (int id=0;id<static_cast<int>(views.size());++id)
+        transform(views[id],id*extent,views[id].cols,false);
+      beta_transform.apply_right_tiles(views);
+      double maximum=0.0;
+      for (int id=0;id<static_cast<int>(views.size());++id) {
+        const int first=id*extent,count=views[id].cols;
+        const auto touched=std::lower_bound(symbolic->reachable.begin(),symbolic->reachable.end(),first);
+        if (touched==symbolic->reachable.end() || *touched>=first+count) continue;
+        if (support && !support->full()) {
+          // Match the sampled path's exact output-column support after beta mixing.
+          const int words=(alpha+63)/64;
+          restrict_maximum_tile<<<grid(static_cast<std::size_t>(alpha)*count),256,0,c.stream()>>>(
+              views[id],mask_cache->get(first).values.data(),words);
+          check_cuda(cudaGetLastError(),"restrict maximum ordered tile");
+        }
+        maximum=std::max(maximum,reduce(views[id]));
+      }
+      return maximum;
+    }
     symbolic->prepare_patterns(allowance/4);
     prepare_factors(extent,allowance/4);
     prepare_masks(extent,allowance/4);
@@ -1140,15 +1206,7 @@ struct ProductContraction::Impl {
       Matrix<double> values(c,alpha,count);
       generate_source(incidence,source,factor_cache->get(first/extent),values.view());
       transform(values.view(),first,count,false);
-      int index=0;
-      check_cublas(cublasSetPointerMode(c.blas(),CUBLAS_POINTER_MODE_HOST),
-          "product panel maximum pointer mode");
-      check_cublas(cublasIdamax(c.blas(),blas_int(values.rows()*values.cols()),
-          values.data(),1,&index),"product panel maximum index");
-      if (index<=0) throw std::runtime_error("empty product panel maximum");
-      double value=0.0;c.copy_to_host(&value,values.data()+index-1,sizeof(double));
-      if (!std::isfinite(value)) throw std::runtime_error("non-finite product panel maximum");
-      maximum=std::max(maximum,std::abs(value));
+      maximum=std::max(maximum,reduce(values.view()));
     }
     return maximum;
   }

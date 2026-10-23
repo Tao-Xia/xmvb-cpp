@@ -95,24 +95,46 @@ unsigned int source_grid(std::int64_t size) {
   return static_cast<unsigned int>(std::min<std::int64_t>(65535,(size+255)/256));
 }
 
+constexpr int source_group_threads=256;
+constexpr int seed_columns_per_lane=4;
+
 constexpr int moment_threads=256;
 constexpr int moment_chunk=16*moment_threads;
 
+template<int paths>
 __global__ void source_alpha(const int* source_groups,
-    const int* source_offsets,const int* source_columns,int begin,int count,
+    const int* source_offsets,const int* source_columns,int begin,
     const std::int64_t* products,const std::int64_t* offsets,
     const std::int64_t* structures,const double* terms,
-    const double* coefficients,int alpha,linalg::MatrixView output,
-    linalg::MatrixView beta) {
-  for (int j=blockIdx.x*blockDim.x+threadIdx.x;j<count;j+=gridDim.x*blockDim.x) {
-    const int source=source_columns[begin+j];
-    beta.data[source+beta.ld*j]=1.0;
-    for (int k=source_offsets[source];k<source_offsets[source+1];++k) {
-      const int group=source_groups[k];
-      double value=0.0;
-      for (auto t=offsets[group];t<offsets[group+1];++t)
-        value+=terms[t]*coefficients[structures[t]];
-      output.data[products[group]%alpha+output.ld*j]=value;
+    const double* coefficients0,const double* coefficients1,
+    const double* coefficients2,int alpha,linalg::MatrixView output0,
+    linalg::MatrixView output1,linalg::MatrixView output2,
+    linalg::MatrixView beta0,linalg::MatrixView beta2) {
+  const int j=blockIdx.x;
+  const int source=source_columns[begin+j];
+  if (blockIdx.y==0 && threadIdx.x==0) {
+    beta0.data[source+beta0.ld*j]=1.0;
+    if constexpr (paths==3) beta2.data[source+beta2.ld*j]=1.0;
+  }
+  for (int k=source_offsets[source]+blockIdx.y*blockDim.x+threadIdx.x;
+       k<source_offsets[source+1];k+=gridDim.y*blockDim.x) {
+    const int group=source_groups[k];
+    double value0=0.0,value1=0.0,value2=0.0;
+    for (auto t=offsets[group];t<offsets[group+1];++t) {
+      const auto structure=structures[t];
+      const double term=terms[t];
+      value0+=term*coefficients0[structure];
+      if constexpr (paths==3) {
+        value1+=term*coefficients1[structure];
+        value2+=term*coefficients2[structure];
+      }
+    }
+    const int row=products[group]%alpha;
+    // A source beta column has at most one product group at each alpha row.
+    output0.data[row+output0.ld*j]=value0;
+    if constexpr (paths==3) {
+      output1.data[row+output1.ld*j]=value1;
+      output2.data[row+output2.ld*j]=value2;
     }
   }
 }
@@ -191,13 +213,14 @@ __global__ void source_seed_rows_three(const std::int64_t* products,
     linalg::MatrixView za0,linalg::MatrixView zb0,
     linalg::MatrixView za1,linalg::MatrixView zb1,
     linalg::MatrixView za2,linalg::MatrixView zb2) {
-  const int column=blockIdx.y*blockDim.x+threadIdx.x;
+  const int first_column=blockIdx.y*blockDim.x*seed_columns_per_lane+threadIdx.x;
   for (int owner=blockIdx.x;owner<alpha+beta;owner+=gridDim.x) {
     const bool left=owner<alpha;
     const int row=left ? owner:owner-alpha;
     const int first=left ? alpha_offsets[row]:beta_offsets[row];
     const int last=left ? alpha_offsets[row+1]:beta_offsets[row+1];
-    double value0=0.0,value1=0.0,value2=0.0;
+    double value0[seed_columns_per_lane]={},value1[seed_columns_per_lane]={},
+           value2[seed_columns_per_lane]={};
     for (int k=first;k<last;++k) {
       const int group=left ? k:beta_groups[k];
       double weight=0.0;
@@ -205,29 +228,38 @@ __global__ void source_seed_rows_three(const std::int64_t* products,
         for (auto term=offsets[group];term<offsets[group+1];++term)
           weight+=terms[term]*coefficients[structures[term]];
       weight=__shfl_sync(0xffffffff,weight,0);
-      if (column<a0.cols) {
-        const auto product=products[group];
-        const int ai=product%alpha,bi=product/alpha;
-        if (left) {
-          value0+=weight*b0.data[bi+b0.ld*column];
-          value1+=weight*b1.data[bi+b1.ld*column];
-          value2+=weight*b2.data[bi+b2.ld*column];
-        } else {
-          value0+=weight*a0.data[ai+a0.ld*column];
-          value1+=weight*a1.data[ai+a1.ld*column];
-          value2+=weight*a2.data[ai+a2.ld*column];
+      const auto product=products[group];
+      const int ai=product%alpha,bi=product/alpha;
+      // Reuse this group's weight across four RHS columns in each lane.
+#pragma unroll
+      for (int c=0;c<seed_columns_per_lane;++c) {
+        const int column=first_column+c*blockDim.x;
+        if (column<a0.cols) {
+          if (left) {
+            value0[c]+=weight*b0.data[bi+b0.ld*column];
+            value1[c]+=weight*b1.data[bi+b1.ld*column];
+            value2[c]+=weight*b2.data[bi+b2.ld*column];
+          } else {
+            value0[c]+=weight*a0.data[ai+a0.ld*column];
+            value1[c]+=weight*a1.data[ai+a1.ld*column];
+            value2[c]+=weight*a2.data[ai+a2.ld*column];
+          }
         }
       }
     }
-    if (column<a0.cols) {
-      if (left) {
-        za0.data[row+za0.ld*column]=value0;
-        za1.data[row+za1.ld*column]=value1;
-        za2.data[row+za2.ld*column]=value2;
-      } else {
-        zb0.data[row+zb0.ld*column]=value0;
-        zb1.data[row+zb1.ld*column]=value1;
-        zb2.data[row+zb2.ld*column]=value2;
+#pragma unroll
+    for (int c=0;c<seed_columns_per_lane;++c) {
+      const int column=first_column+c*blockDim.x;
+      if (column<a0.cols) {
+        if (left) {
+          za0.data[row+za0.ld*column]=value0[c];
+          za1.data[row+za1.ld*column]=value1[c];
+          za2.data[row+za2.ld*column]=value2[c];
+        } else {
+          zb0.data[row+zb0.ld*column]=value0[c];
+          zb1.data[row+zb1.ld*column]=value1[c];
+          zb2.data[row+zb2.ld*column]=value2[c];
+        }
       }
     }
   }
@@ -424,9 +456,22 @@ int StructureSourceFactors::source_extent() const {
   return static_cast<int>(width);
 }
 
+namespace {
+
+dim3 source_load_grid(const std::vector<int>& group_counts,int begin,int count) {
+  const int maximum=*std::max_element(group_counts.begin()+begin,
+      group_counts.begin()+begin+count);
+  return {static_cast<unsigned int>(count),
+      static_cast<unsigned int>(std::min(65535,
+          1+(maximum-1)/source_group_threads))};
+}
+
+}  // namespace
+
 void StructureSourceFactors::load(int begin,int count,
     linalg::ConstMatrixView coefficients,linalg::MatrixView alpha,
     linalg::MatrixView beta) const {
+  const nvtx3::scoped_range range{"transport.source_load"};
   if (coefficients.rows!=structures_ || coefficients.cols!=1 ||
       coefficients.ld<structures_ || !coefficients.data)
     throw std::invalid_argument("invalid selected source coefficients");
@@ -437,12 +482,48 @@ void StructureSourceFactors::load(int begin,int count,
       alpha.ld<alpha_ || beta.ld<beta_ || !alpha.data || !beta.data)
     throw std::invalid_argument("invalid transport source panel");
   zero(*context_,alpha);zero(*context_,beta);
-  source_alpha<<<source_grid(count),256,0,context_->stream()>>>(
+  source_alpha<1><<<source_load_grid(source_group_counts_,begin,count),
+      source_group_threads,0,context_->stream()>>>(
         source_groups_.data(),source_offsets_device_.data(),
-        source_columns_device_.data(),begin,count,action_->product_indices_data(),
+        source_columns_device_.data(),begin,action_->product_indices_data(),
         action_->term_offsets_data(),action_->term_structures_data(),
-        action_->term_weights_data(),coefficients.data,alpha_,alpha,beta);
+        action_->term_weights_data(),coefficients.data,nullptr,nullptr,alpha_,
+        alpha,{},{},beta,{});
   check_cuda(cudaGetLastError(),"transport source panel");
+}
+
+void StructureSourceFactors::load_three(int begin,int count,
+    linalg::ConstMatrixView coefficients0,linalg::ConstMatrixView coefficients1,
+    linalg::ConstMatrixView coefficients2,linalg::MatrixView alpha0,
+    linalg::MatrixView alpha1,linalg::MatrixView alpha2,
+    linalg::MatrixView beta0,linalg::MatrixView beta2) const {
+  const nvtx3::scoped_range range{"transport.source_load_three"};
+  const auto valid_coefficients=[&](linalg::ConstMatrixView x) {
+    return x.rows==structures_ && x.cols==1 && x.ld>=structures_ && x.data;
+  };
+  const auto valid_alpha=[&](linalg::MatrixView x) {
+    return x.rows==alpha_ && x.cols==count && x.ld>=alpha_ && x.data;
+  };
+  const auto valid_beta=[&](linalg::MatrixView x) {
+    return x.rows==beta_ && x.cols==count && x.ld>=beta_ && x.data;
+  };
+  if (begin<0 || count<=0 || count>std::max(1,beta_-1) ||
+      begin+count>static_cast<int>(source_columns_.size()) ||
+      !valid_coefficients(coefficients0) || !valid_coefficients(coefficients1) ||
+      !valid_coefficients(coefficients2) || !valid_alpha(alpha0) ||
+      !valid_alpha(alpha1) || !valid_alpha(alpha2) ||
+      !valid_beta(beta0) || !valid_beta(beta2))
+    throw std::invalid_argument("invalid transport source panels");
+  zero(*context_,alpha0);zero(*context_,alpha1);zero(*context_,alpha2);
+  zero(*context_,beta0);zero(*context_,beta2);
+  source_alpha<3><<<source_load_grid(source_group_counts_,begin,count),
+      source_group_threads,0,context_->stream()>>>(
+        source_groups_.data(),source_offsets_device_.data(),
+        source_columns_device_.data(),begin,action_->product_indices_data(),
+        action_->term_offsets_data(),action_->term_structures_data(),
+        action_->term_weights_data(),coefficients0.data,coefficients1.data,
+        coefficients2.data,alpha_,alpha0,alpha1,alpha2,beta0,beta2);
+  check_cuda(cudaGetLastError(),"transport joint source panels");
 }
 
 void StructureSourceFactors::contract(linalg::ConstMatrixView alpha,
@@ -513,6 +594,7 @@ void SelectedCrossOverlap::seeds_three(const ExteriorTransform& alpha_map,
     linalg::MatrixView alpha_work0,linalg::MatrixView beta_work0,
     linalg::MatrixView alpha_work1,linalg::MatrixView beta_work1,
     linalg::MatrixView alpha_work2,linalg::MatrixView beta_work2) const {
+  const nvtx3::scoped_range range{"transport.seeds_three"};
   check_structure(coefficients);
   const int count=static_cast<int>(alpha0.cols);
   copy(*context_,alpha_work0,alpha0);copy(*context_,alpha_work1,alpha1);
@@ -524,7 +606,8 @@ void SelectedCrossOverlap::seeds_three(const ExteriorTransform& alpha_map,
   beta_map.apply_left(beta_work0,true);beta_map.apply_left(beta_work1,true);
   beta_map.apply_left(beta_work2,true);
   const dim3 grid(std::min(65535,alpha_+beta_),
-      static_cast<unsigned int>((count+31)/32));
+      static_cast<unsigned int>((count+32*seed_columns_per_lane-1)/
+          (32*seed_columns_per_lane)));
   source_seed_rows_three<<<grid,32,0,context_->stream()>>>(
       action_->product_indices_data(),action_->term_offsets_data(),
       action_->term_structures_data(),action_->term_weights_data(),
@@ -728,7 +811,7 @@ void SelectedCrossOverlap::transport_gradient(linalg::ConstMatrixView current,
   Matrix<double> first_a(*context_,alpha_,extent),second_a(*context_,alpha_,extent),
       metric_a(*context_,alpha_,extent),projected(*context_,alpha_,extent);
   Matrix<double> v(*context_,beta_,extent),dv(*context_,beta_,extent),
-      vb(*context_,beta_,extent),vc(*context_,beta_,extent);
+      vc(*context_,beta_,extent);
   Matrix<double> first_b(*context_,beta_,extent),second_b(*context_,beta_,extent),
       metric_b(*context_,beta_,extent);
   Matrix<double> wa0(*context_,alpha_,extent),wa1(*context_,alpha_,extent),
@@ -742,21 +825,20 @@ void SelectedCrossOverlap::transport_gradient(linalg::ConstMatrixView current,
     auto fav=first_a.view().columns(0,count),sav=second_a.view().columns(0,count);
     auto mav=metric_a.view().columns(0,count),pv=projected.view().columns(0,count);
     auto vv=v.view().columns(0,count),dvv=dv.view().columns(0,count);
-    auto vbv=vb.view().columns(0,count),vcv=vc.view().columns(0,count);
+    auto vcv=vc.view().columns(0,count);
     auto fbv=first_b.view().columns(0,count),sbv=second_b.view().columns(0,count);
     auto mbv=metric_b.view().columns(0,count);
     auto wa0v=wa0.view().columns(0,count),wa1v=wa1.view().columns(0,count),
          wa2v=wa2.view().columns(0,count);
     auto wb0v=wb0.view().columns(0,count),wb1v=wb1.view().columns(0,count),
          wb2v=wb2.view().columns(0,count);
-    load_sources(begin,count,reference,uv,vv);
+    sources_.load_three(begin,count,reference,base,transported,
+        uv,ubv,ucv,vv,vcv);
     zero(*context_,duv);zero(*context_,dvv);
     oa.alpha.apply_directional_left(da,uv,duv);
     oa.beta->apply_directional_left(db,vv,dvv);
-    load_sources(begin,count,base,ubv,vbv);
     oa.alpha.apply_left(ubv);
     axpy(*context_,ubv,1.0,duv);
-    load_sources(begin,count,transported,ucv,vcv);
     action_->alpha_transform().apply_left(ucv);
     action_->beta_transform().apply_left(vcv);
     const auto& ca=action_->alpha_transform();
