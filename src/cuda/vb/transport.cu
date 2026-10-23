@@ -38,6 +38,19 @@ void zero(Context& context, linalg::MatrixView destination) {
       destination.rows*sizeof(double),destination.cols,context.stream()),"transport zero");
 }
 
+void transpose_packed(Context& context,linalg::ConstMatrixView source,
+                      linalg::MatrixView destination) {
+  if (destination.rows!=source.cols || destination.cols!=source.rows ||
+      source.ld<source.rows || destination.ld<destination.rows ||
+      !source.data || !destination.data)
+    throw std::invalid_argument("transport packed transpose dimensions");
+  constexpr double one=1.0,zero=0.0;
+  check_cublas(cublasDgeam(context.blas(),CUBLAS_OP_T,CUBLAS_OP_T,
+      blas_int(destination.rows),blas_int(destination.cols),&one,
+      source.data,blas_int(source.ld),&zero,source.data,blas_int(source.ld),
+      destination.data,blas_int(destination.ld)),"transport packed transpose");
+}
+
 void axpy(Context& context, linalg::MatrixView destination, double factor,
           linalg::ConstMatrixView source) {
   if (destination.rows != source.rows || destination.cols != source.cols)
@@ -206,13 +219,9 @@ __global__ void source_seed_rows(const std::int64_t* products,
 __global__ void source_seed_rows_three(const std::int64_t* products,
     const std::int64_t* offsets,const std::int64_t* structures,
     const double* terms,const double* coefficients,const int* alpha_offsets,
-    const int* beta_offsets,const int* beta_groups,int alpha,int beta,
-    linalg::ConstMatrixView a0,linalg::ConstMatrixView b0,
-    linalg::ConstMatrixView a1,linalg::ConstMatrixView b1,
-    linalg::ConstMatrixView a2,linalg::ConstMatrixView b2,
-    linalg::MatrixView za0,linalg::MatrixView zb0,
-    linalg::MatrixView za1,linalg::MatrixView zb1,
-    linalg::MatrixView za2,linalg::MatrixView zb2) {
+    const int* beta_offsets,const int* beta_groups,int alpha,int beta,int count,
+    linalg::ConstMatrixView a,linalg::ConstMatrixView b,
+    linalg::MatrixView za,linalg::MatrixView zb) {
   const int first_column=blockIdx.y*blockDim.x*seed_columns_per_lane+threadIdx.x;
   for (int owner=blockIdx.x;owner<alpha+beta;owner+=gridDim.x) {
     const bool left=owner<alpha;
@@ -234,15 +243,17 @@ __global__ void source_seed_rows_three(const std::int64_t* products,
 #pragma unroll
       for (int c=0;c<seed_columns_per_lane;++c) {
         const int column=first_column+c*blockDim.x;
-        if (column<a0.cols) {
+        if (column<count) {
           if (left) {
-            value0[c]+=weight*b0.data[bi+b0.ld*column];
-            value1[c]+=weight*b1.data[bi+b1.ld*column];
-            value2[c]+=weight*b2.data[bi+b2.ld*column];
+            const auto offset=static_cast<std::int64_t>(bi)*b.ld+column;
+            value0[c]+=weight*b.data[offset];
+            value1[c]+=weight*b.data[offset+count];
+            value2[c]+=weight*b.data[offset+2*count];
           } else {
-            value0[c]+=weight*a0.data[ai+a0.ld*column];
-            value1[c]+=weight*a1.data[ai+a1.ld*column];
-            value2[c]+=weight*a2.data[ai+a2.ld*column];
+            const auto offset=static_cast<std::int64_t>(ai)*a.ld+column;
+            value0[c]+=weight*a.data[offset];
+            value1[c]+=weight*a.data[offset+count];
+            value2[c]+=weight*a.data[offset+2*count];
           }
         }
       }
@@ -250,27 +261,56 @@ __global__ void source_seed_rows_three(const std::int64_t* products,
 #pragma unroll
     for (int c=0;c<seed_columns_per_lane;++c) {
       const int column=first_column+c*blockDim.x;
-      if (column<a0.cols) {
+      if (column<count) {
         if (left) {
-          za0.data[row+za0.ld*column]=value0[c];
-          za1.data[row+za1.ld*column]=value1[c];
-          za2.data[row+za2.ld*column]=value2[c];
+          const auto offset=static_cast<std::int64_t>(row)*za.ld+column;
+          za.data[offset]=value0[c];
+          za.data[offset+count]=value1[c];
+          za.data[offset+2*count]=value2[c];
         } else {
-          zb0.data[row+zb0.ld*column]=value0[c];
-          zb1.data[row+zb1.ld*column]=value1[c];
-          zb2.data[row+zb2.ld*column]=value2[c];
+          const auto offset=static_cast<std::int64_t>(row)*zb.ld+column;
+          zb.data[offset]=value0[c];
+          zb.data[offset+count]=value1[c];
+          zb.data[offset+2*count]=value2[c];
         }
       }
     }
   }
 }
 
+struct MomentTerm {
+  linalg::ConstMatrixView seed,image;
+  double scale;
+};
+
+template<std::size_t count>
+struct MomentBatch { MomentTerm terms[count]; };
+
+template<std::size_t count>
+__device__ double moment_product(const MomentBatch<count>& batch,int target,
+                                 int source,std::int64_t column) {
+  if constexpr (count==1) {
+    const auto& term=batch.terms[0];
+    return term.seed.data[target+term.seed.ld*column]*
+        term.image.data[source+term.image.ld*column];
+  } else {
+    double value=0.0;
+#pragma unroll
+    for (std::size_t t=0;t<count;++t) {
+      const auto& term=batch.terms[t];
+      value+=term.scale*term.seed.data[target+term.seed.ld*column]*
+          term.image.data[source+term.image.ld*column];
+    }
+    return value;
+  }
+}
+
+template<std::size_t count>
 __global__ void moment_diagonal(const std::uint64_t* occupations,int strings,
-    int orbitals,linalg::ConstMatrixView seed,linalg::ConstMatrixView image,
-    double scale,linalg::MatrixView moment) {
+    int orbitals,MomentBatch<count> batch,linalg::MatrixView moment) {
   using Reduce=cub::BlockReduce<double,moment_threads>;
   __shared__ typename Reduce::TempStorage scratch;
-  const auto total=static_cast<std::int64_t>(strings)*seed.cols;
+  const auto total=static_cast<std::int64_t>(strings)*batch.terms[0].seed.cols;
   for (int orbital=blockIdx.x;orbital<orbitals;orbital+=gridDim.x) {
     const auto bit=std::uint64_t{1}<<orbital;
     for (auto chunk=blockIdx.y;static_cast<std::int64_t>(chunk)*moment_chunk<total;
@@ -282,22 +322,22 @@ __global__ void moment_diagonal(const std::uint64_t* occupations,int strings,
       for (auto index=first+threadIdx.x;index<last;index+=blockDim.x) {
         const auto string=index%strings,column=index/strings;
         if (occupations[string]&bit)
-          value+=seed.data[string+seed.ld*column]*
-              image.data[string+image.ld*column];
+          value+=moment_product(batch,string,string,column);
       }
       value=Reduce(scratch).Sum(value);
       if (threadIdx.x==0)
-        atomicAdd(moment.data+orbital+moment.ld*orbital,scale*value);
+        atomicAdd(moment.data+orbital+moment.ld*orbital,
+            (count==1 ? batch.terms[0].scale : 1.0)*value);
       __syncthreads();
     }
   }
 }
 
+template<std::size_t count>
 __global__ void moment_shears(
     const ExteriorTransform::Shear* schedule,
     const vb::ExteriorOrbitalTransform::ShearEdge* edges,int shears,
-    int orbitals,linalg::ConstMatrixView seed,linalg::ConstMatrixView image,
-    double scale,linalg::MatrixView moment) {
+    int orbitals,MomentBatch<count> batch,linalg::MatrixView moment) {
   using Reduce=cub::BlockReduce<double,moment_threads>;
   __shared__ typename Reduce::TempStorage scratch;
   for (int shear=blockIdx.x;shear<shears;shear+=gridDim.x) {
@@ -307,7 +347,7 @@ __global__ void moment_shears(
       remaining-=r;
     }
     const auto part=schedule[shear];
-    const auto total=static_cast<std::int64_t>(part.count)*seed.cols;
+    const auto total=static_cast<std::int64_t>(part.count)*batch.terms[0].seed.cols;
     for (auto chunk=blockIdx.y;static_cast<std::int64_t>(chunk)*moment_chunk<total;
          chunk+=gridDim.y) {
       const auto first=static_cast<std::int64_t>(chunk)*moment_chunk;
@@ -315,17 +355,47 @@ __global__ void moment_shears(
       const auto last=end<total ? end:total;
       double value=0.0;
       for (auto index=first+threadIdx.x;index<last;index+=blockDim.x) {
-        const auto edge=index/seed.cols,column=index%seed.cols;
+        const auto edge=index/batch.terms[0].seed.cols;
+        const auto column=index%batch.terms[0].seed.cols;
         const auto pair=edges[part.offset+edge];
-        value+=pair.sign*seed.data[pair.target+seed.ld*column]*
-            image.data[pair.source+image.ld*column];
+        value+=pair.sign*moment_product(batch,pair.target,pair.source,column);
       }
       value=Reduce(scratch).Sum(value);
       if (threadIdx.x==0)
-        atomicAdd(moment.data+inserted+moment.ld*removed,scale*value);
+        atomicAdd(moment.data+inserted+moment.ld*removed,
+            (count==1 ? batch.terms[0].scale : 1.0)*value);
       __syncthreads();
     }
   }
+}
+
+template<std::size_t count>
+void accumulate_moments(Context& context,const ExteriorTransform& transform,
+    const std::array<MomentTerm,count>& terms,linalg::MatrixView moment) {
+  static_assert(count>=1 && count<=4);
+  const auto rows=transform.dimension();
+  const auto columns=terms[0].seed.cols;
+  for (const auto& term:terms)
+    if (term.seed.rows!=rows || term.image.rows!=rows ||
+        term.seed.cols!=columns || term.image.cols!=columns ||
+        term.seed.ld<rows || term.image.ld<rows ||
+        !term.seed.data || !term.image.data || !std::isfinite(term.scale))
+      throw std::invalid_argument("invalid transport moment panels");
+  MomentBatch<count> batch{};
+  for (std::size_t t=0;t<count;++t) batch.terms[t]=terms[t];
+  const int orbitals=transform.n_orbitals();
+  const auto work=static_cast<std::int64_t>(rows)*columns;
+  const auto chunks=static_cast<unsigned int>(std::min<std::int64_t>(
+      65535,(work+moment_chunk-1)/moment_chunk));
+  const dim3 diagonal_grid(std::min(65535,orbitals),chunks);
+  moment_diagonal<count><<<diagonal_grid,moment_threads,0,context.stream()>>>(
+      transform.occupations_data(),rows,orbitals,batch,moment);
+  if (transform.shear_count())
+    moment_shears<count><<<dim3(std::min<std::size_t>(65535,transform.shear_count()),
+        chunks),moment_threads,0,context.stream()>>>(
+        transform.shear_schedule_data(),transform.shear_edges_data(),
+        static_cast<int>(transform.shear_count()),orbitals,batch,moment);
+  check_cuda(cudaGetLastError(),"transport generator moments");
 }
 
 void upper_only(Context& context, linalg::MatrixView values) {
@@ -585,26 +655,34 @@ void SelectedCrossOverlap::seeds(const ExteriorTransform& alpha_map,
 
 void SelectedCrossOverlap::seeds_three(const ExteriorTransform& alpha_map,
     const ExteriorTransform& beta_map,linalg::ConstMatrixView coefficients,
-    linalg::ConstMatrixView alpha0,linalg::ConstMatrixView beta0,
-    linalg::ConstMatrixView alpha1,linalg::ConstMatrixView beta1,
-    linalg::ConstMatrixView alpha2,linalg::ConstMatrixView beta2,
-    linalg::MatrixView alpha_seed0,linalg::MatrixView beta_seed0,
-    linalg::MatrixView alpha_seed1,linalg::MatrixView beta_seed1,
-    linalg::MatrixView alpha_seed2,linalg::MatrixView beta_seed2,
-    linalg::MatrixView alpha_work0,linalg::MatrixView beta_work0,
-    linalg::MatrixView alpha_work1,linalg::MatrixView beta_work1,
-    linalg::MatrixView alpha_work2,linalg::MatrixView beta_work2) const {
+    std::array<linalg::ConstMatrixView,3> alpha,
+    std::array<linalg::ConstMatrixView,3> beta,
+    linalg::MatrixView alpha_seeds,linalg::MatrixView beta_seeds,
+    linalg::MatrixView alpha_work,linalg::MatrixView beta_work) const {
   const nvtx3::scoped_range range{"transport.seeds_three"};
   check_structure(coefficients);
-  const int count=static_cast<int>(alpha0.cols);
-  copy(*context_,alpha_work0,alpha0);copy(*context_,alpha_work1,alpha1);
-  copy(*context_,alpha_work2,alpha2);
-  copy(*context_,beta_work0,beta0);copy(*context_,beta_work1,beta1);
-  copy(*context_,beta_work2,beta2);
-  alpha_map.apply_left(alpha_work0,true);alpha_map.apply_left(alpha_work1,true);
-  alpha_map.apply_left(alpha_work2,true);
-  beta_map.apply_left(beta_work0,true);beta_map.apply_left(beta_work1,true);
-  beta_map.apply_left(beta_work2,true);
+  const int count=static_cast<int>(alpha[0].cols);
+  if (count<=0 || alpha_work.rows!=alpha_ || beta_work.rows!=beta_ ||
+      alpha_seeds.rows!=alpha_ || beta_seeds.rows!=beta_ ||
+      alpha_work.cols!=3*count || beta_work.cols!=3*count ||
+      alpha_seeds.cols!=3*count || beta_seeds.cols!=3*count)
+    throw std::invalid_argument("invalid packed transport seed panels");
+  for (int path=0;path<3;++path) {
+    copy(*context_,alpha_work.columns(path*count,count),alpha[path]);
+    copy(*context_,beta_work.columns(path*count,count),beta[path]);
+  }
+  alpha_map.apply_left(alpha_work,true);
+  beta_map.apply_left(beta_work,true);
+  const linalg::MatrixView alpha_seed_transposed{
+      alpha_seeds.data,3*count,alpha_,3*count};
+  const linalg::MatrixView beta_seed_transposed{
+      beta_seeds.data,3*count,beta_,3*count};
+  const linalg::MatrixView alpha_work_transposed{
+      alpha_work.data,3*count,alpha_,3*count};
+  const linalg::MatrixView beta_work_transposed{
+      beta_work.data,3*count,beta_,3*count};
+  transpose_packed(*context_,alpha_work,alpha_seed_transposed);
+  transpose_packed(*context_,beta_work,beta_seed_transposed);
   const dim3 grid(std::min(65535,alpha_+beta_),
       static_cast<unsigned int>((count+32*seed_columns_per_lane-1)/
           (32*seed_columns_per_lane)));
@@ -613,33 +691,13 @@ void SelectedCrossOverlap::seeds_three(const ExteriorTransform& alpha_map,
       action_->term_structures_data(),action_->term_weights_data(),
       coefficients.data,sources_.alpha_offsets_device_.data(),
       sources_.source_offsets_device_.data(),sources_.source_groups_.data(),
-      alpha_,beta_,alpha_work0,beta_work0,alpha_work1,beta_work1,
-      alpha_work2,beta_work2,
-      alpha_seed0,beta_seed0,alpha_seed1,beta_seed1,alpha_seed2,beta_seed2);
+      alpha_,beta_,count,alpha_seed_transposed,beta_seed_transposed,
+      alpha_work_transposed,beta_work_transposed);
   check_cuda(cudaGetLastError(),"transport joint factor seeds");
-  alpha_map.apply_left(alpha_seed0);alpha_map.apply_left(alpha_seed1);
-  alpha_map.apply_left(alpha_seed2);
-  beta_map.apply_left(beta_seed0);beta_map.apply_left(beta_seed1);
-  beta_map.apply_left(beta_seed2);
-}
-
-void SelectedCrossOverlap::accumulate_moment(const ExteriorTransform& transform,
-    linalg::ConstMatrixView seed,linalg::ConstMatrixView image,double scale,
-    linalg::MatrixView moment) const {
-  const int orbitals=transform.n_orbitals();
-  const auto work=seed.rows*seed.cols;
-  const auto chunks=static_cast<unsigned int>(std::min<std::int64_t>(
-      65535,(work+moment_chunk-1)/moment_chunk));
-  const dim3 diagonal_grid(std::min(65535,orbitals),chunks);
-  moment_diagonal<<<diagonal_grid,moment_threads,0,context_->stream()>>>(
-      transform.occupations_data(),transform.dimension(),orbitals,
-      seed,image,scale,moment);
-  if (transform.shear_count())
-    moment_shears<<<dim3(std::min<std::size_t>(65535,transform.shear_count()),chunks),
-        moment_threads,0,context_->stream()>>>(
-        transform.shear_schedule_data(),transform.shear_edges_data(),
-        static_cast<int>(transform.shear_count()),orbitals,seed,image,scale,moment);
-  check_cuda(cudaGetLastError(),"transport generator moments");
+  transpose_packed(*context_,alpha_work_transposed,alpha_seeds);
+  transpose_packed(*context_,beta_work_transposed,beta_seeds);
+  alpha_map.apply_left(alpha_seeds);
+  beta_map.apply_left(beta_seeds);
 }
 
 void SelectedCrossOverlap::apply(linalg::ConstMatrixView left_frame,
@@ -738,10 +796,14 @@ void SelectedCrossOverlap::adjoint(linalg::ConstMatrixView left_frame,
     action_->alpha_transform().apply_left(uv);
     action_->beta_transform().apply_left(vv);
     seeds(left.alpha,*left.beta,left_coefficients,uv,vv,zav,zbv,wav,wbv);
-    accumulate_moment(left.alpha,uv,zav,1.0,ml.view());
-    accumulate_moment(*left.beta,vv,zbv,1.0,ml.view());
-    accumulate_moment(action_->alpha_transform(),zav,uv,1.0,mr.view());
-    accumulate_moment(action_->beta_transform(),zbv,vv,1.0,mr.view());
+    accumulate_moments(*context_,left.alpha,
+        std::array{MomentTerm{uv,zav,1.0}},ml.view());
+    accumulate_moments(*context_,*left.beta,
+        std::array{MomentTerm{vv,zbv,1.0}},ml.view());
+    accumulate_moments(*context_,action_->alpha_transform(),
+        std::array{MomentTerm{zav,uv,1.0}},mr.view());
+    accumulate_moments(*context_,action_->beta_transform(),
+        std::array{MomentTerm{zbv,vv,1.0}},mr.view());
   }
   pullback(left_frame,ml.view(),left_gradient);
   pullback(right_frame,mr.view(),right_gradient);
@@ -808,30 +870,25 @@ void SelectedCrossOverlap::transport_gradient(linalg::ConstMatrixView current,
   const int extent=source_extent();
   Matrix<double> u(*context_,alpha_,extent),du(*context_,alpha_,extent),
       ub(*context_,alpha_,extent),uc(*context_,alpha_,extent);
-  Matrix<double> first_a(*context_,alpha_,extent),second_a(*context_,alpha_,extent),
-      metric_a(*context_,alpha_,extent),projected(*context_,alpha_,extent);
+  Matrix<double> projected(*context_,alpha_,extent),
+      seeds_a(*context_,alpha_,3*extent),work_a(*context_,alpha_,3*extent);
   Matrix<double> v(*context_,beta_,extent),dv(*context_,beta_,extent),
       vc(*context_,beta_,extent);
-  Matrix<double> first_b(*context_,beta_,extent),second_b(*context_,beta_,extent),
-      metric_b(*context_,beta_,extent);
-  Matrix<double> wa0(*context_,alpha_,extent),wa1(*context_,alpha_,extent),
-      wa2(*context_,alpha_,extent);
-  Matrix<double> wb0(*context_,beta_,extent),wb1(*context_,beta_,extent),
-      wb2(*context_,beta_,extent);
+  Matrix<double> seeds_b(*context_,beta_,3*extent),work_b(*context_,beta_,3*extent);
   for (int begin=0;begin<source_count();begin+=extent) {
     const int count=std::min(extent,source_count()-begin);
     auto uv=u.view().columns(0,count),duv=du.view().columns(0,count);
     auto ubv=ub.view().columns(0,count),ucv=uc.view().columns(0,count);
-    auto fav=first_a.view().columns(0,count),sav=second_a.view().columns(0,count);
-    auto mav=metric_a.view().columns(0,count),pv=projected.view().columns(0,count);
+    auto as=seeds_a.view().columns(0,3*count);
+    auto fav=as.columns(0,count),sav=as.columns(count,count);
+    auto mav=as.columns(2*count,count),pv=projected.view().columns(0,count);
     auto vv=v.view().columns(0,count),dvv=dv.view().columns(0,count);
     auto vcv=vc.view().columns(0,count);
-    auto fbv=first_b.view().columns(0,count),sbv=second_b.view().columns(0,count);
-    auto mbv=metric_b.view().columns(0,count);
-    auto wa0v=wa0.view().columns(0,count),wa1v=wa1.view().columns(0,count),
-         wa2v=wa2.view().columns(0,count);
-    auto wb0v=wb0.view().columns(0,count),wb1v=wb1.view().columns(0,count),
-         wb2v=wb2.view().columns(0,count);
+    auto bs=seeds_b.view().columns(0,3*count);
+    auto fbv=bs.columns(0,count),sbv=bs.columns(count,count);
+    auto mbv=bs.columns(2*count,count);
+    auto aw=work_a.view().columns(0,3*count);
+    auto bw=work_b.view().columns(0,3*count);
     sources_.load_three(begin,count,reference,base,transported,
         uv,ubv,ucv,vv,vcv);
     zero(*context_,duv);zero(*context_,dvv);
@@ -843,18 +900,17 @@ void SelectedCrossOverlap::transport_gradient(linalg::ConstMatrixView current,
     action_->beta_transform().apply_left(vcv);
     const auto& ca=action_->alpha_transform();
     const auto& cb=action_->beta_transform();
-    seeds_three(ca,cb,lambda,ubv,vv,uv,dvv,ucv,vcv,
-        fav,fbv,sav,sbv,mav,mbv,wa0v,wb0v,wa1v,wb1v,wa2v,wb2v);
-    accumulate_moment(ca,ubv,fav,1.0,mc.view());
-    accumulate_moment(ca,uv,sav,1.0,mc.view());
-    accumulate_moment(ca,ucv,mav,-1.0,mc.view());
-    accumulate_moment(ca,mav,ucv,-1.0,mc.view());
-    accumulate_moment(cb,vv,fbv,1.0,mc.view());
-    accumulate_moment(cb,dvv,sbv,1.0,mc.view());
-    accumulate_moment(cb,vcv,mbv,-1.0,mc.view());
-    accumulate_moment(cb,mbv,vcv,-1.0,mc.view());
-    accumulate_moment(oa.alpha,fav,uv,1.0,mo.view());
-    accumulate_moment(*oa.beta,sbv,vv,1.0,mo.view());
+    seeds_three(ca,cb,lambda,{ubv,uv,ucv},{vv,dvv,vcv},as,bs,aw,bw);
+    accumulate_moments(*context_,ca,std::array{
+        MomentTerm{ubv,fav,1.0},MomentTerm{uv,sav,1.0},
+        MomentTerm{ucv,mav,-1.0},MomentTerm{mav,ucv,-1.0}},mc.view());
+    accumulate_moments(*context_,cb,std::array{
+        MomentTerm{vv,fbv,1.0},MomentTerm{dvv,sbv,1.0},
+        MomentTerm{vcv,mbv,-1.0},MomentTerm{mbv,vcv,-1.0}},mc.view());
+    accumulate_moments(*context_,oa.alpha,
+        std::array{MomentTerm{fav,uv,1.0}},mo.view());
+    accumulate_moments(*context_,*oa.beta,
+        std::array{MomentTerm{sbv,vv,1.0}},mo.view());
     copy(*context_,pv,fav);
     oa.alpha.apply_left(pv,true);
     // The raw beta identity restricts this back-projection to its sources.

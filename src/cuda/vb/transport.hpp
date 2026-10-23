@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <functional>
 #include <memory>
 #include <utility>
@@ -162,18 +163,10 @@ class SelectedCrossOverlap {
              linalg::MatrixView alpha_work,linalg::MatrixView beta_work) const;
   void seeds_three(const ExteriorTransform& alpha_map,
       const ExteriorTransform& beta_map,linalg::ConstMatrixView coefficients,
-      linalg::ConstMatrixView alpha0,linalg::ConstMatrixView beta0,
-      linalg::ConstMatrixView alpha1,linalg::ConstMatrixView beta1,
-      linalg::ConstMatrixView alpha2,linalg::ConstMatrixView beta2,
-      linalg::MatrixView alpha_seed0,linalg::MatrixView beta_seed0,
-      linalg::MatrixView alpha_seed1,linalg::MatrixView beta_seed1,
-      linalg::MatrixView alpha_seed2,linalg::MatrixView beta_seed2,
-      linalg::MatrixView alpha_work0,linalg::MatrixView beta_work0,
-      linalg::MatrixView alpha_work1,linalg::MatrixView beta_work1,
-      linalg::MatrixView alpha_work2,linalg::MatrixView beta_work2) const;
-  void accumulate_moment(const ExteriorTransform& transform,
-      linalg::ConstMatrixView seed,linalg::ConstMatrixView image,double scale,
-      linalg::MatrixView moment) const;
+      std::array<linalg::ConstMatrixView,3> alpha,
+      std::array<linalg::ConstMatrixView,3> beta,
+      linalg::MatrixView alpha_seeds,linalg::MatrixView beta_seeds,
+      linalg::MatrixView alpha_work,linalg::MatrixView beta_work) const;
   int source_extent() const { return sources_.source_extent(); }
   void load_sources(int begin,int count,linalg::ConstMatrixView coefficients,
                     linalg::MatrixView alpha,linalg::MatrixView beta) const {

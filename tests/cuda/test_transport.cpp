@@ -290,7 +290,7 @@ void check_selected_transport() {
           "residual-balanced origin mixed Hessian was not affine");
 }
 
-void check_wide_transport_sources() {
+void check_wide_transport_sources(bool reverse_spins=false) {
   // Unequal spin sectors and >128 source columns exercise every register
   // lane, the second RHS batch, sparse incidence and the final short tile.
   constexpr int n=10,structures=7;
@@ -299,7 +299,7 @@ void check_wide_transport_sources() {
     if (std::popcount(mask)!=5 && std::popcount(mask)!=4) continue;
     std::vector<int> occupied;
     for (int p=0;p<n;++p) if (mask&(1u<<p)) occupied.push_back(p);
-    (occupied.size()==5 ? alpha:beta).push_back(std::move(occupied));
+    (occupied.size()==(reverse_spins ? 4U:5U) ? alpha:beta).push_back(std::move(occupied));
   }
   Terms terms(alpha.size()*beta.size());
   for (const auto& a:alpha) for (const auto& b:beta) {
@@ -366,6 +366,7 @@ int main() {
   try {
     check_selected_transport();
     check_wide_transport_sources();
+    check_wide_transport_sources(true);
     std::cout<<"CUDA selected CI transport and residual-balanced model: PASS\n";
   } catch (const std::exception& error) {
     std::cerr<<error.what()<<'\n';
