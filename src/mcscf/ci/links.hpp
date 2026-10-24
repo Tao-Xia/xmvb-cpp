@@ -57,6 +57,17 @@ struct SpinConnections {
     return {degree ? links.data()+static_cast<std::size_t>(degree)*string:nullptr,degree};
   }
   OccupiedOrbitals occupied(int string) const noexcept { return basis.occupied(string); }
+  /** @brief Count links before a packed channel, using its high orbital and
+   * low-orbital prefix mask. Links already follow high/low packed order.
+   * Only opposite occupations connect; addresses/signs remain precomputed.
+   */
+  int link_prefix(int string,int high,std::uint64_t low_mask) const noexcept {
+    if (high==orbitals) return degree;
+    const auto mask=basis.masks()[string];
+    const auto opposite=(mask>>high)&1 ? ~mask:mask;
+    return orbital_offsets[static_cast<std::size_t>(string)*(orbitals+1)+high]+
+        std::popcount(opposite&low_mask);
+  }
   /** @brief Visit only sources repairing a certified prefix deficit.
    * Source support requires p<=first<=last<q, with p empty and q occupied
    * in this target string. Those p are exactly the first links in q's

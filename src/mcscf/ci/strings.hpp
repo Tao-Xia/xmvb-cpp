@@ -50,6 +50,8 @@ public:
   SpinStrings(int n_orbitals, const std::vector<std::vector<int>>& occupations);
   const std::vector<std::uint64_t>& masks() const noexcept;
   int index(std::uint64_t mask) const;
+  /** @brief Map a certified colex rank emitted by a fixed-particle generator. */
+  int index_from_rank(std::uint64_t rank) const;
   int size() const noexcept;
   int orbitals() const noexcept;
   int electrons() const noexcept;

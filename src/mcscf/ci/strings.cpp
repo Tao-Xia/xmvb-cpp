@@ -1,4 +1,5 @@
 #include "mcscf/ci/strings.hpp"
+#include "mcscf/ci/combinations.hpp"
 
 #include <algorithm>
 #include <limits>
@@ -50,7 +51,7 @@ std::vector<std::uint64_t> encode(int n,const std::vector<std::vector<int>>& row
 
 struct SpinStrings::Data {
   int n,electrons;
-  std::vector<std::uint64_t> masks,choose,ranks;
+  std::vector<std::uint64_t> masks,ranks;
   bool complete;
   std::vector<int> indices;
   Data(int orbitals,std::span<const std::uint64_t> input)
@@ -60,13 +61,6 @@ struct SpinStrings::Data {
     if (masks.empty() || masks.size()>static_cast<std::size_t>(std::numeric_limits<int>::max()))
       throw std::invalid_argument("invalid spin-string count");
     complete=masks.size()==string_count(n,electrons);
-    choose.assign((n+1)*(electrons+1),0);
-    for (int p=0;p<=n;++p) {
-      choose[p*(electrons+1)]=1;
-      for (int k=1;k<=std::min(p,electrons);++k)
-        choose[p*(electrons+1)+k]=choose[(p-1)*(electrons+1)+k-1]+
-            choose[(p-1)*(electrons+1)+k];
-    }
     const auto full=(std::uint64_t{1}<<n)-1;
     bool canonical=complete;
     for (std::size_t i=0;i<masks.size();++i) {
@@ -100,7 +94,7 @@ struct SpinStrings::Data {
     int k=1;
     while (mask) {
       const int p=std::countr_zero(mask);
-      result+=choose[p*(electrons+1)+k++];
+      result+=detail::spin_choose(p,k++);
       mask&=mask-1;
     }
     return result;
@@ -138,7 +132,11 @@ bool SpinStrings::complete() const noexcept { return data_ && data_->complete; }
 int SpinStrings::index(std::uint64_t mask) const {
   if (!data_ || (mask>>data_->n) || std::popcount(mask)!=data_->electrons)
     throw std::out_of_range("spin mask is outside its sector");
-  const auto rank=data_->rank(mask);
+  return index_from_rank(data_->rank(mask));
+}
+int SpinStrings::index_from_rank(std::uint64_t rank) const {
+  if (!data_ || rank>=detail::spin_choose(data_->n,data_->electrons))
+    throw std::out_of_range("spin rank is outside its sector");
   if (data_->complete)
     return data_->indices.empty() ? static_cast<int>(rank):data_->indices[rank];
   const auto found=std::lower_bound(data_->ranks.begin(),data_->ranks.end(),rank);
@@ -155,7 +153,7 @@ std::vector<std::vector<int>> SpinStrings::decode() const {
   return rows;
 }
 std::size_t SpinStrings::dynamic_bytes() const noexcept {
-  return data_ ? sizeof(Data)+sizeof(std::uint64_t)*(data_->masks.capacity()+data_->choose.capacity()+data_->ranks.capacity())+
+  return data_ ? sizeof(Data)+sizeof(std::uint64_t)*(data_->masks.capacity()+data_->ranks.capacity())+
       sizeof(int)*data_->indices.capacity():0;
 }
 

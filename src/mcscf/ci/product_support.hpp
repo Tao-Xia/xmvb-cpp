@@ -60,7 +60,7 @@ public:
     seeds.reserve(products.size());
     for (const ProductIndex product : products) {
       if (product < 0 || static_cast<std::size_t>(product) >=
-                             alpha_.size() * beta_.size())
+                             static_cast<std::size_t>(alpha_.size()) * beta_.size())
         throw std::invalid_argument("product support seed is outside the spin spaces");
       const auto a = alpha_.masks()[product / beta_.size()];
       const auto b = beta_.masks()[product % beta_.size()];
@@ -86,7 +86,7 @@ public:
     bool next(int& alpha, int& beta, bool& in_support) {
       Mask a, b;
       if (!paths_.next(a, b, in_support)) return false;
-      alpha=support_->alpha_.index(a);
+      alpha=support_->alpha_.index_from_rank(paths_.alpha_rank());
       beta = beta_index(b);
       return true;
     }
@@ -107,7 +107,7 @@ public:
     int beta_index(Mask mask) {
       if (!cached_beta_ || *cached_beta_ != mask) {
         cached_beta_=mask;
-        cached_beta_index_=support_->beta_.index(mask);
+        cached_beta_index_=support_->beta_.index_from_rank(paths_.beta_rank());
       }
       return cached_beta_index_;
     }

@@ -10,15 +10,16 @@
 namespace xmvb::mcscf {
 namespace {
 
-/** @brief A packed-channel interval in the fixed-stride record row. */
-std::pair<int,int> link_range(const DensityConnections& links,int first,int last) {
-  if (links.size()==0) return {0,0};
-  const auto less=[](const SpinLink& link,int pair){return link.pair<pair;};
-  const auto begin=first<=links[0].pair ? links.begin():
-      std::lower_bound(links.begin(),links.end(),first,less);
-  const auto end=last>links[links.size()-1].pair ? links.end():
-      std::lower_bound(begin,links.end(),last,less);
-  return {static_cast<int>(begin-links.begin()),static_cast<int>(end-links.begin())};
+/** @brief Packed boundary decoded once per channel tile, not per string/RHS. */
+struct ChannelBoundary {
+  int high;
+  std::uint64_t low_mask;
+};
+ChannelBoundary channel_boundary(int pair) {
+  int high=0;
+  while ((high+1)*(high+2)/2<=pair) ++high;
+  const int low=pair-high*(high+1)/2;
+  return {high,(std::uint64_t{1}<<low)-1};
 }
 
 /** @brief Orbital interval whose packed diagonal channels belong to this tile. */
@@ -102,6 +103,7 @@ void DirectCiSigmaAction::scatter_spin(bool beta,
     throw std::invalid_argument("invalid single-spin channel scatter");
   const int width = factors.cols();
   const auto diagonal = diagonal_range(n_orbitals_,first,first+count);
+  const auto begin=channel_boundary(first),end=channel_boundary(first+count);
   result.setZero();
   const int workers = coarse_openmp_thread_count(effective_openmp_thread_count(), result.size());
 #pragma omp parallel for schedule(static) if(workers > 1) num_threads(workers)
@@ -116,8 +118,9 @@ void DirectCiSigmaAction::scatter_spin(bool beta,
       add(target, core::PairIndex::packed_pair_index(orbital, orbital), 1.0);
     }
     const auto& links = graph.singles(target);
-    const auto range = link_range(links,first,first+count);
-    for (int i = range.first; i < range.second; ++i)
+    const int first_link=graph.link_prefix(target,begin.high,begin.low_mask);
+    const int last_link=graph.link_prefix(target,end.high,end.low_mask);
+    for (int i=first_link;i<last_link;++i)
       add(links[i].source, links[i].pair, links[i].sign);
   }
 }
@@ -133,6 +136,7 @@ void DirectCiSigmaAction::gather_spin(bool beta,
     throw std::invalid_argument("invalid single-spin channel gather");
   const int width = images.cols();
   const auto diagonal = diagonal_range(n_orbitals_,first,first+count);
+  const auto begin=channel_boundary(first),end=channel_boundary(first+count);
   const int workers = coarse_openmp_thread_count(effective_openmp_thread_count(), channels.size());
 #pragma omp parallel for schedule(static) if(workers > 1) num_threads(workers)
   for (int index = 0; index < rows * width; ++index) {
@@ -146,8 +150,9 @@ void DirectCiSigmaAction::gather_spin(bool beta,
       add(target, core::PairIndex::packed_pair_index(orbital, orbital), 1.0);
     }
     const auto& links = graph.singles(target);
-    const auto range = link_range(links,first,first+count);
-    for (int i = range.first; i < range.second; ++i)
+    const int first_link=graph.link_prefix(target,begin.high,begin.low_mask);
+    const int last_link=graph.link_prefix(target,end.high,end.low_mask);
+    for (int i=first_link;i<last_link;++i)
       add(links[i].source, links[i].pair, links[i].sign);
   }
 }

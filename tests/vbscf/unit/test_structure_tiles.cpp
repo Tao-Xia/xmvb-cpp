@@ -1653,6 +1653,8 @@ void check_spin_strings() {
     for (int i=0;i<canonical.size();++i) {
       require(canonical.index(canonical.masks()[i])==i,"canonical combinatorial index is wrong");
       require(reordered.index(reordered.masks()[i])==i,"permuted combinatorial index is wrong");
+      require(reordered.index_from_rank(canonical.size()-1-i)==i,
+          "certified rank changed caller permutation");
       std::vector<int> decoded;
       for (const int p:reordered.occupied(i)) decoded.push_back(p);
       require(decoded==permuted[i],"lazy occupation iteration changed orbital order");
@@ -1683,6 +1685,36 @@ void check_spin_strings() {
   } catch (const std::out_of_range&) {}
 }
 
+/** @brief Independent binomial rank oracle, without allocating a spin sector. */
+std::uint64_t reference_spin_rank(std::uint64_t mask) {
+  std::uint64_t rank=0;
+  int electron=1;
+  while (mask) {
+    const int p=std::countr_zero(mask);
+    rank+=xmvb::mcscf::string_count(p,electron++);
+    mask&=mask-1;
+  }
+  return rank;
+}
+
+void check_path_ranks() {
+  using Paths=xmvb::mcscf::ProductPaths;
+  const auto low=(std::uint64_t{1}<<31)-1;
+  const Paths sparse(63,31,31,{{low,low}});
+  for (int depth:{0,1}) {
+    auto cursor=sparse.cursor(depth);
+    std::uint64_t a,b;
+    bool supported;
+    std::size_t count=0;
+    while (cursor.next(a,b,supported)) {
+      require(cursor.alpha_rank()==reference_spin_rank(a) &&
+          cursor.beta_rank()==reference_spin_rank(b),"large-universe path rank changed");
+      ++count;
+    }
+    require(count==static_cast<std::size_t>(depth ? 1985:1),"rank traversal changed sparse support");
+  }
+}
+
 void check_sigma_columns(const Fixture& fixture, int width) {
   const auto integrals = xmvb::vb::orthogonalize_active_integrals(
       fixture.overlap, fixture.one_electron, fixture.two_electron, fixture.n);
@@ -1691,6 +1723,18 @@ void check_sigma_columns(const Fixture& fixture, int width) {
   const std::size_t expected_links=sigma.alpha_connections().dynamic_bytes()+
       (sigma.shared_spin_connections() ? 0:sigma.beta_connections_view().dynamic_bytes());
   const auto pairs=integrals.pair_kernel.rows();
+  for (const auto* graph:{&sigma.alpha_connections(),&sigma.beta_connections_view()})
+    for (int string=0;string<graph->n_strings();++string) {
+      const auto links=graph->singles(string);
+      for (int high=0;high<=fixture.n;++high)
+        for (int low=0;low<=(high==fixture.n ? 0:high);++low) {
+          const int pair=high*(high+1)/2+low;
+          int expected=0;
+          for (const auto& link:links) expected+=link.pair<pair;
+          require(graph->link_prefix(string,high,(std::uint64_t{1}<<low)-1)==expected,
+              "bit-popcount link prefix changed packed channel boundaries");
+        }
+    }
   require(sigma.dynamic_bytes()==expected_links+2*sizeof(double)*pairs*pairs,
           "direct-CI links are not compact/shared as declared");
   // The bit-string traversal must emit exactly the old certified link subset,
@@ -2056,13 +2100,18 @@ void check_product_support_oracle(
   // Full masks exist only in this small independent oracle, not in paths.
   std::vector<unsigned char> generated(na * nb, 0), generated_halo(na * nb, 0);
   const auto check_paths = [&](int depth, std::vector<unsigned char>& found) {
-    paths.visit(depth, [&](std::uint64_t a, std::uint64_t b, bool in_support) {
+    auto cursor=paths.cursor(depth);
+    std::uint64_t a,b;
+    bool in_support;
+    while (cursor.next(a,b,in_support)) {
+      require(cursor.alpha_rank()==reference_spin_rank(a) &&
+          cursor.beta_rank()==reference_spin_rank(b),"generated colex rank changed");
       const auto ai = std::find(alpha.begin(), alpha.end(), a) - alpha.begin();
       const auto bi = std::find(beta.begin(), beta.end(), b) - beta.begin();
       require(ai < na && bi < nb, "generated string is outside fixed-spin sector");
       require(found[ai * nb + bi]++ == 0, "duplicate product path");
       require(in_support == direct(ai, bi), "incorrect generated support label");
-    });
+    }
   };
   check_paths(0, generated);
   check_paths(1, generated_halo);
@@ -3851,6 +3900,7 @@ int main(int argc, char** argv) {
   try {
     if (argc == 2 && std::string(argv[1]) == "--channel-layout") {
       check_spin_strings();
+      check_path_ranks();
       check_full_channel_image_layout();
       std::cout << "channel layout: PASS\n";
     } else if (argc == 2 && std::string(argv[1]) == "--cache-order") {
@@ -3977,6 +4027,7 @@ int main(int argc, char** argv) {
       check_sigma_tile_plan();
       check_symbolic_replay();
       check_spin_strings();
+      check_path_ranks();
       check_full_channel_image_layout();
       check_sparse_beta_gather();
       check_packed_sigma_tile_plan();

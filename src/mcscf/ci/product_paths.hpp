@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <utility>
 #include <vector>
+#include "mcscf/ci/combinations.hpp"
 
 namespace xmvb::mcscf {
 
@@ -137,7 +138,7 @@ public:
       if (fixed && ((beta >> paths.n_) || __builtin_popcountll(beta) != paths.nb_))
         throw std::invalid_argument("prefix-path beta is outside the spin sector");
       if (!paths.full_ && !paths.covalent_ && paths.size_ == 0) return;
-      beta_stack_.push_back({0, 0, 0, 0, true});
+      beta_stack_.push_back({0,0,0,true,0,0});
       ++counts_.prefixes;
       if (paths.words_ != 0) {
         for (int mode = 0; mode < beta_modes_; ++mode) {
@@ -191,17 +192,21 @@ public:
       }
       if (!next_beta()) return false;
       beta = beta_stack_.back().mask;
+      beta_rank_=beta_stack_.back().rank;
       column_started_ = true;
       return true;
     }
 
+    std::uint64_t alpha_rank() const noexcept { return alpha_rank_; }
+    std::uint64_t beta_rank() const noexcept { return beta_rank_; }
     Counts counts() const noexcept { return counts_; }
 
   private:
     struct Frame {
       int k, count, next;
-      Mask mask;
       bool support;
+      Mask mask;
+      std::uint64_t rank;
     };
 
     bool extend_beta(int bit) {
@@ -229,8 +234,9 @@ public:
         }
       }
       if (!possible) return false;
-      beta_stack_.push_back({k + 1, count, 0,
-                             parent.mask | (static_cast<Mask>(bit) << k), true});
+      beta_stack_.push_back({k+1,count,0,true,
+          parent.mask|(static_cast<Mask>(bit)<<k),
+          parent.rank+(bit ? detail::spin_choose(k,count):0)});
       ++counts_.prefixes;
       return true;
     }
@@ -263,7 +269,7 @@ public:
                       alpha + 2 * paths_->words_);
         }
       }
-      alpha_stack_.push_back({0, 0, 0, 0, support});
+      alpha_stack_.push_back({0,0,0,support,0,0});
       alpha_active_ = true;
       ++counts_.prefixes;
     }
@@ -299,8 +305,9 @@ public:
         }
       }
       if (!possible) return false;
-      alpha_stack_.push_back({k + 1, count, 0,
-                              parent.mask | (static_cast<Mask>(bit) << k), support});
+      alpha_stack_.push_back({k+1,count,0,support,
+          parent.mask|(static_cast<Mask>(bit)<<k),
+          parent.rank+(bit ? detail::spin_choose(k,count):0)});
       ++counts_.prefixes;
       return true;
     }
@@ -313,10 +320,17 @@ public:
           // Fixed electron count leaves only a zero or one tail. A saturated
           // prefix dominates every seed; an all-one tail cannot lose prefix
           // dominance. Emit it directly instead of revisiting unary nodes.
-          alpha = top.mask;
-          if (top.count < paths_->na_)
-            alpha |= ((Mask{1} << paths_->n_) - 1) ^ ((Mask{1} << top.k) - 1);
-          beta = beta_stack_.back().mask;
+          alpha=top.mask;
+          alpha_rank_=top.rank;
+          if (top.count<paths_->na_) {
+            alpha|=((Mask{1}<<paths_->n_)-1)^((Mask{1}<<top.k)-1);
+            // The forced one-tail sums C(p,count+p-k+1). Hockey-stick
+            // reduction preserves its exact colex rank without a bit walk.
+            alpha_rank_+=detail::spin_choose(paths_->n_,paths_->na_)-
+                detail::spin_choose(top.k,top.count);
+          }
+          beta=beta_stack_.back().mask;
+          beta_rank_=beta_stack_.back().rank;
           in_support = top.support;
           alpha_stack_.pop_back();
           ++counts_.products;
@@ -339,6 +353,7 @@ public:
     bool product_mode_ = false, column_mode_ = false, column_started_ = false;
     int beta_modes_, alpha_modes_;
     Counts counts_;
+    std::uint64_t alpha_rank_=0,beta_rank_=0;
     std::vector<Frame> beta_stack_, alpha_stack_;
     std::vector<Mask> beta_live_, alpha_live_;
   };
