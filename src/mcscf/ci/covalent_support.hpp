@@ -21,7 +21,7 @@ class CovalentSupport {
 public:
   CovalentSupport(int n_orbitals, const std::vector<std::uint64_t>& alpha,
                   const std::vector<std::uint64_t>& beta)
-      : chunks_((n_orbitals + 7) / 8), alpha_(prefixes(alpha, n_orbitals)),
+      : chunks_((n_orbitals + 7) / 8), n_(n_orbitals), alpha_(prefixes(alpha, n_orbitals)),
         beta_(prefixes(beta, n_orbitals)), lengths_(chunks_, 0),
         columns_(n_orbitals,alpha,beta) {
     for (int k = 0; k < n_orbitals; ++k)
@@ -72,6 +72,23 @@ public:
     return {first,last};
   }
 
+  /** @brief Bit k marks zero electron surplus after orbital k (zero-based).
+   * Eight exact byte-lane equalities share the stored spin prefixes. Counts
+   * stay below 128, so adding 127 cannot carry into an adjacent byte.
+   */
+  std::uint64_t zero_prefixes(int alpha,int beta) const noexcept {
+    constexpr std::uint64_t high=0x8080808080808080ULL;
+    constexpr std::uint64_t bias=0x7f7f7f7f7f7f7f7fULL;
+    const auto* a=alpha_.data()+static_cast<std::size_t>(alpha)*chunks_;
+    const auto* b=beta_.data()+static_cast<std::size_t>(beta)*chunks_;
+    std::uint64_t result=0;
+    for (int k=0;k<chunks_;++k) {
+      const auto equal=~(((a[k]+b[k])^lengths_[k])+bias)&high;
+      result|=(((equal>>7)*0x0102040810204080ULL)>>56)<<(8*k);
+    }
+    return result&((std::uint64_t{1}<<n_)-1);
+  }
+
   std::size_t dynamic_bytes() const noexcept {
     return (alpha_.capacity()+beta_.capacity()+lengths_.capacity())*
         sizeof(std::uint64_t)+columns_.dynamic_bytes();
@@ -92,7 +109,7 @@ private:
     }
     return result;
   }
-  int chunks_;
+  int chunks_,n_;
   std::vector<std::uint64_t> alpha_, beta_, lengths_;
   CovalentColumns columns_;
 };

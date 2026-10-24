@@ -126,6 +126,7 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
   if (restricted_channels) workspace_bytes-=kernel_bytes;
   ChannelWorkspace::limit_action(workspace_bytes);
   const bool projected_image=source_projected_image && restricted_channels;
+  const bool covalent_sources=support && support->has_channel_envelopes();
   const detail::ChannelProduct channel_product(hamiltonian_pair_kernel_,n_orbitals_,restricted_channels,
       projected_image);
   std::vector<detail::ChannelProduct> directional_products;
@@ -210,7 +211,7 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
   const auto seconds = [](Clock::time_point begin, Clock::time_point end) {
     return std::chrono::duration<double>(end - begin).count();
   };
-  double prepare_time = 0, read_time = 0, compute_time = 0, write_time = 0, gram_time = 0;
+  double prepare_time = 0, read_time = 0, compute_time = 0, write_time = 0, gram_time = 0, scatter_time = 0;
   std::size_t gram_tiles=0;
   std::size_t gram_scratch_bytes=0;
   int gram_partitions=0,gram_extent=0;
@@ -219,7 +220,7 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
   std::size_t targets = 0, unsupported_targets = 0, identity_halo_targets=0,beta_map_bytes=0;
   std::size_t source_channels=0;
   long double projected_products=0,full_products=0;
-  Clock::time_point compute_start, prepare_start, gram_start;
+  Clock::time_point compute_start, prepare_start, gram_start, scatter_start;
 #pragma omp parallel if(workers > 1) num_threads(workers)
   {
     int thread = 0, team = 1;
@@ -402,9 +403,27 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
           const auto [first,last]=channel_product.frontier(channel_group);
           alpha_->visit_lower_sources(a,first,last,add_alpha);
           beta_graph.visit_lower_sources(beta,first,last,add_beta);
+        } else if (covalent_sources && active_support[local]) {
+          const auto zero=support->zero_prefixes(a,beta);
+          alpha_->visit_supported_sources(a,zero,add_alpha);
+          beta_graph.visit_supported_sources(beta,zero,add_beta);
         } else {
           for (int link=0;link<alpha_links.size();++link) add_alpha(link,alpha_links[link].pair);
           for (int link=0;link<beta_links.size();++link) add_beta(link,beta_links[link].pair);
+        }
+      };
+      // Diagnostic barriers are disabled in native runs. Halo reads remain
+      // separately timed; scatter includes only the parallel channel fill.
+      const auto scatter_rows=[&](double* values) {
+        if (timing) {
+#pragma omp single
+          { scatter_start=tick(); }
+        }
+        for (int row=first;row<last;++row) scatter(row,values);
+        if (timing) {
+#pragma omp barrier
+#pragma omp single
+          { scatter_time+=seconds(scatter_start,tick()); }
         }
       };
       for (std::size_t request_id=0;request_id<requests.size();++request_id) {
@@ -428,7 +447,7 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
           }
           if (failure) break;
         }
-        for (int row = first; row < last; ++row) scatter(row,scattered);
+        scatter_rows(scattered);
         if (collect_integrals) {
           if (state && request_id==0) {
             // The response scatter is complete. Refill the same input halo for
@@ -448,7 +467,7 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
               } catch (...) { failure = std::current_exception(); }
             }
             if (failure) break;
-            for (int row = first; row < last; ++row) scatter(row,state_channels);
+            scatter_rows(state_channels);
           }
           // An identical bra borrows A directly: no second scatter or copy.
           // A distinct B remains immutable across all temporal responses.
@@ -625,7 +644,7 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
   if (timing)
     std::fprintf(stderr,
         "XMVB_TILE,batches=%zu,source_columns=%zu,source_elements=%zu,peak_payload=%zu,"
-        "prepare=%.9f,read=%.9f,compute=%.9f,write=%.9f,targets=%zu,exchange=%d,"
+        "prepare=%.9f,read=%.9f,compute=%.9f,write=%.9f,scatter=%.9f,targets=%zu,exchange=%d,"
         "skipped_diagonal_scatters=%zu,gram=%.9f,gram_tiles=%zu,"
         "identity_halo_targets=%zu,beta_map_bytes=%zu,gram_partitions=%d,"
         "gram_extent=%d,gram_scratch_bytes=%zu,workspace_reused=%d,"
@@ -633,7 +652,7 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
         "restricted_channels=%d,source_channels=%zu,channel_kernel_bytes=%zu,"
         "boundary_builds=%zu,boundary_replays=%zu,boundary_bytes=%zu,unindexed_exchange_checks=%zu,exchange_row_products=%zu,bulk_targets=%zu,rhs_width=%d,responses=%zu,projected_image=%d,channel_products=%.0Lf,unrestricted_channel_products=%.0Lf\n",
         batches, source_columns, source_elements, peak_payload,
-        prepare_time, read_time, compute_time, write_time, targets, exchange_parity,
+        prepare_time, read_time, compute_time, write_time, scatter_time, targets, exchange_parity,
         unsupported_targets * static_cast<std::size_t>(width) *
             (requests.size() + static_cast<std::size_t>(collect_integrals && static_cast<bool>(state))),
         gram_time,gram_tiles,identity_halo_targets,beta_map_bytes,

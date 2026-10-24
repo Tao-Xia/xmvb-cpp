@@ -162,6 +162,10 @@ public:
     return covalent_ ? covalent_->deficient_prefixes(alpha,beta):std::pair{-1,-1};
   }
   bool has_channel_envelopes() const noexcept { return covalent_.has_value(); }
+  /** Zero-surplus certificate; valid only for a complete-covalent support. */
+  Mask zero_prefixes(int alpha,int beta) const noexcept {
+    return covalent_->zero_prefixes(alpha,beta);
+  }
   int n_orbitals() const noexcept { return n_; }
   /** Immutable support identity, shared by copies without retaining the support
    * itself. Prepared schedules use it rather than borrowed object addresses. */

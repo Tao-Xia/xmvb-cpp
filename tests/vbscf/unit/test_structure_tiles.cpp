@@ -1698,6 +1698,79 @@ std::uint64_t reference_spin_rank(std::uint64_t mask) {
   return rank;
 }
 
+/** @brief Exact zero-prefix visitor against unfiltered links at fixed inputs.
+ * No product coefficients are stored: both channel vectors read the same
+ * deterministic supported source function. Independent scalar prefixes check
+ * the byte-lane certificate; source addresses/signs and order stay untouched.
+ */
+void check_zero_prefix_sources(int n,int na,int nb) {
+  const auto fixture=make_fixture(n,na,nb);
+  const auto integrals=xmvb::vb::orthogonalize_active_integrals(
+      fixture.overlap,fixture.one_electron,fixture.two_electron,n);
+  const xmvb::mcscf::DirectCiSigmaAction sigma(fixture.alpha,fixture.beta,integrals);
+  const auto& alpha=sigma.alpha_connections();
+  const auto& beta=sigma.beta_connections_view();
+  const auto& am=alpha.basis.masks();
+  const auto& bm=beta.basis.masks();
+  const xmvb::mcscf::CovalentSupport support(n,am,bm);
+  double max_error=0;
+  std::uint64_t candidates=0,retained=0,pairs=0,oracle_retained=0;
+  const bool triangle=na==nb;
+#pragma omp parallel reduction(max:max_error) reduction(+:candidates,retained,pairs,oracle_retained)
+  {
+    std::vector<int> rows;
+    Eigen::VectorXd expected(n*(n+1)/2),actual(expected.size());
+    const auto coefficient=[&](int a,int b) {
+      return support.contains(a,b) ?
+          (1.0+((static_cast<std::uint64_t>(a)+1)*131+(b+1)*17)%4093)/4093.0:0.0;
+    };
+#pragma omp for schedule(static)
+    for (int b=0;b<beta.n_strings();++b) {
+      rows.clear();support.append_column_rows(b,rows,0,triangle ? b+1:alpha.n_strings());
+      for (const int a:rows) {
+        ++pairs;
+        const auto zero=support.zero_prefixes(a,b);
+        std::uint64_t oracle=0;
+        int count=0;
+        for (int k=0;k<n;++k) {
+          count+=((am[a]>>k)&1)+((bm[b]>>k)&1);
+          if (count==k+1) oracle|=std::uint64_t{1}<<k;
+        }
+        require(zero==oracle,"byte-lane zero-prefix mask differs from scalar count");
+        expected.setZero();actual.setZero();
+        for (const auto& link:alpha.singles(a)) {
+          const double value=coefficient(link.source,b);
+          expected[link.pair]+=link.sign*value;++candidates;oracle_retained+=value!=0;
+        }
+        for (const auto& link:beta.singles(b)) {
+          const double value=coefficient(a,link.source);
+          expected[link.pair]+=link.sign*value;++candidates;oracle_retained+=value!=0;
+        }
+        int previous=-1;
+        alpha.visit_supported_sources(a,zero,[&](int index,int channel) {
+          require(index>previous,"supported alpha links changed packed order");previous=index;
+          const auto& link=alpha.singles(a)[index];
+          require(support.contains(link.source,b),"alpha visitor emitted an unsupported source");
+          actual[channel]+=link.sign*coefficient(link.source,b);++retained;
+        });
+        previous=-1;
+        beta.visit_supported_sources(b,zero,[&](int index,int channel) {
+          require(index>previous,"supported beta links changed packed order");previous=index;
+          const auto& link=beta.singles(b)[index];
+          require(support.contains(a,link.source),"beta visitor emitted an unsupported source");
+          actual[channel]+=link.sign*coefficient(a,link.source);++retained;
+        });
+        max_error=std::max(max_error,(actual-expected).cwiseAbs().maxCoeff());
+      }
+    }
+  }
+  require(retained==oracle_retained,"zero-prefix visitor missed supported source addresses");
+  require(max_error==0,"zero-prefix scatter differs from the unfiltered same-input oracle");
+  std::cout<<"zero_prefix n="<<n<<" na="<<na<<" nb="<<nb<<" pairs="<<pairs
+      <<" candidates="<<candidates<<" retained="<<retained
+      <<" max_channel_error="<<max_error<<'\n';
+}
+
 void check_path_ranks() {
   using Paths=xmvb::mcscf::ProductPaths;
   const auto low=(std::uint64_t{1}<<31)-1;
@@ -3994,7 +4067,10 @@ int main(int argc, char** argv) {
       throw std::runtime_error("wide spin-product source index was truncated");
   }
   try {
-    if (argc == 2 && std::string(argv[1]) == "--channel-layout") {
+    if (argc==3 && std::string(argv[1])=="--zero-prefix-scatter") {
+      const int n=std::stoi(argv[2]);
+      check_zero_prefix_sources(n,n/2,n/2);
+    } else if (argc == 2 && std::string(argv[1]) == "--channel-layout") {
       check_spin_strings();
       check_path_ranks();
       check_full_channel_image_layout();
@@ -4125,6 +4201,9 @@ int main(int argc, char** argv) {
       check_spin_strings();
       check_path_ranks();
       check_full_channel_image_layout();
+      check_zero_prefix_sources(4,2,2);
+      check_zero_prefix_sources(5,3,2);
+      check_zero_prefix_sources(8,4,4);
       check_sparse_beta_gather();
       check_packed_sigma_tile_plan();
       check_prefix_words();

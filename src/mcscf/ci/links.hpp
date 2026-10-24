@@ -95,6 +95,31 @@ struct SpinConnections {
     }
   }
 
+  /** @brief Supported sources of a depth-zero covalent target, in link order.
+   * A downward replacement stays supported. An upward replacement cannot
+   * cross a zero-surplus prefix: in each high-orbital link block only a suffix
+   * survives. Existing source addresses and phases are borrowed unchanged.
+   */
+  template<class Function>
+  void visit_supported_sources(int string,std::uint64_t zero,Function&& consume) const {
+    const auto occupied=basis.masks()[string];
+    const auto row=singles(string);
+    const auto internal=zero&((std::uint64_t{1}<<(orbitals-1))-1);
+    if (!internal) {
+      for (int link=0;link<row.size();++link) consume(link,row[link].pair);
+      return;
+    }
+    const auto* offsets=orbital_offsets.data()+static_cast<std::size_t>(string)*(orbitals+1);
+    int excluded=0;
+    for (int high=0;high<orbitals;++high) {
+      const int begin=offsets[high]+((occupied&(std::uint64_t{1}<<high)) ? 0:excluded);
+      for (int link=begin;link<offsets[high+1];++link) consume(link,row[link].pair);
+      // The excluded prefix count is constant until the next zero barrier.
+      if (internal&(std::uint64_t{1}<<high))
+        excluded=std::popcount(occupied&((std::uint64_t{1}<<(high+1))-1));
+    }
+  }
+
   std::size_t dynamic_bytes() const noexcept {
     return links.capacity()*sizeof(SpinLink)+basis.dynamic_bytes()+
         orbital_offsets.capacity()*sizeof(std::uint16_t);
