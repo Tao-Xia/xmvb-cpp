@@ -19,8 +19,6 @@ struct SigmaTileBudget {
   int max_groups=0;
   /** Tile-local channel addresses for a source-supported image. */
   bool projected_image=false;
-  /** Current-tile row-threshold bitplanes; zero when not consumed. */
-  int mask_orbitals=0;
 };
 
 /** Exact target boundary for the same support, links and source layout.

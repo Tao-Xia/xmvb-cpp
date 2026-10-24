@@ -4,20 +4,18 @@
 #include <span>
 
 #include "mcscf/ci/channel_product.hpp"
-#include "mcscf/ci/sigma_masks.hpp"
 
 namespace xmvb::mcscf::detail {
 
 /** @brief One tile-local target with its composed grouped-image address.
- * An RHS advances by stride image rows. All temporal responses share this
- * symbolic address; no channel values or excitation-edge arrays are cached.
+ * RHS increments live once in the selector layout. All responses share this
+ * composed size_t address; no channel values or excitation-edge arrays are cached.
  */
 struct SigmaGatherRow {
-  int alpha;
+  int alpha,channel_group=0;
   std::size_t image;
-  int stride,channel_group=0;
-  std::size_t address(int rhs,int channel,std::size_t channel_stride) const noexcept {
-    return image+static_cast<std::size_t>(rhs)*stride+
+  std::size_t address(int rhs,int channel,int rhs_stride,std::size_t channel_stride) const noexcept {
+    return image+static_cast<std::size_t>(rhs)*rhs_stride+
         static_cast<std::size_t>(channel)*channel_stride;
   }
 };
@@ -25,10 +23,10 @@ struct SigmaGatherRow {
 /** @brief Borrowed numerical image and its exact symbolic addressing. */
 struct SigmaGatherImage {
   const double* values;
+  const int* rhs_strides;
   int element_stride=1;
   const ChannelSelectors* projected=nullptr;
-  const SigmaRowMasks* masks=nullptr;
-  int pair=0,row_offset=0,low=0,high=0,width=1;
+  int pair=0,width=1;
   bool raises_source=true;
 
   int channel(const SigmaGatherRow& row) const noexcept {
@@ -37,14 +35,15 @@ struct SigmaGatherImage {
     return projected->local(row.channel_group,pair);
   }
   double load(const SigmaGatherRow& row,int rhs,int channel) const noexcept {
-    return values[projected ? row.address(rhs,channel,static_cast<std::size_t>(width)*row.stride):
-        row.address(rhs,0,0)*element_stride];
+    const int stride=rhs_strides[row.channel_group];
+    return values[projected ? row.address(rhs,channel,stride,static_cast<std::size_t>(width)*stride):
+        row.address(rhs,0,stride,0)*element_stride];
   }
 };
 
 /** @brief Contract one beta edge over existing target rows only.
- * Exact word masks skip impossible rows while retaining alpha order and one
- * monotone destination merge. The caller owns a disjoint destination range.
+ * Join the sparse destination before decoding channels or loading coefficients.
+ * The alpha order permits one monotone merge.
  */
 inline void gather_beta_rows(const SigmaGatherImage& image,int rhs,double sign,
     std::span<const SigmaGatherRow> targets,int first,int last,
@@ -56,18 +55,17 @@ inline void gather_beta_rows(const SigmaGatherImage& image,int rhs,double sign,
   int output=0;
   if (rows) output=std::lower_bound(rows,rows+n_rows,target->alpha)-rows;
   const auto consume=[&](const SigmaGatherRow& row) {
+    // The sparse output join is cheaper than decoding a channel address.
+    // Every skipped output row has exactly zero contribution to the consumer.
+    if (rows) {
+      while (output<n_rows && rows[output]<row.alpha) ++output;
+      if (output==n_rows || rows[output]!=row.alpha) return;
+    }
     const int channel=image.channel(row);
-    if (channel<0) return;
-    if (!rows) { destination[row.alpha]+=sign*image.load(row,rhs,channel);return; }
-    while (output<n_rows && rows[output]<row.alpha) ++output;
-    if (output<n_rows && rows[output]==row.alpha)
-      destination[output]+=sign*image.load(row,rhs,channel);
+    if (channel>=0)
+      destination[rows ? output:row.alpha]+=sign*image.load(row,rhs,channel);
   };
-  if (image.masks) {
-    image.masks->visit(image.row_offset+static_cast<int>(target-targets.begin()),
-        image.row_offset+static_cast<int>(end-targets.begin()),image.low,image.high,image.raises_source,
-        [&](int index) { consume(targets[index-image.row_offset]); });
-  } else for (;target!=end;++target) consume(*target);
+  for (;target!=end;++target) consume(*target);
 }
 
 } // namespace xmvb::mcscf::detail

@@ -157,15 +157,8 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
   // exposes alpha-row parallelism and the same fused contractions.
   const int panel_columns=static_cast<int>(std::min<std::size_t>(n_beta_,
       static_cast<std::size_t>(cooperative_openmp_thread_count())*(64/sizeof(double))));
-  // Round-up of the last bitmap word is a fixed per-action metadata charge.
-  const std::size_t mask_padding=projected_image ? 2*n_orbitals_*sizeof(std::uint64_t):0;
-  if (mask_padding>=workspace_bytes)
-    throw std::length_error("CI workspace cannot hold channel row masks");
-  workspace_bytes-=mask_padding;
-  detail::SigmaRowMasks row_masks;
   detail::SigmaTilePlan plan(*alpha_,beta_graph,support,exchange_parity,
-      {width,pairs,slab_factor,workspace_bytes,packed_slabs,1,panel_columns,projected_image,
-       projected_image ? n_orbitals_:0},
+      {width,pairs,slab_factor,workspace_bytes,packed_slabs,1,panel_columns,projected_image},
       static_cast<bool>(release));
   auto& groups=plan.groups;
   auto& active=plan.active;
@@ -264,7 +257,7 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
               source_columns += n_columns;
               source_elements += panel_size;
               peak_payload=std::max(peak_payload,plan.payload_bytes()+
-                  (restricted_channels ? kernel_bytes:0)+mask_padding);
+                  (restricted_channels ? kernel_bytes:0));
 
               profiling::ScopedPhase indices_phase(profiling::Phase::CiTileIndices);
               same_group.assign(n_columns, -1);
@@ -280,7 +273,7 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
                 for (int i = groups[g].begin; i < groups[g].end; ++i) {
                   const int channel_group=channel_groups.empty() ? 0:channel_groups[i];
                   const auto image=channel_layout.output_index(channel_layout.image(i),channel_group,0);
-                  target_rows[i]={active[i],image,channel_layout.size(channel_group)/width,channel_group};
+                  target_rows[i]={.alpha=active[i],.channel_group=channel_group,.image=image};
                 }
                 // The column generator already supplies the targets. Compose
                 // their image addresses once instead of scanning the whole
@@ -294,7 +287,6 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
                 for (int i=groups[g].begin;i<groups[g].end;++i)
                   image_index[static_cast<std::size_t>(g)*n_halo+halo_index[target_rows[i].alpha]]=i;
               });
-              if (projected_image) row_masks.reset(n_orbitals_,target_rows,index_workers);
               indices_phase.stop();
               profiling::ScopedPhase links_phase(profiling::Phase::CiTileLinks);
               for (const auto& group:groups)
@@ -488,8 +480,9 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
               const auto value=[&](int row,int rhs,int pair) {
                 const auto& target=target_rows[row];
                 const int channel=projected_image ? channel_product.local(target.channel_group,pair):pair;
-                return channel<0 ? 0.0:channel_values[target.address(rhs,channel,
-                    projected_image ? static_cast<std::size_t>(width)*target.stride:image_rows)];
+                const int stride=channel_layout.rhs_stride(target.channel_group);
+                return channel<0 ? 0.0:channel_values[target.address(rhs,channel,stride,
+                    projected_image ? static_cast<std::size_t>(width)*stride:image_rows)];
               };
               const DirectCiColumnAccumulator accumulate = [&,channel_values](int source, int v,
                 int first,int last,double* destination,const int* rows,int n_rows) {
@@ -537,10 +530,9 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
                 const auto& group=groups[link.group];
                 const detail::SigmaGatherImage image{
                   .values=projected_image ? channel_values:channel_values+static_cast<std::size_t>(link.pair)*image_rows,
+                  .rhs_strides=channel_layout.rhs_strides(),
                   .projected=projected_image ? &channel_product:nullptr,
-                  .masks=projected_image ? &row_masks:nullptr,
-                  .pair=link.pair,.row_offset=group.begin,
-                  .low=std::min(link.created,link.annihilated),.high=std::max(link.created,link.annihilated),.width=width,
+                  .pair=link.pair,.width=width,
                   .raises_source=link.created>link.annihilated};
                 detail::gather_beta_rows(image,v,link.sign,
                     {target_rows.data()+group.begin,static_cast<std::size_t>(group.end-group.begin)},

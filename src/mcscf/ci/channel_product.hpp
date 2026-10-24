@@ -73,7 +73,7 @@ public:
  * copied to rearrange rows. Unrestricted tiles use implicit identity maps.
  */
 class ChannelLayout {
-  std::vector<int> offsets_,image_rows_,channels_;
+  std::vector<int> offsets_,image_rows_,channels_,rhs_strides_;
   std::vector<std::size_t> packed_offsets_;
   bool identity_=true,packed_images_=false;
   int pairs_=0,rows_=0;
@@ -83,13 +83,14 @@ public:
     pairs_=basis.channels(0);rows_=count*width;packed_images_=packed_images;
     offsets_.assign(basis.groups()+1,0);
     packed_offsets_.assign(basis.groups()+1,0);
-    channels_.resize(basis.groups());
+    channels_.resize(basis.groups());rhs_strides_.resize(basis.groups());
     identity_=groups.empty() || std::all_of(groups.begin(),groups.end(),[](int g) { return g==0; });
     if (identity_) offsets_[1]=count*width;
     else for (const int group:groups) offsets_[group+1]+=width;
     for (int group=0;group<basis.groups();++group) {
       offsets_[group+1]+=offsets_[group];
       channels_[group]=basis.channels(group);
+      rhs_strides_[group]=(offsets_[group+1]-offsets_[group])/width;
       packed_offsets_[group+1]=packed_offsets_[group]+
           static_cast<std::size_t>(offsets_[group+1]-offsets_[group])*channels_[group];
     }
@@ -139,6 +140,8 @@ public:
         static_cast<std::size_t>(channel)*output_stride(group);
   }
 
+  const int* rhs_strides() const noexcept { return rhs_strides_.data(); }
+  int rhs_stride(int group) const noexcept { return rhs_strides_[group]; }
   int begin(int group) const noexcept { return offsets_[group]; }
   int size(int group) const noexcept { return offsets_[group+1]-offsets_[group]; }
   std::size_t offset(int group) const noexcept { return packed_offsets_[group]; }
