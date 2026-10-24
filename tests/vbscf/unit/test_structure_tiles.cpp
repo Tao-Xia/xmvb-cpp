@@ -2527,6 +2527,27 @@ void check_supported_sigma(int n, int n_alpha, int n_beta_electrons, int width,
   auto expected = sigma.apply(carrier);
   require((actual - expected).norm() <= 2e-11 * std::max(1.0, expected.norm()),
           "generated closure sigma differs from full sigma, including outside-S outputs");
+  std::vector<std::vector<int>> selected_rows(nb);
+  for (int b=0;b<nb;++b) support.append_column_rows(b,selected_rows[b]);
+  const auto supported_writer=[&](Eigen::MatrixXd& destination)->xmvb::mcscf::DirectCiTileWriter {
+    return [&,target=&destination](const auto& betas,const auto& rows,const auto& accumulate) {
+      for (int b=0;b<static_cast<int>(betas.size());++b) {
+        const auto& selected=selected_rows[betas[b]];
+        if (selected.empty()) continue;
+        for (int v=0;v<width;++v) {
+          Eigen::VectorXd values=Eigen::VectorXd::Zero(selected.size());
+          accumulate(b,v,0,rows.size(),values.data(),selected.data(),selected.size());
+          for (int a=0;a<static_cast<int>(selected.size());++a)
+            (*target)(selected[a],v*nb+betas[b])+=values[a];
+        }
+      }
+    };
+  };
+  actual.setZero();
+  sigma.apply_tiled(width,read,supported_writer(actual),&support,0,{},4*1024*1024,true);
+  for (int b=0;b<nb;++b) for (int a=0;a<na;++a) for (int v=0;v<width;++v)
+    require(std::abs(actual(a,v*nb+b)-(support.contains(a,b) ? expected(a,v*nb+b):0.0))<
+        2e-11*std::max(1.0,expected.norm()),"two-sided channel restriction changed P H P");
   if (n==4 && n_alpha==2 && n_beta_electrons==2) {
     actual.setZero();
     sigma.apply_tiled(width,read,add,&support,0,{},2048);
@@ -2613,6 +2634,16 @@ void check_supported_sigma(int n, int n_alpha, int n_beta_electrons, int width,
                     quotient.col(v * nb + betas[j]).data(), nullptr, 0);
           };
       sigma.apply_tiled(width, parity_read, parity_add, &support, parity);
+      actual.setZero();
+      sigma.apply_tiled(width,parity_read,supported_writer(actual),&support,parity,{},4*1024*1024,true);
+      for (int v=0;v<width;++v) {
+        const Eigen::MatrixXd block=actual.middleCols(v*nb,nb);
+        actual.middleCols(v*nb,nb)=0.5*(block+parity*block.transpose());
+      }
+      const Eigen::MatrixXd full_parity=sigma.apply(parity_carrier);
+      for (int b=0;b<nb;++b) for (int a=0;a<na;++a) for (int v=0;v<width;++v)
+        require(std::abs(actual(a,v*nb+b)-(support.contains(a,b) ? full_parity(a,v*nb+b):0.0))<
+            3e-11*std::max(1.0,full_parity.norm()),"projected channel image lost exchange parity");
       for (int v = 0; v < width; ++v) {
         const Eigen::MatrixXd block = quotient.middleCols(v * nb, nb);
         quotient.middleCols(v * nb, nb) = 0.5 * (block + parity * block.transpose());

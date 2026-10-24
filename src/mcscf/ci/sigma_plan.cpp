@@ -22,7 +22,7 @@ SigmaTilePlan::SigmaTilePlan(const SpinConnections& alpha,const SpinConnections&
     throw std::invalid_argument("packed sigma channels require a certified support");
   const auto width=static_cast<Bytes>(budget.width);
   column_bytes_=sizeof(double)*width*budget.halo_slabs;
-  group_bytes_=sizeof(int)*width;
+  group_bytes_=sizeof(int)*width*(1+static_cast<int>(budget.projected_image));
   entry_bytes_=sizeof(double)*width*budget.packed_slabs;
   row_bytes_=sizeof(SigmaGatherRow)+sizeof(double)*width*
       (budget.slabs-budget.packed_slabs)*budget.pairs;

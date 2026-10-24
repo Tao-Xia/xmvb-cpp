@@ -208,6 +208,9 @@ public:
    * transpose parity in identical spin-string spaces. The intermediate
    * output is then a projected-action representative, NOT the full H image.
    */
+  /** source_projected_image declares that the final bra is also supported on
+   * `support`. Only then may both sides of the channel kernel be restricted.
+   * This is a bilinear-form contract, not an amplitude approximation. */
   void apply_tiled(
       int block_width,
       const DirectCiTileReader& read_columns,
@@ -215,7 +218,8 @@ public:
       const ProductSupport* support = nullptr,
       int exchange_parity = 0,
       const DirectCiColumnRelease& release = {},
-      std::size_t workspace_bytes = 64ULL*1024*1024) const;
+      std::size_t workspace_bytes = 64ULL*1024*1024,
+      bool source_projected_image = false) const;
 
   /** @brief Stream H*response and the integral adjoint of <response,H*state>.
    * Uses the same generated channel sweep and bounded numerical slabs as
@@ -410,7 +414,8 @@ private:
       std::span<const DirectCiTileRequest> requests,const DirectCiTileReader& state,
       bool collect_integrals,const ProductSupport* support,int exchange_parity,
       const DirectCiColumnRelease& release = {},
-      std::size_t workspace_bytes = 64ULL*1024*1024) const;
+      std::size_t workspace_bytes = 64ULL*1024*1024,
+      bool source_projected_image=false) const;
 
   /** @brief Cooperative sigma contraction inside the current OpenMP team.
    * Each output beta column has one owner. All workers must call this method.

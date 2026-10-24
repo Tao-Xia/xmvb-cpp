@@ -13,7 +13,7 @@ using ChannelRows=Eigen::Matrix<double,Eigen::Dynamic,Eigen::Dynamic,Eigen::RowM
 
 /** @brief Shared exact source-channel selectors and corresponding K columns.
  * Group zero is unrestricted. Group 1+first*n+last permits packed pairs
- * (p,q) with p<=first<=last<q. Output channels are never restricted here.
+ * (p,q) with p<=first<=last<q.
  */
 class ChannelSelectors {
   struct Block { std::vector<int> columns,inverse; };
@@ -40,18 +40,23 @@ public:
   int global(int group,int channel) const noexcept { return group ? blocks_[group].columns[channel]:channel; }
 };
 
-/** @brief Host numerical panels on the shared symbolic channel selectors. */
+/** @brief K[:,J] or K[J,J] for unrestricted or source-supported left images. */
 class ChannelProduct : public ChannelSelectors {
   const Eigen::MatrixXd& kernel_;
   workspace::Temporary temporary_;
   std::vector<Eigen::MatrixXd> kernels_;
 public:
-  ChannelProduct(const Eigen::MatrixXd& kernel,int orbitals,bool restricted)
+  ChannelProduct(const Eigen::MatrixXd& kernel,int orbitals,bool restricted,
+      bool projected_image=false)
       :ChannelSelectors(kernel.rows(),orbitals,restricted),kernel_(kernel),kernels_(groups()) {
     for (int group=1;group<groups();++group) {
       auto& panel=kernels_[group];
-      panel.resize(kernel.rows(),channels(group));
-      for (int k=0;k<channels(group);++k) panel.col(k)=kernel.col(global(group,k));
+      panel.resize(projected_image ? channels(group):kernel.rows(),channels(group));
+      for (int k=0;k<channels(group);++k) {
+        if (projected_image) for (int j=0;j<channels(group);++j)
+          panel(j,k)=kernel(global(group,j),global(group,k));
+        else panel.col(k)=kernel.col(global(group,k));
+      }
     }
     std::size_t bytes=0;
     for (const auto& panel:kernels_) bytes+=sizeof(double)*panel.size();
@@ -138,7 +143,6 @@ public:
 inline void multiply_channels(const ChannelProduct& basis,const ChannelLayout& layout,
     const double* source,double* destination,int thread,int team,bool add,
     std::span<const int> diagonal_rows,int count,int width,bool exchange) {
-  const int pairs=basis.channels(0);
   const double scale=exchange ? 2.0:1.0;
   for (int group=0;group<basis.groups();++group) {
     const int size=layout.size(group),first=size*thread/team,last=size*(thread+1)/team;
@@ -149,7 +153,7 @@ inline void multiply_channels(const ChannelProduct& basis,const ChannelLayout& l
     // The full image is column-major with leading dimension count*width.
     // A fixed output channel is then contiguous across all image rows.
     Eigen::Map<Eigen::MatrixXd,0,Eigen::OuterStride<>> output(
-        destination+layout.begin(group)+first,last-first,pairs,
+        destination+layout.begin(group)+first,last-first,basis.kernel(group).rows(),
         Eigen::OuterStride<>(count*width));
     if (add) output.noalias()+=scale*input*basis.kernel(group).transpose();
     else output.noalias()=scale*input*basis.kernel(group).transpose();

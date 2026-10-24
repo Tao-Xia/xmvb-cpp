@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <initializer_list>
 #include <memory>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -217,5 +218,25 @@ inline ColumnTile pack_columns(std::initializer_list<const Eigen::MatrixXd*> pan
 
 /** @brief Bounded compact panels; eviction consumes partial images linearly. */
 using ColumnPanels=mcscf::ColumnCache<ColumnTile>;
+
+/** @brief Unpack independent image lanes onto one shared beta/support panel.
+ * Each consecutive group of beta_count pointers contributes its RHS lanes.
+ * Only the bounded current panel is dense; numerical owners are borrowed.
+ */
+inline Eigen::MatrixXd unpack_columns(int n_alpha,int beta_count,
+    std::span<const ColumnTile* const> panels) {
+  const int width=panels.front()->values.cols();
+  Eigen::MatrixXd result=Eigen::MatrixXd::Zero(n_alpha,width*panels.size());
+  cooperative_openmp_for(width*panels.size(),cooperative_openmp_thread_count(),
+      [&](std::ptrdiff_t packed) {
+    const int block=packed/(beta_count*width);
+    const int v=(packed/beta_count)%width,b=packed%beta_count;
+    const auto& tile=*panels[block*beta_count+b];
+    if (tile.pattern->full) result.col(packed)=tile.values.col(v);
+    else for (int a=0;a<tile.values.rows();++a)
+      result(tile.pattern->rows[a],packed)=tile.values(a,v);
+  });
+  return result;
+}
 
 } // namespace xmvb::vb::detail

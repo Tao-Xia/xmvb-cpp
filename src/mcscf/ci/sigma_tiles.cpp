@@ -27,10 +27,12 @@ void DirectCiSigmaAction::apply_tiled(
     int width,
     const DirectCiTileReader& read_columns, const DirectCiTileWriter& add_columns,
     const ProductSupport* support, int exchange_parity,
-    const DirectCiColumnRelease& release,std::size_t workspace_bytes) const {
+    const DirectCiColumnRelease& release,std::size_t workspace_bytes,
+    bool source_projected_image) const {
   profiling::ScopedPhase phase(profiling::Phase::CiSigma);
   const DirectCiTileRequest request{read_columns,add_columns};
-  contract_tiled(width,{&request,1},{},false,support,exchange_parity,release,workspace_bytes);
+  contract_tiled(width,{&request,1},{},false,support,exchange_parity,release,workspace_bytes,
+      source_projected_image);
 }
 
 DirectCiIntegralAdjoint DirectCiSigmaAction::apply_tiled_with_adjoint(
@@ -66,7 +68,8 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::apply_tiled_responses(
 std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
     int width,std::span<const DirectCiTileRequest> requests,const DirectCiTileReader& state,
     bool collect_integrals,const ProductSupport* support,int exchange_parity,
-    const DirectCiColumnRelease& release,std::size_t workspace_bytes) const {
+    const DirectCiColumnRelease& release,std::size_t workspace_bytes,
+    bool source_projected_image) const {
   if (width<=0 || requests.empty() || (requests.size()>1 && !state))
     throw std::invalid_argument("invalid tiled direct-CI width or response sequence");
   if (exchange_parity < -1 || exchange_parity > 1 ||
@@ -102,7 +105,16 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
   const std::size_t envelopes=n*(n-1)*(n+1)*(n+2)/24;
   const auto directions=std::count_if(requests.begin(),requests.end(),
       [](const auto& request) { return request.direction!=nullptr; });
-  const std::size_t kernel_bytes=(sizeof(double)*pairs*envelopes+
+  std::size_t kernel_entries=pairs*envelopes;
+  if (source_projected_image) {
+    kernel_entries=0;
+    for (int first=0;first<n_orbitals_;++first)
+      for (int last=first;last<n_orbitals_-1;++last) {
+        const auto k=static_cast<std::size_t>((first+1)*(n_orbitals_-1-last));
+        kernel_entries+=k*k;
+      }
+  }
+  const std::size_t kernel_bytes=(sizeof(double)*kernel_entries+
       sizeof(int)*(envelopes+pairs*n*(n-1)/2))*(1+directions);
   // Packing is optional arithmetic scheduling, not a change of CI space.
   // Charge shared immutable kernel panels to this action's existing budget.
@@ -110,7 +122,9 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
       kernel_bytes<=workspace_bytes/8;
   if (restricted_channels) workspace_bytes-=kernel_bytes;
   ChannelWorkspace::limit_action(workspace_bytes);
-  const detail::ChannelProduct channel_product(hamiltonian_pair_kernel_,n_orbitals_,restricted_channels);
+  const bool projected_image=source_projected_image && restricted_channels;
+  const detail::ChannelProduct channel_product(hamiltonian_pair_kernel_,n_orbitals_,restricted_channels,
+      projected_image);
   std::vector<detail::ChannelProduct> directional_products;
   directional_products.reserve(requests.size());
   for (const auto& request:requests)
@@ -143,7 +157,7 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
   const int panel_columns=static_cast<int>(std::min<std::size_t>(n_beta_,
       static_cast<std::size_t>(cooperative_openmp_thread_count())*(64/sizeof(double))));
   detail::SigmaTilePlan plan(*alpha_,beta_graph,support,exchange_parity,
-      {width,pairs,slab_factor,workspace_bytes,packed_slabs,1,panel_columns},
+      {width,pairs,slab_factor,workspace_bytes,packed_slabs,1,panel_columns,projected_image},
       static_cast<bool>(release));
   auto& groups=plan.groups;
   auto& active=plan.active;
@@ -155,7 +169,7 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
   auto& active_support=plan.active_support;
   auto& released_columns=plan.released;
   const auto& diagonal_rows=plan.diagonal_rows;
-  std::vector<int> same_group,offsets,positions,image_index;
+  std::vector<int> same_group,offsets,positions,image_index,image_groups;
   std::vector<detail::SigmaGatherRow> target_rows;
   const auto& channel_groups=plan.channel_groups;
   detail::ChannelLayout channel_layout;
@@ -179,6 +193,7 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
   std::size_t batches = 0, source_columns = 0, source_elements = 0, peak_payload = 0;
   std::size_t targets = 0, unsupported_targets = 0, identity_halo_targets=0,beta_map_bytes=0;
   std::size_t source_channels=0;
+  long double projected_products=0,full_products=0;
   Clock::time_point compute_start, prepare_start, gram_start;
 #pragma omp parallel if(workers > 1) num_threads(workers)
   {
@@ -206,6 +221,12 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
               }
               packed_size=channel_layout.entries();
               source_channels+=packed_size/width;
+              if (timing) for (int group=0;group<channel_product.groups();++group) {
+                const long double entries=static_cast<long double>(channel_layout.size(group))*
+                    channel_product.channels(group);
+                full_products+=entries*pairs;
+                projected_products+=entries*channel_product.kernel(group).rows();
+              }
               n_halo = halo.size();
               n_columns = columns.size();
               panel_size = static_cast<std::size_t>(n_halo) * n_columns * width;
@@ -240,6 +261,7 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
               profiling::ScopedPhase indices_phase(profiling::Phase::CiTileIndices);
               same_group.assign(n_columns, -1);
               image_index.assign(static_cast<std::size_t>(n_halo)*groups.size()*width,-1);
+              if (projected_image) image_groups.resize(image_index.size());
               target_rows.resize(count);
               offsets.assign(n_columns + 1, 0);
               // Each beta group owns a disjoint target interval and image-map
@@ -251,13 +273,17 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
                 for (int i = groups[g].begin; i < groups[g].end; ++i) {
                   const int image=channel_layout.image(i);
                   const int stride=width>1 ? channel_layout.image(count+i)-image:0;
-                  target_rows[i]={active[i],image,stride};
+                  const int channel_group=channel_groups.empty() ? 0:channel_groups[i];
+                  target_rows[i]={active[i],image,stride,channel_group};
                   // Compose E_alpha^T's row map before traversing its links.
                   // The same physical image serves every temporal response;
                   // RHS maps are shared, not copied into worker workspaces.
                   const int h=halo_index[active[i]];
-                  for (int v=0;v<width;++v)
-                    image_index[(static_cast<std::size_t>(v)*groups.size()+g)*n_halo+h]=image+v*stride;
+                  for (int v=0;v<width;++v) {
+                    const auto at=(static_cast<std::size_t>(v)*groups.size()+g)*n_halo+h;
+                    image_index[at]=image+v*stride;
+                    if (projected_image) image_groups[at]=channel_group;
+                  }
                 }
                 // The column generator already supplies the targets. Compose
                 // their image addresses once instead of scanning the whole
@@ -452,6 +478,10 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
             const auto write_image = [&](const DirectCiTileWriter& writer,
                                          const double* channel_values) {
               const std::size_t image_rows=static_cast<std::size_t>(count)*width;
+              const auto value=[&](int row,int channel_group,int pair) {
+                const int channel=projected_image ? channel_product.local(channel_group,pair):pair;
+                return channel<0 ? 0.0:channel_values[row+static_cast<std::size_t>(channel)*image_rows];
+              };
               const DirectCiColumnAccumulator accumulate = [&,channel_values](int source, int v,
                 int first,int last,double* destination,const int* rows,int n_rows) {
               if (first==last) return;
@@ -465,6 +495,8 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
               if (same >= 0) {
                 const int* index=image_index.data()+
                     (static_cast<std::size_t>(v)*groups.size()+same)*n_halo;
+                const int* image_group=projected_image ? image_groups.data()+
+                    (static_cast<std::size_t>(v)*groups.size()+same)*n_halo:nullptr;
                 const auto beta_occupied=beta_graph.occupied(columns[source]);
                 for (int i=begin;i<end;++i) {
                   const int a=rows ? rows[i]:halo[i];
@@ -474,20 +506,19 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
                   if (index[local] >= 0) {
                     const int row=index[local];
                     for (const int p : alpha_->occupied(a))
-                      sum += channel_values[row+static_cast<std::size_t>(
-                          core::PairIndex::packed_pair_index(p, p))*image_rows];
+                      sum += value(row,image_group ? image_group[local]:0,
+                          core::PairIndex::packed_pair_index(p,p));
                     for (const int p : beta_occupied)
-                      sum += channel_values[row+static_cast<std::size_t>(
-                          core::PairIndex::packed_pair_index(p, p))*image_rows];
+                      sum += value(row,image_group ? image_group[local]:0,
+                          core::PairIndex::packed_pair_index(p,p));
                   }
                   const auto& links = alpha_->singles(a);
                   for (int link = 0; link < static_cast<int>(links.size()); ++link) {
                     const int h = identity_halo ? links[link].source:halo_index[links[link].source];
                     const int target = h < 0 ? -1 : index[h];
                     if (target >= 0)
-                      sum += links[link].sign *
-                          channel_values[target+static_cast<std::size_t>(
-                              links[link].pair)*image_rows];
+                      sum += links[link].sign * value(target,image_group ? image_group[h]:0,
+                          links[link].pair);
                   }
                   destination[rows ? i:a] += sum;
                 }
@@ -496,12 +527,13 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
               // the entire alpha range. Do not rediscover them for every pixel.
               for (int edge = offsets[source]; edge < offsets[source + 1]; ++edge) {
                 const auto& link = incoming[edge];
-                const double* values = channel_values +
+                const double* values = projected_image ? channel_values:channel_values +
                     static_cast<std::size_t>(link.pair)*image_rows;
                 const auto& group=groups[link.group];
                 detail::gather_beta_rows(values,1,v,link.sign,
                     {target_rows.data()+group.begin,static_cast<std::size_t>(group.end-group.begin)},
-                    halo[first],halo[last-1]+1,destination,rows,n_rows);
+                    halo[first],halo[last-1]+1,destination,rows,n_rows,
+                    projected_image ? &channel_product:nullptr,link.pair,image_rows);
               }
             };
               writer(columns, halo, accumulate);
@@ -537,7 +569,8 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
         "identity_halo_targets=%zu,beta_map_bytes=%zu,gram_partitions=%d,"
         "gram_extent=%d,gram_scratch_bytes=%zu,workspace_reused=%d,"
         "workspace_allocations=%zu,workspace_bytes=%zu,"
-        "restricted_channels=%d,source_channels=%zu,channel_kernel_bytes=%zu\n",
+        "restricted_channels=%d,source_channels=%zu,channel_kernel_bytes=%zu,"
+        "projected_image=%d,channel_products=%.0Lf,unrestricted_channel_products=%.0Lf\n",
         batches, source_columns, source_elements, peak_payload,
         prepare_time, read_time, compute_time, write_time, targets, exchange_parity,
         unsupported_targets * static_cast<std::size_t>(width) *
@@ -545,7 +578,8 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
         gram_time,gram_tiles,identity_halo_targets,beta_map_bytes,
         gram_partitions,gram_extent,gram_scratch_bytes,
         static_cast<int>(workspace.reused()),workspace.allocations(),workspace.bytes(),
-        static_cast<int>(restricted_channels),source_channels,restricted_channels ? kernel_bytes:0);
+        static_cast<int>(restricted_channels),source_channels,restricted_channels ? kernel_bytes:0,
+        static_cast<int>(projected_image),projected_products,full_products);
   std::vector<DirectCiIntegralAdjoint> results(requests.size());
   if (collect_integrals) for (std::size_t r=0;r<requests.size();++r)
     results[r]=pullback_channel_kernel(kernel_adjoints[r]);

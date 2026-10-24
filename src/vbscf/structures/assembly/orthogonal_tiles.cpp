@@ -77,6 +77,7 @@ StructureResponseSweep StructureAction::contract_product_tiles(
       profiling::Phase::CiTransformRight,profiling::Phase::CiProductGenerate,
       profiling::Phase::CiProductProjection,profiling::Phase::CiProductPattern};
   std::array<unsigned long long,measured.size()> phase_begin{};
+  std::size_t fused_hs_panels=0;
   if (phases.enabled) for (std::size_t i=0;i<measured.size();++i)
     phase_begin[i]=phases.nanoseconds[static_cast<std::size_t>(measured[i])].load(std::memory_order_relaxed);
   StructureResponseSweep sweep{{Eigen::MatrixXd::Zero(collect_images ? n_structures_:0,vectors.cols()),
@@ -159,6 +160,14 @@ StructureResponseSweep StructureAction::contract_product_tiles(
     ++result.tiles.expansions;
     const int width = std::min<int>(batch_width, vectors.cols() - vector_begin);
     const bool ordered=ordered_beta && resident_rhs>=static_cast<std::size_t>(width);
+    // Fusion changes only consumption order. Require enough existing cache
+    // capacity for every exact input/output column, including sparse indices.
+    // No cache is enlarged and no physical-space admission depends on this.
+    const long double column_bound=sizeof(double)*static_cast<long double>(n_unique_alpha_)*width+
+        2*sizeof(int)+(support ? sizeof(int)*static_cast<long double>(n_unique_alpha_)+
+        (sizeof(std::uint64_t)+sizeof(int))*((static_cast<std::size_t>(n_unique_alpha_)+63)/64):0);
+    const bool fuse_overlap=!ordered && !overlap_only && collect_overlap &&
+        column_bound*n_unique_beta_<=cache_bytes;
     // Replace the input/output LRU payloads within the same workspace quarters.
     // Zero-scattering a selected raw support does not assume CAS completeness.
     Eigen::MatrixXd input_image,h_image;
@@ -189,7 +198,8 @@ StructureResponseSweep StructureAction::contract_product_tiles(
     workspace::Temporary h_products_temporary(sizeof(double)*h_products.size());
     workspace::Temporary m_products_temporary(sizeof(double)*m_products.size());
     const auto project_pattern = [&](const ColumnPattern& pattern, const Eigen::SparseMatrix<double>& rows,
-                             Eigen::MatrixXd& image, Eigen::MatrixXd& target) {
+                             Eigen::MatrixXd& image, Eigen::MatrixXd& target,
+                             Eigen::MatrixXd* second=nullptr) {
       profiling::ScopedPhase phase(profiling::Phase::CiProductProjection);
       // C^T (T_alpha^T image T_beta): only touched original spin products
       // are sampled. This is exact for any selected structure subspace.
@@ -203,9 +213,13 @@ StructureResponseSweep StructureAction::contract_product_tiles(
         const int beta = spin_products_[group] % n_unique_beta_;
         for (int vector = 0; vector < width; ++vector) {
           double sum=0.0;
-          for (Eigen::SparseMatrix<double>::InnerIterator entry(rows,beta);entry;++entry)
+          double other=0.0;
+          for (Eigen::SparseMatrix<double>::InnerIterator entry(rows,beta);entry;++entry) {
             sum+=image(alpha,vector*rows.rows()+entry.row())*entry.value();
+            if (second) other+=image(alpha,(width+vector)*rows.rows()+entry.row())*entry.value();
+          }
           target(group,vector)+=sum;
+          if (second) (*second)(group,vector)+=other;
         }
       });
     };
@@ -250,6 +264,7 @@ StructureResponseSweep StructureAction::contract_product_tiles(
     };
 
     std::vector<bool> overlap_consumed(n_unique_beta_, !collect_overlap);
+    std::vector<bool> input_retired(n_unique_beta_,false);
     std::size_t factor_entries=0,factor_slots=0;
     const auto sample_factors=[&](std::span<const int> betas) {
       // Exact zero only: no amplitude threshold and no selected-space closure.
@@ -302,7 +317,7 @@ StructureResponseSweep StructureAction::contract_product_tiles(
       // panel can become T_alpha^T Y in place; no overlap clone is needed.
       const bool need_overlap=std::any_of(betas.begin(),betas.end(),
           [&](int beta) { return !overlap_consumed[beta]; });
-      if (need_overlap) {
+      if (need_overlap && !fuse_overlap) {
         ++result.tiles.overlap_projections;
         for (int b=0;b<cols;++b)
           if (overlap_consumed[betas[b]])
@@ -338,21 +353,26 @@ StructureResponseSweep StructureAction::contract_product_tiles(
       std::vector<std::shared_ptr<const ColumnPattern>> column_patterns;
       for (const auto& image:completed_images) column_patterns.push_back(image.pattern);
       const auto pattern=merge_patterns(column_patterns);
-      Eigen::MatrixXd image=Eigen::MatrixXd::Zero(n_unique_alpha_,width*cols);
+      std::vector<const ColumnTile*> panels;
+      for (const auto& tile:completed_images) panels.push_back(&tile);
+      if (fuse_overlap) for (const int beta:completed_betas)
+        panels.push_back(&input.column(beta));
+      Eigen::MatrixXd image=detail::unpack_columns(n_unique_alpha_,cols,panels);
       workspace::Temporary image_temporary(sizeof(double)*image.size());
-      cooperative_openmp_for(cols*width,cooperative_openmp_thread_count(),[&](std::ptrdiff_t packed) {
-        const int b=packed%cols,v=packed/cols;
-        const auto& tile=completed_images[b];
-        if (tile.pattern->full) image.col(packed)=tile.values.col(v);
-        else for (int a=0;a<tile.values.rows();++a)
-          image(tile.pattern->rows[a],packed)=tile.values(a,v);
-      });
       // All compact values have been consumed. Keep only their shared
       // patterns while generating factors and applying the reverse map.
       completed_images.clear();completed_bytes=0;
       const auto rows=sample_factors(completed_betas);
-      project_pattern(pattern,rows,image,h_products);
-      completed_images.clear(); completed_betas.clear();completed_bytes=0;
+      project_pattern(pattern,rows,image,h_products,fuse_overlap ? &m_products:nullptr);
+      if (fuse_overlap) {
+        ++fused_hs_panels;
+        ++result.tiles.overlap_projections;
+        for (const int beta:completed_betas) {
+          overlap_consumed[beta]=true;
+          if (input_retired[beta]) input.release(beta);
+        }
+      }
+      completed_betas.clear();
     };
     ColumnPanels output(cache_bytes,[&](int beta) -> ColumnTile {
       const auto pattern=pattern_at(beta);
@@ -454,10 +474,11 @@ StructureResponseSweep StructureAction::contract_product_tiles(
         [&](std::span<const int> betas) {
       if (ordered) return;
       for (const int beta:betas) {
-        input.release(beta);
+        input_retired[beta]=true;
+        if (!fuse_overlap) input.release(beta);
         output.release(beta);
       }
-    },cache_bytes);
+    },cache_bytes,true);
     output.finish();
     flush_output();
     // Exchange quotienting may never request some input columns. The overlap
@@ -466,7 +487,26 @@ StructureResponseSweep StructureAction::contract_product_tiles(
       std::vector<int> missing;
       for (const int beta:reachable_columns)
         if (!overlap_consumed[beta]) missing.push_back(beta);
-      input.prepare(missing);
+      if (!fuse_overlap) input.prepare(missing);
+      else for (std::size_t begin=0;begin<missing.size();begin+=extent) {
+        const int cols=std::min<std::size_t>(extent,missing.size()-begin);
+        std::vector<std::shared_ptr<const ColumnPattern>> patterns;
+        std::vector<const ColumnTile*> panels;
+        for (int b=0;b<cols;++b) {
+          const auto& tile=input.column(missing[begin+b]);
+          panels.push_back(&tile);patterns.push_back(tile.pattern);
+        }
+        const auto pattern=merge_patterns(patterns);
+        auto image=detail::unpack_columns(n_unique_alpha_,cols,panels);
+        workspace::Temporary temporary(sizeof(double)*image.size());
+        const auto rows=sample_factors({missing.data()+begin,static_cast<std::size_t>(cols)});
+        project_pattern(pattern,rows,image,m_products);
+        ++result.tiles.overlap_projections;
+        for (int b=0;b<cols;++b) {
+          overlap_consumed[missing[begin+b]]=true;
+          input.release(missing[begin+b]);
+        }
+      }
     }
     if (profiling::phase_totals().enabled)
       std::fprintf(stderr,"XMVB_COLUMN_RELEASE,input=%zu,output=%zu,factor_entries=%zu,factor_slots=%zu\n",
@@ -480,10 +520,10 @@ StructureResponseSweep StructureAction::contract_product_tiles(
     contract();
   }
   if (profiling::phase_totals().enabled)
-    std::fprintf(stderr,"XMVB_PRODUCT_ACTION,rhs=%ld,overlap=%d,batches=%zu,input=%zu,output=%zu,input_evictions=%zu,output_evictions=%zu,ordered_beta=%d,resident_rhs=%zu\n",
+    std::fprintf(stderr,"XMVB_PRODUCT_ACTION,rhs=%ld,overlap=%d,batches=%zu,input=%zu,output=%zu,input_evictions=%zu,output_evictions=%zu,ordered_beta=%d,resident_rhs=%zu,fused_hs_panels=%zu\n",
         static_cast<long>(vectors.cols()),overlap_only,result.tiles.expansions,
         result.tiles.input_panels,result.tiles.hamiltonian_projections,
-        result.tiles.input_evictions,result.tiles.output_evictions,ordered_beta,resident_rhs);
+        result.tiles.input_evictions,result.tiles.output_evictions,ordered_beta,resident_rhs,fused_hs_panels);
   if (phases.enabled) for (std::size_t i=0;i<measured.size();++i)
     std::fprintf(stderr,"XMVB_PRODUCT_PHASE,stage=%s,wall=%.9f\n",
         profiling::PhaseTotals::name(measured[i]),

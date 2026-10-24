@@ -17,6 +17,8 @@ struct SigmaTileBudget {
   int halo_slabs=1;
   /** Consumer panel extent; zero leaves only resource-byte admission. */
   int max_groups=0;
+  /** Tile-local channel addresses for a source-supported image. */
+  bool projected_image=false;
 };
 
 /** Exact target boundary for the same support, links and source layout.

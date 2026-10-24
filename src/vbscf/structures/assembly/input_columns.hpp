@@ -99,6 +99,8 @@ public:
   }
 
   const ColumnPanels& cache() const noexcept { return cache_; }
+  /** Borrow a prepared column until the next cache mutation. */
+  const ColumnTile& column(int beta) { return cache_.get(beta); }
   void release(int beta) { cache_.release(beta); }
 
 private:
