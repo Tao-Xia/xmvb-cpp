@@ -19,6 +19,7 @@ struct SigmaTileBudget {
   int max_groups=0;
   /** Tile-local channel addresses for a source-supported image. */
   bool projected_image=false;
+  bool operator==(const SigmaTileBudget&) const=default;
 };
 
 /** Exact target boundary for the same support, links and source layout.
@@ -52,6 +53,8 @@ public:
   bool next_known(const SigmaTileBoundary& boundary);
   SigmaTileBoundary boundary() const noexcept;
   std::size_t payload_bytes() const;
+  /** The most recent byte-admission pass stopped at its resource bound. */
+  bool byte_limited() const noexcept { return byte_limited_; }
   bool exhausted() const noexcept { return !pending_ && next_beta_==beta_targets_.size(); }
 
 private:
@@ -71,7 +74,7 @@ private:
   std::vector<int> beta_targets_,seen_alpha_,new_alpha_,new_beta_,last_use_,release_order_;
   std::vector<int> column_rows_;
   std::vector<unsigned char> column_support_;
-  bool column_ready_=false;
+  bool column_ready_=false,byte_limited_=false;
   std::vector<unsigned char> alpha_seen_;
   std::optional<Node> pending_;
   std::size_t next_beta_=0,next_release_=0;

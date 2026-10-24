@@ -24,6 +24,7 @@
 #include "mcscf/ci/factors.hpp"
 #include "mcscf/ci/product_support.hpp"
 #include "mcscf/ci/sigma_plan.hpp"
+#include "mcscf/ci/sigma_schedule.hpp"
 #include "mcscf/ci/channel_product.hpp"
 #include "mcscf/ci/sigma_gather.hpp"
 #include "parallel/openmp.hpp"
@@ -2542,8 +2543,11 @@ void check_symbolic_replay() {
                        const ProductSupport* support,int parity,
                        SigmaTileBudget budget,bool release,bool large) {
     SigmaTilePlan reference(alpha,beta,support,parity,budget,release);
+    const SigmaSchedule::Key key{support ? support->identity():nullptr,budget,parity,release};
+    auto stream=std::make_shared<SigmaSchedule::Stream>(key);
     std::vector<Snapshot> snapshots;
     while (reference.next()) {
+      stream->record(reference.boundary(),reference.byte_limited(),2);
       check_sigma_payload(reference,budget,n);
       check_sigma_metadata(reference,parity);
       snapshots.push_back({static_cast<const SigmaTile&>(reference),
@@ -2552,10 +2556,37 @@ void check_symbolic_replay() {
     require(!snapshots.empty(),"symbolic replay fixture generated no tiles");
     require(large ? snapshots.size()==1 : snapshots.size()>2,
         "symbolic replay did not exercise requested tile size");
+    const bool limited=stream->byte_limited;
+    const auto peak=stream->peak_payload;
+    SigmaSchedule schedule;
+    schedule.publish(SigmaSchedule::Kind::Image,std::move(stream));
+    const auto cached=schedule.acquire(SigmaSchedule::Kind::Image,key);
+    require(cached && cached->tiles.size()<=2 && schedule.bytes()>0,
+        "bounded symbolic stream was not retained");
+    auto next=key;next.budget.bytes=peak;
+    require(schedule.acquire(SigmaSchedule::Kind::Image,next)!=nullptr,
+        "exact-fit symbolic stream was rejected");
+    next.budget.bytes=peak-1;
+    require(!schedule.acquire(SigmaSchedule::Kind::Image,next),"oversized symbolic stream was admitted");
+    next=key;++next.budget.bytes;
+    require(static_cast<bool>(schedule.acquire(SigmaSchedule::Kind::Image,next))==!limited,
+        "byte-limited stream was not rebuilt for a larger allowance");
+    next=key;++next.budget.width;
+    require(!schedule.acquire(SigmaSchedule::Kind::Image,next),"RHS-width change reused a stream");
+    next=key;next.support=std::make_shared<const char>();
+    require(!schedule.acquire(SigmaSchedule::Kind::Image,next),"different support reused a stream");
+    next=key;next.release=!next.release;
+    require(!schedule.acquire(SigmaSchedule::Kind::Image,next),"release layout reused a stream");
+    next=key;next.parity=parity==0 ? 1:0;
+    require(!schedule.acquire(SigmaSchedule::Kind::Image,next),"spin-exchange change reused a stream");
+    next=key;next.budget.projected_image=!next.budget.projected_image;
+    require(!schedule.acquire(SigmaSchedule::Kind::Image,next),"image addressing change reused a stream");
+    require(!schedule.acquire(SigmaSchedule::Kind::Directional,key),"algebraic roles shared a stream slot");
     SigmaTilePlan replay(alpha,beta,support,parity,budget,release);
-    for (const auto& snapshot:snapshots) {
-      require(replay.next_known(snapshot.boundary),"symbolic replay lost a tile");
-      compare(replay,snapshot);
+    for (std::size_t i=0;i<snapshots.size();++i) {
+      const bool more=i<cached->tiles.size() ? replay.next_known(cached->tiles[i]):replay.next();
+      require(more,"symbolic replay lost a tile");
+      compare(replay,snapshots[i]);
     }
     require(!replay.next() && replay.exhausted(),
         "symbolic replay did not finish at the same target boundary");

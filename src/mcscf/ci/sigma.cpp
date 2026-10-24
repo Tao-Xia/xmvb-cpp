@@ -1,4 +1,5 @@
 #include "mcscf/ci/sigma.hpp"
+#include "mcscf/ci/sigma_schedule.hpp"
 
 #include <algorithm>
 #include <array>
@@ -73,7 +74,7 @@ DirectCiSigmaAction::DirectCiSigmaAction(
 DirectCiSigmaAction::DirectCiSigmaAction(
     SpinStrings alpha,SpinStrings beta,const ActiveIntegrals& integrals)
     :n_orbitals_(integrals.one_electron.rows()),n_alpha_(alpha.size()),n_beta_(beta.size()),
-      pair_kernel_(integrals.pair_kernel) {
+      pair_kernel_(integrals.pair_kernel),schedule_(std::make_shared<detail::SigmaSchedule>()) {
   if (n_orbitals_<=0 || n_orbitals_>63 || alpha.orbitals()!=n_orbitals_ ||
       beta.orbitals()!=n_orbitals_ || !alpha.complete() || !beta.complete() || integrals.one_electron.cols()!=n_orbitals_ ||
       !integrals.one_electron.allFinite() ||
@@ -100,7 +101,7 @@ DirectCiSigmaAction::DirectCiSigmaAction(
       n_beta_(reference.n_beta_),
       pair_kernel_(integrals.pair_kernel),
       alpha_(reference.alpha_),
-      distinct_beta_(reference.distinct_beta_) {
+      distinct_beta_(reference.distinct_beta_),schedule_(reference.schedule_) {
   if (integrals.one_electron.rows() != n_orbitals_ ||
       integrals.pair_kernel.rows() != reference.pair_kernel_.rows()) {
     throw std::invalid_argument("direct-CI shared links have incompatible orbitals");
@@ -1038,7 +1039,7 @@ std::size_t DirectCiSigmaAction::dynamic_bytes() const noexcept {
   if (distinct_beta_) {
     bytes += distinct_beta_->dynamic_bytes();
   }
-  return bytes;
+  return bytes+schedule_->bytes();
 }
 
 }  // namespace xmvb::mcscf

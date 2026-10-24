@@ -16,6 +16,8 @@
 
 namespace xmvb::mcscf {
 
+namespace detail { class SigmaSchedule; }
+
 class ProductSupport;
 class DirectCiSigmaAction;
 
@@ -440,6 +442,7 @@ private:
   Eigen::MatrixXd hamiltonian_pair_kernel_;
   std::shared_ptr<const SpinConnections> alpha_;
   std::shared_ptr<const SpinConnections> distinct_beta_;
+  std::shared_ptr<detail::SigmaSchedule> schedule_;
 };
 
 }  // namespace xmvb::mcscf

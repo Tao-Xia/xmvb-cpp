@@ -15,6 +15,7 @@
 #include "core/workspace.hpp"
 #include "mcscf/ci/product_support.hpp"
 #include "mcscf/ci/sigma_plan.hpp"
+#include "mcscf/ci/sigma_schedule.hpp"
 #include "mcscf/ci/channel_product.hpp"
 #include "mcscf/ci/sigma_gather.hpp"
 
@@ -159,9 +160,29 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
   // exposes alpha-row parallelism and the same fused contractions.
   const int panel_columns=static_cast<int>(std::min<std::size_t>(n_beta_,
       static_cast<std::size_t>(cooperative_openmp_thread_count())*(64/sizeof(double))));
-  detail::SigmaTilePlan plan(*alpha_,beta_graph,support,exchange_parity,
-      {width,pairs,slab_factor,workspace_bytes,packed_slabs,1,panel_columns,projected_image},
+  const detail::SigmaTileBudget tile_budget{
+      width,pairs,slab_factor,workspace_bytes,packed_slabs,1,panel_columns,projected_image};
+  detail::SigmaTilePlan plan(*alpha_,beta_graph,support,exchange_parity,tile_budget,
       static_cast<bool>(release));
+  using Schedule=detail::SigmaSchedule;
+  const auto kind=has_direction ? Schedule::Kind::Directional:
+      collect_integrals ? Schedule::Kind::Transition:Schedule::Kind::Image;
+  const Schedule::Key key{support ? support->identity():nullptr,tile_budget,
+      exchange_parity,static_cast<bool>(release)};
+  const auto replay=schedule_->acquire(kind,key);
+  auto recording=replay ? nullptr:std::make_shared<Schedule::Stream>(key);
+  const auto boundary_limit=static_cast<std::size_t>(n_alpha_)+n_beta_;
+  std::size_t boundary_ordinal=0,boundary_replays=0,boundary_builds=0;
+  const auto advance=[&] {
+    if (replay && boundary_ordinal<replay->tiles.size()) {
+      plan.next_known(replay->tiles[boundary_ordinal++]);++boundary_replays;return true;
+    }
+    if (replay && !replay->truncated) return false;
+    if (!plan.next()) return false;
+    ++boundary_builds;
+    if (recording) recording->record(plan.boundary(),plan.byte_limited(),boundary_limit);
+    return true;
+  };
   auto& groups=plan.groups;
   auto& active=plan.active;
   auto& group_index=plan.group_index;
@@ -213,9 +234,9 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
           prepare_start=tick();
           {
             profiling::ScopedPhase phase(profiling::Phase::CiTilePaths);
-            finished=!plan.next();
+            finished=!advance();
           }
-          if (!failure) {
+          if (!failure && !finished) {
             unsupported_targets+=plan.unsupported_targets;
             bulk_targets+=plan.bulk_targets;
             if (!active.empty()) {
@@ -598,6 +619,7 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
     }
   }
   if (failure) std::rethrow_exception(failure);
+  if (recording) schedule_->publish(kind,std::move(recording));
   if (timing)
     std::fprintf(stderr,
         "XMVB_TILE,batches=%zu,source_columns=%zu,source_elements=%zu,peak_payload=%zu,"
@@ -607,7 +629,7 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
         "gram_extent=%d,gram_scratch_bytes=%zu,workspace_reused=%d,"
         "workspace_allocations=%zu,workspace_bytes=%zu,"
         "restricted_channels=%d,source_channels=%zu,channel_kernel_bytes=%zu,"
-        "unindexed_exchange_checks=%zu,exchange_row_products=%zu,bulk_targets=%zu,rhs_width=%d,responses=%zu,projected_image=%d,channel_products=%.0Lf,unrestricted_channel_products=%.0Lf\n",
+        "boundary_builds=%zu,boundary_replays=%zu,boundary_bytes=%zu,unindexed_exchange_checks=%zu,exchange_row_products=%zu,bulk_targets=%zu,rhs_width=%d,responses=%zu,projected_image=%d,channel_products=%.0Lf,unrestricted_channel_products=%.0Lf\n",
         batches, source_columns, source_elements, peak_payload,
         prepare_time, read_time, compute_time, write_time, targets, exchange_parity,
         unsupported_targets * static_cast<std::size_t>(width) *
@@ -616,6 +638,7 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
         gram_partitions,gram_extent,gram_scratch_bytes,
         static_cast<int>(workspace.reused()),workspace.allocations(),workspace.bytes(),
         static_cast<int>(restricted_channels),source_channels,restricted_channels ? kernel_bytes:0,
+        boundary_builds,boundary_replays,schedule_->bytes(),
         unindexed_exchange_checks,exchange_row_products,bulk_targets,width,requests.size(),
         static_cast<int>(projected_image),projected_products,full_products);
   std::vector<DirectCiIntegralAdjoint> results(requests.size());

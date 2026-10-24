@@ -119,7 +119,7 @@ void SigmaTilePlan::reset_tile() {
   for (const int a:seen_alpha_) alpha_seen_[a]=0;
   groups.clear(); active.clear(); group_index.clear(); halo.clear(); columns.clear();
   active_support.clear(); seen_alpha_.clear(); released.clear(); channel_groups.clear(); payload_=0;
-  diagonal_rows.clear(); unsupported_targets=0;bulk_targets=0;
+  diagonal_rows.clear(); unsupported_targets=0;bulk_targets=0;byte_limited_=false;
 }
 
 void SigmaTilePlan::append_node(const Node& node,bool new_group,bool expand_alpha) {
@@ -217,6 +217,7 @@ bool SigmaTilePlan::next() {
     if (!new_beta_.empty() || new_group)
       bytes+=halo.size()*(column_bytes_*new_beta_.size()+group_bytes_*new_group);
     if (bytes>budget_.bytes || active.size()>=static_cast<std::size_t>(std::numeric_limits<int>::max()/budget_.width)) {
+      byte_limited_=bytes>budget_.bytes;
       if (active.empty()) throw std::length_error("one direct-CI target exceeds the tile workspace");
       pending_=node;
       break;
