@@ -20,6 +20,7 @@
 #include "cuda/vb/product.hpp"
 #include "linalg/eigensolver.hpp"
 #include "mcscf/ci/sigma.hpp"
+#include "mcscf/ci/channel_product.hpp"
 #include "mcscf/ci/integrals.hpp"
 #include "mcscf/ci/product_support.hpp"
 #include "mcscf/ci/strings.hpp"
@@ -35,6 +36,22 @@ using Terms = std::vector<std::vector<xmvb::vb::StructureExpansionTerm>>;
 
 void require(bool ok, const char* message) {
   if (!ok) throw std::runtime_error(message);
+}
+
+void check_channel_panels() {
+  const xmvb::mcscf::detail::ChannelSelectors basis(10,4,true);
+  xmvb::mcscf::detail::ChannelLayout layout;
+  const std::array groups{0,3,1,3};
+  layout.reset(basis,groups,4,2);
+  int next=0;
+  while (next<8) {
+    const auto p=layout.panel(next,2,40);
+    require(p.first==next && p.rows>0 && p.rows<=8-next &&
+        2*p.packed+10*p.rows<=40,"ragged channel panel violates its byte bound");
+    if (next==4) require(p.rows==3 && p.packed==3,
+        "frontier panel still prices absent full-channel source entries");
+    next+=p.rows;
+  }
 }
 
 /** Force small block lifetimes in the production selected-coordinate action.
@@ -79,6 +96,9 @@ void check_packed_blocks(const xmvb::vb::StructureAction& source,const Eigen::Ma
             (host(m)-expected.overlap).norm()<2e-10,
             "shared-support product executor changed selected H/M");
       }
+      product->apply_selected(incidence,x.view(),sigma,h.view(),{},budget);
+      require((host(h)-expected.hamiltonian).norm()<2e-10,
+          "Hamiltonian-only selected action changed H");
       product->apply_selected(incidence,x.view(),sigma,{},m.view(),budget,true);
       require((host(m)-expected.overlap).norm()<2e-10,
           "packed overlap-only block changed the selected-space projection");
@@ -549,7 +569,8 @@ void check_action(int count, bool transformed,bool covalent=false,bool broad=fal
   const Eigen::MatrixXd half_vectors=0.5*vectors;
   const auto half=gpu.apply(half_vectors);
   require(context.counters().graph_captures==captures &&
-      context.counters().graph_launches==launches+static_cast<std::size_t>(vectors.cols()),
+      context.counters().graph_launches==launches+
+          static_cast<std::size_t>(vectors.cols())*(cpu.orthogonal_view().support ? 3:1),
       "CI action rebuilt its fixed plan for new numerical coefficients");
   require((half.hamiltonian-0.5*expected.hamiltonian).norm()<2e-10 &&
       (half.overlap-0.5*expected.overlap).norm()<2e-10,
@@ -608,6 +629,15 @@ void check_action(int count, bool transformed,bool covalent=false,bool broad=fal
     require((after_release.hamiltonian-expected.hamiltonian).norm()<2e-10 &&
         (after_release.overlap-expected.overlap).norm()<2e-10,
         "CUDA structure graph replayed released scratch addresses");
+    const auto recovered_captures=context.counters().graph_captures;
+    const auto recovered_launches=context.counters().graph_launches;
+    const auto reused=gpu.apply(vectors);
+    require(context.counters().graph_captures==recovered_captures &&
+        context.counters().graph_launches==recovered_launches+
+          static_cast<std::size_t>(vectors.cols())*(cpu.orthogonal_view().support ? 3:1),
+        "prepared support did not restore a reusable numerical graph lease");
+    require((reused.hamiltonian-expected.hamiltonian).norm()<2e-10,
+        "restored numerical graph lease changed H");
   }
   if (count == 3) {
     const auto& diagonal = cpu.preconditioner_diagonal();
@@ -638,6 +668,7 @@ void check_action(int count, bool transformed,bool covalent=false,bool broad=fal
 
 int main() {
   try {
+    check_channel_panels();
     check_action(1,false);
     check_action(1,true);
     check_action(3,false);

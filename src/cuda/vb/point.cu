@@ -205,7 +205,7 @@ Matrix<double> VbPoint::hessian_diagonal(View mo) {
   return diagonal;
 }
 
-double VbPoint::evaluate_coefficients(View coefficients) {
+double VbPoint::evaluate_coefficients(View coefficients,View overlap_image) {
   const nvtx3::scoped_range range{"point.energy_gradient"};
   if (!prepared_) throw std::logic_error("CUDA point coefficients require preparation");
   check_structure(coefficients,action_->size());
@@ -222,7 +222,7 @@ double VbPoint::evaluate_coefficients(View coefficients) {
   const ProductIncidence incidence{action_->term_offsets_data(),action_->term_structures_data(),
       action_->term_weights_data(),action_->size()};
   auto jet=products_->jet(incidence,sigma_,endpoint_,geometry_.frame_transform(),{},{},nullptr,
-      product_workspace_bytes());
+      product_workspace_bytes(),nullptr,{},overlap_image);
   selected_h_=std::move(jet.hamiltonian);selected_m_=std::move(jet.overlap);
   one_adjoint_=std::move(jet.one);pair_adjoint_=std::move(jet.pair);
   frame_moment_=std::move(jet.generator);

@@ -80,6 +80,10 @@ struct CiTileRequest {
    * Its channels occupy the state slab through all later requests; the caller
    * must keep that source live through the sweep. */
   bool response_is_state=false;
+  /** Independent beta-column destinations; disjoint from response inputs. */
+  double* const* column_image=nullptr;
+  /** Stable column source paired with column_image by the fixed CI owner. */
+  double* const* column_response=nullptr;
 };
 
 /** Borrowed resident endpoints for consumers not yet storing compact columns.
@@ -121,11 +125,17 @@ class DirectCiSigma {
    * immutable device arrays of n_beta column addresses; the owner clears
    * output tiles before use and keeps all storage alive through graph replay.
    */
-  void apply_tile_columns(double* const* input,double* const* output) const;
+  void apply_tile_columns(double* const* input,double* const* output,
+      const mcscf::ProductSupport* support=nullptr,std::size_t workspace_bytes=0) const;
+
+  /** Whether the last column action prepared one complete fixed tile. */
+  bool fixed_tile_ready() const noexcept;
+  std::uint64_t tile_execution_generation() const noexcept;
 
   /** CPU SigmaTilePlan, exact channel envelopes and release schedule, executed
-   * on device. Each distinct input and writer retains one bounded tile halo;
-   * L2-sized numerical row panels reuse state channels across responses.
+   * on device. Channel-reduced derivative responses reuse one raw halo and
+   * retain compact channels; full-channel responses stream row panels.
+   * The immutable state is shared across responses in either schedule.
    * Source slabs follow ragged channel groups and images have full channels;
    * no product-sized carrier is allocated here.
    * All integral adjoints and H*response+dH*state images are device-resident.
@@ -133,7 +143,8 @@ class DirectCiSigma {
    */
   void apply_tiled_responses(int width,std::span<const CiTileRequest> requests,
       const CiTileReader& state,const mcscf::ProductSupport* support,
-      std::size_t workspace_bytes,const CiColumnRelease& release={}) const;
+      std::size_t workspace_bytes,const CiColumnRelease& release={},
+      int max_beta_groups=0) const;
   void apply_supported_responses(std::span<const CiCarrierRequest> requests,
       linalg::ConstMatrixView state,const mcscf::ProductSupport& support,
       std::size_t workspace_bytes,bool physical_image=true) const;
@@ -282,6 +293,9 @@ class DirectCiSigma {
     }
   };
 
+  void apply_supported_columns(double* const* input,double* const* output,
+      const mcscf::ProductSupport&,std::size_t workspace_bytes) const;
+  void reset_tile_execution() const;
   void apply_products(linalg::ConstMatrixView,linalg::MatrixView,
       double* const* input_columns,double* const* output_columns) const;
   void prepare_adjoint(int block_width, bool with_sigma,

@@ -310,10 +310,9 @@ struct FullAction::Impl {
                          linalg::MatrixView image) const {
     const ProductIncidence incidence{action.term_offsets_data(),
         action.term_structures_data(),action.term_weights_data(),action.size()};
-    Matrix<double> overlap(context,action.size(),1);
     for (std::int64_t column=0;column<source.cols;++column)
       identity_product.apply_selected(incidence,source.column(column),
-          action.carrier_sigma(),image.column(column),overlap.view(),
+          action.carrier_sigma(),image.column(column),{},
           context.available_device_bytes());
   }
 };

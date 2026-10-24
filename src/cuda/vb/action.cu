@@ -483,6 +483,13 @@ void StructureAction::update_integrals(linalg::ConstMatrixView h,
 void StructureAction::apply(linalg::ConstMatrixView vectors,
     linalg::MatrixView h,linalg::MatrixView m) const { impl_->apply(vectors,h,m); }
 
+void StructureAction::apply_hamiltonian(linalg::ConstMatrixView vectors,
+    linalg::MatrixView hamiltonian) const {
+  const auto& p=*impl_;
+  p.selected_contraction().apply_selected(p.selected_incidence(),vectors,p.sigma,
+      hamiltonian,{},p.available_bytes());
+}
+
 void StructureAction::apply_overlap(linalg::ConstMatrixView vectors,
     linalg::MatrixView overlap) const {
   const auto& p=*impl_;

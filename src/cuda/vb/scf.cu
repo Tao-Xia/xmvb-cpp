@@ -158,7 +158,7 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,
       scale(context,trial.ci.hamiltonian_eigenvectors.view(),-1.0);
       if (!trial.ci.identity_overlap) scale(context,trial.ci.overlap_eigenvectors.view(),-1.0);
     }
-    trial.energy=trial.point->evaluate_coefficients(trial.coefficients.view());
+    trial.energy=trial.point->evaluate_coefficients(trial.coefficients.view(),trial.ci.overlap_view());
   };
   const auto relax=[&](Matrix<double> trial_raw,View guess)->Trial {
     const nvtx3::scoped_range range{"scf.relax_ci"};
@@ -349,7 +349,7 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,
     };
     struct Keyframe { Matrix<double> displacement;std::unique_ptr<VbPoint> point;
       std::shared_ptr<const StructureCiPoint> ci_point;
-      Matrix<double> raw;std::optional<SingleStateCiTransportPoint> transport; };
+      Matrix<double> raw,overlap;std::optional<SingleStateCiTransportPoint> transport; };
     std::optional<Keyframe> cache;
     const auto keyframe=[&](View x)->Keyframe& {
       AllocationPhase allocation(context,"CI transported keyframe");
@@ -375,6 +375,11 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,
             frame.ci_point ? frame.ci_point->metric:nullptr,
             frame.point->frame_identity()));
       }
+      if (frame.ci_point && frame.ci_point->metric) {
+        frame.overlap=Matrix<double>(context,nstr,1);
+        frame.ci_point->metric->apply(ns ? frame.transport->coefficients.view():
+            accepted.coefficients.view(),frame.overlap.view());
+      }
       cache.emplace(std::move(frame));return *cache;
     };
     DeviceCiahMicroCallbacks callbacks;
@@ -384,7 +389,7 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,
     callbacks.evaluate_keyframe=[&](View x) {
       auto& frame=keyframe(x);
       const auto coefficients=ns ? frame.transport->coefficients.view():accepted.coefficients.view();
-      const double physical=frame.point->evaluate_coefficients(coefficients);
+      const double physical=frame.point->evaluate_coefficients(coefficients,frame.overlap.view());
       Matrix<double> gr(context,nb,norb),gc(context,nstr,1),g(context,dimension,1);
       frame.point->gradient(gr.view(),gc.view());
       double energy=physical;

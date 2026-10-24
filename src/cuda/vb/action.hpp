@@ -38,6 +38,8 @@ class StructureAction {
 
   void apply(linalg::ConstMatrixView vectors,
              linalg::MatrixView hamiltonian, linalg::MatrixView overlap) const;
+  /** H alone when the caller already owns the exact selected overlap. */
+  void apply_hamiltonian(linalg::ConstMatrixView vectors,linalg::MatrixView hamiltonian) const;
   /** @brief Overlap alone; never evaluate sigma to prepare a metric. */
   void apply_overlap(linalg::ConstMatrixView vectors, linalg::MatrixView overlap) const;
   vb::StructureActionResult apply(

@@ -247,7 +247,10 @@ DeviceDavidsonResult StructureCi::solve_device(
   const DeviceEigenAction action=[this](linalg::ConstMatrixView x,
       linalg::MatrixView h,linalg::MatrixView m) {
     if (full_) full_->apply_ci_hamiltonian(x,h);
-    else action_->apply(x,h,m);
+    else if (point_->metric) {
+      action_->apply_hamiltonian(x,h);
+      point_->metric->apply(x,m);
+    } else action_->apply(x,h,m);
   };
   const DeviceEigenPreconditioner inverse=[this](linalg::ConstMatrixView r,double e,
       linalg::MatrixView p) { precondition(r,e,p); };
@@ -293,7 +296,10 @@ void StructureCi::energy_norm_device(linalg::ConstMatrixView state,
       norm.rows!=1 || norm.cols!=1 || !norm.data || energy.data==norm.data)
     throw std::invalid_argument("CUDA CI energy/norm dimensions");
   Matrix<double> h(*context_,state.rows,1),m(*context_,state.rows,1);
-  action_->apply(state,h.view(),m.view());
+  if (point_ && point_->metric && refreshed_version_==action_->version()) {
+    action_->apply_hamiltonian(state,h.view());
+    point_->metric->apply(state,m.view());
+  } else action_->apply(state,h.view(),m.view());
   check_cublas(cublasSetPointerMode(context_->blas(),CUBLAS_POINTER_MODE_DEVICE),
       "CUDA CI device scalar pointer mode");
   try {

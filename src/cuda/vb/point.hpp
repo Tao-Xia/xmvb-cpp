@@ -24,7 +24,8 @@ class VbPoint {
   /** Prepare a new orbital point once before CI relaxation. */
   void prepare(linalg::ConstMatrixView raw);
   /** Evaluate the relaxed or fixed CI state using the prepared integrals. */
-  double evaluate_coefficients(linalg::ConstMatrixView coefficients);
+  double evaluate_coefficients(linalg::ConstMatrixView coefficients,
+      linalg::ConstMatrixView overlap_image = {});
   void activate() const { select_frame(); }
   /** Analytic rotation diagonal and accepted response projections from the
    * same integral sweep. mo is ordered orthonormal core, active, virtual.

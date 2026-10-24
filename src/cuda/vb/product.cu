@@ -481,14 +481,14 @@ struct ProductContraction::Impl {
     Impl& owner;
     int extent;
     std::vector<Matrix<double>> panels;
-    std::vector<linalg::MatrixView> source_views,adjoint_views;
+    std::vector<linalg::MatrixView> source_views,image_views,adjoint_views;
     Buffer<double*> pointers;
     Matrix<double> input,h,m,stripe;
     std::uint64_t sigma_generation=0;
     std::weak_ptr<const void> sigma_storage;
     const double* sigma_kernel=nullptr;
     ProductIncidence captured{};
-    std::unique_ptr<Graph> h_graph,m_graph;
+    std::unique_ptr<Graph> h_graph,h_only_graph,m_graph,forward_graph,sigma_graph;
 
     FixedAction(Impl& p,int structures,int panel_extent)
         :owner(p),extent(panel_extent),input(p.c,structures,1),
@@ -502,6 +502,7 @@ struct ProductContraction::Impl {
         panels.emplace_back(p.c,2LL*p.alpha,count);
         const auto data=panels.back().data();
         source_views.push_back({data,p.alpha,count,2LL*p.alpha});
+        image_views.push_back({data+p.alpha,p.alpha,count,2LL*p.alpha});
         adjoint_views.push_back({data,p.alpha,2LL*count,p.alpha});
         const auto tile=first/extent;
         table[column_tables+tile]=data;
@@ -516,15 +517,11 @@ struct ProductContraction::Impl {
       if (rows) stripe=Matrix<double>(p.c,p.beta,rows);
     }
 
-    void emit(ProductIncidence incidence,const DirectCiSigma& sigma,bool overlap_only) {
+    void forward(ProductIncidence incidence) {
       auto& p=owner;
       for (auto& tile:panels) clear(p.c,tile.view());
-      clear(p.c,m.view());
-      if (!overlap_only) clear(p.c,h.view());
       auto* const source_columns=pointers.data();
-      auto* const image_columns=source_columns+p.beta;
-      auto* const source_tiles=image_columns+p.beta;
-      auto* const image_tiles=source_tiles+panels.size();
+      auto* const source_tiles=source_columns+2*p.beta;
       if (p.groups) {
         ordered_products_tiles<<<grid(p.groups),256,0,p.c.stream()>>>(incidence,
             p.symbolic->raw_alpha.data(),p.symbolic->raw_beta.data(),p.groups,
@@ -533,16 +530,26 @@ struct ProductContraction::Impl {
       }
       for (auto view:source_views) p.alpha_transform.apply_left(view);
       p.beta_transform.apply_right_columns(source_columns,p.alpha,stripe.view());
-      if (!overlap_only) sigma.apply_tile_columns(source_columns,image_columns);
-      p.beta_transform.apply_right_columns(source_columns,
-          overlap_only ? p.alpha:2LL*p.alpha,stripe.view(),true);
-      for (auto view:overlap_only ? source_views:adjoint_views)
+    }
+
+    void backward(ProductIncidence incidence,bool with_h,bool with_m) {
+      auto& p=owner;
+      auto* const source_columns=pointers.data();
+      auto* const image_columns=source_columns+p.beta;
+      auto* const source_tiles=image_columns+p.beta;
+      auto* const image_tiles=source_tiles+panels.size();
+      if (with_h) clear(p.c,h.view());
+      if (with_m) clear(p.c,m.view());
+      p.beta_transform.apply_right_columns(with_m ? source_columns:image_columns,
+          with_h && with_m ? 2LL*p.alpha:p.alpha,stripe.view(),true);
+      for (auto view:with_h && with_m ? adjoint_views:with_m ? source_views:image_views)
         p.alpha_transform.apply_left(view,true);
       if (p.groups) {
-        ordered_products_tiles<<<grid(p.groups),256,0,p.c.stream()>>>(incidence,
-            p.symbolic->raw_alpha.data(),p.symbolic->raw_beta.data(),p.groups,{},
-            source_tiles,p.alpha,extent,m.view(),true,2LL*p.alpha);
-        if (!overlap_only)
+        if (with_m)
+          ordered_products_tiles<<<grid(p.groups),256,0,p.c.stream()>>>(incidence,
+              p.symbolic->raw_alpha.data(),p.symbolic->raw_beta.data(),p.groups,{},
+              source_tiles,p.alpha,extent,m.view(),true,2LL*p.alpha);
+        if (with_h)
           ordered_products_tiles<<<grid(p.groups),256,0,p.c.stream()>>>(incidence,
               p.symbolic->raw_alpha.data(),p.symbolic->raw_beta.data(),p.groups,{},
               image_tiles,p.alpha,extent,h.view(),true,2LL*p.alpha);
@@ -552,30 +559,59 @@ struct ProductContraction::Impl {
 
     void apply(ProductIncidence incidence,const DirectCiSigma& sigma,
         linalg::ConstMatrixView vectors,linalg::MatrixView hout,
-        linalg::MatrixView mout,bool overlap_only) {
+        linalg::MatrixView mout,std::size_t bytes,bool overlap_only) {
       auto& p=owner;
+      const bool with_h=!overlap_only,with_m=mout.data!=nullptr;
       if (captured.offsets!=incidence.offsets || captured.structures!=incidence.structures ||
           captured.weights!=incidence.weights) {
-        h_graph.reset();m_graph.reset();captured=incidence;
+        h_graph.reset();h_only_graph.reset();m_graph.reset();forward_graph.reset();sigma_graph.reset();
+        captured=incidence;
       }
-      if (!overlap_only) {
+      if (with_h && !p.support) {
+        const auto invalidate=[&] { h_graph.reset();h_only_graph.reset(); };
         if (sigma_storage.lock()!=sigma.workspace_identity().lock() ||
-            sigma_kernel!=sigma.channel_kernel().data) h_graph.reset();
-        // Other physical consumers share the channel workspace. Its generation
-        // is the address-lifetime certificate, not an orbital-value version.
-        if (sigma_generation!=sigma.workspace_generation()) h_graph.reset();
+            sigma_kernel!=sigma.channel_kernel().data ||
+            sigma_generation!=sigma.workspace_generation()) invalidate();
         sigma.prepare(1);
-        if (sigma_generation!=sigma.workspace_generation()) h_graph.reset();
+        if (sigma_generation!=sigma.workspace_generation()) invalidate();
         sigma_generation=sigma.workspace_generation();
         sigma_storage=sigma.workspace_identity();sigma_kernel=sigma.channel_kernel().data;
       }
-      auto& graph=overlap_only ? m_graph:h_graph;
-      if (!graph) graph=std::make_unique<Graph>(p.c,[&] {emit(incidence,sigma,overlap_only);});
+      auto& graph=overlap_only ? m_graph:with_m ? h_graph:h_only_graph;
+      // Support-limited sigma shares the CPU symbolic planner. Its host
+      // scheduling stays outside capture; both orbital maps retain stable
+      // graphs and the sigma writes directly into independent output columns.
+      const bool supported=with_h && p.support;
+      if (supported && !forward_graph)
+        forward_graph=std::make_unique<Graph>(p.c,[&] {forward(incidence);});
+      if (!graph) graph=std::make_unique<Graph>(p.c,[&] {
+        if (!supported) {
+          forward(incidence);
+          if (with_h) sigma.apply_tile_columns(pointers.data(),pointers.data()+p.beta);
+        }
+        backward(incidence,with_h,with_m);
+      });
       for (std::int64_t rhs=0;rhs<vectors.cols;++rhs) {
         p.copy_panel(input.view(),vectors.column(rhs));
+        if (supported) {
+          forward_graph->launch();
+          if (!sigma_graph || !sigma.fixed_tile_ready() ||
+              sigma_storage.lock()!=sigma.workspace_identity().lock() ||
+              sigma_kernel!=sigma.channel_kernel().data ||
+              sigma_generation!=sigma.tile_execution_generation()) {
+            sigma_graph.reset();
+            sigma.apply_tile_columns(pointers.data(),pointers.data()+p.beta,p.support,bytes/5);
+            if (sigma.fixed_tile_ready())
+              sigma_graph=std::make_unique<Graph>(p.c,[&] {
+                sigma.apply_tile_columns(pointers.data(),pointers.data()+p.beta,p.support,bytes/5);
+              });
+            sigma_storage=sigma.workspace_identity();sigma_kernel=sigma.channel_kernel().data;
+            sigma_generation=sigma.tile_execution_generation();
+          } else sigma_graph->launch();
+        }
         graph->launch();
-        p.copy_panel(mout.column(rhs),m.view());
-        if (!overlap_only) p.copy_panel(hout.column(rhs),h.view());
+        if (with_m) p.copy_panel(mout.column(rhs),m.view());
+        if (with_h) p.copy_panel(hout.column(rhs),h.view());
       }
     }
   };
@@ -596,7 +632,7 @@ struct ProductContraction::Impl {
       if (required>allowance) return false;
       fixed_action=std::make_unique<FixedAction>(*this,incidence.size,extent);
     }
-    fixed_action->apply(incidence,sigma,vectors,h,m,overlap_only);
+    fixed_action->apply(incidence,sigma,vectors,h,m,bytes,overlap_only);
     return true;
   }
 
@@ -679,7 +715,8 @@ struct ProductContraction::Impl {
       ProductEndpoint& endpoint,linalg::ConstMatrixView upper,
       linalg::ConstMatrixView response,linalg::ConstMatrixView delta_upper,
       const DirectCiSigma* delta_sigma,std::size_t bytes,ProductJet* ci,
-      linalg::ConstMatrixView relative_direction,bool selected_only=false,bool overlap_only=false) {
+      linalg::ConstMatrixView relative_direction,bool selected_only=false,bool overlap_only=false,
+      bool collect_overlap=true) {
     const nvtx3::scoped_range range{"vb.product_jet"};
     const bool tangent=response.data || delta_upper.data || delta_sigma;
     const bool joint=ci!=nullptr;
@@ -698,7 +735,7 @@ struct ProductContraction::Impl {
       throw std::invalid_argument("invalid selected product jet source");
     const int n=sigma.n_orbitals(),d=sigma.n_channels();
     const auto make_result=[&] {
-      ProductJet result{overlap_only ? Matrix<double>{}:Matrix<double>(c,incidence.size,1),Matrix<double>(c,incidence.size,1),
+      ProductJet result{overlap_only ? Matrix<double>{}:Matrix<double>(c,incidence.size,1),collect_overlap ? Matrix<double>(c,incidence.size,1):Matrix<double>{},
           selected_only ? Matrix<double>{}:Matrix<double>(c,n,n),
           selected_only ? Matrix<double>{}:Matrix<double>(c,d,d),
           selected_only ? Matrix<double>{}:Matrix<double>(c,n,n)};
@@ -742,7 +779,7 @@ struct ProductContraction::Impl {
         products<=(quarter/2-source_descriptors)/(sizeof(double)*source_slots);
     // Plan both consumers before preparing factors: ordered right shears
     // have no use for the beta-factor matrix or its sparse conversion.
-    const int targets=joint ? 4:2;
+    const int targets=joint ? 4:collect_overlap ? 2:1;
     const auto projection_slots=static_cast<std::size_t>(targets)*
         (delta_upper.data && !cached ? 2U:1U)+
         (delta_upper.data && !cached ? 2U:0U);
@@ -1178,7 +1215,7 @@ struct ProductContraction::Impl {
     if (tangent) requests.push_back({dy,writer(1),delta_sigma,result.one.view(),result.pair.view()});
     if (joint) requests.push_back({q,writer(2),nullptr,ci->one.view(),ci->pair.view()});
     if (!overlap_only)
-      sigma.apply_tiled_responses(1,requests,tangent ? y:CiTileReader{},support,quarter);
+      sigma.apply_tiled_responses(1,requests,tangent ? y:CiTileReader{},support,quarter,{},extent);
     if (!overlap_only && (sigma.exchange_parity() || !tangent) && !output.evictions) {
       std::vector<ProductColumns*> panels_view(panels,nullptr);
       for (int id=0;id<panels;++id) if (reachable_panel[id]) panels_view[id]=&output.get(id);
@@ -1205,7 +1242,7 @@ struct ProductContraction::Impl {
           relative_direction.data,relative_direction.ld,&zero,relative_direction.data,
           relative_direction.ld,transpose.data(),n),"product relative direction transpose");
     }
-    for (int id=0;id<panels;++id) if (reachable_panel[id]) {
+    for (int id=0;id<panels;++id) if (reachable_panel[id] && (tangent || collect_overlap)) {
       const int count=selected(id).size();
       Matrix<double> values(c,alpha,(tangent && joint ? 2:1)*count);
       auto dv=values.view().columns(0,count);
@@ -1396,8 +1433,8 @@ void ProductContraction::accept(ProductEndpoint& endpoint,double energy) const {
 void ProductContraction::apply_selected(ProductIncidence incidence,linalg::ConstMatrixView source,
     const DirectCiSigma& sigma,linalg::MatrixView h,linalg::MatrixView m,
     std::size_t bytes,bool overlap_only) const {
-  if (source.rows!=incidence.size || source.cols<=0 || m.rows!=source.rows ||
-      m.cols!=source.cols || (!overlap_only &&
+  if (source.rows!=incidence.size || source.cols<=0 || (overlap_only && !m.data) ||
+      (m.data && (m.rows!=source.rows || m.cols!=source.cols)) || (!overlap_only &&
       (h.rows!=source.rows || h.cols!=source.cols || !h.data)))
     throw std::invalid_argument("invalid selected product action block");
   const CapacityPlan capacity(impl_->c);
@@ -1405,9 +1442,9 @@ void ProductContraction::apply_selected(ProductIncidence incidence,linalg::Const
   ProductEndpoint endpoint{Matrix<double>(impl_->c,incidence.size,1)};
   for (int rhs=0;rhs<source.cols;++rhs) {
     impl_->copy_panel(endpoint.coefficients.view(),source.column(rhs));
-    auto result=impl_->jet(incidence,sigma,endpoint,{},{},{},nullptr,bytes,nullptr,{},true,overlap_only);
+    auto result=impl_->jet(incidence,sigma,endpoint,{},{},{},nullptr,bytes,nullptr,{},true,overlap_only,m.data!=nullptr);
     if (!overlap_only) impl_->copy_panel(h.column(rhs),result.hamiltonian.view());
-    impl_->copy_panel(m.column(rhs),result.overlap.view());
+    if (m.data) impl_->copy_panel(m.column(rhs),result.overlap.view());
   }
 }
 double ProductContraction::maximum_orthogonal_component(ProductIncidence incidence,
@@ -1417,8 +1454,18 @@ double ProductContraction::maximum_orthogonal_component(ProductIncidence inciden
 ProductJet ProductContraction::jet(ProductIncidence incidence,const DirectCiSigma& sigma,
     ProductEndpoint& endpoint,linalg::ConstMatrixView upper,linalg::ConstMatrixView response,
     linalg::ConstMatrixView delta_upper,const DirectCiSigma* delta_sigma,
-    std::size_t bytes,ProductJet* ci,linalg::ConstMatrixView relative_direction) const {
-  return impl_->jet(incidence,sigma,endpoint,upper,response,delta_upper,delta_sigma,bytes,ci,relative_direction);
+    std::size_t bytes,ProductJet* ci,linalg::ConstMatrixView relative_direction,
+    linalg::ConstMatrixView overlap_image) const {
+  if (overlap_image.data && (response.data || delta_upper.data || delta_sigma || ci ||
+      overlap_image.rows!=incidence.size || overlap_image.cols!=1 || overlap_image.ld<overlap_image.rows))
+    throw std::invalid_argument("prepared M*C requires a primal selected point");
+  auto result=impl_->jet(incidence,sigma,endpoint,upper,response,delta_upper,delta_sigma,bytes,ci,
+      relative_direction,false,false,!overlap_image.data);
+  if (overlap_image.data) {
+    result.overlap=Matrix<double>(impl_->c,incidence.size,1);
+    impl_->copy_panel(result.overlap.view(),overlap_image);
+  }
+  return result;
 }
 
 } // namespace xmvb::cuda

@@ -53,7 +53,8 @@ public:
   void release_cached_workspace(std::size_t bytes) const;
   /** Finish the accepted CPU-style Y/(H-E)Y panels after Rayleigh evaluation. */
   void accept(ProductEndpoint&,double energy) const;
-  /** Selected-space H/M without a complete product source or group image. */
+  /** Selected-space H/M without a contiguous product source or group image.
+   * A null overlap requests H alone, reusing a caller-owned selected metric. */
   void apply_selected(ProductIncidence,linalg::ConstMatrixView coefficients,
       const DirectCiSigma&,linalg::MatrixView hamiltonian,linalg::MatrixView overlap,
       std::size_t workspace_bytes,bool overlap_only=false) const;
@@ -65,12 +66,15 @@ public:
    * The tangent result includes the supplied CI response. The optional ci
    * result isolates that response; the coarse solver subtracts it from the
    * total image to obtain the independent orbital image, as in VbPoint.
+   * Primal calls may borrow an already computed M*C; directional M terms
+   * are always differentiated by the jet, never replaced by that image.
    */
   ProductJet jet(ProductIncidence,const DirectCiSigma&,ProductEndpoint&,
       linalg::ConstMatrixView upper,linalg::ConstMatrixView response,
       linalg::ConstMatrixView delta_upper,const DirectCiSigma* delta_sigma,
       std::size_t workspace_bytes,ProductJet* ci=nullptr,
-      linalg::ConstMatrixView relative_direction={}) const;
+      linalg::ConstMatrixView relative_direction={},
+      linalg::ConstMatrixView overlap_image={}) const;
 private:
   struct Impl;
   explicit ProductContraction(std::unique_ptr<Impl>);

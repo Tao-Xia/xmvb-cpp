@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <span>
+#include <stdexcept>
 #include <vector>
 #include <Eigen/Core>
 #include "core/workspace.hpp"
@@ -91,6 +92,31 @@ public:
       image_rows_[row]=image;
     }
   }
+  struct Panel { int first,rows; std::size_t packed; };
+
+  /** Largest consecutive row panel fitting its exact ragged source copies
+   * plus one full-channel image. Only scalar boundaries are returned; source
+   * rows remain in their existing group order, without padding or repacking.
+   */
+  Panel panel(int first,int source_copies,std::size_t entries) const {
+    if (first<0 || first>=offsets_.back() || source_copies<0)
+      throw std::invalid_argument("invalid channel row panel");
+    Panel result{first,0,0};
+    std::size_t used=0;
+    for (int g=0;g<static_cast<int>(channels_.size());++g) {
+      const int start=std::max(first+result.rows,offsets_[g]);
+      if (start>=offsets_[g+1]) continue;
+      const auto row_entries=static_cast<std::size_t>(source_copies)*channels_[g]+pairs_;
+      const int count=static_cast<int>(std::min<std::size_t>(offsets_[g+1]-start,
+          (entries-used)/row_entries));
+      result.rows+=count;result.packed+=static_cast<std::size_t>(count)*channels_[g];
+      used+=static_cast<std::size_t>(count)*row_entries;
+      if (start+count<offsets_[g+1]) break;
+    }
+    if (!result.rows) throw std::length_error("channel panel cannot hold one row");
+    return result;
+  }
+
   int begin(int group) const noexcept { return offsets_[group]; }
   int size(int group) const noexcept { return offsets_[group+1]-offsets_[group]; }
   std::size_t offset(int group) const noexcept { return packed_offsets_[group]; }

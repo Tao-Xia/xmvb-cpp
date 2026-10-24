@@ -274,6 +274,17 @@ void check_case(bool inactive,int structures) {
        independent_energy(input,ao,space,structures,ci,nuclear),3e-10,
        "joint VB energy versus independent CPU source");
   const auto accepted=gradient(context,point,raw,ci);
+  {
+    auto orbital=upload(context,raw),coefficients=upload(context,ci);
+    const auto original=point.evaluate(orbital.view(),coefficients.view());
+    DeviceMatrix mc(context,structures,1),go(context,raw.rows(),raw.cols()),gc(context,structures,1);
+    action.apply_overlap(coefficients.view(),mc.view());
+    near(point.evaluate_coefficients(coefficients.view(),mc.view()),original,2e-11,
+        "prepared overlap primal energy at finite CI residual");
+    point.gradient(go.view(),gc.view());
+    near(download(context,go.view()),accepted.raw,2e-11,"prepared overlap orbital gradient");
+    near(download(context,gc.view()),accepted.ci,2e-11,"prepared overlap CI gradient");
+  }
   const double epsilon=1e-5;
   for (int o=0;o<raw.cols();++o) {
     const int count=xmvb::vb::differentiable_sparse_orbital_parameter_count(input,o);
@@ -310,6 +321,9 @@ void check_case(bool inactive,int structures) {
   const auto hvp=[&](const Matrix& orbital,const Matrix& structure) {
     auto base_raw=upload(context,raw),base_ci=upload(context,ci);
     point.evaluate(base_raw.view(),base_ci.view());
+    DeviceMatrix prepared_mc(context,structures,1);
+    action.apply_overlap(base_ci.view(),prepared_mc.view());
+    point.evaluate_coefficients(base_ci.view(),prepared_mc.view());
     xmvb::cuda::AcceptedOrbitalChart chart(context,input,false,ao_metric);
     chart.rebuild(point.geometry());
     auto diagonal=point.hessian_diagonal(chart.accepted_mo_frame());

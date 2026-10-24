@@ -376,6 +376,7 @@ std::size_t DirectCiSigma::resident_bytes() const noexcept {
 }
 
 void DirectCiSigma::reset_workspace() const {
+  reset_tile_execution();
   ++workspace_->generation;
   workspace_->products=0;
   scattered_=Matrix<double>{};
@@ -467,9 +468,19 @@ void DirectCiSigma::apply(linalg::ConstMatrixView coefficients,
   apply_products(coefficients,image,nullptr,nullptr);
 }
 
-void DirectCiSigma::apply_tile_columns(double* const* input,double* const* output) const {
+void DirectCiSigma::apply_tile_columns(double* const* input,double* const* output,
+    const mcscf::ProductSupport* support,std::size_t bytes) const {
   if (!input || !output) throw std::invalid_argument("missing CI tile column table");
-  apply_products({nullptr,n_alpha_,n_beta_,n_alpha_},
+  if (support) {
+    apply_supported_columns(input,output,*support,bytes);
+    if (exchange_parity_) {
+      const auto products=contraction_rows(1);
+      complete_exchange_image<<<grid_size(products),256,0,context_->stream()>>>(
+          {nullptr,n_alpha_,n_beta_,n_alpha_},products,n_alpha_,n_beta_,
+          exchange_parity_,true,output);
+      check_cuda(cudaGetLastError(),"complete supported tile exchange image");
+    }
+  } else apply_products({nullptr,n_alpha_,n_beta_,n_alpha_},
       {nullptr,n_alpha_,n_beta_,n_alpha_},input,output);
 }
 
