@@ -17,22 +17,21 @@ namespace xmvb::vb {
  * evaluates the corresponding one- and two-electron matrix elements.
  */
 class DeterminantHamiltonianResolver {
-public:
-  /**
+  public:
+    /**
    * @brief Constructs a resolver with the default overlap resolver.
    */
-  DeterminantHamiltonianResolver();
+    DeterminantHamiltonianResolver();
 
-  /**
+    /**
    * @brief Constructs a resolver using an overlap resolver instance.
    *
    * @param overlap_resolver Resolver used to compute determinant overlap
    *   determinant, nullity, and first-order cofactors.
    */
-  explicit DeterminantHamiltonianResolver(
-      DeterminantOverlapResolver overlap_resolver);
+    explicit DeterminantHamiltonianResolver(DeterminantOverlapResolver overlap_resolver);
 
-  /**
+    /**
    * @brief Evaluates determinant-level Hamiltonian and overlap quantities.
    *
    * @param occ_L Zero-based occupied orbital indices of the
@@ -48,26 +47,25 @@ public:
    * @param eri_act Packed two-electron integral storage.
    * @return DeterminantHamiltonianResult Determinant overlap and Hamiltonian.
    */
-  DeterminantHamiltonianResult resolve(
-      const std::vector<int>& occ_L,
-      const std::vector<int>& occ_R,
-      const Eigen::Ref<const Eigen::MatrixXd>& det_ovlp_mat,
-      const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
-      int n_orbitals,
-      const std::vector<double>& eri_act) const;
+    DeterminantHamiltonianResult resolve(const std::vector<int>& occ_L,
+                                         const std::vector<int>& occ_R,
+                                         const Eigen::Ref<const Eigen::MatrixXd>& det_ovlp_mat,
+                                         const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
+                                         int n_orbitals,
+                                         const std::vector<double>& eri_act) const;
 
-  /**
+    /**
    * @brief Evaluates determinant Hamiltonian using either packed or RI active ERIs.
    */
-  DeterminantHamiltonianResult resolve(
-      const std::vector<int>& occ_L,
-      const std::vector<int>& occ_R,
-      const Eigen::Ref<const Eigen::MatrixXd>& det_ovlp_mat,
-      const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
-      int n_orbitals,
-      const xmvb::integrals::ActiveSpaceTwoElectronResult& active_space_two_electron_result) const;
+    DeterminantHamiltonianResult resolve(const std::vector<int>& occ_L,
+                                         const std::vector<int>& occ_R,
+                                         const Eigen::Ref<const Eigen::MatrixXd>& det_ovlp_mat,
+                                         const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
+                                         int n_orbitals,
+                                         const xmvb::integrals::ActiveSpaceTwoElectronResult&
+                                             active_space_two_electron_result) const;
 
-  /**
+    /**
    * @brief Evaluates determinant Hamiltonian using a precomputed overlap result.
    *
    * This overload lets callers reuse determinant/cofactor work across overlap
@@ -88,27 +86,26 @@ public:
    *   using the packed two-electron indexing convention.
    * @return DeterminantHamiltonianResult Determinant overlap and Hamiltonian.
    */
-  DeterminantHamiltonianResult resolve(
-      const std::vector<int>& occ_L,
-      const std::vector<int>& occ_R,
-      const DeterminantOverlapResult& det_ovlp_result,
-      const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
-      int n_orbitals,
-      const std::vector<double>& eri_act) const;
+    DeterminantHamiltonianResult resolve(const std::vector<int>& occ_L,
+                                         const std::vector<int>& occ_R,
+                                         const DeterminantOverlapResult& det_ovlp_result,
+                                         const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
+                                         int n_orbitals,
+                                         const std::vector<double>& eri_act) const;
 
-  /**
+    /**
    * @brief Evaluates determinant Hamiltonian using either packed or RI active ERIs.
    */
-  DeterminantHamiltonianResult resolve(
-      const std::vector<int>& occ_L,
-      const std::vector<int>& occ_R,
-      const DeterminantOverlapResult& det_ovlp_result,
-      const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
-      int n_orbitals,
-      const xmvb::integrals::ActiveSpaceTwoElectronResult& active_space_two_electron_result) const;
+    DeterminantHamiltonianResult resolve(const std::vector<int>& occ_L,
+                                         const std::vector<int>& occ_R,
+                                         const DeterminantOverlapResult& det_ovlp_result,
+                                         const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
+                                         int n_orbitals,
+                                         const xmvb::integrals::ActiveSpaceTwoElectronResult&
+                                             active_space_two_electron_result) const;
 
-private:
-  DeterminantOverlapResolver overlap_resolver_;
+  private:
+    DeterminantOverlapResolver overlap_resolver_;
 };
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

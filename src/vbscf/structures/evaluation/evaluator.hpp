@@ -19,24 +19,24 @@ namespace xmvb::vb {
  * 5. Contract spin-string contributions into structure Hamiltonian/overlap matrices.
  */
 class StructureMatrixEvaluator {
-public:
-  StructureMatrixEvaluator() = default;
+  public:
+    StructureMatrixEvaluator() = default;
 
-  /**
+    /**
    * @brief Evaluates structure matrices from prebuilt active-space intermediates.
    */
-  StructureAccumulationResult evaluate(
-      const VbScfInput& input,
-      const PreparedActiveSpaceContext& prepared_active_space) const;
+    StructureAccumulationResult
+    evaluate(const VbScfInput& input,
+             const PreparedActiveSpaceContext& prepared_active_space) const;
 
-  /** @brief Builds the reusable unique-spin pair cache for a structure action. */
-  SameSpinPairCacheContext build_pair_cache(
-      const VbScfInput& input,
-      const PreparedActiveSpaceContext& prepared_active_space,
-      SameSpinPairCacheBuildOptions options) const;
+    /** @brief Builds the reusable unique-spin pair cache for a structure action. */
+    SameSpinPairCacheContext
+    build_pair_cache(const VbScfInput& input,
+                     const PreparedActiveSpaceContext& prepared_active_space,
+                     SameSpinPairCacheBuildOptions options) const;
 
-private:
-  FullDeterminantStructureHamiltonianOverlapBuilder structure_builder_;
+  private:
+    FullDeterminantStructureHamiltonianOverlapBuilder structure_builder_;
 };
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

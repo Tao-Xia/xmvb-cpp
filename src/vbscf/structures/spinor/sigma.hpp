@@ -20,37 +20,33 @@ namespace xmvb::vb::spinor {
  * complex amplitudes; neither representation removes that limitation.
  */
 class Sigma {
-public:
-  Sigma(
-      std::shared_ptr<const Strings> strings,
-      Eigen::MatrixXcd h,
-      std::vector<std::complex<double>> eri);
+  public:
+    Sigma(std::shared_ptr<const Strings> strings,
+          Eigen::MatrixXcd h,
+          std::vector<std::complex<double>> eri);
 
-  Sigma(
-      std::shared_ptr<const Strings> strings,
-      Eigen::MatrixXcd h,
-      std::vector<Eigen::MatrixXcd> factors);
+    Sigma(std::shared_ptr<const Strings> strings,
+          Eigen::MatrixXcd h,
+          std::vector<Eigen::MatrixXcd> factors);
 
-  const std::shared_ptr<const Strings>& strings() const noexcept {
-    return strings_;
-  }
+    const std::shared_ptr<const Strings>& strings() const noexcept {
+        return strings_;
+    }
 
-  /** @brief Apply H to each RHS column in masks() row order. */
-  Eigen::MatrixXcd apply(
-      const Eigen::Ref<const Eigen::MatrixXcd>& matrix) const;
+    /** @brief Apply H to each RHS column in masks() row order. */
+    Eigen::MatrixXcd apply(const Eigen::Ref<const Eigen::MatrixXcd>& matrix) const;
 
-private:
-  void validate_common() const;
-  void validate_exact() const;
-  void validate_ri() const;
-  Eigen::MatrixXcd apply_exact_two_body(
-      const Eigen::Ref<const Eigen::MatrixXcd>& matrix) const;
+  private:
+    void validate_common() const;
+    void validate_exact() const;
+    void validate_ri() const;
+    Eigen::MatrixXcd apply_exact_two_body(const Eigen::Ref<const Eigen::MatrixXcd>& matrix) const;
 
-  std::shared_ptr<const Strings> strings_;
-  Eigen::MatrixXcd h_;
-  std::vector<std::complex<double>> eri_;
-  std::vector<Eigen::MatrixXcd> factors_;
-  bool ri_ = false;
+    std::shared_ptr<const Strings> strings_;
+    Eigen::MatrixXcd h_;
+    std::vector<std::complex<double>> eri_;
+    std::vector<Eigen::MatrixXcd> factors_;
+    bool ri_ = false;
 };
 
-}  // namespace xmvb::vb::spinor
+} // namespace xmvb::vb::spinor

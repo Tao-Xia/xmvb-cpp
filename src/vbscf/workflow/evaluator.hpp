@@ -19,31 +19,28 @@ namespace xmvb::vb {
  * 3. form state-averaged energies and expose the eigenvectors
  */
 class VbScfEvaluator {
-public:
-  /**
+  public:
+    /**
    * @brief Creates an evaluator with default helper components.
    */
-  VbScfEvaluator();
+    VbScfEvaluator();
 
-  /**
+    /**
    * @brief Creates an evaluator with explicit helper components.
    */
-  VbScfEvaluator(
-      StructureMatrixEvaluator matrix_evaluator,
-      xmvb::linalg::GeneralizedEigensolver generalized_eigensolver);
+    VbScfEvaluator(StructureMatrixEvaluator matrix_evaluator,
+                   xmvb::linalg::GeneralizedEigensolver generalized_eigensolver);
 
-  /**
+    /**
    * @brief Evaluates the ground-state VBSCF step.
    *
    * @param input VBSCF input bundle.
    * @param nuclear_repulsion_energy Nuclear repulsion energy.
    * @return VbScfResult Structure matrices plus generalized-eigen data.
    */
-  VbScfResult evaluate(
-      const VbScfInput& input,
-      double nuclear_repulsion_energy = 0.0) const;
+    VbScfResult evaluate(const VbScfInput& input, double nuclear_repulsion_energy = 0.0) const;
 
-  /**
+    /**
    * @brief Evaluates an explicitly selected state-averaged VBSCF step.
    *
    * @param input VBSCF input bundle.
@@ -52,15 +49,14 @@ public:
    * @param nuclear_repulsion_energy Nuclear repulsion energy.
    * @return VbScfResult Structure matrices plus generalized-eigen data.
    */
-  VbScfResult evaluate(
-      const VbScfInput& input,
-      const std::vector<int>& selected_state_indices,
-      const std::vector<double>& state_average_weights,
-      double nuclear_repulsion_energy) const;
+    VbScfResult evaluate(const VbScfInput& input,
+                         const std::vector<int>& selected_state_indices,
+                         const std::vector<double>& state_average_weights,
+                         double nuclear_repulsion_energy) const;
 
-private:
-  StructureMatrixEvaluator matrix_evaluator_;
-  xmvb::linalg::GeneralizedEigensolver generalized_eigensolver_;
+  private:
+    StructureMatrixEvaluator matrix_evaluator_;
+    xmvb::linalg::GeneralizedEigensolver generalized_eigensolver_;
 };
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

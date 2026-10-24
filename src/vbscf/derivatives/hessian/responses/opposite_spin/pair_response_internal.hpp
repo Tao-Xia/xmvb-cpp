@@ -18,69 +18,59 @@ class DirectionalOppositeSpinPairTileView;
 
 /** Directional cofactor data for one ordered unique-spin pair. */
 struct DirectionalOppositeSpinPairData {
-  Eigen::MatrixXd delta_overlap_submatrix;
-  OppositeSpinPackedPairProjection delta_first_order_cofactor_projection;
+    Eigen::MatrixXd delta_overlap_submatrix;
+    OppositeSpinPackedPairProjection delta_first_order_cofactor_projection;
 };
 
 /** Directional opposite-spin data local to one unique-spin pair tile. */
 struct DirectionalOppositeSpinPairTile {
-  int left_begin = 0;
-  int right_begin = 0;
-  int left_size = 0;
-  int right_size = 0;
-  std::vector<DirectionalOppositeSpinPairData> pairs;
-  /** Pair-major contiguous storage, with one packed channel per column. */
-  Eigen::MatrixXd raw_channel_values;
-  Eigen::MatrixXd projected_channel_values;
+    int left_begin = 0;
+    int right_begin = 0;
+    int left_size = 0;
+    int right_size = 0;
+    std::vector<DirectionalOppositeSpinPairData> pairs;
+    /** Pair-major contiguous storage, with one packed channel per column. */
+    Eigen::MatrixXd raw_channel_values;
+    Eigen::MatrixXd projected_channel_values;
 
-  const DirectionalOppositeSpinPairData& pair(
-      int left_local,
-      int right_local) const;
+    const DirectionalOppositeSpinPairData& pair(int left_local, int right_local) const;
 
-  DirectionalOppositeSpinPairTileView view(bool transposed = false) const;
+    DirectionalOppositeSpinPairTileView view(bool transposed = false) const;
 };
 
 /** Zero-copy orientation view of one canonical opposite-spin tile. */
 class DirectionalOppositeSpinPairTileView {
-public:
-  using Stride = Eigen::Stride<Eigen::Dynamic, Eigen::Dynamic>;
-  using ConstChannelMap = Eigen::Map<
-      const Eigen::MatrixXd, Eigen::Unaligned, Stride>;
+  public:
+    using Stride = Eigen::Stride<Eigen::Dynamic, Eigen::Dynamic>;
+    using ConstChannelMap = Eigen::Map<const Eigen::MatrixXd, Eigen::Unaligned, Stride>;
 
-  DirectionalOppositeSpinPairTileView(
-      const DirectionalOppositeSpinPairTile& storage,
-      bool transposed) noexcept
-      : storage_(&storage), transposed_(transposed) {}
+    DirectionalOppositeSpinPairTileView(const DirectionalOppositeSpinPairTile& storage,
+                                        bool transposed) noexcept
+        : storage_(&storage), transposed_(transposed) {}
 
-  int left_begin() const noexcept;
-  int right_begin() const noexcept;
-  int left_size() const noexcept;
-  int right_size() const noexcept;
-  ConstChannelMap raw_channel(int packed_pair) const;
-  ConstChannelMap projected_channel(int packed_pair) const;
+    int left_begin() const noexcept;
+    int right_begin() const noexcept;
+    int left_size() const noexcept;
+    int right_size() const noexcept;
+    ConstChannelMap raw_channel(int packed_pair) const;
+    ConstChannelMap projected_channel(int packed_pair) const;
 
-  template <typename Consumer>
-  void with_pair(
-      int left_local,
-      int right_local,
-      Consumer&& consume) const {
-    if (!transposed_) {
-      consume(storage_->pair(left_local, right_local));
-      return;
+    template <typename Consumer>
+    void with_pair(int left_local, int right_local, Consumer&& consume) const {
+        if (!transposed_) {
+            consume(storage_->pair(left_local, right_local));
+            return;
+        }
+        DirectionalOppositeSpinPairData pair = storage_->pair(right_local, left_local);
+        pair.delta_overlap_submatrix.transposeInPlace();
+        consume(pair);
     }
-    DirectionalOppositeSpinPairData pair =
-        storage_->pair(right_local, left_local);
-    pair.delta_overlap_submatrix.transposeInPlace();
-    consume(pair);
-  }
 
-private:
-  ConstChannelMap channel_view(
-      const Eigen::MatrixXd& channels,
-      int packed_pair) const;
+  private:
+    ConstChannelMap channel_view(const Eigen::MatrixXd& channels, int packed_pair) const;
 
-  const DirectionalOppositeSpinPairTile* storage_ = nullptr;
-  bool transposed_ = false;
+    const DirectionalOppositeSpinPairTile* storage_ = nullptr;
+    bool transposed_ = false;
 };
 
 /**
@@ -112,4 +102,4 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
     const Eigen::MatrixXd* accepted_ri_active_pair_factors = nullptr,
     const Eigen::MatrixXd* directional_ri_active_pair_factors = nullptr);
 
-}  // namespace xmvb::vb::detail
+} // namespace xmvb::vb::detail

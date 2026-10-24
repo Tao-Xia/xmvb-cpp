@@ -8,7 +8,6 @@ namespace xmvb::vb {
 /**
  * @brief Returns a molecule-static AO-side RI cache, building it on demand.
  */
-const xmvb::integrals::RiAoFactorization& ensure_vbscf_input_ri_cache(
-    const VbScfInput& input);
+const xmvb::integrals::RiAoFactorization& ensure_vbscf_input_ri_cache(const VbScfInput& input);
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

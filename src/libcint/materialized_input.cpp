@@ -6,57 +6,56 @@
 
 namespace xmvb::libcint {
 
-xmvb::integrals::AoIntegralInput build_core_hamiltonian_only_ao_integral_input(
-    int n_basis_functions,
-    Eigen::MatrixXd ao_core_hamiltonian_matrix) {
-  if (n_basis_functions <= 0) {
-    throw std::invalid_argument("n_basis_functions must be positive");
-  }
+xmvb::integrals::AoIntegralInput
+build_core_hamiltonian_only_ao_integral_input(int n_basis_functions,
+                                              Eigen::MatrixXd ao_core_hamiltonian_matrix) {
+    if (n_basis_functions <= 0) {
+        throw std::invalid_argument("n_basis_functions must be positive");
+    }
 
-  if (ao_core_hamiltonian_matrix.rows() != n_basis_functions ||
-      ao_core_hamiltonian_matrix.cols() != n_basis_functions) {
-    throw std::invalid_argument(
-        "AO core Hamiltonian shape does not match n_basis_functions");
-  }
+    if (ao_core_hamiltonian_matrix.rows() != n_basis_functions ||
+        ao_core_hamiltonian_matrix.cols() != n_basis_functions) {
+        throw std::invalid_argument("AO core Hamiltonian shape does not match n_basis_functions");
+    }
 
-  xmvb::integrals::AoIntegralInput ao_integral_input;
-  ao_integral_input.n_basis_functions = n_basis_functions;
-  ao_integral_input.ao_core_hamiltonian_matrix =
-      std::move(ao_core_hamiltonian_matrix);
-  return ao_integral_input;
+    xmvb::integrals::AoIntegralInput ao_integral_input;
+    ao_integral_input.n_basis_functions = n_basis_functions;
+    ao_integral_input.ao_core_hamiltonian_matrix = std::move(ao_core_hamiltonian_matrix);
+    return ao_integral_input;
 }
 
-xmvb::integrals::AoIntegralInput build_materialized_ao_integral_input(
-    MaterializedAoIntegralBuffers buffers,integrals::AoPairLayout layout) {
-  if (buffers.n_basis_functions <= 0) {
-    throw std::invalid_argument("n_basis_functions must be positive");
-  }
+xmvb::integrals::AoIntegralInput
+build_materialized_ao_integral_input(MaterializedAoIntegralBuffers buffers,
+                                     integrals::AoPairLayout layout) {
+    if (buffers.n_basis_functions <= 0) {
+        throw std::invalid_argument("n_basis_functions must be positive");
+    }
 
-  if (buffers.ao_core_hamiltonian_matrix.rows() != buffers.n_basis_functions ||
-      buffers.ao_core_hamiltonian_matrix.cols() != buffers.n_basis_functions) {
-    throw std::invalid_argument(
-        "AO core Hamiltonian shape does not match n_basis_functions");
-  }
-  if (buffers.left_pair_indices.size() != buffers.two_electron_values.size() ||
-      buffers.right_pair_indices.size() != buffers.two_electron_values.size()) {
-    throw std::invalid_argument("AO-pair index/value sizes are inconsistent");
-  }
+    if (buffers.ao_core_hamiltonian_matrix.rows() != buffers.n_basis_functions ||
+        buffers.ao_core_hamiltonian_matrix.cols() != buffers.n_basis_functions) {
+        throw std::invalid_argument("AO core Hamiltonian shape does not match n_basis_functions");
+    }
+    if (buffers.left_pair_indices.size() != buffers.two_electron_values.size() ||
+        buffers.right_pair_indices.size() != buffers.two_electron_values.size()) {
+        throw std::invalid_argument("AO-pair index/value sizes are inconsistent");
+    }
 
-  xmvb::integrals::AoIntegralInput ao_integral_input;
-  ao_integral_input.n_basis_functions = buffers.n_basis_functions;
-  ao_integral_input.ao_core_hamiltonian_matrix =
-      std::move(buffers.ao_core_hamiltonian_matrix);
-  if (!buffers.chunks.empty()) {
-    if (!buffers.two_electron_values.empty())
-      throw std::invalid_argument("AO integrals have both flat and chunked storage");
-    ao_integral_input.pair_graph=integrals::build_ao_pair_graph(
-        std::move(buffers.chunks),buffers.n_basis_functions);
-  } else ao_integral_input.pair_graph = xmvb::integrals::build_ao_pair_graph(
-      std::move(buffers.left_pair_indices),
-      std::move(buffers.right_pair_indices),
-      std::move(buffers.two_electron_values),
-      buffers.n_basis_functions,layout);
-  return ao_integral_input;
+    xmvb::integrals::AoIntegralInput ao_integral_input;
+    ao_integral_input.n_basis_functions = buffers.n_basis_functions;
+    ao_integral_input.ao_core_hamiltonian_matrix = std::move(buffers.ao_core_hamiltonian_matrix);
+    if (!buffers.chunks.empty()) {
+        if (!buffers.two_electron_values.empty())
+            throw std::invalid_argument("AO integrals have both flat and chunked storage");
+        ao_integral_input.pair_graph =
+            integrals::build_ao_pair_graph(std::move(buffers.chunks), buffers.n_basis_functions);
+    } else
+        ao_integral_input.pair_graph =
+            xmvb::integrals::build_ao_pair_graph(std::move(buffers.left_pair_indices),
+                                                 std::move(buffers.right_pair_indices),
+                                                 std::move(buffers.two_electron_values),
+                                                 buffers.n_basis_functions,
+                                                 layout);
+    return ao_integral_input;
 }
 
-}  // namespace xmvb::libcint
+} // namespace xmvb::libcint

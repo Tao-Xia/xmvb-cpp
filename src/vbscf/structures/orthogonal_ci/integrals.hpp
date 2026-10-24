@@ -16,12 +16,12 @@ namespace xmvb::vb {
  * mcscf::ActiveIntegrals directly and never builds this Cholesky metadata.
  */
 struct OrthogonalActiveIntegrals : mcscf::ActiveIntegrals {
-  /** Upper factor in `S_active = R^T R`. */
-  Eigen::MatrixXd orbital_transform;
-  /** True when both input h and G were built from `C R^{-1}`. */
-  bool input_pretransformed = false;
-  /** Accepted orthogonal RI factors, shared by all integral directions. */
-  Eigen::MatrixXd ri_pair_factors;
+    /** Upper factor in `S_active = R^T R`. */
+    Eigen::MatrixXd orbital_transform;
+    /** True when both input h and G were built from `C R^{-1}`. */
+    bool input_pretransformed = false;
+    /** Accepted orthogonal RI factors, shared by all integral directions. */
+    Eigen::MatrixXd ri_pair_factors;
 };
 
 /** @brief Integral adjoints at the physical VB input boundary.
@@ -31,19 +31,19 @@ struct OrthogonalActiveIntegrals : mcscf::ActiveIntegrals {
  * includes the frame generator, so physical pullback uses a fixed R.
  */
 struct NonorthogonalActiveIntegralAdjoint {
-  Eigen::MatrixXd overlap;
-  Eigen::MatrixXd one_electron;
-  Eigen::MatrixXd pair_kernel;
+    Eigen::MatrixXd overlap;
+    Eigen::MatrixXd one_electron;
+    Eigen::MatrixXd pair_kernel;
 };
 
 /**
  * @brief Orthogonalizes active integrals without changing their physical span.
  */
-OrthogonalActiveIntegrals orthogonalize_active_integrals(
-    const std::vector<double>& active_overlap,
-    const Eigen::Ref<const Eigen::MatrixXd>& one_electron,
-    const xmvb::integrals::ActiveSpaceTwoElectronResult& two_electron,
-    int n_active_orbitals);
+OrthogonalActiveIntegrals
+orthogonalize_active_integrals(const std::vector<double>& active_overlap,
+                               const Eigen::Ref<const Eigen::MatrixXd>& one_electron,
+                               const xmvb::integrals::ActiveSpaceTwoElectronResult& two_electron,
+                               int n_active_orbitals);
 
 /**
  * @brief Differentiates the Cholesky-orthogonalized active integrals.
@@ -71,25 +71,21 @@ OrthogonalActiveIntegrals orthogonalize_active_integral_direction(
  * perturbation. The returned overlap matrix follows the symmetric Frobenius
  * convention used by the active-space pullback.
  */
-NonorthogonalActiveIntegralAdjoint
-backpropagate_orthogonal_active_integral_adjoint(
+NonorthogonalActiveIntegralAdjoint backpropagate_orthogonal_active_integral_adjoint(
     const OrthogonalActiveIntegrals& accepted,
     const Eigen::Ref<const Eigen::MatrixXd>& orthogonal_one_electron_gradient,
     const Eigen::Ref<const Eigen::MatrixXd>& orthogonal_pair_kernel_gradient,
     const Eigen::Ref<const Eigen::MatrixXd>& generator_gradient);
 
 /** @brief Differentiates the orthogonal active-integral adjoint pullback. */
-NonorthogonalActiveIntegralAdjoint
-backpropagate_orthogonal_active_integral_adjoint_direction(
+NonorthogonalActiveIntegralAdjoint backpropagate_orthogonal_active_integral_adjoint_direction(
     const OrthogonalActiveIntegrals& accepted,
     const OrthogonalActiveIntegrals& direction,
     const Eigen::Ref<const Eigen::MatrixXd>& orthogonal_one_electron_gradient,
     const Eigen::Ref<const Eigen::MatrixXd>& orthogonal_pair_kernel_gradient,
     const Eigen::Ref<const Eigen::MatrixXd>& generator_gradient,
-    const Eigen::Ref<const Eigen::MatrixXd>&
-        orthogonal_one_electron_gradient_direction,
-    const Eigen::Ref<const Eigen::MatrixXd>&
-        orthogonal_pair_kernel_gradient_direction,
+    const Eigen::Ref<const Eigen::MatrixXd>& orthogonal_one_electron_gradient_direction,
+    const Eigen::Ref<const Eigen::MatrixXd>& orthogonal_pair_kernel_gradient_direction,
     const Eigen::Ref<const Eigen::MatrixXd>& generator_gradient_direction);
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

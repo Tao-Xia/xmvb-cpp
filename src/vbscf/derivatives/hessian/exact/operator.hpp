@@ -27,14 +27,14 @@ struct VbScfInput;
  * orbital operator without horizontal structure relaxation.
  */
 struct HvpComponents {
-  bool direct_core_response = true;
-  bool fixed_upstream_pullback = true;
-  bool local_active_response = true;
-  bool structure_response = true;
-  /** Requested inexact structure-response tolerance; zero keeps final accuracy. */
-  double response_relative_residual_tolerance = 0.0;
-  /** Apply the current common response space without enriching it. */
-  bool freeze_structure_response = false;
+    bool direct_core_response = true;
+    bool fixed_upstream_pullback = true;
+    bool local_active_response = true;
+    bool structure_response = true;
+    /** Requested inexact structure-response tolerance; zero keeps final accuracy. */
+    double response_relative_residual_tolerance = 0.0;
+    /** Apply the current common response space without enriching it. */
+    bool freeze_structure_response = false;
 };
 
 /**
@@ -45,53 +45,52 @@ struct HvpComponents {
  * Hessian is @f$-J K^\dagger J^T@f$.
  */
 struct StructureResponseSchurModel {
-  std::uint64_t revision = 0;
-  Eigen::MatrixXd orbital_couplings;
-  Eigen::MatrixXd projected_operator;
-  Eigen::MatrixXd projected_inverse;
+    std::uint64_t revision = 0;
+    Eigen::MatrixXd orbital_couplings;
+    Eigen::MatrixXd projected_operator;
+    Eigen::MatrixXd projected_inverse;
 
-  Eigen::MatrixXd apply(
-      const Eigen::Ref<const Eigen::MatrixXd>& orbital_directions) const;
+    Eigen::MatrixXd apply(const Eigen::Ref<const Eigen::MatrixXd>& orbital_directions) const;
 };
 
 /** @brief Basis-invariant absolute-spectrum summary of a Schur model. */
 struct ResponseSpectrumSummary {
-  int model_rank = 0;
-  int rank_90 = 0;
-  int rank_99 = 0;
-  double effective_rank = 0.0;
-  double top_mode_fraction = 0.0;
-  double top_5_fraction = 0.0;
-  double top_10_fraction = 0.0;
+    int model_rank = 0;
+    int rank_90 = 0;
+    int rank_99 = 0;
+    double effective_rank = 0.0;
+    double top_mode_fraction = 0.0;
+    double top_5_fraction = 0.0;
+    double top_10_fraction = 0.0;
 };
 
 /** @brief Orbital block and orbital-to-structure coupling from one forward pass. */
 struct OrbitalCouplingAction {
-  Eigen::VectorXd orbital_hessian;
-  Eigen::MatrixXd scaled_structure_forcing;
-  /** Normalization gauge from the same directional overlap, A_g=-G^-1 D/2. */
-  Eigen::MatrixXd gauge_frame;
-  std::optional<StructureConnectionDirection> connection;
+    Eigen::VectorXd orbital_hessian;
+    Eigen::MatrixXd scaled_structure_forcing;
+    /** Normalization gauge from the same directional overlap, A_g=-G^-1 D/2. */
+    Eigen::MatrixXd gauge_frame;
+    std::optional<StructureConnectionDirection> connection;
 };
 
 /** @brief Batched orbital block and one structure-forcing matrix per direction. */
 struct OrbitalCouplingBlockAction {
-  /** @brief Columns are the orbital Hessian images @f$\bar A P@f$. */
-  Eigen::MatrixXd orbital_hessian;
-  /** @brief Scaled @f$BP@f$ forcing matrices aligned with the input columns. */
-  std::vector<Eigen::MatrixXd> scaled_structure_forcing;
+    /** @brief Columns are the orbital Hessian images @f$\bar A P@f$. */
+    Eigen::MatrixXd orbital_hessian;
+    /** @brief Scaled @f$BP@f$ forcing matrices aligned with the input columns. */
+    std::vector<Eigen::MatrixXd> scaled_structure_forcing;
 };
 
 /** @brief Common-revision solutions of the horizontal structure equations. */
 struct StructureResponseBlock {
-  /** @brief Physical scaled responses aligned with the forcing block. */
-  std::vector<Eigen::MatrixXd> scaled_coefficients;
-  std::vector<Eigen::MatrixXd> coefficient_responses;
-  std::vector<Eigen::MatrixXd> adjoint_multipliers;
-  std::vector<Eigen::MatrixXd> scaled_equation_residuals;
-  std::uint64_t revision = 0;
-  int block_actions = 0;
-  double max_relative_residual = 0.0;
+    /** @brief Physical scaled responses aligned with the forcing block. */
+    std::vector<Eigen::MatrixXd> scaled_coefficients;
+    std::vector<Eigen::MatrixXd> coefficient_responses;
+    std::vector<Eigen::MatrixXd> adjoint_multipliers;
+    std::vector<Eigen::MatrixXd> scaled_equation_residuals;
+    std::uint64_t revision = 0;
+    int block_actions = 0;
+    double max_relative_residual = 0.0;
 };
 
 /**
@@ -100,8 +99,7 @@ struct StructureResponseBlock {
  * The diagnostic never assembles an orbital-space Hessian and does not alter
  * or truncate the supplied response model.
  */
-ResponseSpectrumSummary summarize_response_spectrum(
-    const StructureResponseSchurModel& model);
+ResponseSpectrumSummary summarize_response_spectrum(const StructureResponseSchurModel& model);
 
 /**
  * @brief Accepted-point matrix-free orbital second-order operator.
@@ -119,149 +117,145 @@ ResponseSpectrumSummary summarize_response_spectrum(
  *
  */
 class ExactHvpOperator {
-public:
-  struct Diagnostics {
-    bool supports_analytic_core_model = false;
-    bool outer_response_enabled = false;
-    bool used_reduced_curvature_diagonal = false;
-    bool has_same_spin_matrix_form = false;
-    bool has_opposite_spin_pair_graph = false;
-    bool streams_exact_pair_products = false;
-    int n_selected_states = 0;
-    int n_active_orbitals = 0;
-    int n_blocks = 0;
-    std::size_t resident_exact_pair_elements = 0;
-    std::size_t exact_pair_tile_rows = 0;
-    std::size_t apply_count = 0;
-    /** Exact within-state coefficient responses reused from accepted adjoints. */
-    std::size_t normalization_adjoint_reuses = 0;
-    std::size_t batch_apply_count = 0;
-    std::size_t orbital_coupling_batch_count = 0;
-    std::size_t orbital_coupling_batch_chunk_count = 0;
-    std::size_t max_orbital_coupling_batch_width = 0;
-    std::size_t structure_response_block_actions = 0;
-    std::size_t structure_response_schur_build_count = 0;
-    std::size_t structure_response_schur_new_columns = 0;
-    int max_structure_response_iterations = 0;
-    double max_structure_response_relative_residual = 0.0;
-    double total_apply_wall_time_seconds = 0.0;
-    double core_setup_wall_time_seconds = 0.0;
-    double ao_effective_one_electron_build_wall_time_seconds = 0.0;
-    double ao_effective_one_electron_fused_wall_time_seconds = 0.0;
-    double active_two_electron_wall_time_seconds = 0.0;
-    double ao_effective_one_electron_backprop_wall_time_seconds = 0.0;
-    double orbital_backprop_wall_time_seconds = 0.0;
-    double fixed_upstream_pullback_wall_time_seconds = 0.0;
-    double outer_response_wall_time_seconds = 0.0;
-    // Outer response sub-stage timings
-    double outer_response_active_space_integrals_wall_time_seconds = 0.0;
-    double outer_response_structure_matrices_wall_time_seconds = 0.0;
-    double outer_response_eigensystem_wall_time_seconds = 0.0;
-    double outer_response_pair_weights_wall_time_seconds = 0.0;
-    double outer_response_active_gradient_wall_time_seconds = 0.0;
-    double outer_response_local_active_gradient_wall_time_seconds = 0.0;
-    double outer_response_structure_active_gradient_wall_time_seconds = 0.0;
-    double outer_response_selected_state_rebuild_wall_time_seconds = 0.0;
-    double outer_response_same_spin_backward_wall_time_seconds = 0.0;
-    double outer_response_opposite_spin_backward_wall_time_seconds = 0.0;
-    double outer_response_opposite_spin_packed_gradient_wall_time_seconds = 0.0;
-    double outer_response_opposite_spin_alpha_overlap_wall_time_seconds = 0.0;
-    double outer_response_opposite_spin_beta_overlap_wall_time_seconds = 0.0;
-    double outer_response_orbital_pullback_wall_time_seconds = 0.0;
-    double structure_response_schur_wall_time_seconds = 0.0;
-    double structure_response_schur_structure_action_wall_time_seconds = 0.0;
-    double structure_response_schur_adjoint_wall_time_seconds = 0.0;
-  };
+  public:
+    struct Diagnostics {
+        bool supports_analytic_core_model = false;
+        bool outer_response_enabled = false;
+        bool used_reduced_curvature_diagonal = false;
+        bool has_same_spin_matrix_form = false;
+        bool has_opposite_spin_pair_graph = false;
+        bool streams_exact_pair_products = false;
+        int n_selected_states = 0;
+        int n_active_orbitals = 0;
+        int n_blocks = 0;
+        std::size_t resident_exact_pair_elements = 0;
+        std::size_t exact_pair_tile_rows = 0;
+        std::size_t apply_count = 0;
+        /** Exact within-state coefficient responses reused from accepted adjoints. */
+        std::size_t normalization_adjoint_reuses = 0;
+        std::size_t batch_apply_count = 0;
+        std::size_t orbital_coupling_batch_count = 0;
+        std::size_t orbital_coupling_batch_chunk_count = 0;
+        std::size_t max_orbital_coupling_batch_width = 0;
+        std::size_t structure_response_block_actions = 0;
+        std::size_t structure_response_schur_build_count = 0;
+        std::size_t structure_response_schur_new_columns = 0;
+        int max_structure_response_iterations = 0;
+        double max_structure_response_relative_residual = 0.0;
+        double total_apply_wall_time_seconds = 0.0;
+        double core_setup_wall_time_seconds = 0.0;
+        double ao_effective_one_electron_build_wall_time_seconds = 0.0;
+        double ao_effective_one_electron_fused_wall_time_seconds = 0.0;
+        double active_two_electron_wall_time_seconds = 0.0;
+        double ao_effective_one_electron_backprop_wall_time_seconds = 0.0;
+        double orbital_backprop_wall_time_seconds = 0.0;
+        double fixed_upstream_pullback_wall_time_seconds = 0.0;
+        double outer_response_wall_time_seconds = 0.0;
+        // Outer response sub-stage timings
+        double outer_response_active_space_integrals_wall_time_seconds = 0.0;
+        double outer_response_structure_matrices_wall_time_seconds = 0.0;
+        double outer_response_eigensystem_wall_time_seconds = 0.0;
+        double outer_response_pair_weights_wall_time_seconds = 0.0;
+        double outer_response_active_gradient_wall_time_seconds = 0.0;
+        double outer_response_local_active_gradient_wall_time_seconds = 0.0;
+        double outer_response_structure_active_gradient_wall_time_seconds = 0.0;
+        double outer_response_selected_state_rebuild_wall_time_seconds = 0.0;
+        double outer_response_same_spin_backward_wall_time_seconds = 0.0;
+        double outer_response_opposite_spin_backward_wall_time_seconds = 0.0;
+        double outer_response_opposite_spin_packed_gradient_wall_time_seconds = 0.0;
+        double outer_response_opposite_spin_alpha_overlap_wall_time_seconds = 0.0;
+        double outer_response_opposite_spin_beta_overlap_wall_time_seconds = 0.0;
+        double outer_response_orbital_pullback_wall_time_seconds = 0.0;
+        double structure_response_schur_wall_time_seconds = 0.0;
+        double structure_response_schur_structure_action_wall_time_seconds = 0.0;
+        double structure_response_schur_adjoint_wall_time_seconds = 0.0;
+    };
 
-  ExactHvpOperator(
-      std::shared_ptr<const AcceptedPointContext> accepted_point_context,
-      const VbScfInput* current_input,
-      SparseParameterLayout parameter_view,
-      const OrbitalChart* nonredundant_space);
+    ExactHvpOperator(std::shared_ptr<const AcceptedPointContext> accepted_point_context,
+                     const VbScfInput* current_input,
+                     SparseParameterLayout parameter_view,
+                     const OrbitalChart* nonredundant_space);
 
-  ~ExactHvpOperator();
+    ~ExactHvpOperator();
 
-  /**
+    /**
    * @brief Applies the accepted-point reduced-space second-order model.
    *
    * The returned vector lives in the same reduced coordinates as the input.
    * HvpComponents selects which sub-components (direct core, fixed-upstream
    * pullback, outer response) are included.
    */
-  Eigen::VectorXd apply_reduced(
-      const Eigen::VectorXd& reduced_direction,
-      HvpComponents components = {}) const;
+    Eigen::VectorXd apply_reduced(const Eigen::VectorXd& reduced_direction,
+                                  HvpComponents components = {}) const;
 
-  /**
+    /**
    * @brief Applies the matrix-free operator to a block of directions.
    *
    * Columns are independent reduced-space directions.  This interface is the
    * semantic foundation for fused block contractions; it never materializes
    * the reduced Hessian.
    */
-  Eigen::MatrixXd apply_reduced_batch(
-      const Eigen::Ref<const Eigen::MatrixXd>& reduced_directions,
-      HvpComponents components = {}) const;
+    Eigen::MatrixXd apply_reduced_batch(const Eigen::Ref<const Eigen::MatrixXd>& reduced_directions,
+                                        HvpComponents components = {}) const;
 
-  /**
+    /**
    * @brief Applies @f$\bar A p@f$ and @f$Bp@f$ without solving a response.
    *
    * The structure forcing columns use @f$z_s=\sqrt{2w_s}q_s@f$ coordinates.
    * The accepted-point forward/integral direction is evaluated only once.
    */
-  OrbitalCouplingAction apply_orbital_coupling(
-      const Eigen::VectorXd& reduced_direction,
-      StructureResponseRequest* ci_response=nullptr) const;
+    OrbitalCouplingAction
+    apply_orbital_coupling(const Eigen::VectorXd& reduced_direction,
+                           StructureResponseRequest* ci_response = nullptr) const;
 
-  /**
+    /**
    * @brief Applies the complete orbital operator without horizontal response.
    *
    * Includes selected-state normalization gauge in the fused local backward.
    * No horizontal structure forcing or response solve is constructed.
    */
-  Eigen::VectorXd apply_orbital(
-      const Eigen::VectorXd& reduced_direction) const;
+    Eigen::VectorXd apply_orbital(const Eigen::VectorXd& reduced_direction) const;
 
-  /**
+    /**
    * @brief Applies @f$\bar A P@f$ and @f$BP@f$ to a bounded direction block.
    *
    * AO one-electron and active two-electron directional transformations are
    * shared inside each memory-bounded chunk. Caller blocks wider than the
    * workspace budget are split without changing column order.
    */
-  OrbitalCouplingBlockAction apply_orbital_coupling_batch(
-      const Eigen::Ref<const Eigen::MatrixXd>& reduced_directions) const;
+    OrbitalCouplingBlockAction
+    apply_orbital_coupling_batch(const Eigen::Ref<const Eigen::MatrixXd>& reduced_directions) const;
 
-  /** @brief Solves @f$Cz=-F@f$ for a forcing block in one common revision. */
-  StructureResponseBlock solve_structure_response_block(
-      const std::vector<Eigen::MatrixXd>& scaled_structure_forcing,
-      double relative_residual_tolerance) const;
+    /** @brief Solves @f$Cz=-F@f$ for a forcing block in one common revision. */
+    StructureResponseBlock
+    solve_structure_response_block(const std::vector<Eigen::MatrixXd>& scaled_structure_forcing,
+                                   double relative_residual_tolerance) const;
 
-  /** @brief Applies @f$B^Tz@f$ through the existing selected-state adjoint. */
-  Eigen::VectorXd apply_structure_coupling_adjoint(
-      const Eigen::Ref<const Eigen::MatrixXd>& coefficient_response,
-      const Eigen::Ref<const Eigen::MatrixXd>& adjoint_multipliers) const;
+    /** @brief Applies @f$B^Tz@f$ through the existing selected-state adjoint. */
+    Eigen::VectorXd apply_structure_coupling_adjoint(
+        const Eigen::Ref<const Eigen::MatrixXd>& coefficient_response,
+        const Eigen::Ref<const Eigen::MatrixXd>& adjoint_multipliers) const;
 
-  /** @brief Returns the canonical lazy accepted-point structure action. */
-  const StructureAction& structure_action() const;
+    /** @brief Returns the canonical lazy accepted-point structure action. */
+    const StructureAction& structure_action() const;
 
-  /** @brief Orbital pullback of an already contracted structure response. */
-  Eigen::VectorXd apply_structure_coupling_adjoint(
-      const StructureActiveIntegralAdjoint& adjoint) const;
+    /** @brief Orbital pullback of an already contracted structure response. */
+    Eigen::VectorXd
+    apply_structure_coupling_adjoint(const StructureActiveIntegralAdjoint& adjoint) const;
 
-  bool supports_analytic_core_model() const noexcept;
+    bool supports_analytic_core_model() const noexcept;
 
-  /** @brief Revision invalidating previously sampled relaxed HVP images. */
-  std::uint64_t response_model_revision() const noexcept;
+    /** @brief Revision invalidating previously sampled relaxed HVP images. */
+    std::uint64_t response_model_revision() const noexcept;
 
-  /** @brief Builds the current exact recycled response Schur model. */
-  StructureResponseSchurModel structure_response_schur_model() const;
+    /** @brief Builds the current exact recycled response Schur model. */
+    StructureResponseSchurModel structure_response_schur_model() const;
 
-  Diagnostics diagnostics() const;
+    Diagnostics diagnostics() const;
 
-private:
-  struct State;
-  std::unique_ptr<State> state_;
+  private:
+    struct State;
+    std::unique_ptr<State> state_;
 };
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

@@ -18,8 +18,8 @@ namespace xmvb::vb {
  * builder.
  */
 class StructureExpander {
-public:
-  /**
+  public:
+    /**
    * @brief Expands raw structure definitions into unique spin-string pairs.
    *
    * The returned object only fills spin-string occupations and signed
@@ -29,10 +29,9 @@ public:
    * @param raw_structure_data Raw structure definitions.
    * @return StructureExpansion Spin-string pairs and expansion terms.
    */
-  StructureExpansion expand(
-      const RawStructureData& raw_structure_data) const;
+    StructureExpansion expand(const RawStructureData& raw_structure_data) const;
 
-  /**
+    /**
    * @brief Expands only a selected subset of raw structures.
    *
    * The selected structures are reindexed into a compact local structure space
@@ -42,9 +41,8 @@ public:
    * @param selected_structure_indices Zero-based structure indices to keep.
    * @return StructureExpansion Spin-string pairs and remapped terms.
    */
-  StructureExpansion expand_subset(
-      const RawStructureData& raw_structure_data,
-      const std::vector<int>& selected_structure_indices) const;
+    StructureExpansion expand_subset(const RawStructureData& raw_structure_data,
+                                     const std::vector<int>& selected_structure_indices) const;
 };
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

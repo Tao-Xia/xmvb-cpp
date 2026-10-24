@@ -41,4 +41,4 @@ OrbitalPreparationInput build_partial_overlap_support_expanded_input(
     const OrbitalPreparationInput& orbital_preparation_input,
     const std::vector<char>& expand_orbital_mask);
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

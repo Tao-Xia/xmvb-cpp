@@ -13,18 +13,24 @@ namespace xmvb::cuda {
  * No compound transform, spin-pair square or product-space scratch is stored.
  */
 class SpinSelf {
- public:
-  SpinSelf(Context& context,int orbitals,std::span<const std::uint64_t> masks);
-  void update(linalg::ConstMatrixView frame,linalg::ConstMatrixView channel_kernel);
-  linalg::ConstMatrixView moments() const noexcept { return moments_.view(); }
-  linalg::ConstMatrixView energy() const noexcept { return energy_.view(); }
-  linalg::ConstMatrixView overlap() const noexcept { return overlap_.view(); }
+  public:
+    SpinSelf(Context& context, int orbitals, std::span<const std::uint64_t> masks);
+    void update(linalg::ConstMatrixView frame, linalg::ConstMatrixView channel_kernel);
+    linalg::ConstMatrixView moments() const noexcept {
+        return moments_.view();
+    }
+    linalg::ConstMatrixView energy() const noexcept {
+        return energy_.view();
+    }
+    linalg::ConstMatrixView overlap() const noexcept {
+        return overlap_.view();
+    }
 
- private:
-  Context* context_;
-  int orbitals_,occupied_,strings_,channels_;
-  Buffer<int> occupations_,first_,second_;
-  Matrix<double> moments_,energy_,overlap_;
+  private:
+    Context* context_;
+    int orbitals_, occupied_, strings_, channels_;
+    Buffer<int> occupations_, first_, second_;
+    Matrix<double> moments_, energy_, overlap_;
 };
 
-}  // namespace xmvb::cuda
+} // namespace xmvb::cuda

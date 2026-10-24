@@ -11,8 +11,8 @@ namespace xmvb::mcscf {
  * to this physical CI interface.
  */
 struct ActiveIntegrals {
-  Eigen::MatrixXd one_electron;
-  Eigen::MatrixXd pair_kernel;
+    Eigen::MatrixXd one_electron;
+    Eigen::MatrixXd pair_kernel;
 };
 
-}  // namespace xmvb::mcscf
+} // namespace xmvb::mcscf

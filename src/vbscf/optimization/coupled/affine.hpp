@@ -7,10 +7,10 @@ namespace xmvb::vb {
 
 /** The four affine-chart images, also used separately by the CIAH coarse model. */
 struct AffineCouplingAction {
-  OrbitalCouplingAction orbital;
-  StructureCoordinateCouplingAction ci;
-  Eigen::VectorXd forcing;
-  Eigen::VectorXd adjoint;
+    OrbitalCouplingAction orbital;
+    StructureCoordinateCouplingAction ci;
+    Eigen::VectorXd forcing;
+    Eigen::VectorXd adjoint;
 };
 
 /**
@@ -21,19 +21,19 @@ struct AffineCouplingAction {
  * Both corrections reuse the existing directional overlap / adjoint sweep.
  */
 class AffineCoupling {
-public:
-  AffineCoupling(const AcceptedPointContext& context,
-      const ExactHvpOperator& hessian, const StructureTangentOperator& structure);
+  public:
+    AffineCoupling(const AcceptedPointContext& context,
+                   const ExactHvpOperator& hessian,
+                   const StructureTangentOperator& structure);
 
-  AffineCouplingAction apply(const Eigen::VectorXd& orbital,
-      const Eigen::VectorXd& ci) const;
+    AffineCouplingAction apply(const Eigen::VectorXd& orbital, const Eigen::VectorXd& ci) const;
 
-private:
-  const ExactHvpOperator& hessian_;
-  const StructureTangentOperator& structure_;
-  Eigen::MatrixXd residual_;
-  Eigen::MatrixXd metric_inverse_;
-  Eigen::VectorXd scales_;
+  private:
+    const ExactHvpOperator& hessian_;
+    const StructureTangentOperator& structure_;
+    Eigen::MatrixXd residual_;
+    Eigen::MatrixXd metric_inverse_;
+    Eigen::VectorXd scales_;
 };
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

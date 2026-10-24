@@ -14,8 +14,8 @@ namespace xmvb::linalg {
  * @brief Accuracy and work limit for matrix-free generalized-eigen response.
  */
 struct EigenResponseOptions {
-  int max_iterations;
-  double relative_residual_tolerance;
+    int max_iterations;
+    double relative_residual_tolerance;
 };
 
 /** @brief Fixed symmetric inverse preconditioner on each response complement.
@@ -27,19 +27,18 @@ struct EigenResponseOptions {
  * bordered certificate.
  */
 struct EigenResponsePreconditioner {
-  std::function<Eigen::VectorXd(
-      const Eigen::Ref<const Eigen::VectorXd>&, Eigen::Index)> apply;
-  double minimum_eigenvalue = 0.0;
+    std::function<Eigen::VectorXd(const Eigen::Ref<const Eigen::VectorXd>&, Eigen::Index)> apply;
+    double minimum_eigenvalue = 0.0;
 };
 
 /** @brief Unconditional Galerkin action of one frozen recycle space. */
 struct EigenResponseRecycleApplication {
-  Eigen::VectorXd solution;
-  Eigen::VectorXd operator_image;
-  Eigen::VectorXd hamiltonian_image;
-  Eigen::VectorXd overlap_image;
-  bool available = false;
-  bool has_generalized_images = false;
+    Eigen::VectorXd solution;
+    Eigen::VectorXd operator_image;
+    Eigen::VectorXd hamiltonian_image;
+    Eigen::VectorXd overlap_image;
+    bool available = false;
+    bool has_generalized_images = false;
 };
 
 /**
@@ -52,89 +51,85 @@ struct EigenResponseRecycleApplication {
  * owned by one accepted orbital point and one selected root.
  */
 class EigenResponseRecycleSpace {
-public:
-  int dimension() const noexcept;
-  int size() const noexcept;
-  std::uint64_t revision() const noexcept;
-  void clear();
+  public:
+    int dimension() const noexcept;
+    int size() const noexcept;
+    std::uint64_t revision() const noexcept;
+    void clear();
 
-  /** @brief Orthonormal columns spanning the frozen response model. */
-  const Eigen::MatrixXd& basis() const noexcept;
+    /** @brief Orthonormal columns spanning the frozen response model. */
+    const Eigen::MatrixXd& basis() const noexcept;
 
-  /** @brief Pseudoinverse of the symmetric projected response operator. */
-  const Eigen::MatrixXd& projected_inverse() const;
+    /** @brief Pseudoinverse of the symmetric projected response operator. */
+    const Eigen::MatrixXd& projected_inverse() const;
 
-  /** @brief Symmetric projected response operator @f$W^T C W@f$. */
-  const Eigen::MatrixXd& projected_operator() const;
+    /** @brief Symmetric projected response operator @f$W^T C W@f$. */
+    const Eigen::MatrixXd& projected_operator() const;
 
-  /**
+    /**
    * @brief Applies an SPD spectral/Jacobi preconditioner.
    *
    * Numerically resolved recycle Ritz modes use the inverse absolute
    * projected eigenvalues. The Euclidean complement uses the supplied
    * positive Jacobi inverse, projected on both sides to preserve symmetry.
    */
-  Eigen::VectorXd apply_absolute_spectral_preconditioner(
-      const Eigen::Ref<const Eigen::VectorXd>& right_hand_side,
-      const Eigen::Ref<const Eigen::VectorXd>& jacobi_inverse,
-      const EigenResponsePreconditioner* preconditioner = nullptr,
-      Eigen::Index state = 0) const;
+    Eigen::VectorXd apply_absolute_spectral_preconditioner(
+        const Eigen::Ref<const Eigen::VectorXd>& right_hand_side,
+        const Eigen::Ref<const Eigen::VectorXd>& jacobi_inverse,
+        const EigenResponsePreconditioner* preconditioner = nullptr,
+        Eigen::Index state = 0) const;
 
-  /** @brief SPD bound after replacing resolved recycle modes by their spectra. */
-  double preconditioner_lower_bound(double complement_lower_bound) const;
+    /** @brief SPD bound after replacing resolved recycle modes by their spectra. */
+    double preconditioner_lower_bound(double complement_lower_bound) const;
 
-  /**
+    /**
    * @brief Applies the frozen symmetric Galerkin inverse to any finite RHS.
    *
    * This operation is linear in the right-hand side and never rejects a
    * result based on residual improvement. Small projected spectral
    * modes are removed with one RHS-independent numerical-rank cutoff.
    */
-  EigenResponseRecycleApplication galerkin_apply(
-      const Eigen::Ref<const Eigen::VectorXd>& right_hand_side) const;
+    EigenResponseRecycleApplication
+    galerkin_apply(const Eigen::Ref<const Eigen::VectorXd>& right_hand_side) const;
 
-  bool append(
-      const Eigen::Ref<const Eigen::VectorXd>& solution,
-      const Eigen::Ref<const Eigen::VectorXd>& operator_image);
+    bool append(const Eigen::Ref<const Eigen::VectorXd>& solution,
+                const Eigen::Ref<const Eigen::VectorXd>& operator_image);
 
-  bool append_generalized(
-      const Eigen::Ref<const Eigen::VectorXd>& solution,
-      const Eigen::Ref<const Eigen::VectorXd>& operator_image,
-      const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_image,
-      const Eigen::Ref<const Eigen::VectorXd>& overlap_image);
+    bool append_generalized(const Eigen::Ref<const Eigen::VectorXd>& solution,
+                            const Eigen::Ref<const Eigen::VectorXd>& operator_image,
+                            const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_image,
+                            const Eigen::Ref<const Eigen::VectorXd>& overlap_image);
 
-private:
-  bool append_impl(
-      const Eigen::Ref<const Eigen::VectorXd>& solution,
-      const Eigen::Ref<const Eigen::VectorXd>& operator_image,
-      const Eigen::VectorXd* hamiltonian_image,
-      const Eigen::VectorXd* overlap_image);
-  void prepare_projected_inverse() const;
+  private:
+    bool append_impl(const Eigen::Ref<const Eigen::VectorXd>& solution,
+                     const Eigen::Ref<const Eigen::VectorXd>& operator_image,
+                     const Eigen::VectorXd* hamiltonian_image,
+                     const Eigen::VectorXd* overlap_image);
+    void prepare_projected_inverse() const;
 
-  Eigen::MatrixXd basis_;
-  Eigen::MatrixXd operator_images_;
-  Eigen::MatrixXd hamiltonian_images_;
-  Eigen::MatrixXd overlap_images_;
-  std::uint64_t revision_ = 0;
-  mutable Eigen::MatrixXd projected_inverse_;
-  mutable Eigen::MatrixXd projected_operator_;
-  mutable Eigen::MatrixXd spectral_preconditioner_basis_;
-  mutable Eigen::VectorXd spectral_preconditioner_inverse_eigenvalues_;
-  mutable std::uint64_t projected_inverse_revision_ =
-      static_cast<std::uint64_t>(-1);
+    Eigen::MatrixXd basis_;
+    Eigen::MatrixXd operator_images_;
+    Eigen::MatrixXd hamiltonian_images_;
+    Eigen::MatrixXd overlap_images_;
+    std::uint64_t revision_ = 0;
+    mutable Eigen::MatrixXd projected_inverse_;
+    mutable Eigen::MatrixXd projected_operator_;
+    mutable Eigen::MatrixXd spectral_preconditioner_basis_;
+    mutable Eigen::VectorXd spectral_preconditioner_inverse_eigenvalues_;
+    mutable std::uint64_t projected_inverse_revision_ = static_cast<std::uint64_t>(-1);
 };
 
 /**
  * @brief Selected-root response and numerical diagnostics.
  */
 struct EigenResponseResult {
-  Eigen::MatrixXd eigenvector_response;
-  Eigen::VectorXd eigenvalue_response;
-  /** @brief Residual of the complete bordered response equations. */
-  Eigen::MatrixXd bordered_residuals;
-  Eigen::VectorXd relative_residual_norms;
-  std::vector<int> iterations;
-  int block_actions = 0;
+    Eigen::MatrixXd eigenvector_response;
+    Eigen::VectorXd eigenvalue_response;
+    /** @brief Residual of the complete bordered response equations. */
+    Eigen::MatrixXd bordered_residuals;
+    Eigen::VectorXd relative_residual_norms;
+    std::vector<int> iterations;
+    int block_actions = 0;
 };
 
 /**
@@ -152,13 +147,13 @@ struct EigenResponseResult {
  * `C^T S dC = -0.5 C^T dS C`.
  */
 struct EigenSubspaceResponseResult {
-  Eigen::MatrixXd eigenvector_response;
-  Eigen::MatrixXd selected_matrix_response;
-  /** @brief Top-block residual of the bordered response equation. */
-  Eigen::MatrixXd equation_residual;
-  Eigen::VectorXd relative_residual_norms;
-  std::vector<int> iterations;
-  int block_actions = 0;
+    Eigen::MatrixXd eigenvector_response;
+    Eigen::MatrixXd selected_matrix_response;
+    /** @brief Top-block residual of the bordered response equation. */
+    Eigen::MatrixXd equation_residual;
+    Eigen::VectorXd relative_residual_norms;
+    std::vector<int> iterations;
+    int block_actions = 0;
 };
 
 /**
@@ -172,13 +167,13 @@ struct EigenSubspaceResponseResult {
  * @f$F+(H\delta C_g-S\delta C_gE)-SCM_g@f$.
  */
 struct EqualWeightEigenCoupling {
-  Eigen::MatrixXd metric;
-  Eigen::MatrixXd forcing;
-  Eigen::MatrixXd gauge_target;
-  /** Internal selected-state frame A_g, with gauge response C A_g. */
-  Eigen::MatrixXd gauge_frame;
-  Eigen::MatrixXd gauge_selected_matrix_response;
-  Eigen::MatrixXd horizontal_forcing;
+    Eigen::MatrixXd metric;
+    Eigen::MatrixXd forcing;
+    Eigen::MatrixXd gauge_target;
+    /** Internal selected-state frame A_g, with gauge response C A_g. */
+    Eigen::MatrixXd gauge_frame;
+    Eigen::MatrixXd gauge_selected_matrix_response;
+    Eigen::MatrixXd horizontal_forcing;
 };
 
 /**
@@ -279,8 +274,7 @@ EigenResponseResult solve_generalized_eigen_response_from_full_spectrum(
  * The selected columns must be S-orthonormal generalized eigenvectors and
  * `delta_*_selected` must contain `dH C` and `dS C`, respectively.
  */
-EigenSubspaceResponseResult
-solve_equal_weight_generalized_eigen_subspace_response(
+EigenSubspaceResponseResult solve_equal_weight_generalized_eigen_subspace_response(
     const GeneralizedEigenAction& action,
     const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
     const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
@@ -301,8 +295,7 @@ solve_equal_weight_generalized_eigen_subspace_response(
  * are restored before the true residual is evaluated. Poor finite residuals
  * are reported without mutating or refining the supplied spaces.
  */
-EigenSubspaceResponseResult
-evaluate_frozen_equal_weight_generalized_eigen_subspace_response(
+EigenSubspaceResponseResult evaluate_frozen_equal_weight_generalized_eigen_subspace_response(
     const GeneralizedEigenAction& action,
     const Eigen::Ref<const Eigen::VectorXd>& selected_eigenvalues,
     const Eigen::Ref<const Eigen::MatrixXd>& selected_eigenvectors,
@@ -328,4 +321,4 @@ solve_equal_weight_generalized_eigen_subspace_response_from_full_spectrum(
     const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_selected,
     double relative_residual_tolerance);
 
-}  // namespace xmvb::linalg
+} // namespace xmvb::linalg

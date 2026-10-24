@@ -8,7 +8,7 @@ namespace xmvb::integrals {
 
 /** @brief Projected density responses required by the analytic diagonal. */
 struct DensityDiagonals {
-  Eigen::MatrixXd core, active, core_coulomb;
+    Eigen::MatrixXd core, active, core_coulomb;
 };
 
 /** @brief Contract all RI density channels without complete AO responses.
@@ -18,12 +18,13 @@ struct DensityDiagonals {
  * Only occupied one-index transforms and their projected second moments are
  * generated. Scratch is auxiliary/pair tiled; workers own small active moments.
  */
-DensityDiagonals contract_ri_density_diagonals(
-    const RiAoFactorization& ri,
-    const Eigen::Ref<const Eigen::MatrixXd>& orbitals,
-    int n_core, int n_active,
-    const Eigen::Ref<const Eigen::MatrixXd>& active_weights,
-    const Eigen::Ref<const OrbitalPairMatrix>& active_coulomb,
-    std::size_t workspace_bytes = workspace::available());
+DensityDiagonals
+contract_ri_density_diagonals(const RiAoFactorization& ri,
+                              const Eigen::Ref<const Eigen::MatrixXd>& orbitals,
+                              int n_core,
+                              int n_active,
+                              const Eigen::Ref<const Eigen::MatrixXd>& active_weights,
+                              const Eigen::Ref<const OrbitalPairMatrix>& active_coulomb,
+                              std::size_t workspace_bytes = workspace::available());
 
-}  // namespace xmvb::integrals
+} // namespace xmvb::integrals

@@ -23,73 +23,73 @@ struct SelectedMetric;
  * determinant coefficient bundles.
  */
 struct AcceptedPointContext {
-  /** Completeness of the variational VB space, not merely its spin carrier. */
-  bool complete_active_space = false;
-  /** @brief Outer accuracy contract inherited by structure response solves. */
-  StructureSolveAccuracy structure_solve_accuracy;
+    /** Completeness of the variational VB space, not merely its spin carrier. */
+    bool complete_active_space = false;
+    /** @brief Outer accuracy contract inherited by structure response solves. */
+    StructureSolveAccuracy structure_solve_accuracy;
 
-  /**
+    /**
    * @brief Prepared active-space tensors and one-electron reference data.
    */
-  PreparedActiveSpaceContext prepared_active_space;
+    PreparedActiveSpaceContext prepared_active_space;
 
-  /**
+    /**
    * @brief Unique-spin reuse tables and cached ordered same-spin determinant pairs.
    */
-  SameSpinPairCacheContext same_spin_pair_cache;
+    SameSpinPairCacheContext same_spin_pair_cache;
 
-  /**
+    /**
    * @brief On-demand matrix-free accepted structure problem.
    *
    * A forward Davidson solve may transfer its action here.  Dense and
    * matrix-backed solves leave it empty; the exact HVP operator constructs it
    * only if an outer structure response is actually admitted.
    */
-  mutable std::optional<StructureAction> structure_action;
+    mutable std::optional<StructureAction> structure_action;
 
-  /** @brief Budgeted occupation-block metric factors, shared by all consumers. */
-  const StructureMetricInverse* metric_inverse(const StructureAction& action) const;
-  mutable std::shared_ptr<const StructureMetricInverse> structure_metric_inverse;
-  mutable bool structure_metric_planned = false;
+    /** @brief Budgeted occupation-block metric factors, shared by all consumers. */
+    const StructureMetricInverse* metric_inverse(const StructureAction& action) const;
+    mutable std::shared_ptr<const StructureMetricInverse> structure_metric_inverse;
+    mutable bool structure_metric_planned = false;
 
-  /** @brief Existing bounded selected Gram/factor retained from Davidson. */
-  std::shared_ptr<const SelectedMetric> selected_metric;
+    /** @brief Existing bounded selected Gram/factor retained from Davidson. */
+    std::shared_ptr<const SelectedMetric> selected_metric;
 
-  /** @brief Selected spin Gram factors; no orbital closure is assumed. */
-  std::shared_ptr<const SpinMetric> spin_metric;
+    /** @brief Selected spin Gram factors; no orbital closure is assumed. */
+    std::shared_ptr<const SpinMetric> spin_metric;
 
-  /**
+    /**
    * @brief Accepted Hamiltonian and overlap images of the selected states.
    *
    * The generalized-eigen response and coupled structure operator share these
    * images. They are populated together with the canonical structure action so
    * neither consumer repeats the same selected-state block action.
    */
-  mutable std::optional<StructureActionResult> selected_state_structure_images;
+    mutable std::optional<StructureActionResult> selected_state_structure_images;
 
-  /** @brief Direction-independent direct-CI data reused by every exact HVP. */
-  mutable std::optional<StructureAdjointState> structure_adjoint_state;
+    /** @brief Direction-independent direct-CI data reused by every exact HVP. */
+    mutable std::optional<StructureAdjointState> structure_adjoint_state;
 
-  /**
+    /**
    * @brief Accepted-point active-space adjoint with respect to `SSO`.
    *
    * This is the exact accepted-point reverse-mode weight used by the orbital
    * backpropagation layer. Matrix-free second-order probes can reuse it as a
    * frozen active-space adjoint without rebuilding the structure/eigen response.
    */
-  std::vector<double> active_orbital_overlap_gradient;
+    std::vector<double> active_orbital_overlap_gradient;
 
-  /**
+    /**
    * @brief Accepted-point active-space adjoint with respect to `HHO`.
    */
-  std::vector<double> active_one_electron_gradient;
+    std::vector<double> active_one_electron_gradient;
 
-  /**
+    /**
    * @brief Accepted-point active-space adjoint with respect to packed `GGO`.
    */
-  std::vector<double> packed_active_two_electron_gradient;
+    std::vector<double> packed_active_two_electron_gradient;
 
-  /**
+    /**
    * @brief Accepted total adjoint of the active auxiliary orbitals.
    *
    * The complete orbital-gradient sweep has already accumulated the active
@@ -97,65 +97,65 @@ struct AcceptedPointContext {
    * Exact HVP construction reuses it for the fixed-upstream pullback instead
    * of repeating those accepted-point reverse sweeps.
    */
-  Eigen::MatrixXd total_active_auxiliary_gradient;
+    Eigen::MatrixXd total_active_auxiliary_gradient;
 
-  /**
+    /**
    * @brief Accepted total adjoint of the inactive density matrix.
    *
    * Stored in column-major AO-matrix order. This includes the reference,
    * active-space, and AO effective-one-electron contributions accumulated by
    * the complete orbital-gradient evaluation.
    */
-  std::vector<double> total_inactive_density_gradient;
+    std::vector<double> total_inactive_density_gradient;
 
-  /**
+    /**
    * @brief Selected states carried by this context.
    */
-  std::vector<int> selected_state_indices;
+    std::vector<int> selected_state_indices;
 
-  /**
+    /**
    * @brief Normalized state-average weights aligned with `selected_state_indices`.
    */
-  std::vector<double> normalized_state_weights;
+    std::vector<double> normalized_state_weights;
 
-  /**
+    /**
    * @brief Accepted energies aligned with `selected_state_indices`.
    */
-  std::vector<double> selected_state_energies;
+    std::vector<double> selected_state_energies;
 
-  /**
+    /**
    * @brief Selected accepted eigenvectors, one state per column.
    */
-  Eigen::MatrixXd selected_state_eigenvectors;
+    Eigen::MatrixXd selected_state_eigenvectors;
 
-  /** @brief Available roots retained for recycling at the next objective call. */
-  Eigen::MatrixXd root_eigenvectors;
+    /** @brief Available roots retained for recycling at the next objective call. */
+    Eigen::MatrixXd root_eigenvectors;
 
-  /** @brief Complete structure eigenvalues retained only by the dense solver. */
-  std::vector<double> full_structure_eigenvalues;
+    /** @brief Complete structure eigenvalues retained only by the dense solver. */
+    std::vector<double> full_structure_eigenvalues;
 
-  /**
+    /**
    * @brief State-dependent determinant coefficient matrices on unique-spin space.
    */
-  SelectedStateDeterminantMatrices selected_state_matrices;
+    SelectedStateDeterminantMatrices selected_state_matrices;
 
-  /**
+    /**
    * @brief Number of active orbitals used to index `HHO`, `SSO`, and packed `GGO`.
    */
-  int n_active_orbitals = 0;
+    int n_active_orbitals = 0;
 
-  /** @brief Dimension of the structure space acted on by `structure_action`. */
-  int n_structures = 0;
+    /** @brief Dimension of the structure space acted on by `structure_action`. */
+    int n_structures = 0;
 
-  /**
+    /**
    * @brief Whether the accepted point supports matrix-form same-spin adjoints.
    */
-  bool use_full_matrix_form_adjoint = false;
+    bool use_full_matrix_form_adjoint = false;
 
-  /**
+    /**
    * @brief Whether the accepted point supports pair-graph opposite-spin adjoints.
    */
-  bool use_pair_graph_opposite_spin_adjoint = false;
+    bool use_pair_graph_opposite_spin_adjoint = false;
 };
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

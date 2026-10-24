@@ -14,7 +14,7 @@ namespace xmvb::integrals {
  * Both exact and RI integral preparation populate this same physical contract.
  */
 struct ActiveSpaceTwoElectronView {
-  const std::vector<double>* packed_active_two_electron_integrals = nullptr;
+    const std::vector<double>* packed_active_two_electron_integrals = nullptr;
 };
 
 /**
@@ -55,11 +55,11 @@ int infer_active_orbital_count_from_packed_integral_count(std::size_t packed_int
  * The packed pair indices `P` and `Q` use the same
  * `xmvb::core::PairIndex::packed_pair_index(...)` storage convention.
  */
-double lookup_active_space_two_electron_kernel_value(
-    const ActiveSpaceTwoElectronView& two_electron_view,
-    int row_packed_pair_index,
-    int column_packed_pair_index,
-    int n_active_orbitals);
+double
+lookup_active_space_two_electron_kernel_value(const ActiveSpaceTwoElectronView& two_electron_view,
+                                              int row_packed_pair_index,
+                                              int column_packed_pair_index,
+                                              int n_active_orbitals);
 
 /**
  * @brief Applies the active-space pair kernel to a sparse packed-pair vector.
@@ -104,7 +104,6 @@ Eigen::MatrixXd apply_active_space_two_electron_kernel_block(
  * @brief Copy the prepared packed kernel for diagnostics and output.
  */
 std::vector<double> reconstruct_packed_active_two_electron_integrals(
-    const ActiveSpaceTwoElectronView& two_electron_view,
-    int n_active_orbitals);
+    const ActiveSpaceTwoElectronView& two_electron_view, int n_active_orbitals);
 
-}  // namespace xmvb::integrals
+} // namespace xmvb::integrals

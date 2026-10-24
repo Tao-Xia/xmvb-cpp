@@ -21,9 +21,8 @@ namespace xmvb::vb {
  * @param orbitals Current orbital coefficients in that AO basis.
  * @return Absolute path to the written `.molden` file.
  */
-std::filesystem::path write_molden_file(
-    const std::filesystem::path& input_file_path,
-    const integrals::LibcintInput& libcint_input,
-    const OrbitalPreparationInput& orbitals);
+std::filesystem::path write_molden_file(const std::filesystem::path& input_file_path,
+                                        const integrals::LibcintInput& libcint_input,
+                                        const OrbitalPreparationInput& orbitals);
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

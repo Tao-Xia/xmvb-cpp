@@ -39,740 +39,623 @@ namespace xmvb::vb {
 
 namespace {
 
-
 struct ForwardSpinPairEntry {
-  double overlap_determinant = 0.0;
-  double one_electron_hamiltonian = 0.0;
-  double total_hamiltonian = 0.0;
-  OppositeSpinPackedPairProjection first_order_projection;
+    double overlap_determinant = 0.0;
+    double one_electron_hamiltonian = 0.0;
+    double total_hamiltonian = 0.0;
+    OppositeSpinPackedPairProjection first_order_projection;
 };
 
 struct LocalSpinProjectionBlock {
-  struct ProjectionSlot {
-    const OppositeSpinPackedPairProjection* borrowed_projection = nullptr;
-    OppositeSpinPackedPairProjection owned_projection;
+    struct ProjectionSlot {
+        const OppositeSpinPackedPairProjection* borrowed_projection = nullptr;
+        OppositeSpinPackedPairProjection owned_projection;
 
-    const OppositeSpinPackedPairProjection& projection() const {
-      return (borrowed_projection != nullptr)
-          ? *borrowed_projection
-          : owned_projection;
+        const OppositeSpinPackedPairProjection& projection() const {
+            return (borrowed_projection != nullptr) ? *borrowed_projection : owned_projection;
+        }
+    };
+
+    int n_rows = 0;
+    int n_cols = 0;
+    std::vector<ProjectionSlot> first_order_projections;
+
+    const OppositeSpinPackedPairProjection& first_order_projection(int row_local,
+                                                                   int column_local) const {
+        return first_order_projections[(column_local) * (n_rows) + (row_local)].projection();
     }
-  };
-
-  int n_rows = 0;
-  int n_cols = 0;
-  std::vector<ProjectionSlot> first_order_projections;
-
-  const OppositeSpinPackedPairProjection& first_order_projection(
-      int row_local,
-      int column_local) const {
-    return first_order_projections[(column_local) * (n_rows) + (row_local)]
-        .projection();
-  }
 };
 
 struct LocalOppositeSpinChannelFamily {
-  std::vector<int> packed_pair_indices;
-  std::vector<Eigen::MatrixXd> alpha_channel_matrices;
+    std::vector<int> packed_pair_indices;
+    std::vector<Eigen::MatrixXd> alpha_channel_matrices;
 };
 
 struct ForwardSpinPairTile {
-  int row_tile = 0;
-  int column_tile = 0;
-  int row_begin = 0;
-  int row_end = 0;
-  int column_begin = 0;
-  int column_end = 0;
-  std::uint64_t last_access_stamp = 0;
-  std::vector<ForwardSpinPairEntry> entries;
+    int row_tile = 0;
+    int column_tile = 0;
+    int row_begin = 0;
+    int row_end = 0;
+    int column_begin = 0;
+    int column_end = 0;
+    std::uint64_t last_access_stamp = 0;
+    std::vector<ForwardSpinPairEntry> entries;
 
-  const ForwardSpinPairEntry& entry(
-      int global_row,
-      int global_column) const {
-    const int local_row = global_row - row_begin;
-    const int local_column = global_column - column_begin;
-    return entries[(local_column) * (row_end - row_begin) + (local_row)];
-  }
+    const ForwardSpinPairEntry& entry(int global_row, int global_column) const {
+        const int local_row = global_row - row_begin;
+        const int local_column = global_column - column_begin;
+        return entries[(local_column) * (row_end - row_begin) + (local_row)];
+    }
 };
 
 enum class ForwardSpinPairCacheMode {
-  Tiles,
-  Entries,
+    Tiles,
+    Entries,
 };
 
 struct ForwardSpinPairCacheOptions {
-  ForwardSpinPairCacheMode mode = ForwardSpinPairCacheMode::Tiles;
-  int tile_size = 0;
-  int capacity = 0;
+    ForwardSpinPairCacheMode mode = ForwardSpinPairCacheMode::Tiles;
+    int tile_size = 0;
+    int capacity = 0;
 };
 
 struct ForwardSpinPairCachedEntry {
-  std::uint64_t key = 0;
-  ForwardSpinPairEntry value;
+    std::uint64_t key = 0;
+    ForwardSpinPairEntry value;
 };
 
 std::size_t square_storage_size(int dimension) {
-  return (dimension) * (dimension);
+    return (dimension) * (dimension);
 }
 
-std::size_t structure_matrix_index(
-    int row,
-    int column,
-    int n_structures) {
-  return (column) * (n_structures) + (row);
+std::size_t structure_matrix_index(int row, int column, int n_structures) {
+    return (column) * (n_structures) + (row);
 }
 
 int structure_matrix_tile_size() {
-  return 256;
+    return 256;
 }
 
 int structure_matrix_tile_cache_tiles() {
-  return 4;
+    return 4;
 }
 
 int structure_diagonal_pair_cache_entries() {
-  // Reuse the matrix builder's tuning scales, but cache individual pairs. A
-  // diagonal structure contraction generally touches a sparse and scattered
-  // set of unique-spin pairs, so filling whole 2-D tiles turns one requested
-  // pair into as many as tile_size^2 evaluations.
-  return structure_matrix_tile_size() * structure_matrix_tile_cache_tiles();
+    // Reuse the matrix builder's tuning scales, but cache individual pairs. A
+    // diagonal structure contraction generally touches a sparse and scattered
+    // set of unique-spin pairs, so filling whole 2-D tiles turns one requested
+    // pair into as many as tile_size^2 evaluations.
+    return structure_matrix_tile_size() * structure_matrix_tile_cache_tiles();
 }
 
 int forward_structure_matrix_thread_count(int n_structures) {
-  // The tiled forward builder allocates one pair of spin-tile providers per
-  // worker. Cap the team by the outer structure-row count so small structure
-  // spaces do not pay for idle tile caches or empty dynamic-schedule workers.
-  if (n_structures <= 2) {
-    return 1;
-  }
-  return std::max(
-      1,
-      std::min(
-          xmvb::effective_openmp_thread_count(),
-          n_structures));
+    // The tiled forward builder allocates one pair of spin-tile providers per
+    // worker. Cap the team by the outer structure-row count so small structure
+    // spaces do not pay for idle tile caches or empty dynamic-schedule workers.
+    if (n_structures <= 2) {
+        return 1;
+    }
+    return std::max(1, std::min(xmvb::effective_openmp_thread_count(), n_structures));
 }
 
-OppositeSpinPackedPairProjection build_sparse_packed_pair_projection(
-    const std::vector<int>& occ_L,
-    const std::vector<int>& occ_R,
-    const Eigen::MatrixXd& coefficient_matrix,
-    bool coefficient_matrix_is_right_by_left,
-    int n_orbitals) {
-  const int n_packed_active_pairs = xmvb::integrals::packed_active_pair_count(n_orbitals);
-  OppositeSpinPackedPairProjection projection;
-  if (occ_L.empty()) {
+OppositeSpinPackedPairProjection
+build_sparse_packed_pair_projection(const std::vector<int>& occ_L,
+                                    const std::vector<int>& occ_R,
+                                    const Eigen::MatrixXd& coefficient_matrix,
+                                    bool coefficient_matrix_is_right_by_left,
+                                    int n_orbitals) {
+    const int n_packed_active_pairs = xmvb::integrals::packed_active_pair_count(n_orbitals);
+    OppositeSpinPackedPairProjection projection;
+    if (occ_L.empty()) {
+        return projection;
+    }
+
+    std::vector<double> dense_pair_values(n_packed_active_pairs, 0.0);
+    std::vector<unsigned char> touched_mask(n_packed_active_pairs, 0u);
+    std::vector<int> touched_indices;
+    touched_indices.reserve(occ_L.size() * occ_R.size());
+
+    for (int left_column = 0; left_column < static_cast<int>(occ_L.size()); ++left_column) {
+        const int orbital_index_left = occ_L[left_column];
+        for (int right_row = 0; right_row < static_cast<int>(occ_R.size()); ++right_row) {
+            const int orbital_index_right = occ_R[right_row];
+            const int packed_pair_index =
+                xmvb::core::PairIndex::packed_pair_index(orbital_index_right, orbital_index_left);
+            if (touched_mask[packed_pair_index] == 0u) {
+                touched_mask[packed_pair_index] = 1u;
+                touched_indices.push_back(packed_pair_index);
+            }
+            const double coefficient = coefficient_matrix_is_right_by_left
+                                           ? coefficient_matrix(right_row, left_column)
+                                           : coefficient_matrix(left_column, right_row);
+            dense_pair_values[packed_pair_index] += coefficient;
+        }
+    }
+
+    projection.packed_pair_indices.reserve(touched_indices.size());
+    projection.packed_pair_values.reserve(touched_indices.size());
+    for (const int packed_pair_index : touched_indices) {
+        const double packed_pair_value = dense_pair_values[packed_pair_index];
+        if (packed_pair_value == 0.0) {
+            continue;
+        }
+        projection.packed_pair_indices.push_back(packed_pair_index);
+        projection.packed_pair_values.push_back(packed_pair_value);
+    }
     return projection;
-  }
-
-  std::vector<double> dense_pair_values(
-      n_packed_active_pairs,
-      0.0);
-  std::vector<unsigned char> touched_mask(
-      n_packed_active_pairs,
-      0u);
-  std::vector<int> touched_indices;
-  touched_indices.reserve(occ_L.size() * occ_R.size());
-
-  for (int left_column = 0;
-       left_column < static_cast<int>(occ_L.size());
-       ++left_column) {
-    const int orbital_index_left = occ_L[left_column];
-    for (int right_row = 0;
-         right_row < static_cast<int>(occ_R.size());
-         ++right_row) {
-      const int orbital_index_right = occ_R[right_row];
-      const int packed_pair_index =
-          xmvb::core::PairIndex::packed_pair_index(
-              orbital_index_right,
-              orbital_index_left);
-      if (touched_mask[packed_pair_index] == 0u) {
-        touched_mask[packed_pair_index] = 1u;
-        touched_indices.push_back(packed_pair_index);
-      }
-      const double coefficient =
-          coefficient_matrix_is_right_by_left
-              ? coefficient_matrix(right_row, left_column)
-              : coefficient_matrix(left_column, right_row);
-      dense_pair_values[packed_pair_index] += coefficient;
-    }
-  }
-
-  projection.packed_pair_indices.reserve(touched_indices.size());
-  projection.packed_pair_values.reserve(touched_indices.size());
-  for (const int packed_pair_index : touched_indices) {
-    const double packed_pair_value =
-        dense_pair_values[packed_pair_index];
-    if (packed_pair_value == 0.0) {
-      continue;
-    }
-    projection.packed_pair_indices.push_back(packed_pair_index);
-    projection.packed_pair_values.push_back(packed_pair_value);
-  }
-  return projection;
 }
 
 template <typename TwoElectronInput>
-ForwardSpinPairEntry evaluate_forward_spin_pair_entry(
-    const std::vector<int>& occ_L,
-    const std::vector<int>& occ_R,
-    const DeterminantPairEvaluator& pair_evaluator,
-    const std::vector<double>& ovlp_act,
-    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
-    int n_orbitals,
-    const TwoElectronInput& two_electron_input) {
-  const SpinDeterminantPairEvaluation pair_evaluation =
-      pair_evaluator.evaluate_same_spin_pair(
-          occ_L,
-          occ_R,
-          ovlp_act,
-          h1e_act,
-          n_orbitals,
-          two_electron_input,
-          false);
+ForwardSpinPairEntry
+evaluate_forward_spin_pair_entry(const std::vector<int>& occ_L,
+                                 const std::vector<int>& occ_R,
+                                 const DeterminantPairEvaluator& pair_evaluator,
+                                 const std::vector<double>& ovlp_act,
+                                 const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
+                                 int n_orbitals,
+                                 const TwoElectronInput& two_electron_input) {
+    const SpinDeterminantPairEvaluation pair_evaluation = pair_evaluator.evaluate_same_spin_pair(
+        occ_L, occ_R, ovlp_act, h1e_act, n_orbitals, two_electron_input, false);
 
-  ForwardSpinPairEntry entry;
-  entry.overlap_determinant =
-      pair_evaluation.overlap_result.overlap_determinant;
-  entry.one_electron_hamiltonian = pair_evaluation.one_electron_hamiltonian;
-  entry.total_hamiltonian = pair_evaluation.total_hamiltonian;
-  if (!occ_L.empty() && pair_evaluation.overlap_result.nullity < 2) {
-    entry.first_order_projection =
-        build_sparse_packed_pair_projection(
-            occ_L,
-            occ_R,
-            calc_cofactor_1st(pair_evaluation.overlap_result),
-            true,
-            n_orbitals);
-  }
-  return entry;
+    ForwardSpinPairEntry entry;
+    entry.overlap_determinant = pair_evaluation.overlap_result.overlap_determinant;
+    entry.one_electron_hamiltonian = pair_evaluation.one_electron_hamiltonian;
+    entry.total_hamiltonian = pair_evaluation.total_hamiltonian;
+    if (!occ_L.empty() && pair_evaluation.overlap_result.nullity < 2) {
+        entry.first_order_projection = build_sparse_packed_pair_projection(
+            occ_L, occ_R, calc_cofactor_1st(pair_evaluation.overlap_result), true, n_orbitals);
+    }
+    return entry;
 }
 
-template <typename TwoElectronInput>
-class ForwardSpinPairProvider {
-public:
-  ForwardSpinPairProvider(
-      const xmvb::mcscf::StringTable& unique_spin_determinants,
-      const std::vector<SpinDeterminantPairEvaluation>* ordered_spin_pair_cache,
-      DeterminantPairEvaluator pair_evaluator,
-      const std::vector<double>& ovlp_act,
-      const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
-      int n_orbitals,
-      const TwoElectronInput& two_electron_input,
-      ForwardSpinPairCacheOptions cache_options)
-      : unique_spin_determinants_(unique_spin_determinants),
-        ordered_spin_pair_cache_(ordered_spin_pair_cache),
-        pair_evaluator_(std::move(pair_evaluator)),
-        ovlp_act_(ovlp_act),
-        h1e_act_(h1e_act),
-        n_orbitals_(n_orbitals),
-        two_electron_input_(two_electron_input),
-        cache_options_(cache_options) {
-    if (cache_options_.capacity <= 0) {
-      throw std::invalid_argument("spin-pair cache capacity must be positive");
-    }
-    if (cache_options_.mode == ForwardSpinPairCacheMode::Tiles &&
-        cache_options_.tile_size <= 0) {
-      throw std::invalid_argument("tile_size must be positive");
-    }
-    if (ordered_spin_pair_cache_ != nullptr) {
-      const std::size_t expected_cache_entries =
-          square_storage_size(static_cast<int>(unique_spin_determinants_.size()));
-      if (ordered_spin_pair_cache_->size() != expected_cache_entries) {
-        throw std::invalid_argument(
-            "ordered same-spin pair cache size does not match unique determinant count");
-      }
-    }
-    if (cache_options_.mode == ForwardSpinPairCacheMode::Tiles) {
-      cached_tiles_.reserve(cache_options_.capacity);
-    } else {
-      cached_entry_lookup_.reserve(cache_options_.capacity);
-    }
-  }
-
-  const ForwardSpinPairEntry& entry(
-      int left_unique_index,
-      int right_unique_index) {
-    if (left_unique_index < 0 ||
-        left_unique_index >= static_cast<int>(unique_spin_determinants_.size()) ||
-        right_unique_index < 0 ||
-        right_unique_index >= static_cast<int>(unique_spin_determinants_.size())) {
-      throw std::out_of_range("unique spin pair lookup index out of range");
+template <typename TwoElectronInput> class ForwardSpinPairProvider {
+  public:
+    ForwardSpinPairProvider(
+        const xmvb::mcscf::StringTable& unique_spin_determinants,
+        const std::vector<SpinDeterminantPairEvaluation>* ordered_spin_pair_cache,
+        DeterminantPairEvaluator pair_evaluator,
+        const std::vector<double>& ovlp_act,
+        const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
+        int n_orbitals,
+        const TwoElectronInput& two_electron_input,
+        ForwardSpinPairCacheOptions cache_options)
+        : unique_spin_determinants_(unique_spin_determinants),
+          ordered_spin_pair_cache_(ordered_spin_pair_cache),
+          pair_evaluator_(std::move(pair_evaluator)), ovlp_act_(ovlp_act), h1e_act_(h1e_act),
+          n_orbitals_(n_orbitals), two_electron_input_(two_electron_input),
+          cache_options_(cache_options) {
+        if (cache_options_.capacity <= 0) {
+            throw std::invalid_argument("spin-pair cache capacity must be positive");
+        }
+        if (cache_options_.mode == ForwardSpinPairCacheMode::Tiles &&
+            cache_options_.tile_size <= 0) {
+            throw std::invalid_argument("tile_size must be positive");
+        }
+        if (ordered_spin_pair_cache_ != nullptr) {
+            const std::size_t expected_cache_entries =
+                square_storage_size(static_cast<int>(unique_spin_determinants_.size()));
+            if (ordered_spin_pair_cache_->size() != expected_cache_entries) {
+                throw std::invalid_argument(
+                    "ordered same-spin pair cache size does not match unique determinant count");
+            }
+        }
+        if (cache_options_.mode == ForwardSpinPairCacheMode::Tiles) {
+            cached_tiles_.reserve(cache_options_.capacity);
+        } else {
+            cached_entry_lookup_.reserve(cache_options_.capacity);
+        }
     }
 
-    if (cache_options_.mode == ForwardSpinPairCacheMode::Entries) {
-      return find_or_build_entry(left_unique_index, right_unique_index);
+    const ForwardSpinPairEntry& entry(int left_unique_index, int right_unique_index) {
+        if (left_unique_index < 0 ||
+            left_unique_index >= static_cast<int>(unique_spin_determinants_.size()) ||
+            right_unique_index < 0 ||
+            right_unique_index >= static_cast<int>(unique_spin_determinants_.size())) {
+            throw std::out_of_range("unique spin pair lookup index out of range");
+        }
+
+        if (cache_options_.mode == ForwardSpinPairCacheMode::Entries) {
+            return find_or_build_entry(left_unique_index, right_unique_index);
+        }
+
+        const int row_tile = left_unique_index / cache_options_.tile_size;
+        const int column_tile = right_unique_index / cache_options_.tile_size;
+        ForwardSpinPairTile* tile = find_or_build_tile(row_tile, column_tile);
+        tile->last_access_stamp = ++access_stamp_;
+        return tile->entry(left_unique_index, right_unique_index);
     }
 
-    const int row_tile = left_unique_index / cache_options_.tile_size;
-    const int column_tile = right_unique_index / cache_options_.tile_size;
-    ForwardSpinPairTile* tile = find_or_build_tile(row_tile, column_tile);
-    tile->last_access_stamp = ++access_stamp_;
-    return tile->entry(left_unique_index, right_unique_index);
-  }
-
-  bool has_ordered_spin_pair_cache() const {
-    return ordered_spin_pair_cache_ != nullptr;
-  }
-
-  const SpinDeterminantPairEvaluation& pair_evaluation(
-      int left_unique_index,
-      int right_unique_index) const {
-    if (ordered_spin_pair_cache_ == nullptr) {
-      throw std::logic_error(
-          "ordered same-spin pair cache is not available for direct lookup");
+    bool has_ordered_spin_pair_cache() const {
+        return ordered_spin_pair_cache_ != nullptr;
     }
-    if (left_unique_index < 0 ||
-        left_unique_index >= static_cast<int>(unique_spin_determinants_.size()) ||
-        right_unique_index < 0 ||
-        right_unique_index >= static_cast<int>(unique_spin_determinants_.size())) {
-      throw std::out_of_range("unique spin cache lookup index out of range");
-    }
-    return (*ordered_spin_pair_cache_)[ordered_spin_pair_storage_index(
+
+    const SpinDeterminantPairEvaluation& pair_evaluation(int left_unique_index,
+                                                         int right_unique_index) const {
+        if (ordered_spin_pair_cache_ == nullptr) {
+            throw std::logic_error(
+                "ordered same-spin pair cache is not available for direct lookup");
+        }
+        if (left_unique_index < 0 ||
+            left_unique_index >= static_cast<int>(unique_spin_determinants_.size()) ||
+            right_unique_index < 0 ||
+            right_unique_index >= static_cast<int>(unique_spin_determinants_.size())) {
+            throw std::out_of_range("unique spin cache lookup index out of range");
+        }
+        return (*ordered_spin_pair_cache_)[ordered_spin_pair_storage_index(
             left_unique_index,
             right_unique_index,
             static_cast<int>(unique_spin_determinants_.size()))];
-  }
-
-private:
-  static std::uint64_t entry_key(
-      int left_unique_index,
-      int right_unique_index) {
-    return
-        (static_cast<std::uint64_t>(
-             static_cast<std::uint32_t>(left_unique_index)) << 32u) |
-        static_cast<std::uint32_t>(right_unique_index);
-  }
-
-  const ForwardSpinPairEntry& find_or_build_entry(
-      int left_unique_index,
-      int right_unique_index) {
-    const std::uint64_t key =
-        entry_key(left_unique_index, right_unique_index);
-    const auto cached = cached_entry_lookup_.find(key);
-    if (cached != cached_entry_lookup_.end()) {
-      cached_entries_.splice(
-          cached_entries_.begin(),
-          cached_entries_,
-          cached->second);
-      return cached->second->value;
     }
 
-    ForwardSpinPairCachedEntry built_entry;
-    built_entry.key = key;
-    built_entry.value = evaluate_forward_spin_pair_entry(
-        unique_spin_determinants_[left_unique_index],
-        unique_spin_determinants_[right_unique_index],
-        pair_evaluator_,
-        ovlp_act_,
-        h1e_act_,
-        n_orbitals_,
-        two_electron_input_);
-
-    if (static_cast<int>(cached_entries_.size()) ==
-        cache_options_.capacity) {
-      cached_entry_lookup_.erase(cached_entries_.back().key);
-      cached_entries_.pop_back();
-    }
-    cached_entries_.push_front(std::move(built_entry));
-    cached_entry_lookup_.emplace(key, cached_entries_.begin());
-    return cached_entries_.front().value;
-  }
-
-  ForwardSpinPairTile* find_or_build_tile(
-      int row_tile,
-      int column_tile) {
-    for (auto& tile : cached_tiles_) {
-      if (tile.row_tile == row_tile && tile.column_tile == column_tile) {
-        return &tile;
-      }
+  private:
+    static std::uint64_t entry_key(int left_unique_index, int right_unique_index) {
+        return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(left_unique_index)) << 32u) |
+               static_cast<std::uint32_t>(right_unique_index);
     }
 
-    const int row_begin = row_tile * cache_options_.tile_size;
-    const int column_begin = column_tile * cache_options_.tile_size;
-    const int row_end = std::min(
-        row_begin + cache_options_.tile_size,
-        static_cast<int>(unique_spin_determinants_.size()));
-    const int column_end = std::min(
-        column_begin + cache_options_.tile_size,
-        static_cast<int>(unique_spin_determinants_.size()));
-
-    ForwardSpinPairTile built_tile;
-    built_tile.row_tile = row_tile;
-    built_tile.column_tile = column_tile;
-    built_tile.row_begin = row_begin;
-    built_tile.row_end = row_end;
-    built_tile.column_begin = column_begin;
-    built_tile.column_end = column_end;
-    built_tile.last_access_stamp = ++access_stamp_;
-    built_tile.entries.resize(
-        (row_end - row_begin) * (column_end - column_begin));
-
-    // Each tile stores only the forward payload needed by the matrix-form
-    // structure assembly: same-spin scalar channels and the sparse first-order
-    // opposite-spin regrouping. The tile can then be reused across many
-    // structure-pair contractions without materializing the global `N^2`
-    // dense channel families.
-    for (int column_index = column_begin;
-         column_index < column_end;
-         ++column_index) {
-      for (int row_index = row_begin;
-           row_index < row_end;
-           ++row_index) {
-        built_tile.entries[(column_index - column_begin) * (row_end - row_begin) + (row_index - row_begin)] =
-            evaluate_forward_spin_pair_entry(
-                unique_spin_determinants_[row_index],
-                unique_spin_determinants_[column_index],
-                pair_evaluator_,
-                ovlp_act_,
-                h1e_act_,
-                n_orbitals_,
-                two_electron_input_);
-      }
-    }
-
-    if (static_cast<int>(cached_tiles_.size()) == cache_options_.capacity) {
-      auto victim_iterator = cached_tiles_.begin();
-      for (auto iterator = cached_tiles_.begin();
-           iterator != cached_tiles_.end();
-           ++iterator) {
-        if (iterator->last_access_stamp < victim_iterator->last_access_stamp) {
-          victim_iterator = iterator;
+    const ForwardSpinPairEntry& find_or_build_entry(int left_unique_index, int right_unique_index) {
+        const std::uint64_t key = entry_key(left_unique_index, right_unique_index);
+        const auto cached = cached_entry_lookup_.find(key);
+        if (cached != cached_entry_lookup_.end()) {
+            cached_entries_.splice(cached_entries_.begin(), cached_entries_, cached->second);
+            return cached->second->value;
         }
-      }
-      *victim_iterator = std::move(built_tile);
-      return &(*victim_iterator);
+
+        ForwardSpinPairCachedEntry built_entry;
+        built_entry.key = key;
+        built_entry.value =
+            evaluate_forward_spin_pair_entry(unique_spin_determinants_[left_unique_index],
+                                             unique_spin_determinants_[right_unique_index],
+                                             pair_evaluator_,
+                                             ovlp_act_,
+                                             h1e_act_,
+                                             n_orbitals_,
+                                             two_electron_input_);
+
+        if (static_cast<int>(cached_entries_.size()) == cache_options_.capacity) {
+            cached_entry_lookup_.erase(cached_entries_.back().key);
+            cached_entries_.pop_back();
+        }
+        cached_entries_.push_front(std::move(built_entry));
+        cached_entry_lookup_.emplace(key, cached_entries_.begin());
+        return cached_entries_.front().value;
     }
 
-    cached_tiles_.push_back(std::move(built_tile));
-    return &cached_tiles_.back();
-  }
+    ForwardSpinPairTile* find_or_build_tile(int row_tile, int column_tile) {
+        for (auto& tile : cached_tiles_) {
+            if (tile.row_tile == row_tile && tile.column_tile == column_tile) {
+                return &tile;
+            }
+        }
 
-  const xmvb::mcscf::StringTable& unique_spin_determinants_;
-  const std::vector<SpinDeterminantPairEvaluation>* ordered_spin_pair_cache_ =
-      nullptr;
-  DeterminantPairEvaluator pair_evaluator_;
-  const std::vector<double>& ovlp_act_;
-  const Eigen::Ref<const Eigen::MatrixXd> h1e_act_;
-  int n_orbitals_ = 0;
-  const TwoElectronInput& two_electron_input_;
-  ForwardSpinPairCacheOptions cache_options_;
-  std::uint64_t access_stamp_ = 0;
-  std::vector<ForwardSpinPairTile> cached_tiles_;
-  std::list<ForwardSpinPairCachedEntry> cached_entries_;
-  std::unordered_map<
-      std::uint64_t,
-      std::list<ForwardSpinPairCachedEntry>::iterator>
-      cached_entry_lookup_;
+        const int row_begin = row_tile * cache_options_.tile_size;
+        const int column_begin = column_tile * cache_options_.tile_size;
+        const int row_end = std::min(row_begin + cache_options_.tile_size,
+                                     static_cast<int>(unique_spin_determinants_.size()));
+        const int column_end = std::min(column_begin + cache_options_.tile_size,
+                                        static_cast<int>(unique_spin_determinants_.size()));
+
+        ForwardSpinPairTile built_tile;
+        built_tile.row_tile = row_tile;
+        built_tile.column_tile = column_tile;
+        built_tile.row_begin = row_begin;
+        built_tile.row_end = row_end;
+        built_tile.column_begin = column_begin;
+        built_tile.column_end = column_end;
+        built_tile.last_access_stamp = ++access_stamp_;
+        built_tile.entries.resize((row_end - row_begin) * (column_end - column_begin));
+
+        // Each tile stores only the forward payload needed by the matrix-form
+        // structure assembly: same-spin scalar channels and the sparse first-order
+        // opposite-spin regrouping. The tile can then be reused across many
+        // structure-pair contractions without materializing the global `N^2`
+        // dense channel families.
+        for (int column_index = column_begin; column_index < column_end; ++column_index) {
+            for (int row_index = row_begin; row_index < row_end; ++row_index) {
+                built_tile.entries[(column_index - column_begin) * (row_end - row_begin) +
+                                   (row_index - row_begin)] =
+                    evaluate_forward_spin_pair_entry(unique_spin_determinants_[row_index],
+                                                     unique_spin_determinants_[column_index],
+                                                     pair_evaluator_,
+                                                     ovlp_act_,
+                                                     h1e_act_,
+                                                     n_orbitals_,
+                                                     two_electron_input_);
+            }
+        }
+
+        if (static_cast<int>(cached_tiles_.size()) == cache_options_.capacity) {
+            auto victim_iterator = cached_tiles_.begin();
+            for (auto iterator = cached_tiles_.begin(); iterator != cached_tiles_.end();
+                 ++iterator) {
+                if (iterator->last_access_stamp < victim_iterator->last_access_stamp) {
+                    victim_iterator = iterator;
+                }
+            }
+            *victim_iterator = std::move(built_tile);
+            return &(*victim_iterator);
+        }
+
+        cached_tiles_.push_back(std::move(built_tile));
+        return &cached_tiles_.back();
+    }
+
+    const xmvb::mcscf::StringTable& unique_spin_determinants_;
+    const std::vector<SpinDeterminantPairEvaluation>* ordered_spin_pair_cache_ = nullptr;
+    DeterminantPairEvaluator pair_evaluator_;
+    const std::vector<double>& ovlp_act_;
+    const Eigen::Ref<const Eigen::MatrixXd> h1e_act_;
+    int n_orbitals_ = 0;
+    const TwoElectronInput& two_electron_input_;
+    ForwardSpinPairCacheOptions cache_options_;
+    std::uint64_t access_stamp_ = 0;
+    std::vector<ForwardSpinPairTile> cached_tiles_;
+    std::list<ForwardSpinPairCachedEntry> cached_entries_;
+    std::unordered_map<std::uint64_t, std::list<ForwardSpinPairCachedEntry>::iterator>
+        cached_entry_lookup_;
 };
 
-void validate_full_determinant_input(
-    SpinStringRows alpha_det,
-    SpinStringRows beta_det,
-    StructureIncidence determinant_to_structure_terms,
-    int n_orbitals,
-    int n_structures) {
-  const int n_determinants = static_cast<int>(alpha_det.size());
-  if (n_determinants <= 0) {
-    throw std::invalid_argument("at least one determinant is required");
-  }
-  if (static_cast<int>(beta_det.size()) != n_determinants ||
-      static_cast<int>(determinant_to_structure_terms.size()) != n_determinants) {
-    throw std::invalid_argument("all determinant-indexed inputs must have the same size");
-  }
-  if (n_orbitals <= 0 || n_structures <= 0) {
-    throw std::invalid_argument("n_orbitals and n_structures must be positive");
-  }
+void validate_full_determinant_input(SpinStringRows alpha_det,
+                                     SpinStringRows beta_det,
+                                     StructureIncidence determinant_to_structure_terms,
+                                     int n_orbitals,
+                                     int n_structures) {
+    const int n_determinants = static_cast<int>(alpha_det.size());
+    if (n_determinants <= 0) {
+        throw std::invalid_argument("at least one determinant is required");
+    }
+    if (static_cast<int>(beta_det.size()) != n_determinants ||
+        static_cast<int>(determinant_to_structure_terms.size()) != n_determinants) {
+        throw std::invalid_argument("all determinant-indexed inputs must have the same size");
+    }
+    if (n_orbitals <= 0 || n_structures <= 0) {
+        throw std::invalid_argument("n_orbitals and n_structures must be positive");
+    }
 }
 
-void symmetrize_structure_matrices(
-    StructureAccumulationResult& accumulation_result) {
-  const int n_structures = accumulation_result.n_structures;
-  for (int row = 0; row < n_structures; ++row) {
-    for (int column = 0; column < row; ++column) {
-      const std::size_t lower_index =
-          structure_matrix_index(row, column, n_structures);
-      const std::size_t upper_index =
-          structure_matrix_index(column, row, n_structures);
-      accumulation_result.overlap_matrix[lower_index] =
-          accumulation_result.overlap_matrix[upper_index];
-      accumulation_result.hamiltonian_matrix[lower_index] =
-          accumulation_result.hamiltonian_matrix[upper_index];
+void symmetrize_structure_matrices(StructureAccumulationResult& accumulation_result) {
+    const int n_structures = accumulation_result.n_structures;
+    for (int row = 0; row < n_structures; ++row) {
+        for (int column = 0; column < row; ++column) {
+            const std::size_t lower_index = structure_matrix_index(row, column, n_structures);
+            const std::size_t upper_index = structure_matrix_index(column, row, n_structures);
+            accumulation_result.overlap_matrix[lower_index] =
+                accumulation_result.overlap_matrix[upper_index];
+            accumulation_result.hamiltonian_matrix[lower_index] =
+                accumulation_result.hamiltonian_matrix[upper_index];
+        }
     }
-  }
 }
 
 template <typename TwoElectronInput>
-void collect_pair_evaluations(
-    const SameSpinPairCacheContext* same_spin_pair_cache,
-    const DeterminantPairEvaluator& pair_evaluator,
-    SpinStringRows alpha_det,
-    SpinStringRows beta_det,
-    const std::vector<double>& ovlp_act,
-    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
-    int n_orbitals,
-    const TwoElectronInput& two_electron_input,
-    std::vector<DeterminantPairEvaluation>* pair_evaluations) {
-  if (pair_evaluations == nullptr) {
-    throw std::invalid_argument("pair_evaluations must not be null");
-  }
-
-  const int n_determinants = static_cast<int>(alpha_det.size());
-  const std::size_t n_determinant_pairs =
-      unordered_determinant_pair_count(n_determinants);
-  if (pair_evaluations->size() != n_determinant_pairs) {
-    throw std::invalid_argument(
-        "pair_evaluations size does not match determinant pair count");
-  }
-
-  int n_threads = 1;
-  n_threads = xmvb::effective_openmp_thread_count();
-  if (n_threads > n_determinants) {
-    n_threads = n_determinants;
-  }
-  if (n_threads < 1) {
-    n_threads = 1;
-  }
-
-  if (n_threads == 1) {
-    const DeterminantPairEvaluator thread_pair_evaluator = pair_evaluator;
-    auto determinant_pair = determinant_pair_from_storage_index(0);
-    for (std::size_t pair_storage_index = 0;
-         pair_storage_index < n_determinant_pairs;
-         ++pair_storage_index) {
-      (*pair_evaluations)[pair_storage_index] =
-          evaluate_full_determinant_pair_with_optional_same_spin_cache(
-              same_spin_pair_cache,
-              thread_pair_evaluator,
-              alpha_det,
-              beta_det,
-              determinant_pair.left,
-              determinant_pair.right,
-              ovlp_act,
-              h1e_act,
-              n_orbitals,
-              two_electron_input,
-              true);
-      advance_unordered_determinant_pair(&determinant_pair);
+void collect_pair_evaluations(const SameSpinPairCacheContext* same_spin_pair_cache,
+                              const DeterminantPairEvaluator& pair_evaluator,
+                              SpinStringRows alpha_det,
+                              SpinStringRows beta_det,
+                              const std::vector<double>& ovlp_act,
+                              const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
+                              int n_orbitals,
+                              const TwoElectronInput& two_electron_input,
+                              std::vector<DeterminantPairEvaluation>* pair_evaluations) {
+    if (pair_evaluations == nullptr) {
+        throw std::invalid_argument("pair_evaluations must not be null");
     }
-    return;
-  }
 
-  std::atomic<bool> failed(false);
-  std::exception_ptr first_exception;
-  const std::size_t pair_chunk_size =
-      unordered_determinant_pair_parallel_chunk_size(
-          n_determinant_pairs,
-          n_threads);
-  const std::size_t pair_chunk_stride =
-      pair_chunk_size * static_cast<std::size_t>(n_threads);
+    const int n_determinants = static_cast<int>(alpha_det.size());
+    const std::size_t n_determinant_pairs = unordered_determinant_pair_count(n_determinants);
+    if (pair_evaluations->size() != n_determinant_pairs) {
+        throw std::invalid_argument("pair_evaluations size does not match determinant pair count");
+    }
+
+    int n_threads = 1;
+    n_threads = xmvb::effective_openmp_thread_count();
+    if (n_threads > n_determinants) {
+        n_threads = n_determinants;
+    }
+    if (n_threads < 1) {
+        n_threads = 1;
+    }
+
+    if (n_threads == 1) {
+        const DeterminantPairEvaluator thread_pair_evaluator = pair_evaluator;
+        auto determinant_pair = determinant_pair_from_storage_index(0);
+        for (std::size_t pair_storage_index = 0; pair_storage_index < n_determinant_pairs;
+             ++pair_storage_index) {
+            (*pair_evaluations)[pair_storage_index] =
+                evaluate_full_determinant_pair_with_optional_same_spin_cache(same_spin_pair_cache,
+                                                                             thread_pair_evaluator,
+                                                                             alpha_det,
+                                                                             beta_det,
+                                                                             determinant_pair.left,
+                                                                             determinant_pair.right,
+                                                                             ovlp_act,
+                                                                             h1e_act,
+                                                                             n_orbitals,
+                                                                             two_electron_input,
+                                                                             true);
+            advance_unordered_determinant_pair(&determinant_pair);
+        }
+        return;
+    }
+
+    std::atomic<bool> failed(false);
+    std::exception_ptr first_exception;
+    const std::size_t pair_chunk_size =
+        unordered_determinant_pair_parallel_chunk_size(n_determinant_pairs, n_threads);
+    const std::size_t pair_chunk_stride = pair_chunk_size * static_cast<std::size_t>(n_threads);
 
 #pragma omp parallel num_threads(n_threads)
-  {
-    int thread_index = 0;
+    {
+        int thread_index = 0;
 #ifdef _OPENMP
-    thread_index = omp_get_thread_num();
+        thread_index = omp_get_thread_num();
 #endif
-    const DeterminantPairEvaluator thread_pair_evaluator = pair_evaluator;
-    // Pair evaluation is mathematically independent for each triangular
-    // storage slot.  Chunk-striping keeps the pair-to-thread assignment
-    // deterministic while spreading expensive determinant rows across workers.
-    for (std::size_t pair_begin =
-             static_cast<std::size_t>(thread_index) * pair_chunk_size;
-         pair_begin < n_determinant_pairs;
-         pair_begin += pair_chunk_stride) {
-      const std::size_t pair_end =
-          std::min(n_determinant_pairs, pair_begin + pair_chunk_size);
-      auto determinant_pair = determinant_pair_from_storage_index(pair_begin);
-      for (std::size_t pair_storage_index = pair_begin;
-           pair_storage_index < pair_end;
-           ++pair_storage_index) {
-        if (failed.load(std::memory_order_relaxed)) {
-          break;
-        }
+        const DeterminantPairEvaluator thread_pair_evaluator = pair_evaluator;
+        // Pair evaluation is mathematically independent for each triangular
+        // storage slot.  Chunk-striping keeps the pair-to-thread assignment
+        // deterministic while spreading expensive determinant rows across workers.
+        for (std::size_t pair_begin = static_cast<std::size_t>(thread_index) * pair_chunk_size;
+             pair_begin < n_determinant_pairs;
+             pair_begin += pair_chunk_stride) {
+            const std::size_t pair_end =
+                std::min(n_determinant_pairs, pair_begin + pair_chunk_size);
+            auto determinant_pair = determinant_pair_from_storage_index(pair_begin);
+            for (std::size_t pair_storage_index = pair_begin; pair_storage_index < pair_end;
+                 ++pair_storage_index) {
+                if (failed.load(std::memory_order_relaxed)) {
+                    break;
+                }
 
-        try {
-          (*pair_evaluations)[pair_storage_index] =
-              evaluate_full_determinant_pair_with_optional_same_spin_cache(
-                  same_spin_pair_cache,
-                  thread_pair_evaluator,
-                  alpha_det,
-                  beta_det,
-                  determinant_pair.left,
-                  determinant_pair.right,
-                  ovlp_act,
-                  h1e_act,
-                  n_orbitals,
-                  two_electron_input,
-                  true);
-        } catch (...) {
+                try {
+                    (*pair_evaluations)[pair_storage_index] =
+                        evaluate_full_determinant_pair_with_optional_same_spin_cache(
+                            same_spin_pair_cache,
+                            thread_pair_evaluator,
+                            alpha_det,
+                            beta_det,
+                            determinant_pair.left,
+                            determinant_pair.right,
+                            ovlp_act,
+                            h1e_act,
+                            n_orbitals,
+                            two_electron_input,
+                            true);
+                } catch (...) {
 #pragma omp critical
-          {
-            if (!failed.load(std::memory_order_relaxed)) {
-              first_exception = std::current_exception();
-              failed.store(true, std::memory_order_relaxed);
+                    {
+                        if (!failed.load(std::memory_order_relaxed)) {
+                            first_exception = std::current_exception();
+                            failed.store(true, std::memory_order_relaxed);
+                        }
+                    }
+                }
+                advance_unordered_determinant_pair(&determinant_pair);
             }
-          }
         }
-        advance_unordered_determinant_pair(&determinant_pair);
-      }
     }
-  }
 
-  if (first_exception) {
-    std::rethrow_exception(first_exception);
-  }
+    if (first_exception) {
+        std::rethrow_exception(first_exception);
+    }
 }
 
 template <typename TileProvider>
-void gather_forward_spin_block(
-    TileProvider* tile_provider,
-    const std::vector<int>& row_indices,
-    const std::vector<int>& column_indices,
-    Eigen::MatrixXd* overlap_block,
-    Eigen::MatrixXd* total_block,
-    LocalSpinProjectionBlock* local_projection_block) {
-  if (tile_provider == nullptr ||
-      overlap_block == nullptr ||
-      total_block == nullptr ||
-      local_projection_block == nullptr) {
-    throw std::invalid_argument(
-        "forward spin block gather received a null output/input pointer");
-  }
-
-  overlap_block->resize(
-      static_cast<int>(row_indices.size()),
-      static_cast<int>(column_indices.size()));
-  total_block->resize(overlap_block->rows(), overlap_block->cols());
-  local_projection_block->n_rows = overlap_block->rows();
-  local_projection_block->n_cols = overlap_block->cols();
-  const std::size_t block_row_count = overlap_block->rows();
-  const std::size_t block_col_count = overlap_block->cols();
-  local_projection_block->first_order_projections.assign(
-      block_row_count * block_col_count,
-      LocalSpinProjectionBlock::ProjectionSlot{});
-
-  for (int column_local = 0;
-       column_local < static_cast<int>(column_indices.size());
-       ++column_local) {
-    const int column_global = column_indices[column_local];
-    for (int row_local = 0;
-         row_local < static_cast<int>(row_indices.size());
-         ++row_local) {
-      const int row_global = row_indices[row_local];
-      auto& projection_slot = local_projection_block->first_order_projections[(column_local) * (overlap_block->rows()) + (row_local)];
-      if (tile_provider->has_ordered_spin_pair_cache()) {
-        const auto& pair_evaluation =
-            tile_provider->pair_evaluation(row_global, column_global);
-        (*overlap_block)(row_local, column_local) =
-            pair_evaluation.overlap_result.overlap_determinant;
-        (*total_block)(row_local, column_local) =
-            pair_evaluation.total_hamiltonian;
-        projection_slot.borrowed_projection =
-            &pair_evaluation
-                 .opposite_spin_pair_cache
-                 .first_order_cofactor_projection;
-        projection_slot.owned_projection = OppositeSpinPackedPairProjection{};
-      } else {
-        const ForwardSpinPairEntry& entry =
-            tile_provider->entry(row_global, column_global);
-        (*overlap_block)(row_local, column_local) =
-            entry.overlap_determinant;
-        (*total_block)(row_local, column_local) = entry.total_hamiltonian;
-        projection_slot.borrowed_projection = nullptr;
-        projection_slot.owned_projection = entry.first_order_projection;
-      }
+void gather_forward_spin_block(TileProvider* tile_provider,
+                               const std::vector<int>& row_indices,
+                               const std::vector<int>& column_indices,
+                               Eigen::MatrixXd* overlap_block,
+                               Eigen::MatrixXd* total_block,
+                               LocalSpinProjectionBlock* local_projection_block) {
+    if (tile_provider == nullptr || overlap_block == nullptr || total_block == nullptr ||
+        local_projection_block == nullptr) {
+        throw std::invalid_argument(
+            "forward spin block gather received a null output/input pointer");
     }
-  }
+
+    overlap_block->resize(static_cast<int>(row_indices.size()),
+                          static_cast<int>(column_indices.size()));
+    total_block->resize(overlap_block->rows(), overlap_block->cols());
+    local_projection_block->n_rows = overlap_block->rows();
+    local_projection_block->n_cols = overlap_block->cols();
+    const std::size_t block_row_count = overlap_block->rows();
+    const std::size_t block_col_count = overlap_block->cols();
+    local_projection_block->first_order_projections.assign(
+        block_row_count * block_col_count, LocalSpinProjectionBlock::ProjectionSlot{});
+
+    for (int column_local = 0; column_local < static_cast<int>(column_indices.size());
+         ++column_local) {
+        const int column_global = column_indices[column_local];
+        for (int row_local = 0; row_local < static_cast<int>(row_indices.size()); ++row_local) {
+            const int row_global = row_indices[row_local];
+            auto& projection_slot =
+                local_projection_block
+                    ->first_order_projections[(column_local) * (overlap_block->rows()) +
+                                              (row_local)];
+            if (tile_provider->has_ordered_spin_pair_cache()) {
+                const auto& pair_evaluation =
+                    tile_provider->pair_evaluation(row_global, column_global);
+                (*overlap_block)(row_local, column_local) =
+                    pair_evaluation.overlap_result.overlap_determinant;
+                (*total_block)(row_local, column_local) = pair_evaluation.total_hamiltonian;
+                projection_slot.borrowed_projection =
+                    &pair_evaluation.opposite_spin_pair_cache.first_order_cofactor_projection;
+                projection_slot.owned_projection = OppositeSpinPackedPairProjection{};
+            } else {
+                const ForwardSpinPairEntry& entry = tile_provider->entry(row_global, column_global);
+                (*overlap_block)(row_local, column_local) = entry.overlap_determinant;
+                (*total_block)(row_local, column_local) = entry.total_hamiltonian;
+                projection_slot.borrowed_projection = nullptr;
+                projection_slot.owned_projection = entry.first_order_projection;
+            }
+        }
+    }
 }
 
 int count_local_projection_block_distinct_pairs(
-    const LocalSpinProjectionBlock& local_projection_block,
-    int n_packed_active_pairs) {
-  if (local_projection_block.n_rows <= 0 ||
-      local_projection_block.n_cols <= 0 ||
-      n_packed_active_pairs <= 0) {
-    return 0;
-  }
-
-  std::vector<unsigned char> touched_mask(
-      n_packed_active_pairs,
-      0u);
-  int distinct_pair_count = 0;
-  for (int column_local = 0;
-       column_local < local_projection_block.n_cols;
-       ++column_local) {
-    for (int row_local = 0;
-         row_local < local_projection_block.n_rows;
-         ++row_local) {
-      const auto& projection =
-          local_projection_block.first_order_projection(
-              row_local,
-              column_local);
-      for (const int packed_pair_index : projection.packed_pair_indices) {
-        if (packed_pair_index < 0 || packed_pair_index >= n_packed_active_pairs) {
-          throw std::out_of_range(
-              "packed_pair_index outside local opposite-spin channel range");
-        }
-        if (touched_mask[packed_pair_index] == 0u) {
-          touched_mask[packed_pair_index] = 1u;
-          ++distinct_pair_count;
-        }
-      }
+    const LocalSpinProjectionBlock& local_projection_block, int n_packed_active_pairs) {
+    if (local_projection_block.n_rows <= 0 || local_projection_block.n_cols <= 0 ||
+        n_packed_active_pairs <= 0) {
+        return 0;
     }
-  }
-  return distinct_pair_count;
+
+    std::vector<unsigned char> touched_mask(n_packed_active_pairs, 0u);
+    int distinct_pair_count = 0;
+    for (int column_local = 0; column_local < local_projection_block.n_cols; ++column_local) {
+        for (int row_local = 0; row_local < local_projection_block.n_rows; ++row_local) {
+            const auto& projection =
+                local_projection_block.first_order_projection(row_local, column_local);
+            for (const int packed_pair_index : projection.packed_pair_indices) {
+                if (packed_pair_index < 0 || packed_pair_index >= n_packed_active_pairs) {
+                    throw std::out_of_range(
+                        "packed_pair_index outside local opposite-spin channel range");
+                }
+                if (touched_mask[packed_pair_index] == 0u) {
+                    touched_mask[packed_pair_index] = 1u;
+                    ++distinct_pair_count;
+                }
+            }
+        }
+    }
+    return distinct_pair_count;
 }
 
-LocalOppositeSpinChannelFamily build_local_channel_family(
-    const LocalSpinProjectionBlock& local_projection_block,
-    int n_packed_active_pairs) {
-  LocalOppositeSpinChannelFamily channel_family;
-  if (local_projection_block.n_rows <= 0 ||
-      local_projection_block.n_cols <= 0 ||
-      n_packed_active_pairs <= 0) {
-    return channel_family;
-  }
-
-  std::vector<int> local_channel_index_by_packed_pair(
-      n_packed_active_pairs,
-      -1);
-
-  for (int column_local = 0;
-       column_local < local_projection_block.n_cols;
-       ++column_local) {
-    for (int row_local = 0;
-         row_local < local_projection_block.n_rows;
-         ++row_local) {
-      const auto& projection =
-          local_projection_block.first_order_projection(
-              row_local,
-              column_local);
-      for (std::size_t entry_index = 0;
-           entry_index < projection.packed_pair_indices.size();
-           ++entry_index) {
-        const int packed_pair_index = projection.packed_pair_indices[entry_index];
-        if (packed_pair_index < 0 || packed_pair_index >= n_packed_active_pairs) {
-          throw std::out_of_range(
-              "packed_pair_index outside local opposite-spin channel range");
-        }
-        const double packed_pair_value = projection.packed_pair_values[entry_index];
-        int& channel_index =
-            local_channel_index_by_packed_pair[packed_pair_index];
-        if (channel_index < 0) {
-          channel_index = static_cast<int>(channel_family.packed_pair_indices.size());
-          channel_family.packed_pair_indices.push_back(packed_pair_index);
-          channel_family.alpha_channel_matrices.emplace_back(
-              Eigen::MatrixXd::Zero(
-                  local_projection_block.n_rows,
-                  local_projection_block.n_cols));
-        }
-        channel_family.alpha_channel_matrices[channel_index](row_local, column_local) =
-            packed_pair_value;
-      }
+LocalOppositeSpinChannelFamily
+build_local_channel_family(const LocalSpinProjectionBlock& local_projection_block,
+                           int n_packed_active_pairs) {
+    LocalOppositeSpinChannelFamily channel_family;
+    if (local_projection_block.n_rows <= 0 || local_projection_block.n_cols <= 0 ||
+        n_packed_active_pairs <= 0) {
+        return channel_family;
     }
-  }
 
-  return channel_family;
+    std::vector<int> local_channel_index_by_packed_pair(n_packed_active_pairs, -1);
+
+    for (int column_local = 0; column_local < local_projection_block.n_cols; ++column_local) {
+        for (int row_local = 0; row_local < local_projection_block.n_rows; ++row_local) {
+            const auto& projection =
+                local_projection_block.first_order_projection(row_local, column_local);
+            for (std::size_t entry_index = 0; entry_index < projection.packed_pair_indices.size();
+                 ++entry_index) {
+                const int packed_pair_index = projection.packed_pair_indices[entry_index];
+                if (packed_pair_index < 0 || packed_pair_index >= n_packed_active_pairs) {
+                    throw std::out_of_range(
+                        "packed_pair_index outside local opposite-spin channel range");
+                }
+                const double packed_pair_value = projection.packed_pair_values[entry_index];
+                int& channel_index = local_channel_index_by_packed_pair[packed_pair_index];
+                if (channel_index < 0) {
+                    channel_index = static_cast<int>(channel_family.packed_pair_indices.size());
+                    channel_family.packed_pair_indices.push_back(packed_pair_index);
+                    channel_family.alpha_channel_matrices.emplace_back(Eigen::MatrixXd::Zero(
+                        local_projection_block.n_rows, local_projection_block.n_cols));
+                }
+                channel_family.alpha_channel_matrices[channel_index](row_local, column_local) =
+                    packed_pair_value;
+            }
+        }
+    }
+
+    return channel_family;
 }
 
 void build_local_projected_channel(
@@ -781,31 +664,20 @@ void build_local_projected_channel(
     const xmvb::integrals::ActiveSpaceTwoElectronView& two_electron_view,
     int n_orbitals,
     Eigen::MatrixXd* projected_channel_block) {
-  if (projected_channel_block == nullptr) {
-    throw std::invalid_argument("projected_channel_block must not be null");
-  }
-
-  projected_channel_block->resize(
-      local_projection_block.n_rows,
-      local_projection_block.n_cols);
-  for (int column_local = 0;
-       column_local < local_projection_block.n_cols;
-       ++column_local) {
-    for (int row_local = 0;
-         row_local < local_projection_block.n_rows;
-         ++row_local) {
-      const auto& projection =
-          local_projection_block.first_order_projection(
-              row_local,
-              column_local);
-      (*projected_channel_block)(row_local, column_local) =
-          xmvb::vb::project_sparse_projection_onto_packed_pair(
-              projection,
-              target_packed_pair_index,
-              two_electron_view,
-              n_orbitals);
+    if (projected_channel_block == nullptr) {
+        throw std::invalid_argument("projected_channel_block must not be null");
     }
-  }
+
+    projected_channel_block->resize(local_projection_block.n_rows, local_projection_block.n_cols);
+    for (int column_local = 0; column_local < local_projection_block.n_cols; ++column_local) {
+        for (int row_local = 0; row_local < local_projection_block.n_rows; ++row_local) {
+            const auto& projection =
+                local_projection_block.first_order_projection(row_local, column_local);
+            (*projected_channel_block)(row_local, column_local) =
+                xmvb::vb::project_sparse_projection_onto_packed_pair(
+                    projection, target_packed_pair_index, two_electron_view, n_orbitals);
+        }
+    }
 }
 
 double contract_local_opposite_spin_block(
@@ -818,88 +690,73 @@ double contract_local_opposite_spin_block(
     Eigen::MatrixXd* beta_projected_channel_block,
     Eigen::MatrixXd* beta_push,
     Eigen::MatrixXd* image) {
-  if (beta_projected_channel_block == nullptr ||
-      beta_push == nullptr ||
-      image == nullptr) {
-    throw std::invalid_argument(
-        "opposite-spin local contraction outputs must not be null");
-  }
+    if (beta_projected_channel_block == nullptr || beta_push == nullptr || image == nullptr) {
+        throw std::invalid_argument("opposite-spin local contraction outputs must not be null");
+    }
 
-  const int n_packed_active_pairs = xmvb::integrals::packed_active_pair_count(n_orbitals);
-  const int alpha_channel_count =
-      count_local_projection_block_distinct_pairs(
-          alpha_projection_block,
-          n_packed_active_pairs);
-  const int beta_channel_count =
-      count_local_projection_block_distinct_pairs(
-          beta_projection_block,
-          n_packed_active_pairs);
-  double contraction = 0.0;
-  if (alpha_channel_count <= beta_channel_count) {
-    const LocalOppositeSpinChannelFamily alpha_channels =
-        build_local_channel_family(
-            alpha_projection_block,
-            n_packed_active_pairs);
-    for (std::size_t channel_index = 0;
-         channel_index < alpha_channels.packed_pair_indices.size();
-         ++channel_index) {
-      build_local_projected_channel(
-          beta_projection_block,
-          alpha_channels.packed_pair_indices[channel_index],
-          two_electron_view,
-          n_orbitals,
-          beta_projected_channel_block);
-      contraction +=
-          contract_dense_structure_pair_kernel(
-              left_coefficients,
-              right_coefficients,
-              alpha_channels.alpha_channel_matrices[channel_index],
-              *beta_projected_channel_block,
-              beta_push,
-              image);
+    const int n_packed_active_pairs = xmvb::integrals::packed_active_pair_count(n_orbitals);
+    const int alpha_channel_count =
+        count_local_projection_block_distinct_pairs(alpha_projection_block, n_packed_active_pairs);
+    const int beta_channel_count =
+        count_local_projection_block_distinct_pairs(beta_projection_block, n_packed_active_pairs);
+    double contraction = 0.0;
+    if (alpha_channel_count <= beta_channel_count) {
+        const LocalOppositeSpinChannelFamily alpha_channels =
+            build_local_channel_family(alpha_projection_block, n_packed_active_pairs);
+        for (std::size_t channel_index = 0;
+             channel_index < alpha_channels.packed_pair_indices.size();
+             ++channel_index) {
+            build_local_projected_channel(beta_projection_block,
+                                          alpha_channels.packed_pair_indices[channel_index],
+                                          two_electron_view,
+                                          n_orbitals,
+                                          beta_projected_channel_block);
+            contraction += contract_dense_structure_pair_kernel(
+                left_coefficients,
+                right_coefficients,
+                alpha_channels.alpha_channel_matrices[channel_index],
+                *beta_projected_channel_block,
+                beta_push,
+                image);
+        }
+    } else {
+        const LocalOppositeSpinChannelFamily beta_channels =
+            build_local_channel_family(beta_projection_block, n_packed_active_pairs);
+        for (std::size_t channel_index = 0;
+             channel_index < beta_channels.packed_pair_indices.size();
+             ++channel_index) {
+            build_local_projected_channel(alpha_projection_block,
+                                          beta_channels.packed_pair_indices[channel_index],
+                                          two_electron_view,
+                                          n_orbitals,
+                                          beta_projected_channel_block);
+            contraction += contract_dense_structure_pair_kernel(
+                left_coefficients,
+                right_coefficients,
+                *beta_projected_channel_block,
+                beta_channels.alpha_channel_matrices[channel_index],
+                beta_push,
+                image);
+        }
     }
-  } else {
-    const LocalOppositeSpinChannelFamily beta_channels =
-        build_local_channel_family(
-            beta_projection_block,
-            n_packed_active_pairs);
-    for (std::size_t channel_index = 0;
-         channel_index < beta_channels.packed_pair_indices.size();
-         ++channel_index) {
-      build_local_projected_channel(
-          alpha_projection_block,
-          beta_channels.packed_pair_indices[channel_index],
-          two_electron_view,
-          n_orbitals,
-          beta_projected_channel_block);
-      contraction +=
-          contract_dense_structure_pair_kernel(
-              left_coefficients,
-              right_coefficients,
-              *beta_projected_channel_block,
-              beta_channels.alpha_channel_matrices[channel_index],
-              beta_push,
-              image);
-    }
-  }
-  return contraction;
+    return contraction;
 }
 
 struct ForwardStructurePairWorkspace {
-  Eigen::MatrixXd alpha_overlap;
-  Eigen::MatrixXd alpha_hamiltonian;
-  Eigen::MatrixXd beta_overlap;
-  Eigen::MatrixXd beta_hamiltonian;
-  Eigen::MatrixXd projected_channel;
-  Eigen::MatrixXd beta_push;
-  Eigen::MatrixXd image;
-  LocalSpinProjectionBlock alpha_projection;
-  LocalSpinProjectionBlock beta_projection;
+    Eigen::MatrixXd alpha_overlap;
+    Eigen::MatrixXd alpha_hamiltonian;
+    Eigen::MatrixXd beta_overlap;
+    Eigen::MatrixXd beta_hamiltonian;
+    Eigen::MatrixXd projected_channel;
+    Eigen::MatrixXd beta_push;
+    Eigen::MatrixXd image;
+    LocalSpinProjectionBlock alpha_projection;
+    LocalSpinProjectionBlock beta_projection;
 };
 
 struct ForwardStructurePairResult {
-  double hamiltonian = 0.0;
-  double overlap = 0.0;
+    double hamiltonian = 0.0;
+    double overlap = 0.0;
 };
 
 template <typename TwoElectronInput>
@@ -913,110 +770,95 @@ ForwardStructurePairResult contract_forward_structure_pair(
     const xmvb::integrals::ActiveSpaceTwoElectronView& two_electron_view,
     int n_orbitals,
     ForwardStructurePairWorkspace* workspace) {
-  if (alpha_provider == nullptr || beta_provider == nullptr ||
-      workspace == nullptr) {
-    throw std::invalid_argument(
-        "forward structure-pair contraction requires non-null workspace");
-  }
-  if (left.local_coefficients.size() == 0 ||
-      right.local_coefficients.size() == 0) {
-    return {};
-  }
-
-  gather_forward_spin_block(
-      alpha_provider,
-      left.alpha_support,
-      right.alpha_support,
-      &workspace->alpha_overlap,
-      &workspace->alpha_hamiltonian,
-      &workspace->alpha_projection);
-
-  const bool close_shell_diagonal =
-      close_shell_same_spin && left.close_shell_diagonal &&
-      right.close_shell_diagonal;
-  if (close_shell_diagonal) {
-    workspace->beta_overlap = workspace->alpha_overlap;
-    workspace->beta_hamiltonian = workspace->alpha_hamiltonian;
-    workspace->beta_projection = workspace->alpha_projection;
-  } else {
-    gather_forward_spin_block(
-        shared_same_spin_pair_kernels ? alpha_provider : beta_provider,
-        left.beta_support,
-        right.beta_support,
-        &workspace->beta_overlap,
-        &workspace->beta_hamiltonian,
-        &workspace->beta_projection);
-  }
-
-  ForwardStructurePairResult result;
-  if (close_shell_diagonal) {
-    result.overlap = contract_diagonal_structure_pair_kernel(
-        left.local_diagonal_coefficients,
-        right.local_diagonal_coefficients,
-        workspace->alpha_overlap,
-        workspace->alpha_overlap);
-    result.hamiltonian = 2.0 * contract_diagonal_structure_pair_kernel(
-        left.local_diagonal_coefficients,
-        right.local_diagonal_coefficients,
-        workspace->alpha_hamiltonian,
-        workspace->alpha_overlap);
-  } else {
-    result.overlap = contract_dense_structure_pair_kernel(
-        left.local_coefficients,
-        right.local_coefficients,
-        workspace->alpha_overlap,
-        workspace->beta_overlap,
-        &workspace->beta_push,
-        &workspace->image);
-    result.hamiltonian = contract_dense_structure_pair_kernel(
-        left.local_coefficients,
-        right.local_coefficients,
-        workspace->alpha_hamiltonian,
-        workspace->beta_overlap,
-        &workspace->beta_push,
-        &workspace->image) +
-        contract_dense_structure_pair_kernel(
-            left.local_coefficients,
-            right.local_coefficients,
-            workspace->alpha_overlap,
-            workspace->beta_hamiltonian,
-            &workspace->beta_push,
-            &workspace->image);
-  }
-
-  if (close_shell_diagonal) {
-    const LocalOppositeSpinChannelFamily channels =
-        build_local_channel_family(
-            workspace->alpha_projection,
-            xmvb::integrals::packed_active_pair_count(n_orbitals));
-    for (std::size_t channel = 0;
-         channel < channels.packed_pair_indices.size();
-         ++channel) {
-      build_local_projected_channel(
-          workspace->alpha_projection,
-          channels.packed_pair_indices[channel],
-          two_electron_view,
-          n_orbitals,
-          &workspace->projected_channel);
-      result.hamiltonian += contract_diagonal_structure_pair_kernel(
-          left.local_diagonal_coefficients,
-          right.local_diagonal_coefficients,
-          channels.alpha_channel_matrices[channel],
-          workspace->projected_channel);
+    if (alpha_provider == nullptr || beta_provider == nullptr || workspace == nullptr) {
+        throw std::invalid_argument(
+            "forward structure-pair contraction requires non-null workspace");
     }
-  } else {
-    result.hamiltonian += contract_local_opposite_spin_block(
-        left.local_coefficients,
-        right.local_coefficients,
-        workspace->alpha_projection,
-        workspace->beta_projection,
-        two_electron_view,
-        n_orbitals,
-        &workspace->projected_channel,
-        &workspace->beta_push,
-        &workspace->image);
-  }
-  return result;
+    if (left.local_coefficients.size() == 0 || right.local_coefficients.size() == 0) {
+        return {};
+    }
+
+    gather_forward_spin_block(alpha_provider,
+                              left.alpha_support,
+                              right.alpha_support,
+                              &workspace->alpha_overlap,
+                              &workspace->alpha_hamiltonian,
+                              &workspace->alpha_projection);
+
+    const bool close_shell_diagonal =
+        close_shell_same_spin && left.close_shell_diagonal && right.close_shell_diagonal;
+    if (close_shell_diagonal) {
+        workspace->beta_overlap = workspace->alpha_overlap;
+        workspace->beta_hamiltonian = workspace->alpha_hamiltonian;
+        workspace->beta_projection = workspace->alpha_projection;
+    } else {
+        gather_forward_spin_block(shared_same_spin_pair_kernels ? alpha_provider : beta_provider,
+                                  left.beta_support,
+                                  right.beta_support,
+                                  &workspace->beta_overlap,
+                                  &workspace->beta_hamiltonian,
+                                  &workspace->beta_projection);
+    }
+
+    ForwardStructurePairResult result;
+    if (close_shell_diagonal) {
+        result.overlap = contract_diagonal_structure_pair_kernel(left.local_diagonal_coefficients,
+                                                                 right.local_diagonal_coefficients,
+                                                                 workspace->alpha_overlap,
+                                                                 workspace->alpha_overlap);
+        result.hamiltonian =
+            2.0 * contract_diagonal_structure_pair_kernel(left.local_diagonal_coefficients,
+                                                          right.local_diagonal_coefficients,
+                                                          workspace->alpha_hamiltonian,
+                                                          workspace->alpha_overlap);
+    } else {
+        result.overlap = contract_dense_structure_pair_kernel(left.local_coefficients,
+                                                              right.local_coefficients,
+                                                              workspace->alpha_overlap,
+                                                              workspace->beta_overlap,
+                                                              &workspace->beta_push,
+                                                              &workspace->image);
+        result.hamiltonian = contract_dense_structure_pair_kernel(left.local_coefficients,
+                                                                  right.local_coefficients,
+                                                                  workspace->alpha_hamiltonian,
+                                                                  workspace->beta_overlap,
+                                                                  &workspace->beta_push,
+                                                                  &workspace->image) +
+                             contract_dense_structure_pair_kernel(left.local_coefficients,
+                                                                  right.local_coefficients,
+                                                                  workspace->alpha_overlap,
+                                                                  workspace->beta_hamiltonian,
+                                                                  &workspace->beta_push,
+                                                                  &workspace->image);
+    }
+
+    if (close_shell_diagonal) {
+        const LocalOppositeSpinChannelFamily channels = build_local_channel_family(
+            workspace->alpha_projection, xmvb::integrals::packed_active_pair_count(n_orbitals));
+        for (std::size_t channel = 0; channel < channels.packed_pair_indices.size(); ++channel) {
+            build_local_projected_channel(workspace->alpha_projection,
+                                          channels.packed_pair_indices[channel],
+                                          two_electron_view,
+                                          n_orbitals,
+                                          &workspace->projected_channel);
+            result.hamiltonian +=
+                contract_diagonal_structure_pair_kernel(left.local_diagonal_coefficients,
+                                                        right.local_diagonal_coefficients,
+                                                        channels.alpha_channel_matrices[channel],
+                                                        workspace->projected_channel);
+        }
+    } else {
+        result.hamiltonian += contract_local_opposite_spin_block(left.local_coefficients,
+                                                                 right.local_coefficients,
+                                                                 workspace->alpha_projection,
+                                                                 workspace->beta_projection,
+                                                                 two_electron_view,
+                                                                 n_orbitals,
+                                                                 &workspace->projected_channel,
+                                                                 &workspace->beta_push,
+                                                                 &workspace->image);
+    }
+    return result;
 }
 
 template <typename TwoElectronInput>
@@ -1031,586 +873,499 @@ StructureAccumulationResult build_tiled_matrix_form_structure_matrices(
     const TwoElectronInput& two_electron_input,
     const DeterminantPairEvaluator& pair_evaluator,
     const std::vector<SpinDeterminantPairEvaluation>* alpha_pair_cache = nullptr,
-    const std::vector<SpinDeterminantPairEvaluation>* beta_pair_cache = nullptr)
-{
-  const int n_determinants = static_cast<int>(determinant_to_structure_terms.size());
-  const bool close_shell_same_spin =
-      alpha_reuse_table.unique_determinants ==
-          beta_reuse_table.unique_determinants &&
-      alpha_reuse_table.determinant_to_unique_id ==
-          beta_reuse_table.determinant_to_unique_id;
-  const bool shared_same_spin_pair_kernels =
-      alpha_reuse_table.unique_determinants ==
-      beta_reuse_table.unique_determinants;
-  const int tile_size = structure_matrix_tile_size();
-  const int max_cached_tiles = structure_matrix_tile_cache_tiles();
-  const auto coefficient_blocks =
-      build_structure_coefficient_blocks(
-          determinant_to_structure_terms,
-          n_structures,
-          alpha_reuse_table,
-          beta_reuse_table,
-          true);
-  const xmvb::integrals::ActiveSpaceTwoElectronView two_electron_view =
-      xmvb::integrals::make_active_space_two_electron_view(two_electron_input);
-  const int n_threads =
-      forward_structure_matrix_thread_count(n_structures);
+    const std::vector<SpinDeterminantPairEvaluation>* beta_pair_cache = nullptr) {
+    const int n_determinants = static_cast<int>(determinant_to_structure_terms.size());
+    const bool close_shell_same_spin =
+        alpha_reuse_table.unique_determinants == beta_reuse_table.unique_determinants &&
+        alpha_reuse_table.determinant_to_unique_id == beta_reuse_table.determinant_to_unique_id;
+    const bool shared_same_spin_pair_kernels =
+        alpha_reuse_table.unique_determinants == beta_reuse_table.unique_determinants;
+    const int tile_size = structure_matrix_tile_size();
+    const int max_cached_tiles = structure_matrix_tile_cache_tiles();
+    const auto coefficient_blocks = build_structure_coefficient_blocks(
+        determinant_to_structure_terms, n_structures, alpha_reuse_table, beta_reuse_table, true);
+    const xmvb::integrals::ActiveSpaceTwoElectronView two_electron_view =
+        xmvb::integrals::make_active_space_two_electron_view(two_electron_input);
+    const int n_threads = forward_structure_matrix_thread_count(n_structures);
 
-  StructureAccumulationResult result;
-  result.n_structures = n_structures;
-  const std::size_t matrix_size = square_storage_size(n_structures);
-  result.overlap_matrix.assign(matrix_size, 0.0);
-  result.hamiltonian_matrix.assign(matrix_size, 0.0);
-  result.determinant_overlap_cache.assign(
-      n_determinants,
-      0.0);
+    StructureAccumulationResult result;
+    result.n_structures = n_structures;
+    const std::size_t matrix_size = square_storage_size(n_structures);
+    result.overlap_matrix.assign(matrix_size, 0.0);
+    result.hamiltonian_matrix.assign(matrix_size, 0.0);
+    result.determinant_overlap_cache.assign(n_determinants, 0.0);
 
-  const ForwardSpinPairCacheOptions tile_cache_options{
-      .mode = ForwardSpinPairCacheMode::Tiles,
-      .tile_size = tile_size,
-      .capacity = max_cached_tiles,
-  };
-  ForwardSpinPairProvider<TwoElectronInput> alpha_provider(
-      alpha_reuse_table.unique_determinants,
-      alpha_pair_cache,
-      pair_evaluator,
-      ovlp_act,
-      h1e_act,
-      n_orbitals,
-      two_electron_input,
-      tile_cache_options);
-  ForwardSpinPairProvider<TwoElectronInput> beta_provider(
-      beta_reuse_table.unique_determinants,
-      beta_pair_cache,
-      pair_evaluator,
-      ovlp_act,
-      h1e_act,
-      n_orbitals,
-      two_electron_input,
-      tile_cache_options);
-  for (int determinant_index = 0;
-       determinant_index < n_determinants;
-       ++determinant_index) {
-    const int unique_alpha_id =
-        alpha_reuse_table.determinant_to_unique_id[determinant_index];
-    const int unique_beta_id =
-        beta_reuse_table.determinant_to_unique_id[determinant_index];
-    const double alpha_overlap =
-        alpha_provider.has_ordered_spin_pair_cache()
-            ? alpha_provider
-                  .pair_evaluation(unique_alpha_id, unique_alpha_id)
-                  .overlap_result
-                  .overlap_determinant
-            : alpha_provider.entry(unique_alpha_id, unique_alpha_id)
-                  .overlap_determinant;
-    const double beta_overlap =
-        close_shell_same_spin
-            ? alpha_overlap
-            : (beta_provider.has_ordered_spin_pair_cache()
-                   ? beta_provider
-                         .pair_evaluation(unique_beta_id, unique_beta_id)
-                         .overlap_result
-                         .overlap_determinant
-                   : beta_provider.entry(unique_beta_id, unique_beta_id)
-                         .overlap_determinant);
-    result.determinant_overlap_cache[determinant_index] =
-        alpha_overlap * beta_overlap;
-  }
-
-  // The tiled forward path computes only the unique-spin blocks touched by the
-  // current structure pair `(I,J)`. If a whole support block fits inside one
-  // tile, the local contraction is algebraically identical to the dense
-  // matrix-form kernel, but without building the global `N_alpha^2` /
-  // `N_beta^2` channel families upfront.
-#pragma omp parallel if(n_threads > 1) num_threads(n_threads)
-  {
-    const DeterminantPairEvaluator thread_pair_evaluator = pair_evaluator;
-    ForwardSpinPairProvider<TwoElectronInput> thread_alpha_provider(
-        alpha_reuse_table.unique_determinants,
-        alpha_pair_cache,
-        thread_pair_evaluator,
-        ovlp_act,
-        h1e_act,
-        n_orbitals,
-        two_electron_input,
-        tile_cache_options);
-    ForwardSpinPairProvider<TwoElectronInput> thread_beta_provider(
-        beta_reuse_table.unique_determinants,
-        beta_pair_cache,
-        thread_pair_evaluator,
-        ovlp_act,
-        h1e_act,
-        n_orbitals,
-        two_electron_input,
-        tile_cache_options);
-    ForwardStructurePairWorkspace workspace;
-
-#pragma omp for schedule(dynamic, 1)
-    for (int right_structure = 0;
-         right_structure < n_structures;
-         ++right_structure) {
-      const auto& right_block =
-          coefficient_blocks[right_structure];
-      for (int left_structure = 0;
-           left_structure <= right_structure;
-           ++left_structure) {
-        const auto& left_block =
-            coefficient_blocks[left_structure];
-        const std::size_t linear_index =
-            structure_matrix_index(
-                left_structure,
-                right_structure,
-                n_structures);
-
-        const ForwardStructurePairResult pair =
-            contract_forward_structure_pair(
-                left_block,
-                right_block,
-                close_shell_same_spin,
-                shared_same_spin_pair_kernels,
-                &thread_alpha_provider,
-                &thread_beta_provider,
-                two_electron_view,
-                n_orbitals,
-                &workspace);
-        result.overlap_matrix[linear_index] = pair.overlap;
-        result.hamiltonian_matrix[linear_index] = pair.hamiltonian;
-      }
+    const ForwardSpinPairCacheOptions tile_cache_options{
+        .mode = ForwardSpinPairCacheMode::Tiles,
+        .tile_size = tile_size,
+        .capacity = max_cached_tiles,
+    };
+    ForwardSpinPairProvider<TwoElectronInput> alpha_provider(alpha_reuse_table.unique_determinants,
+                                                             alpha_pair_cache,
+                                                             pair_evaluator,
+                                                             ovlp_act,
+                                                             h1e_act,
+                                                             n_orbitals,
+                                                             two_electron_input,
+                                                             tile_cache_options);
+    ForwardSpinPairProvider<TwoElectronInput> beta_provider(beta_reuse_table.unique_determinants,
+                                                            beta_pair_cache,
+                                                            pair_evaluator,
+                                                            ovlp_act,
+                                                            h1e_act,
+                                                            n_orbitals,
+                                                            two_electron_input,
+                                                            tile_cache_options);
+    for (int determinant_index = 0; determinant_index < n_determinants; ++determinant_index) {
+        const int unique_alpha_id = alpha_reuse_table.determinant_to_unique_id[determinant_index];
+        const int unique_beta_id = beta_reuse_table.determinant_to_unique_id[determinant_index];
+        const double alpha_overlap =
+            alpha_provider.has_ordered_spin_pair_cache()
+                ? alpha_provider.pair_evaluation(unique_alpha_id, unique_alpha_id)
+                      .overlap_result.overlap_determinant
+                : alpha_provider.entry(unique_alpha_id, unique_alpha_id).overlap_determinant;
+        const double beta_overlap =
+            close_shell_same_spin
+                ? alpha_overlap
+                : (beta_provider.has_ordered_spin_pair_cache()
+                       ? beta_provider.pair_evaluation(unique_beta_id, unique_beta_id)
+                             .overlap_result.overlap_determinant
+                       : beta_provider.entry(unique_beta_id, unique_beta_id).overlap_determinant);
+        result.determinant_overlap_cache[determinant_index] = alpha_overlap * beta_overlap;
     }
-  }
 
-  symmetrize_structure_matrices(result);
-  return result;
-}
-
-template <typename TwoElectronInput>
-std::vector<ForwardSpinPairEntry> build_unique_spin_self_entries(
-    const xmvb::mcscf::StringTable& unique_spin_determinants,
-    const std::vector<unsigned char>& touched,
-    const std::vector<double>& ovlp_act,
-    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
-    int n_orbitals,
-    const TwoElectronInput& two_electron_input,
-    const DeterminantPairEvaluator& pair_evaluator,
-    bool retain_projected_pair_values) {
-  std::vector<ForwardSpinPairEntry> entries(
-      unique_spin_determinants.size());
-  if (entries.empty()) {
-    return entries;
-  }
-
-  const xmvb::integrals::ActiveSpaceTwoElectronView two_electron_view =
-      xmvb::integrals::make_active_space_two_electron_view(two_electron_input);
-  int n_threads = std::min(
-      xmvb::effective_openmp_thread_count(),
-      static_cast<int>(entries.size()));
-  n_threads = std::max(1, n_threads);
-  std::atomic<bool> failed(false);
-  std::exception_ptr first_exception;
-#pragma omp parallel if(n_threads > 1) num_threads(n_threads)
-  {
-    const DeterminantPairEvaluator thread_pair_evaluator = pair_evaluator;
-#pragma omp for schedule(static)
-    for (int unique_index = 0;
-         unique_index < static_cast<int>(entries.size());
-         ++unique_index) {
-      if (!touched[unique_index] || failed.load(std::memory_order_relaxed)) {
-        continue;
-      }
-      try {
-        const auto& determinant = unique_spin_determinants[unique_index];
-        ForwardSpinPairEntry entry = evaluate_forward_spin_pair_entry(
-            determinant,
-            determinant,
+    // The tiled forward path computes only the unique-spin blocks touched by the
+    // current structure pair `(I,J)`. If a whole support block fits inside one
+    // tile, the local contraction is algebraically identical to the dense
+    // matrix-form kernel, but without building the global `N_alpha^2` /
+    // `N_beta^2` channel families upfront.
+#pragma omp parallel if (n_threads > 1) num_threads(n_threads)
+    {
+        const DeterminantPairEvaluator thread_pair_evaluator = pair_evaluator;
+        ForwardSpinPairProvider<TwoElectronInput> thread_alpha_provider(
+            alpha_reuse_table.unique_determinants,
+            alpha_pair_cache,
             thread_pair_evaluator,
             ovlp_act,
             h1e_act,
             n_orbitals,
-            two_electron_input);
-        if (retain_projected_pair_values &&
-            !entry.first_order_projection.packed_pair_indices.empty()) {
-          entry.first_order_projection.projected_pair_values =
-              xmvb::integrals::apply_active_space_two_electron_kernel_to_sparse_projection(
-                  two_electron_view,
-                  n_orbitals,
-                  entry.first_order_projection.packed_pair_indices,
-                  entry.first_order_projection.packed_pair_values);
+            two_electron_input,
+            tile_cache_options);
+        ForwardSpinPairProvider<TwoElectronInput> thread_beta_provider(
+            beta_reuse_table.unique_determinants,
+            beta_pair_cache,
+            thread_pair_evaluator,
+            ovlp_act,
+            h1e_act,
+            n_orbitals,
+            two_electron_input,
+            tile_cache_options);
+        ForwardStructurePairWorkspace workspace;
+
+#pragma omp for schedule(dynamic, 1)
+        for (int right_structure = 0; right_structure < n_structures; ++right_structure) {
+            const auto& right_block = coefficient_blocks[right_structure];
+            for (int left_structure = 0; left_structure <= right_structure; ++left_structure) {
+                const auto& left_block = coefficient_blocks[left_structure];
+                const std::size_t linear_index =
+                    structure_matrix_index(left_structure, right_structure, n_structures);
+
+                const ForwardStructurePairResult pair =
+                    contract_forward_structure_pair(left_block,
+                                                    right_block,
+                                                    close_shell_same_spin,
+                                                    shared_same_spin_pair_kernels,
+                                                    &thread_alpha_provider,
+                                                    &thread_beta_provider,
+                                                    two_electron_view,
+                                                    n_orbitals,
+                                                    &workspace);
+                result.overlap_matrix[linear_index] = pair.overlap;
+                result.hamiltonian_matrix[linear_index] = pair.hamiltonian;
+            }
         }
-        entries[unique_index] = std::move(entry);
-      } catch (...) {
-#pragma omp critical
-        {
-          if (!failed.load(std::memory_order_relaxed)) {
-            first_exception = std::current_exception();
-            failed.store(true, std::memory_order_relaxed);
-          }
-        }
-      }
     }
-  }
-  if (first_exception) {
-    std::rethrow_exception(first_exception);
-  }
-  return entries;
+
+    symmetrize_structure_matrices(result);
+    return result;
+}
+
+template <typename TwoElectronInput>
+std::vector<ForwardSpinPairEntry>
+build_unique_spin_self_entries(const xmvb::mcscf::StringTable& unique_spin_determinants,
+                               const std::vector<unsigned char>& touched,
+                               const std::vector<double>& ovlp_act,
+                               const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
+                               int n_orbitals,
+                               const TwoElectronInput& two_electron_input,
+                               const DeterminantPairEvaluator& pair_evaluator,
+                               bool retain_projected_pair_values) {
+    std::vector<ForwardSpinPairEntry> entries(unique_spin_determinants.size());
+    if (entries.empty()) {
+        return entries;
+    }
+
+    const xmvb::integrals::ActiveSpaceTwoElectronView two_electron_view =
+        xmvb::integrals::make_active_space_two_electron_view(two_electron_input);
+    int n_threads =
+        std::min(xmvb::effective_openmp_thread_count(), static_cast<int>(entries.size()));
+    n_threads = std::max(1, n_threads);
+    std::atomic<bool> failed(false);
+    std::exception_ptr first_exception;
+#pragma omp parallel if (n_threads > 1) num_threads(n_threads)
+    {
+        const DeterminantPairEvaluator thread_pair_evaluator = pair_evaluator;
+#pragma omp for schedule(static)
+        for (int unique_index = 0; unique_index < static_cast<int>(entries.size());
+             ++unique_index) {
+            if (!touched[unique_index] || failed.load(std::memory_order_relaxed)) {
+                continue;
+            }
+            try {
+                const auto& determinant = unique_spin_determinants[unique_index];
+                ForwardSpinPairEntry entry = evaluate_forward_spin_pair_entry(determinant,
+                                                                              determinant,
+                                                                              thread_pair_evaluator,
+                                                                              ovlp_act,
+                                                                              h1e_act,
+                                                                              n_orbitals,
+                                                                              two_electron_input);
+                if (retain_projected_pair_values &&
+                    !entry.first_order_projection.packed_pair_indices.empty()) {
+                    entry.first_order_projection.projected_pair_values = xmvb::integrals::
+                        apply_active_space_two_electron_kernel_to_sparse_projection(
+                            two_electron_view,
+                            n_orbitals,
+                            entry.first_order_projection.packed_pair_indices,
+                            entry.first_order_projection.packed_pair_values);
+                }
+                entries[unique_index] = std::move(entry);
+            } catch (...) {
+#pragma omp critical
+                {
+                    if (!failed.load(std::memory_order_relaxed)) {
+                        first_exception = std::current_exception();
+                        failed.store(true, std::memory_order_relaxed);
+                    }
+                }
+            }
+        }
+    }
+    if (first_exception) {
+        std::rethrow_exception(first_exception);
+    }
+    return entries;
 }
 
 double contract_self_opposite_spin_projection(
     const OppositeSpinPackedPairProjection& sparse_projection,
     const OppositeSpinPackedPairProjection& projected_projection) {
-  if (sparse_projection.packed_pair_indices.empty() ||
-      projected_projection.packed_pair_indices.empty()) {
-    return 0.0;
-  }
-  if (sparse_projection.packed_pair_indices.size() !=
-      sparse_projection.packed_pair_values.size()) {
-    throw std::invalid_argument(
-        "self opposite-spin sparse projection is inconsistent");
-  }
-  if (projected_projection.projected_pair_values.empty()) {
-    throw std::invalid_argument(
-        "self opposite-spin projected values are unavailable");
-  }
-
-  double coupling = 0.0;
-  for (std::size_t entry = 0;
-       entry < sparse_projection.packed_pair_indices.size();
-       ++entry) {
-    const int packed_pair = sparse_projection.packed_pair_indices[entry];
-    if (packed_pair < 0 ||
-        packed_pair >= static_cast<int>(
-            projected_projection.projected_pair_values.size())) {
-      throw std::out_of_range(
-          "self opposite-spin packed pair is out of range");
+    if (sparse_projection.packed_pair_indices.empty() ||
+        projected_projection.packed_pair_indices.empty()) {
+        return 0.0;
     }
-    coupling += sparse_projection.packed_pair_values[entry] *
-        projected_projection.projected_pair_values[packed_pair];
-  }
-  return coupling;
+    if (sparse_projection.packed_pair_indices.size() !=
+        sparse_projection.packed_pair_values.size()) {
+        throw std::invalid_argument("self opposite-spin sparse projection is inconsistent");
+    }
+    if (projected_projection.projected_pair_values.empty()) {
+        throw std::invalid_argument("self opposite-spin projected values are unavailable");
+    }
+
+    double coupling = 0.0;
+    for (std::size_t entry = 0; entry < sparse_projection.packed_pair_indices.size(); ++entry) {
+        const int packed_pair = sparse_projection.packed_pair_indices[entry];
+        if (packed_pair < 0 ||
+            packed_pair >= static_cast<int>(projected_projection.projected_pair_values.size())) {
+            throw std::out_of_range("self opposite-spin packed pair is out of range");
+        }
+        coupling += sparse_projection.packed_pair_values[entry] *
+                    projected_projection.projected_pair_values[packed_pair];
+    }
+    return coupling;
 }
 
 struct StructureSupportTerm {
-  int determinant = 0;
-  double coefficient = 0.0;
+    int determinant = 0;
+    double coefficient = 0.0;
 };
 
 std::uint64_t symmetric_pair_key(int left, int right) {
-  const std::uint32_t low = static_cast<std::uint32_t>(
-      std::min(left, right));
-  const std::uint32_t high = static_cast<std::uint32_t>(
-      std::max(left, right));
-  return (static_cast<std::uint64_t>(high) << 32u) | low;
+    const std::uint32_t low = static_cast<std::uint32_t>(std::min(left, right));
+    const std::uint32_t high = static_cast<std::uint32_t>(std::max(left, right));
+    return (static_cast<std::uint64_t>(high) << 32u) | low;
 }
 
-double exact_spin_overlap(
-    const xmvb::mcscf::StringTable& unique_determinants,
-    int left,
-    int right,
-    const std::vector<double>& active_overlap,
-    int n_orbitals,
-    const DeterminantOverlapResolver& overlap_resolver,
-    std::unordered_map<std::uint64_t, double>* cache) {
-  const std::uint64_t key = symmetric_pair_key(left, right);
-  const auto cached = cache->find(key);
-  if (cached != cache->end()) {
-    return cached->second;
-  }
-  const auto& left_occupations = unique_determinants[left];
-  const auto& right_occupations = unique_determinants[right];
-  double overlap = 1.0;
-  if (!left_occupations.empty()) {
-    overlap = overlap_resolver.determinant(
-        build_overlap_submatrix(
-            left_occupations,
-            right_occupations,
-            active_overlap,
-            n_orbitals));
-  }
-  cache->emplace(key, overlap);
-  return overlap;
-}
-
-Eigen::VectorXd build_exact_structure_overlap_diagonal(
-    StructureIncidence determinant_to_structure_terms,
-    int n_structures,
-    const SpinDeterminantReuseTable& alpha_reuse_table,
-    const SpinDeterminantReuseTable& beta_reuse_table,
-    const std::vector<double>& active_overlap,
-    int n_orbitals,
-    const DeterminantOverlapResolver& overlap_resolver) {
-  std::vector<std::vector<StructureSupportTerm>> structure_supports(
-      n_structures);
-  for (std::size_t determinant = 0;
-       determinant < determinant_to_structure_terms.size();
-       ++determinant) {
-    for (const StructureExpansionTerm& term :
-         determinant_to_structure_terms[determinant]) {
-      if (term.structure_index < 0 ||
-          term.structure_index >= n_structures) {
-        throw std::out_of_range(
-            "exact overlap diagonal structure index is out of range");
-      }
-      auto& support = structure_supports[term.structure_index];
-      if (!support.empty() &&
-          support.back().determinant == static_cast<int>(determinant)) {
-        support.back().coefficient += term.coefficient;
-      } else {
-        support.push_back(StructureSupportTerm{
-            static_cast<int>(determinant), term.coefficient});
-      }
+double exact_spin_overlap(const xmvb::mcscf::StringTable& unique_determinants,
+                          int left,
+                          int right,
+                          const std::vector<double>& active_overlap,
+                          int n_orbitals,
+                          const DeterminantOverlapResolver& overlap_resolver,
+                          std::unordered_map<std::uint64_t, double>* cache) {
+    const std::uint64_t key = symmetric_pair_key(left, right);
+    const auto cached = cache->find(key);
+    if (cached != cache->end()) {
+        return cached->second;
     }
-  }
+    const auto& left_occupations = unique_determinants[left];
+    const auto& right_occupations = unique_determinants[right];
+    double overlap = 1.0;
+    if (!left_occupations.empty()) {
+        overlap = overlap_resolver.determinant(build_overlap_submatrix(
+            left_occupations, right_occupations, active_overlap, n_orbitals));
+    }
+    cache->emplace(key, overlap);
+    return overlap;
+}
 
-  Eigen::VectorXd diagonal = Eigen::VectorXd::Zero(n_structures);
-  const bool shared_spin_space =
-      alpha_reuse_table.unique_determinants ==
-      beta_reuse_table.unique_determinants;
-  int n_threads = std::min(
-      xmvb::effective_openmp_thread_count(), n_structures);
-  n_threads = std::max(1, n_threads);
-  std::atomic<bool> failed(false);
-  std::exception_ptr first_exception;
-#pragma omp parallel if(n_threads > 1) num_threads(n_threads)
-  {
-    std::unordered_map<std::uint64_t, double> alpha_overlap_cache;
-    std::unordered_map<std::uint64_t, double> beta_overlap_cache;
-#pragma omp for schedule(dynamic, 1)
-    for (int structure = 0; structure < n_structures; ++structure) {
-      if (failed.load(std::memory_order_relaxed)) {
-        continue;
-      }
-      try {
-        alpha_overlap_cache.clear();
-        beta_overlap_cache.clear();
-        const auto& support = structure_supports[structure];
-        double squared_norm = 0.0;
-        for (std::size_t right_offset = 0;
-             right_offset < support.size();
-             ++right_offset) {
-          const int right_determinant = support[right_offset].determinant;
-          const int right_alpha =
-              alpha_reuse_table.determinant_to_unique_id[right_determinant];
-          const int right_beta =
-              beta_reuse_table.determinant_to_unique_id[right_determinant];
-          for (std::size_t left_offset = 0;
-               left_offset <= right_offset;
-               ++left_offset) {
-            const int left_determinant = support[left_offset].determinant;
-            const int left_alpha =
-                alpha_reuse_table.determinant_to_unique_id[left_determinant];
-            const int left_beta =
-                beta_reuse_table.determinant_to_unique_id[left_determinant];
-            const double alpha_overlap = exact_spin_overlap(
-                alpha_reuse_table.unique_determinants,
-                left_alpha,
-                right_alpha,
-                active_overlap,
-                n_orbitals,
-                overlap_resolver,
-                &alpha_overlap_cache);
-            double beta_overlap = 0.0;
-            if (shared_spin_space) {
-              beta_overlap = exact_spin_overlap(
-                  alpha_reuse_table.unique_determinants,
-                  left_beta,
-                  right_beta,
-                  active_overlap,
-                  n_orbitals,
-                  overlap_resolver,
-                  &alpha_overlap_cache);
-            } else {
-              beta_overlap = exact_spin_overlap(
-                  beta_reuse_table.unique_determinants,
-                  left_beta,
-                  right_beta,
-                  active_overlap,
-                  n_orbitals,
-                  overlap_resolver,
-                  &beta_overlap_cache);
+Eigen::VectorXd
+build_exact_structure_overlap_diagonal(StructureIncidence determinant_to_structure_terms,
+                                       int n_structures,
+                                       const SpinDeterminantReuseTable& alpha_reuse_table,
+                                       const SpinDeterminantReuseTable& beta_reuse_table,
+                                       const std::vector<double>& active_overlap,
+                                       int n_orbitals,
+                                       const DeterminantOverlapResolver& overlap_resolver) {
+    std::vector<std::vector<StructureSupportTerm>> structure_supports(n_structures);
+    for (std::size_t determinant = 0; determinant < determinant_to_structure_terms.size();
+         ++determinant) {
+        for (const StructureExpansionTerm& term : determinant_to_structure_terms[determinant]) {
+            if (term.structure_index < 0 || term.structure_index >= n_structures) {
+                throw std::out_of_range("exact overlap diagonal structure index is out of range");
             }
-            const double pair_weight =
-                support[left_offset].coefficient *
-                support[right_offset].coefficient;
-            squared_norm += (left_offset == right_offset ? 1.0 : 2.0) *
-                pair_weight * alpha_overlap * beta_overlap;
-          }
+            auto& support = structure_supports[term.structure_index];
+            if (!support.empty() && support.back().determinant == static_cast<int>(determinant)) {
+                support.back().coefficient += term.coefficient;
+            } else {
+                support.push_back(
+                    StructureSupportTerm{static_cast<int>(determinant), term.coefficient});
+            }
         }
-        if (!std::isfinite(squared_norm) || !(squared_norm > 0.0)) {
-          throw std::domain_error(
-              "exact structure overlap must be finite and strictly positive "
-              "for structure " + std::to_string(structure));
-        }
-        diagonal[structure] = squared_norm;
-      } catch (...) {
-#pragma omp critical
-        {
-          if (!failed.load(std::memory_order_relaxed)) {
-            first_exception = std::current_exception();
-            failed.store(true, std::memory_order_relaxed);
-          }
-        }
-      }
     }
-  }
-  if (first_exception) {
-    std::rethrow_exception(first_exception);
-  }
-  return diagonal;
+
+    Eigen::VectorXd diagonal = Eigen::VectorXd::Zero(n_structures);
+    const bool shared_spin_space =
+        alpha_reuse_table.unique_determinants == beta_reuse_table.unique_determinants;
+    int n_threads = std::min(xmvb::effective_openmp_thread_count(), n_structures);
+    n_threads = std::max(1, n_threads);
+    std::atomic<bool> failed(false);
+    std::exception_ptr first_exception;
+#pragma omp parallel if (n_threads > 1) num_threads(n_threads)
+    {
+        std::unordered_map<std::uint64_t, double> alpha_overlap_cache;
+        std::unordered_map<std::uint64_t, double> beta_overlap_cache;
+#pragma omp for schedule(dynamic, 1)
+        for (int structure = 0; structure < n_structures; ++structure) {
+            if (failed.load(std::memory_order_relaxed)) {
+                continue;
+            }
+            try {
+                alpha_overlap_cache.clear();
+                beta_overlap_cache.clear();
+                const auto& support = structure_supports[structure];
+                double squared_norm = 0.0;
+                for (std::size_t right_offset = 0; right_offset < support.size(); ++right_offset) {
+                    const int right_determinant = support[right_offset].determinant;
+                    const int right_alpha =
+                        alpha_reuse_table.determinant_to_unique_id[right_determinant];
+                    const int right_beta =
+                        beta_reuse_table.determinant_to_unique_id[right_determinant];
+                    for (std::size_t left_offset = 0; left_offset <= right_offset; ++left_offset) {
+                        const int left_determinant = support[left_offset].determinant;
+                        const int left_alpha =
+                            alpha_reuse_table.determinant_to_unique_id[left_determinant];
+                        const int left_beta =
+                            beta_reuse_table.determinant_to_unique_id[left_determinant];
+                        const double alpha_overlap =
+                            exact_spin_overlap(alpha_reuse_table.unique_determinants,
+                                               left_alpha,
+                                               right_alpha,
+                                               active_overlap,
+                                               n_orbitals,
+                                               overlap_resolver,
+                                               &alpha_overlap_cache);
+                        double beta_overlap = 0.0;
+                        if (shared_spin_space) {
+                            beta_overlap = exact_spin_overlap(alpha_reuse_table.unique_determinants,
+                                                              left_beta,
+                                                              right_beta,
+                                                              active_overlap,
+                                                              n_orbitals,
+                                                              overlap_resolver,
+                                                              &alpha_overlap_cache);
+                        } else {
+                            beta_overlap = exact_spin_overlap(beta_reuse_table.unique_determinants,
+                                                              left_beta,
+                                                              right_beta,
+                                                              active_overlap,
+                                                              n_orbitals,
+                                                              overlap_resolver,
+                                                              &beta_overlap_cache);
+                        }
+                        const double pair_weight =
+                            support[left_offset].coefficient * support[right_offset].coefficient;
+                        squared_norm += (left_offset == right_offset ? 1.0 : 2.0) * pair_weight *
+                                        alpha_overlap * beta_overlap;
+                    }
+                }
+                if (!std::isfinite(squared_norm) || !(squared_norm > 0.0)) {
+                    throw std::domain_error(
+                        "exact structure overlap must be finite and strictly positive "
+                        "for structure " +
+                        std::to_string(structure));
+                }
+                diagonal[structure] = squared_norm;
+            } catch (...) {
+#pragma omp critical
+                {
+                    if (!failed.load(std::memory_order_relaxed)) {
+                        first_exception = std::current_exception();
+                        failed.store(true, std::memory_order_relaxed);
+                    }
+                }
+            }
+        }
+    }
+    if (first_exception) {
+        std::rethrow_exception(first_exception);
+    }
+    return diagonal;
 }
 
 template <typename TwoElectronInput>
-StructureDiagonal build_determinant_diagonal_jacobi_preconditioner(
-    StructureIncidence determinant_to_structure_terms,
-    int n_structures,
-    const SpinDeterminantReuseTable& alpha_reuse_table,
-    const SpinDeterminantReuseTable& beta_reuse_table,
-    const std::vector<double>& ovlp_act,
-    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
-    int n_orbitals,
-    const TwoElectronInput& two_electron_input,
-    const DeterminantPairEvaluator& pair_evaluator) {
-  const bool shared_spin_entries =
-      alpha_reuse_table.unique_determinants ==
-      beta_reuse_table.unique_determinants;
-  const bool project_alpha = shared_spin_entries ||
-      alpha_reuse_table.unique_determinants.size() <=
-          beta_reuse_table.unique_determinants.size();
-  // Completing the ambient indices must not evaluate added zero-support
-  // strings in the Davidson diagonal. Only original expansion rows matter.
-  std::vector<unsigned char> alpha_touched(alpha_reuse_table.unique_determinants.size(),0);
-  std::vector<unsigned char> beta_touched(beta_reuse_table.unique_determinants.size(),0);
-  for (std::size_t d=0; d<determinant_to_structure_terms.size(); ++d) {
-    if (determinant_to_structure_terms[d].empty()) continue;
-    alpha_touched[alpha_reuse_table.determinant_to_unique_id[d]]=1;
-    beta_touched[beta_reuse_table.determinant_to_unique_id[d]]=1;
-  }
-  if (shared_spin_entries)
-    for (std::size_t i=0; i<alpha_touched.size(); ++i)
-      alpha_touched[i] |= beta_touched[i];
-  std::vector<ForwardSpinPairEntry> alpha_entries =
-      build_unique_spin_self_entries(
-          alpha_reuse_table.unique_determinants,
-          alpha_touched,
-          ovlp_act,
-          h1e_act,
-          n_orbitals,
-          two_electron_input,
-          pair_evaluator,
-          project_alpha);
-  std::vector<ForwardSpinPairEntry> beta_entries;
-  if (!shared_spin_entries) {
-    beta_entries = build_unique_spin_self_entries(
-        beta_reuse_table.unique_determinants,
-        beta_touched,
-        ovlp_act,
-        h1e_act,
-        n_orbitals,
-        two_electron_input,
-        pair_evaluator,
-        !project_alpha);
-  }
-  const std::vector<ForwardSpinPairEntry>& beta_entries_ref =
-      shared_spin_entries ? alpha_entries : beta_entries;
-
-  if (alpha_reuse_table.determinant_to_unique_id.size() !=
-          determinant_to_structure_terms.size() ||
-      beta_reuse_table.determinant_to_unique_id.size() !=
-          determinant_to_structure_terms.size()) {
-    throw std::invalid_argument(
-        "determinant self-preconditioner topology is inconsistent");
-  }
-
-  StructureDiagonal diagonal;
-  diagonal.hamiltonian = Eigen::VectorXd::Zero(n_structures);
-  diagonal.overlap = Eigen::VectorXd::Zero(n_structures);
-  // Most rows of a complete spin-product space do not occur in the selected
-  // structure expansion.  Visit only supported rows, and reuse flat scratch
-  // storage instead of allocating unordered-map nodes for every determinant.
-  std::vector<double> combined_structure_coefficients(n_structures, 0.0);
-  std::vector<int> coefficient_generation(n_structures, -1);
-  std::vector<int> touched_structures;
-  touched_structures.reserve(n_structures);
-  int generation = 0;
-  for (std::size_t determinant = 0;
-       determinant < determinant_to_structure_terms.size();
-       ++determinant) {
-    const auto& expansion_terms =
-        determinant_to_structure_terms[determinant];
-    if (expansion_terms.empty()) {
-      continue;
+StructureDiagonal
+build_determinant_diagonal_jacobi_preconditioner(StructureIncidence determinant_to_structure_terms,
+                                                 int n_structures,
+                                                 const SpinDeterminantReuseTable& alpha_reuse_table,
+                                                 const SpinDeterminantReuseTable& beta_reuse_table,
+                                                 const std::vector<double>& ovlp_act,
+                                                 const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
+                                                 int n_orbitals,
+                                                 const TwoElectronInput& two_electron_input,
+                                                 const DeterminantPairEvaluator& pair_evaluator) {
+    const bool shared_spin_entries =
+        alpha_reuse_table.unique_determinants == beta_reuse_table.unique_determinants;
+    const bool project_alpha =
+        shared_spin_entries ||
+        alpha_reuse_table.unique_determinants.size() <= beta_reuse_table.unique_determinants.size();
+    // Completing the ambient indices must not evaluate added zero-support
+    // strings in the Davidson diagonal. Only original expansion rows matter.
+    std::vector<unsigned char> alpha_touched(alpha_reuse_table.unique_determinants.size(), 0);
+    std::vector<unsigned char> beta_touched(beta_reuse_table.unique_determinants.size(), 0);
+    for (std::size_t d = 0; d < determinant_to_structure_terms.size(); ++d) {
+        if (determinant_to_structure_terms[d].empty())
+            continue;
+        alpha_touched[alpha_reuse_table.determinant_to_unique_id[d]] = 1;
+        beta_touched[beta_reuse_table.determinant_to_unique_id[d]] = 1;
     }
-    if (generation == std::numeric_limits<int>::max()) {
-      std::fill(
-          coefficient_generation.begin(), coefficient_generation.end(), -1);
-      generation = 0;
+    if (shared_spin_entries)
+        for (std::size_t i = 0; i < alpha_touched.size(); ++i)
+            alpha_touched[i] |= beta_touched[i];
+    std::vector<ForwardSpinPairEntry> alpha_entries =
+        build_unique_spin_self_entries(alpha_reuse_table.unique_determinants,
+                                       alpha_touched,
+                                       ovlp_act,
+                                       h1e_act,
+                                       n_orbitals,
+                                       two_electron_input,
+                                       pair_evaluator,
+                                       project_alpha);
+    std::vector<ForwardSpinPairEntry> beta_entries;
+    if (!shared_spin_entries) {
+        beta_entries = build_unique_spin_self_entries(beta_reuse_table.unique_determinants,
+                                                      beta_touched,
+                                                      ovlp_act,
+                                                      h1e_act,
+                                                      n_orbitals,
+                                                      two_electron_input,
+                                                      pair_evaluator,
+                                                      !project_alpha);
     }
-    ++generation;
-    touched_structures.clear();
-    for (const StructureExpansionTerm& term : expansion_terms) {
-      if (term.structure_index < 0 ||
-          term.structure_index >= n_structures) {
-        throw std::out_of_range(
-            "determinant self-preconditioner structure index is out of range");
-      }
-      if (coefficient_generation[term.structure_index] != generation) {
-        coefficient_generation[term.structure_index] = generation;
-        combined_structure_coefficients[term.structure_index] = 0.0;
-        touched_structures.push_back(term.structure_index);
-      }
-      combined_structure_coefficients[term.structure_index] +=
-          term.coefficient;
+    const std::vector<ForwardSpinPairEntry>& beta_entries_ref =
+        shared_spin_entries ? alpha_entries : beta_entries;
+
+    if (alpha_reuse_table.determinant_to_unique_id.size() !=
+            determinant_to_structure_terms.size() ||
+        beta_reuse_table.determinant_to_unique_id.size() != determinant_to_structure_terms.size()) {
+        throw std::invalid_argument("determinant self-preconditioner topology is inconsistent");
     }
 
-    const int alpha_id =
-        alpha_reuse_table.determinant_to_unique_id[determinant];
-    const int beta_id =
-        beta_reuse_table.determinant_to_unique_id[determinant];
-    if (alpha_id < 0 ||
-        alpha_id >= static_cast<int>(alpha_entries.size()) ||
-        beta_id < 0 ||
-        beta_id >= static_cast<int>(beta_entries_ref.size())) {
-      throw std::out_of_range(
-          "determinant self-preconditioner unique-spin id is out of range");
-    }
-    const ForwardSpinPairEntry& alpha = alpha_entries[alpha_id];
-    const ForwardSpinPairEntry& beta = beta_entries_ref[beta_id];
-    const double determinant_overlap =
-        alpha.overlap_determinant * beta.overlap_determinant;
-    const double opposite_spin = project_alpha
-        ? contract_self_opposite_spin_projection(
-              beta.first_order_projection,
-              alpha.first_order_projection)
-        : contract_self_opposite_spin_projection(
-              alpha.first_order_projection,
-              beta.first_order_projection);
-    const double determinant_hamiltonian =
-        alpha.total_hamiltonian * beta.overlap_determinant +
-        beta.total_hamiltonian * alpha.overlap_determinant +
-        opposite_spin;
+    StructureDiagonal diagonal;
+    diagonal.hamiltonian = Eigen::VectorXd::Zero(n_structures);
+    diagonal.overlap = Eigen::VectorXd::Zero(n_structures);
+    // Most rows of a complete spin-product space do not occur in the selected
+    // structure expansion.  Visit only supported rows, and reuse flat scratch
+    // storage instead of allocating unordered-map nodes for every determinant.
+    std::vector<double> combined_structure_coefficients(n_structures, 0.0);
+    std::vector<int> coefficient_generation(n_structures, -1);
+    std::vector<int> touched_structures;
+    touched_structures.reserve(n_structures);
+    int generation = 0;
+    for (std::size_t determinant = 0; determinant < determinant_to_structure_terms.size();
+         ++determinant) {
+        const auto& expansion_terms = determinant_to_structure_terms[determinant];
+        if (expansion_terms.empty()) {
+            continue;
+        }
+        if (generation == std::numeric_limits<int>::max()) {
+            std::fill(coefficient_generation.begin(), coefficient_generation.end(), -1);
+            generation = 0;
+        }
+        ++generation;
+        touched_structures.clear();
+        for (const StructureExpansionTerm& term : expansion_terms) {
+            if (term.structure_index < 0 || term.structure_index >= n_structures) {
+                throw std::out_of_range(
+                    "determinant self-preconditioner structure index is out of range");
+            }
+            if (coefficient_generation[term.structure_index] != generation) {
+                coefficient_generation[term.structure_index] = generation;
+                combined_structure_coefficients[term.structure_index] = 0.0;
+                touched_structures.push_back(term.structure_index);
+            }
+            combined_structure_coefficients[term.structure_index] += term.coefficient;
+        }
 
-    for (const int structure : touched_structures) {
-      const double coefficient =
-          combined_structure_coefficients[structure];
-      const double squared_coefficient = coefficient * coefficient;
-      diagonal.hamiltonian[structure] +=
-          squared_coefficient * determinant_hamiltonian;
-      diagonal.overlap[structure] +=
-          squared_coefficient * determinant_overlap;
+        const int alpha_id = alpha_reuse_table.determinant_to_unique_id[determinant];
+        const int beta_id = beta_reuse_table.determinant_to_unique_id[determinant];
+        if (alpha_id < 0 || alpha_id >= static_cast<int>(alpha_entries.size()) || beta_id < 0 ||
+            beta_id >= static_cast<int>(beta_entries_ref.size())) {
+            throw std::out_of_range(
+                "determinant self-preconditioner unique-spin id is out of range");
+        }
+        const ForwardSpinPairEntry& alpha = alpha_entries[alpha_id];
+        const ForwardSpinPairEntry& beta = beta_entries_ref[beta_id];
+        const double determinant_overlap = alpha.overlap_determinant * beta.overlap_determinant;
+        const double opposite_spin =
+            project_alpha ? contract_self_opposite_spin_projection(beta.first_order_projection,
+                                                                   alpha.first_order_projection)
+                          : contract_self_opposite_spin_projection(alpha.first_order_projection,
+                                                                   beta.first_order_projection);
+        const double determinant_hamiltonian = alpha.total_hamiltonian * beta.overlap_determinant +
+                                               beta.total_hamiltonian * alpha.overlap_determinant +
+                                               opposite_spin;
+
+        for (const int structure : touched_structures) {
+            const double coefficient = combined_structure_coefficients[structure];
+            const double squared_coefficient = coefficient * coefficient;
+            diagonal.hamiltonian[structure] += squared_coefficient * determinant_hamiltonian;
+            diagonal.overlap[structure] += squared_coefficient * determinant_overlap;
+        }
     }
-  }
-  for (int structure = 0; structure < n_structures; ++structure) {
-    if (!std::isfinite(diagonal.hamiltonian[structure])) {
-      throw std::domain_error(
-          "Davidson Jacobi Hamiltonian is non-finite for structure " +
-          std::to_string(structure));
+    for (int structure = 0; structure < n_structures; ++structure) {
+        if (!std::isfinite(diagonal.hamiltonian[structure])) {
+            throw std::domain_error("Davidson Jacobi Hamiltonian is non-finite for structure " +
+                                    std::to_string(structure));
+        }
+        if (!std::isfinite(diagonal.overlap[structure]) || !(diagonal.overlap[structure] > 0.0)) {
+            throw std::domain_error(
+                "Davidson Jacobi overlap must be finite and strictly positive for "
+                "structure " +
+                std::to_string(structure));
+        }
     }
-    if (!std::isfinite(diagonal.overlap[structure]) ||
-        !(diagonal.overlap[structure] > 0.0)) {
-      throw std::domain_error(
-          "Davidson Jacobi overlap must be finite and strictly positive for "
-          "structure " + std::to_string(structure));
-    }
-  }
-  return diagonal;
+    return diagonal;
 }
 
 template <typename TwoElectronInput>
@@ -1626,104 +1381,96 @@ StructureDiagonal build_demand_driven_structure_diagonal(
     const DeterminantPairEvaluator& pair_evaluator,
     const std::vector<SpinDeterminantPairEvaluation>* alpha_pair_cache,
     const std::vector<SpinDeterminantPairEvaluation>* beta_pair_cache) {
-  const bool close_shell_same_spin =
-      alpha_reuse_table.unique_determinants ==
-          beta_reuse_table.unique_determinants &&
-      alpha_reuse_table.determinant_to_unique_id ==
-          beta_reuse_table.determinant_to_unique_id;
-  const bool shared_same_spin_pair_kernels =
-      alpha_reuse_table.unique_determinants ==
-      beta_reuse_table.unique_determinants;
-  const auto coefficient_blocks = build_structure_coefficient_blocks(
-      determinant_to_structure_terms,
-      n_structures,
-      alpha_reuse_table,
-      beta_reuse_table,
-      true);
-  const xmvb::integrals::ActiveSpaceTwoElectronView two_electron_view =
-      xmvb::integrals::make_active_space_two_electron_view(two_electron_input);
-  const ForwardSpinPairCacheOptions entry_cache_options{
-      .mode = ForwardSpinPairCacheMode::Entries,
-      .tile_size = 0,
-      .capacity = structure_diagonal_pair_cache_entries(),
-  };
-  const int n_threads = forward_structure_matrix_thread_count(n_structures);
+    const bool close_shell_same_spin =
+        alpha_reuse_table.unique_determinants == beta_reuse_table.unique_determinants &&
+        alpha_reuse_table.determinant_to_unique_id == beta_reuse_table.determinant_to_unique_id;
+    const bool shared_same_spin_pair_kernels =
+        alpha_reuse_table.unique_determinants == beta_reuse_table.unique_determinants;
+    const auto coefficient_blocks = build_structure_coefficient_blocks(
+        determinant_to_structure_terms, n_structures, alpha_reuse_table, beta_reuse_table, true);
+    const xmvb::integrals::ActiveSpaceTwoElectronView two_electron_view =
+        xmvb::integrals::make_active_space_two_electron_view(two_electron_input);
+    const ForwardSpinPairCacheOptions entry_cache_options{
+        .mode = ForwardSpinPairCacheMode::Entries,
+        .tile_size = 0,
+        .capacity = structure_diagonal_pair_cache_entries(),
+    };
+    const int n_threads = forward_structure_matrix_thread_count(n_structures);
 
-  StructureDiagonal diagonal;
-  diagonal.hamiltonian = Eigen::VectorXd::Zero(n_structures);
-  diagonal.overlap = Eigen::VectorXd::Zero(n_structures);
-#pragma omp parallel if(n_threads > 1) num_threads(n_threads)
-  {
-    const DeterminantPairEvaluator thread_pair_evaluator = pair_evaluator;
-    ForwardSpinPairProvider<TwoElectronInput> alpha_provider(
-        alpha_reuse_table.unique_determinants,
-        alpha_pair_cache,
-        thread_pair_evaluator,
-        ovlp_act,
-        h1e_act,
-        n_orbitals,
-        two_electron_input,
-        entry_cache_options);
-    ForwardSpinPairProvider<TwoElectronInput> beta_provider(
-        beta_reuse_table.unique_determinants,
-        beta_pair_cache,
-        thread_pair_evaluator,
-        ovlp_act,
-        h1e_act,
-        n_orbitals,
-        two_electron_input,
-        entry_cache_options);
-    ForwardStructurePairWorkspace workspace;
+    StructureDiagonal diagonal;
+    diagonal.hamiltonian = Eigen::VectorXd::Zero(n_structures);
+    diagonal.overlap = Eigen::VectorXd::Zero(n_structures);
+#pragma omp parallel if (n_threads > 1) num_threads(n_threads)
+    {
+        const DeterminantPairEvaluator thread_pair_evaluator = pair_evaluator;
+        ForwardSpinPairProvider<TwoElectronInput> alpha_provider(
+            alpha_reuse_table.unique_determinants,
+            alpha_pair_cache,
+            thread_pair_evaluator,
+            ovlp_act,
+            h1e_act,
+            n_orbitals,
+            two_electron_input,
+            entry_cache_options);
+        ForwardSpinPairProvider<TwoElectronInput> beta_provider(
+            beta_reuse_table.unique_determinants,
+            beta_pair_cache,
+            thread_pair_evaluator,
+            ovlp_act,
+            h1e_act,
+            n_orbitals,
+            two_electron_input,
+            entry_cache_options);
+        ForwardStructurePairWorkspace workspace;
 
 #pragma omp for schedule(dynamic, 1)
-    for (int structure = 0; structure < n_structures; ++structure) {
-      const auto& block = coefficient_blocks[structure];
-      const ForwardStructurePairResult pair = contract_forward_structure_pair(
-          block,
-          block,
-          close_shell_same_spin,
-          shared_same_spin_pair_kernels,
-          &alpha_provider,
-          &beta_provider,
-          two_electron_view,
-          n_orbitals,
-          &workspace);
-      diagonal.hamiltonian[structure] = pair.hamiltonian;
-      diagonal.overlap[structure] = pair.overlap;
+        for (int structure = 0; structure < n_structures; ++structure) {
+            const auto& block = coefficient_blocks[structure];
+            const ForwardStructurePairResult pair =
+                contract_forward_structure_pair(block,
+                                                block,
+                                                close_shell_same_spin,
+                                                shared_same_spin_pair_kernels,
+                                                &alpha_provider,
+                                                &beta_provider,
+                                                two_electron_view,
+                                                n_orbitals,
+                                                &workspace);
+            diagonal.hamiltonian[structure] = pair.hamiltonian;
+            diagonal.overlap[structure] = pair.overlap;
+        }
     }
-  }
-  return diagonal;
+    return diagonal;
 }
 
-}  // namespace
+} // namespace
 
-const DeterminantPairEvaluation& FullDeterminantStructureBuildResult::pair_evaluation(
-    int determinant_index_left,
-    int determinant_index_right) const {
-  if (pair_evaluations.empty()) {
-    throw std::logic_error(
-        "determinant pair evaluations were not retained by this build result");
-  }
-  if (determinant_index_left < 0 || determinant_index_right < 0 ||
-      determinant_index_left >= n_determinants || determinant_index_right >= n_determinants) {
-    throw std::out_of_range("determinant pair index out of range");
-  }
-  return pair_evaluations[canonical_determinant_pair_storage_index(
-      determinant_index_left,
-      determinant_index_right)];
+const DeterminantPairEvaluation&
+FullDeterminantStructureBuildResult::pair_evaluation(int determinant_index_left,
+                                                     int determinant_index_right) const {
+    if (pair_evaluations.empty()) {
+        throw std::logic_error(
+            "determinant pair evaluations were not retained by this build result");
+    }
+    if (determinant_index_left < 0 || determinant_index_right < 0 ||
+        determinant_index_left >= n_determinants || determinant_index_right >= n_determinants) {
+        throw std::out_of_range("determinant pair index out of range");
+    }
+    return pair_evaluations[canonical_determinant_pair_storage_index(determinant_index_left,
+                                                                     determinant_index_right)];
 }
 
-FullDeterminantStructureHamiltonianOverlapBuilder::FullDeterminantStructureHamiltonianOverlapBuilder()
-    : determinant_overlap_resolver_(),
-      determinant_hamiltonian_resolver_() {}
+FullDeterminantStructureHamiltonianOverlapBuilder::
+    FullDeterminantStructureHamiltonianOverlapBuilder()
+    : determinant_overlap_resolver_(), determinant_hamiltonian_resolver_() {}
 
-FullDeterminantStructureHamiltonianOverlapBuilder::FullDeterminantStructureHamiltonianOverlapBuilder(
-    DeterminantOverlapResolver determinant_overlap_resolver,
-    DeterminantHamiltonianResolver determinant_hamiltonian_resolver)
+FullDeterminantStructureHamiltonianOverlapBuilder::
+    FullDeterminantStructureHamiltonianOverlapBuilder(
+        DeterminantOverlapResolver determinant_overlap_resolver,
+        DeterminantHamiltonianResolver determinant_hamiltonian_resolver)
     : determinant_overlap_resolver_(std::move(determinant_overlap_resolver)),
       determinant_hamiltonian_resolver_(std::move(determinant_hamiltonian_resolver)) {}
 
-
 StructureAccumulationResult FullDeterminantStructureHamiltonianOverlapBuilder::build(
     SpinStringRows alpha_det,
     SpinStringRows beta_det,
@@ -1733,18 +1480,17 @@ StructureAccumulationResult FullDeterminantStructureHamiltonianOverlapBuilder::b
     int n_orbitals,
     const std::vector<double>& eri_act,
     int n_structures) const {
-  return build_impl(
-      alpha_det,
-      beta_det,
-      determinant_to_structure_terms,
-      ovlp_act,
-      h1e_act,
-      n_orbitals,
-      eri_act,
-      n_structures,
-      nullptr,
-      false)
-      .structure_matrices;
+    return build_impl(alpha_det,
+                      beta_det,
+                      determinant_to_structure_terms,
+                      ovlp_act,
+                      h1e_act,
+                      n_orbitals,
+                      eri_act,
+                      n_structures,
+                      nullptr,
+                      false)
+        .structure_matrices;
 }
 
 StructureAccumulationResult FullDeterminantStructureHamiltonianOverlapBuilder::build(
@@ -1756,18 +1502,17 @@ StructureAccumulationResult FullDeterminantStructureHamiltonianOverlapBuilder::b
     int n_orbitals,
     const xmvb::integrals::ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     int n_structures) const {
-  return build_impl(
-      alpha_det,
-      beta_det,
-      determinant_to_structure_terms,
-      ovlp_act,
-      h1e_act,
-      n_orbitals,
-      active_space_two_electron_result,
-      n_structures,
-      nullptr,
-      false)
-      .structure_matrices;
+    return build_impl(alpha_det,
+                      beta_det,
+                      determinant_to_structure_terms,
+                      ovlp_act,
+                      h1e_act,
+                      n_orbitals,
+                      active_space_two_electron_result,
+                      n_structures,
+                      nullptr,
+                      false)
+        .structure_matrices;
 }
 
 StructureAccumulationResult FullDeterminantStructureHamiltonianOverlapBuilder::build(
@@ -1780,18 +1525,17 @@ StructureAccumulationResult FullDeterminantStructureHamiltonianOverlapBuilder::b
     const std::vector<double>& eri_act,
     int n_structures,
     const SameSpinPairCacheContext& same_spin_pair_cache) const {
-  return build_impl(
-      alpha_det,
-      beta_det,
-      determinant_to_structure_terms,
-      ovlp_act,
-      h1e_act,
-      n_orbitals,
-      eri_act,
-      n_structures,
-      &same_spin_pair_cache,
-      false)
-      .structure_matrices;
+    return build_impl(alpha_det,
+                      beta_det,
+                      determinant_to_structure_terms,
+                      ovlp_act,
+                      h1e_act,
+                      n_orbitals,
+                      eri_act,
+                      n_structures,
+                      &same_spin_pair_cache,
+                      false)
+        .structure_matrices;
 }
 
 StructureAccumulationResult FullDeterminantStructureHamiltonianOverlapBuilder::build(
@@ -1804,22 +1548,20 @@ StructureAccumulationResult FullDeterminantStructureHamiltonianOverlapBuilder::b
     const xmvb::integrals::ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     int n_structures,
     const SameSpinPairCacheContext& same_spin_pair_cache) const {
-  return build_impl(
-      alpha_det,
-      beta_det,
-      determinant_to_structure_terms,
-      ovlp_act,
-      h1e_act,
-      n_orbitals,
-      active_space_two_electron_result,
-      n_structures,
-      &same_spin_pair_cache,
-      false)
-      .structure_matrices;
+    return build_impl(alpha_det,
+                      beta_det,
+                      determinant_to_structure_terms,
+                      ovlp_act,
+                      h1e_act,
+                      n_orbitals,
+                      active_space_two_electron_result,
+                      n_structures,
+                      &same_spin_pair_cache,
+                      false)
+        .structure_matrices;
 }
 
-StructureDiagonal
-FullDeterminantStructureHamiltonianOverlapBuilder::build_diagonal(
+StructureDiagonal FullDeterminantStructureHamiltonianOverlapBuilder::build_diagonal(
     SpinStringRows alpha_det,
     SpinStringRows beta_det,
     StructureIncidence determinant_to_structure_terms,
@@ -1829,49 +1571,38 @@ FullDeterminantStructureHamiltonianOverlapBuilder::build_diagonal(
     const xmvb::integrals::ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     int n_structures,
     const SameSpinPairCacheContext& same_spin_pair_cache) const {
-  validate_full_determinant_input(
-      alpha_det,
-      beta_det,
-      determinant_to_structure_terms,
-      n_orbitals,
-      n_structures);
-  if (same_spin_pair_cache.alpha_reuse_table.determinant_to_unique_id.size() !=
-          alpha_det.size() ||
-      same_spin_pair_cache.beta_reuse_table.determinant_to_unique_id.size() !=
-          beta_det.size()) {
-    throw std::invalid_argument(
-        "same-spin topology does not match the determinant expansion");
-  }
-  std::optional<xmvb::integrals::ActiveSpaceTwoElectronResult> raw_integrals;
-  const auto* diagonal_integrals = &active_space_two_electron_result;
-  const Eigen::MatrixXd raw_h1e = xmvb::integrals::materialize_raw_one_electron(
-      h1e_act, active_space_two_electron_result.orbital_transform);
-  if (active_space_two_electron_result.orbital_transform.size() != 0) {
-    raw_integrals.emplace(xmvb::integrals::materialize_raw_active_integrals(
-        active_space_two_electron_result));
-    diagonal_integrals = &*raw_integrals;
-  }
-  return build_demand_driven_structure_diagonal(
-      determinant_to_structure_terms,
-      n_structures,
-      same_spin_pair_cache.alpha_reuse_table,
-      same_spin_pair_cache.beta_reuse_table,
-      ovlp_act,
-      raw_h1e,
-      n_orbitals,
-      *diagonal_integrals,
-      make_pair_evaluator(),
-      same_spin_pair_cache.enabled()
-          ? &same_spin_pair_cache.alpha_pair_cache_ref()
-          : nullptr,
-      same_spin_pair_cache.enabled()
-          ? &same_spin_pair_cache.beta_pair_cache_ref()
-          : nullptr);
+    validate_full_determinant_input(
+        alpha_det, beta_det, determinant_to_structure_terms, n_orbitals, n_structures);
+    if (same_spin_pair_cache.alpha_reuse_table.determinant_to_unique_id.size() !=
+            alpha_det.size() ||
+        same_spin_pair_cache.beta_reuse_table.determinant_to_unique_id.size() != beta_det.size()) {
+        throw std::invalid_argument("same-spin topology does not match the determinant expansion");
+    }
+    std::optional<xmvb::integrals::ActiveSpaceTwoElectronResult> raw_integrals;
+    const auto* diagonal_integrals = &active_space_two_electron_result;
+    const Eigen::MatrixXd raw_h1e = xmvb::integrals::materialize_raw_one_electron(
+        h1e_act, active_space_two_electron_result.orbital_transform);
+    if (active_space_two_electron_result.orbital_transform.size() != 0) {
+        raw_integrals.emplace(
+            xmvb::integrals::materialize_raw_active_integrals(active_space_two_electron_result));
+        diagonal_integrals = &*raw_integrals;
+    }
+    return build_demand_driven_structure_diagonal(
+        determinant_to_structure_terms,
+        n_structures,
+        same_spin_pair_cache.alpha_reuse_table,
+        same_spin_pair_cache.beta_reuse_table,
+        ovlp_act,
+        raw_h1e,
+        n_orbitals,
+        *diagonal_integrals,
+        make_pair_evaluator(),
+        same_spin_pair_cache.enabled() ? &same_spin_pair_cache.alpha_pair_cache_ref() : nullptr,
+        same_spin_pair_cache.enabled() ? &same_spin_pair_cache.beta_pair_cache_ref() : nullptr);
 }
 
 StructureDiagonal
-FullDeterminantStructureHamiltonianOverlapBuilder::
-build_davidson_jacobi_preconditioner(
+FullDeterminantStructureHamiltonianOverlapBuilder::build_davidson_jacobi_preconditioner(
     SpinStringRows alpha_det,
     SpinStringRows beta_det,
     StructureIncidence determinant_to_structure_terms,
@@ -1881,43 +1612,34 @@ build_davidson_jacobi_preconditioner(
     const xmvb::integrals::ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     int n_structures,
     const SameSpinPairCacheContext& same_spin_pair_cache) const {
-  validate_full_determinant_input(
-      alpha_det,
-      beta_det,
-      determinant_to_structure_terms,
-      n_orbitals,
-      n_structures);
-  if (same_spin_pair_cache.alpha_reuse_table.determinant_to_unique_id.size() !=
-          alpha_det.size() ||
-      same_spin_pair_cache.beta_reuse_table.determinant_to_unique_id.size() !=
-          beta_det.size()) {
-    throw std::invalid_argument(
-        "same-spin topology does not match the determinant expansion");
-  }
-  std::optional<xmvb::integrals::ActiveSpaceTwoElectronResult> raw_integrals;
-  const auto* jacobi_integrals = &active_space_two_electron_result;
-  const Eigen::MatrixXd raw_h1e = xmvb::integrals::materialize_raw_one_electron(
-      h1e_act, active_space_two_electron_result.orbital_transform);
-  if (active_space_two_electron_result.orbital_transform.size() != 0) {
-    raw_integrals.emplace(xmvb::integrals::materialize_raw_active_integrals(
-        active_space_two_electron_result));
-    jacobi_integrals = &*raw_integrals;
-  }
-  return build_determinant_diagonal_jacobi_preconditioner(
-      determinant_to_structure_terms,
-      n_structures,
-      same_spin_pair_cache.alpha_reuse_table,
-      same_spin_pair_cache.beta_reuse_table,
-      ovlp_act,
-      raw_h1e,
-      n_orbitals,
-      *jacobi_integrals,
-      make_pair_evaluator());
+    validate_full_determinant_input(
+        alpha_det, beta_det, determinant_to_structure_terms, n_orbitals, n_structures);
+    if (same_spin_pair_cache.alpha_reuse_table.determinant_to_unique_id.size() !=
+            alpha_det.size() ||
+        same_spin_pair_cache.beta_reuse_table.determinant_to_unique_id.size() != beta_det.size()) {
+        throw std::invalid_argument("same-spin topology does not match the determinant expansion");
+    }
+    std::optional<xmvb::integrals::ActiveSpaceTwoElectronResult> raw_integrals;
+    const auto* jacobi_integrals = &active_space_two_electron_result;
+    const Eigen::MatrixXd raw_h1e = xmvb::integrals::materialize_raw_one_electron(
+        h1e_act, active_space_two_electron_result.orbital_transform);
+    if (active_space_two_electron_result.orbital_transform.size() != 0) {
+        raw_integrals.emplace(
+            xmvb::integrals::materialize_raw_active_integrals(active_space_two_electron_result));
+        jacobi_integrals = &*raw_integrals;
+    }
+    return build_determinant_diagonal_jacobi_preconditioner(determinant_to_structure_terms,
+                                                            n_structures,
+                                                            same_spin_pair_cache.alpha_reuse_table,
+                                                            same_spin_pair_cache.beta_reuse_table,
+                                                            ovlp_act,
+                                                            raw_h1e,
+                                                            n_orbitals,
+                                                            *jacobi_integrals,
+                                                            make_pair_evaluator());
 }
 
-Eigen::VectorXd
-FullDeterminantStructureHamiltonianOverlapBuilder::
-build_exact_overlap_diagonal(
+Eigen::VectorXd FullDeterminantStructureHamiltonianOverlapBuilder::build_exact_overlap_diagonal(
     SpinStringRows alpha_det,
     SpinStringRows beta_det,
     StructureIncidence determinant_to_structure_terms,
@@ -1925,38 +1647,29 @@ build_exact_overlap_diagonal(
     int n_orbitals,
     int n_structures,
     const SameSpinPairCacheContext& same_spin_pair_cache) const {
-  validate_full_determinant_input(
-      alpha_det,
-      beta_det,
-      determinant_to_structure_terms,
-      n_orbitals,
-      n_structures);
-  if (same_spin_pair_cache.alpha_reuse_table.determinant_to_unique_id.size() !=
-          alpha_det.size() ||
-      same_spin_pair_cache.beta_reuse_table.determinant_to_unique_id.size() !=
-          beta_det.size()) {
-    throw std::invalid_argument(
-        "same-spin topology does not match the determinant expansion");
-  }
-  return build_exact_structure_overlap_diagonal(
-      determinant_to_structure_terms,
-      n_structures,
-      same_spin_pair_cache.alpha_reuse_table,
-      same_spin_pair_cache.beta_reuse_table,
-      active_overlap,
-      n_orbitals,
-      determinant_overlap_resolver_);
+    validate_full_determinant_input(
+        alpha_det, beta_det, determinant_to_structure_terms, n_orbitals, n_structures);
+    if (same_spin_pair_cache.alpha_reuse_table.determinant_to_unique_id.size() !=
+            alpha_det.size() ||
+        same_spin_pair_cache.beta_reuse_table.determinant_to_unique_id.size() != beta_det.size()) {
+        throw std::invalid_argument("same-spin topology does not match the determinant expansion");
+    }
+    return build_exact_structure_overlap_diagonal(determinant_to_structure_terms,
+                                                  n_structures,
+                                                  same_spin_pair_cache.alpha_reuse_table,
+                                                  same_spin_pair_cache.beta_reuse_table,
+                                                  active_overlap,
+                                                  n_orbitals,
+                                                  determinant_overlap_resolver_);
 }
 
 DeterminantPairEvaluator
 FullDeterminantStructureHamiltonianOverlapBuilder::make_pair_evaluator() const {
-  return DeterminantPairEvaluator(
-      determinant_overlap_resolver_,
-      determinant_hamiltonian_resolver_);
+    return DeterminantPairEvaluator(determinant_overlap_resolver_,
+                                    determinant_hamiltonian_resolver_);
 }
 
-FullDeterminantStructureBuildResult
-FullDeterminantStructureHamiltonianOverlapBuilder::build_impl(
+FullDeterminantStructureBuildResult FullDeterminantStructureHamiltonianOverlapBuilder::build_impl(
     SpinStringRows alpha_det,
     SpinStringRows beta_det,
     StructureIncidence determinant_to_structure_terms,
@@ -1967,96 +1680,83 @@ FullDeterminantStructureHamiltonianOverlapBuilder::build_impl(
     int n_structures,
     const SameSpinPairCacheContext* same_spin_pair_cache,
     bool store_pair_evaluations) const {
-  validate_full_determinant_input(
-      alpha_det,
-      beta_det,
-      determinant_to_structure_terms,
-      n_orbitals,
-      n_structures);
+    validate_full_determinant_input(
+        alpha_det, beta_det, determinant_to_structure_terms, n_orbitals, n_structures);
 
-  const int n_determinants = static_cast<int>(alpha_det.size());
-  FullDeterminantStructureBuildResult build_result;
-  build_result.n_determinants = n_determinants;
-  const std::size_t n_determinant_pairs =
-      unordered_determinant_pair_count(n_determinants);
-  if (store_pair_evaluations) {
-    build_result.pair_evaluations.resize(n_determinant_pairs);
-  }
-  if (same_spin_pair_cache != nullptr) {
-    if (same_spin_pair_cache->alpha_reuse_table.determinant_to_unique_id.size() !=
-            alpha_det.size() ||
-        same_spin_pair_cache->beta_reuse_table.determinant_to_unique_id.size() !=
-            beta_det.size()) {
-      throw std::invalid_argument(
-          "same-spin cache context does not match the determinant expansion");
+    const int n_determinants = static_cast<int>(alpha_det.size());
+    FullDeterminantStructureBuildResult build_result;
+    build_result.n_determinants = n_determinants;
+    const std::size_t n_determinant_pairs = unordered_determinant_pair_count(n_determinants);
+    if (store_pair_evaluations) {
+        build_result.pair_evaluations.resize(n_determinant_pairs);
     }
-  }
+    if (same_spin_pair_cache != nullptr) {
+        if (same_spin_pair_cache->alpha_reuse_table.determinant_to_unique_id.size() !=
+                alpha_det.size() ||
+            same_spin_pair_cache->beta_reuse_table.determinant_to_unique_id.size() !=
+                beta_det.size()) {
+            throw std::invalid_argument(
+                "same-spin cache context does not match the determinant expansion");
+        }
+    }
 
-  const SpinDeterminantReuseTable alpha_reuse_table =
-      (same_spin_pair_cache != nullptr)
-          ? same_spin_pair_cache->alpha_reuse_table
-          : build_spin_determinant_reuse_table(alpha_det);
-  const SpinDeterminantReuseTable beta_reuse_table =
-      (same_spin_pair_cache != nullptr)
-          ? same_spin_pair_cache->beta_reuse_table
-          : build_spin_determinant_reuse_table(beta_det);
-  const DeterminantPairEvaluator pair_evaluator = make_pair_evaluator();
-  build_result.structure_matrices =
-      build_tiled_matrix_form_structure_matrices(
-          determinant_to_structure_terms,
-          n_structures,
-          alpha_reuse_table,
-          beta_reuse_table,
-          ovlp_act,
-          h1e_act,
-          n_orbitals,
-          eri_act,
-          pair_evaluator,
-          (same_spin_pair_cache != nullptr &&
-           same_spin_pair_cache->enabled())
-              ? &same_spin_pair_cache->alpha_pair_cache_ref()
-              : nullptr,
-          (same_spin_pair_cache != nullptr &&
-           same_spin_pair_cache->enabled())
-              ? &same_spin_pair_cache->beta_pair_cache_ref()
-              : nullptr);
-
-  if (!store_pair_evaluations) {
-    return build_result;
-  }
-
-  // Diagnostic pair retention should reuse the same tiled/cache inputs rather
-  // than routing structure assembly back through the deleted pairwise path.
-  SameSpinPairCacheContext local_same_spin_pair_cache;
-  const SameSpinPairCacheContext* active_same_spin_pair_cache =
-      same_spin_pair_cache;
-  if (active_same_spin_pair_cache == nullptr) {
-    local_same_spin_pair_cache = build_same_spin_pair_cache_context(
-        alpha_det,
-        beta_det,
-        pair_evaluator,
+    const SpinDeterminantReuseTable alpha_reuse_table =
+        (same_spin_pair_cache != nullptr) ? same_spin_pair_cache->alpha_reuse_table
+                                          : build_spin_determinant_reuse_table(alpha_det);
+    const SpinDeterminantReuseTable beta_reuse_table =
+        (same_spin_pair_cache != nullptr) ? same_spin_pair_cache->beta_reuse_table
+                                          : build_spin_determinant_reuse_table(beta_det);
+    const DeterminantPairEvaluator pair_evaluator = make_pair_evaluator();
+    build_result.structure_matrices = build_tiled_matrix_form_structure_matrices(
+        determinant_to_structure_terms,
+        n_structures,
+        alpha_reuse_table,
+        beta_reuse_table,
         ovlp_act,
         h1e_act,
         n_orbitals,
         eri_act,
-        SameSpinPairCacheBuildOptions{});
-    active_same_spin_pair_cache = &local_same_spin_pair_cache;
-  }
-  collect_pair_evaluations(
-      active_same_spin_pair_cache,
-      pair_evaluator,
-      alpha_det,
-      beta_det,
-      ovlp_act,
-      h1e_act,
-      n_orbitals,
-      eri_act,
-      &build_result.pair_evaluations);
-  return build_result;
+        pair_evaluator,
+        (same_spin_pair_cache != nullptr && same_spin_pair_cache->enabled())
+            ? &same_spin_pair_cache->alpha_pair_cache_ref()
+            : nullptr,
+        (same_spin_pair_cache != nullptr && same_spin_pair_cache->enabled())
+            ? &same_spin_pair_cache->beta_pair_cache_ref()
+            : nullptr);
+
+    if (!store_pair_evaluations) {
+        return build_result;
+    }
+
+    // Diagnostic pair retention should reuse the same tiled/cache inputs rather
+    // than routing structure assembly back through the deleted pairwise path.
+    SameSpinPairCacheContext local_same_spin_pair_cache;
+    const SameSpinPairCacheContext* active_same_spin_pair_cache = same_spin_pair_cache;
+    if (active_same_spin_pair_cache == nullptr) {
+        local_same_spin_pair_cache =
+            build_same_spin_pair_cache_context(alpha_det,
+                                               beta_det,
+                                               pair_evaluator,
+                                               ovlp_act,
+                                               h1e_act,
+                                               n_orbitals,
+                                               eri_act,
+                                               SameSpinPairCacheBuildOptions{});
+        active_same_spin_pair_cache = &local_same_spin_pair_cache;
+    }
+    collect_pair_evaluations(active_same_spin_pair_cache,
+                             pair_evaluator,
+                             alpha_det,
+                             beta_det,
+                             ovlp_act,
+                             h1e_act,
+                             n_orbitals,
+                             eri_act,
+                             &build_result.pair_evaluations);
+    return build_result;
 }
 
-FullDeterminantStructureBuildResult
-FullDeterminantStructureHamiltonianOverlapBuilder::build_impl(
+FullDeterminantStructureBuildResult FullDeterminantStructureHamiltonianOverlapBuilder::build_impl(
     SpinStringRows alpha_det,
     SpinStringRows beta_det,
     StructureIncidence determinant_to_structure_terms,
@@ -2067,100 +1767,88 @@ FullDeterminantStructureHamiltonianOverlapBuilder::build_impl(
     int n_structures,
     const SameSpinPairCacheContext* same_spin_pair_cache,
     bool store_pair_evaluations) const {
-  validate_full_determinant_input(
-      alpha_det,
-      beta_det,
-      determinant_to_structure_terms,
-      n_orbitals,
-      n_structures);
+    validate_full_determinant_input(
+        alpha_det, beta_det, determinant_to_structure_terms, n_orbitals, n_structures);
 
-  std::optional<xmvb::integrals::ActiveSpaceTwoElectronResult> raw_integrals;
-  const auto* assembly_integrals = &active_space_two_electron_result;
-  const Eigen::MatrixXd raw_h1e = xmvb::integrals::materialize_raw_one_electron(
-      h1e_act, active_space_two_electron_result.orbital_transform);
-  if (active_space_two_electron_result.orbital_transform.size() != 0) {
-    raw_integrals.emplace(xmvb::integrals::materialize_raw_active_integrals(
-        active_space_two_electron_result));
-    assembly_integrals = &*raw_integrals;
-  }
-
-  const int n_determinants = static_cast<int>(alpha_det.size());
-  FullDeterminantStructureBuildResult build_result;
-  build_result.n_determinants = n_determinants;
-  const std::size_t n_determinant_pairs =
-      unordered_determinant_pair_count(n_determinants);
-  if (store_pair_evaluations) {
-    build_result.pair_evaluations.resize(n_determinant_pairs);
-  }
-  if (same_spin_pair_cache != nullptr) {
-    if (same_spin_pair_cache->alpha_reuse_table.determinant_to_unique_id.size() !=
-            alpha_det.size() ||
-        same_spin_pair_cache->beta_reuse_table.determinant_to_unique_id.size() !=
-            beta_det.size()) {
-      throw std::invalid_argument(
-          "same-spin cache context does not match the determinant expansion");
+    std::optional<xmvb::integrals::ActiveSpaceTwoElectronResult> raw_integrals;
+    const auto* assembly_integrals = &active_space_two_electron_result;
+    const Eigen::MatrixXd raw_h1e = xmvb::integrals::materialize_raw_one_electron(
+        h1e_act, active_space_two_electron_result.orbital_transform);
+    if (active_space_two_electron_result.orbital_transform.size() != 0) {
+        raw_integrals.emplace(
+            xmvb::integrals::materialize_raw_active_integrals(active_space_two_electron_result));
+        assembly_integrals = &*raw_integrals;
     }
-  }
 
-  const SpinDeterminantReuseTable alpha_reuse_table =
-      (same_spin_pair_cache != nullptr)
-          ? same_spin_pair_cache->alpha_reuse_table
-          : build_spin_determinant_reuse_table(alpha_det);
-  const SpinDeterminantReuseTable beta_reuse_table =
-      (same_spin_pair_cache != nullptr)
-          ? same_spin_pair_cache->beta_reuse_table
-          : build_spin_determinant_reuse_table(beta_det);
-  const DeterminantPairEvaluator pair_evaluator = make_pair_evaluator();
-  build_result.structure_matrices =
-      build_tiled_matrix_form_structure_matrices(
-          determinant_to_structure_terms,
-          n_structures,
-          alpha_reuse_table,
-          beta_reuse_table,
-          ovlp_act,
-          raw_h1e,
-          n_orbitals,
-          *assembly_integrals,
-          pair_evaluator,
-          (same_spin_pair_cache != nullptr &&
-           same_spin_pair_cache->enabled())
-              ? &same_spin_pair_cache->alpha_pair_cache_ref()
-              : nullptr,
-          (same_spin_pair_cache != nullptr &&
-           same_spin_pair_cache->enabled())
-              ? &same_spin_pair_cache->beta_pair_cache_ref()
-              : nullptr);
+    const int n_determinants = static_cast<int>(alpha_det.size());
+    FullDeterminantStructureBuildResult build_result;
+    build_result.n_determinants = n_determinants;
+    const std::size_t n_determinant_pairs = unordered_determinant_pair_count(n_determinants);
+    if (store_pair_evaluations) {
+        build_result.pair_evaluations.resize(n_determinant_pairs);
+    }
+    if (same_spin_pair_cache != nullptr) {
+        if (same_spin_pair_cache->alpha_reuse_table.determinant_to_unique_id.size() !=
+                alpha_det.size() ||
+            same_spin_pair_cache->beta_reuse_table.determinant_to_unique_id.size() !=
+                beta_det.size()) {
+            throw std::invalid_argument(
+                "same-spin cache context does not match the determinant expansion");
+        }
+    }
 
-  if (!store_pair_evaluations) {
-    return build_result;
-  }
-
-  SameSpinPairCacheContext local_same_spin_pair_cache;
-  const SameSpinPairCacheContext* active_same_spin_pair_cache =
-      same_spin_pair_cache;
-  if (active_same_spin_pair_cache == nullptr) {
-    local_same_spin_pair_cache = build_same_spin_pair_cache_context(
-        alpha_det,
-        beta_det,
-        pair_evaluator,
+    const SpinDeterminantReuseTable alpha_reuse_table =
+        (same_spin_pair_cache != nullptr) ? same_spin_pair_cache->alpha_reuse_table
+                                          : build_spin_determinant_reuse_table(alpha_det);
+    const SpinDeterminantReuseTable beta_reuse_table =
+        (same_spin_pair_cache != nullptr) ? same_spin_pair_cache->beta_reuse_table
+                                          : build_spin_determinant_reuse_table(beta_det);
+    const DeterminantPairEvaluator pair_evaluator = make_pair_evaluator();
+    build_result.structure_matrices = build_tiled_matrix_form_structure_matrices(
+        determinant_to_structure_terms,
+        n_structures,
+        alpha_reuse_table,
+        beta_reuse_table,
         ovlp_act,
         raw_h1e,
         n_orbitals,
         *assembly_integrals,
-        SameSpinPairCacheBuildOptions{});
-    active_same_spin_pair_cache = &local_same_spin_pair_cache;
-  }
-  collect_pair_evaluations(
-      active_same_spin_pair_cache,
-      pair_evaluator,
-      alpha_det,
-      beta_det,
-      ovlp_act,
-      raw_h1e,
-      n_orbitals,
-      *assembly_integrals,
-      &build_result.pair_evaluations);
-  return build_result;
+        pair_evaluator,
+        (same_spin_pair_cache != nullptr && same_spin_pair_cache->enabled())
+            ? &same_spin_pair_cache->alpha_pair_cache_ref()
+            : nullptr,
+        (same_spin_pair_cache != nullptr && same_spin_pair_cache->enabled())
+            ? &same_spin_pair_cache->beta_pair_cache_ref()
+            : nullptr);
+
+    if (!store_pair_evaluations) {
+        return build_result;
+    }
+
+    SameSpinPairCacheContext local_same_spin_pair_cache;
+    const SameSpinPairCacheContext* active_same_spin_pair_cache = same_spin_pair_cache;
+    if (active_same_spin_pair_cache == nullptr) {
+        local_same_spin_pair_cache =
+            build_same_spin_pair_cache_context(alpha_det,
+                                               beta_det,
+                                               pair_evaluator,
+                                               ovlp_act,
+                                               raw_h1e,
+                                               n_orbitals,
+                                               *assembly_integrals,
+                                               SameSpinPairCacheBuildOptions{});
+        active_same_spin_pair_cache = &local_same_spin_pair_cache;
+    }
+    collect_pair_evaluations(active_same_spin_pair_cache,
+                             pair_evaluator,
+                             alpha_det,
+                             beta_det,
+                             ovlp_act,
+                             raw_h1e,
+                             n_orbitals,
+                             *assembly_integrals,
+                             &build_result.pair_evaluations);
+    return build_result;
 }
 
 FullDeterminantStructureBuildResult
@@ -2173,18 +1861,16 @@ FullDeterminantStructureHamiltonianOverlapBuilder::build_with_pair_evaluations(
     int n_orbitals,
     const std::vector<double>& eri_act,
     int n_structures) const {
-  return build_impl(
-      alpha_det,
-      beta_det,
-      determinant_to_structure_terms,
-      ovlp_act,
-      h1e_act,
-      n_orbitals,
-      eri_act,
-      n_structures,
-      nullptr,
-      true);
+    return build_impl(alpha_det,
+                      beta_det,
+                      determinant_to_structure_terms,
+                      ovlp_act,
+                      h1e_act,
+                      n_orbitals,
+                      eri_act,
+                      n_structures,
+                      nullptr,
+                      true);
 }
 
-
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

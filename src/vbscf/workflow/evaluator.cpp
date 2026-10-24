@@ -5,134 +5,109 @@
 #include <stdexcept>
 #include <utility>
 
-
 namespace xmvb::vb {
 
 namespace {
 
-double compute_average_structure_overlap(
-    const std::vector<double>& overlap_matrix,
-    int n_structures) {
-  double diagonal_sum = 0.0;
-  for (int structure_index = 0; structure_index < n_structures; ++structure_index) {
-    const std::size_t diagonal_index =
-        structure_index * n_structures + structure_index;
-    diagonal_sum += overlap_matrix[diagonal_index];
-  }
-  return diagonal_sum / static_cast<double>(n_structures);
-}
-
-double compute_selected_state_average_energy(
-    const std::vector<double>& eigenvalues,
-    const std::vector<int>& selected_state_indices,
-    const std::vector<double>& normalized_weights) {
-  double energy = 0.0;
-  for (std::size_t selection_index = 0;
-       selection_index < selected_state_indices.size();
-       ++selection_index) {
-    energy +=
-        normalized_weights[selection_index] *
-        eigenvalues[selected_state_indices[selection_index]];
-  }
-  return energy;
-}
-
-
-void validate_state_selection(
-    const std::vector<int>& selected_state_indices,
-    const std::vector<double>& state_average_weights,
-    int n_structures) {
-  if (selected_state_indices.empty()) {
-    throw std::invalid_argument("selected_state_indices must not be empty");
-  }
-  if (selected_state_indices.size() != state_average_weights.size()) {
-    throw std::invalid_argument(
-        "selected_state_indices and state_average_weights must have the same length");
-  }
-  for (const int state_index : selected_state_indices) {
-    if (state_index < 0 || state_index >= n_structures) {
-      throw std::out_of_range("selected state index is out of range");
+double compute_average_structure_overlap(const std::vector<double>& overlap_matrix,
+                                         int n_structures) {
+    double diagonal_sum = 0.0;
+    for (int structure_index = 0; structure_index < n_structures; ++structure_index) {
+        const std::size_t diagonal_index = structure_index * n_structures + structure_index;
+        diagonal_sum += overlap_matrix[diagonal_index];
     }
-  }
+    return diagonal_sum / static_cast<double>(n_structures);
 }
 
-}  // namespace
+double compute_selected_state_average_energy(const std::vector<double>& eigenvalues,
+                                             const std::vector<int>& selected_state_indices,
+                                             const std::vector<double>& normalized_weights) {
+    double energy = 0.0;
+    for (std::size_t selection_index = 0; selection_index < selected_state_indices.size();
+         ++selection_index) {
+        energy += normalized_weights[selection_index] *
+                  eigenvalues[selected_state_indices[selection_index]];
+    }
+    return energy;
+}
 
-VbScfEvaluator::VbScfEvaluator()
-    : matrix_evaluator_(),
-      generalized_eigensolver_() {}
+void validate_state_selection(const std::vector<int>& selected_state_indices,
+                              const std::vector<double>& state_average_weights,
+                              int n_structures) {
+    if (selected_state_indices.empty()) {
+        throw std::invalid_argument("selected_state_indices must not be empty");
+    }
+    if (selected_state_indices.size() != state_average_weights.size()) {
+        throw std::invalid_argument(
+            "selected_state_indices and state_average_weights must have the same length");
+    }
+    for (const int state_index : selected_state_indices) {
+        if (state_index < 0 || state_index >= n_structures) {
+            throw std::out_of_range("selected state index is out of range");
+        }
+    }
+}
 
-VbScfEvaluator::VbScfEvaluator(
-    StructureMatrixEvaluator matrix_evaluator,
-    xmvb::linalg::GeneralizedEigensolver generalized_eigensolver)
+} // namespace
+
+VbScfEvaluator::VbScfEvaluator() : matrix_evaluator_(), generalized_eigensolver_() {}
+
+VbScfEvaluator::VbScfEvaluator(StructureMatrixEvaluator matrix_evaluator,
+                               xmvb::linalg::GeneralizedEigensolver generalized_eigensolver)
     : matrix_evaluator_(std::move(matrix_evaluator)),
       generalized_eigensolver_(std::move(generalized_eigensolver)) {}
 
-VbScfResult VbScfEvaluator::evaluate(
-    const VbScfInput& input,
-    double nuclear_repulsion_energy) const {
-  return evaluate(input, {0}, {1.0}, nuclear_repulsion_energy);
+VbScfResult VbScfEvaluator::evaluate(const VbScfInput& input,
+                                     double nuclear_repulsion_energy) const {
+    return evaluate(input, {0}, {1.0}, nuclear_repulsion_energy);
 }
 
-VbScfResult VbScfEvaluator::evaluate(
-    const VbScfInput& input,
-    const std::vector<int>& selected_state_indices,
-    const std::vector<double>& state_average_weights,
-    double nuclear_repulsion_energy) const {
-  if (input.structure_data.n_structures <= 0) {
-    throw std::invalid_argument("input.structure_data.n_structures must be positive");
-  }
+VbScfResult VbScfEvaluator::evaluate(const VbScfInput& input,
+                                     const std::vector<int>& selected_state_indices,
+                                     const std::vector<double>& state_average_weights,
+                                     double nuclear_repulsion_energy) const {
+    if (input.structure_data.n_structures <= 0) {
+        throw std::invalid_argument("input.structure_data.n_structures must be positive");
+    }
 
-  validate_state_selection(
-      selected_state_indices,
-      state_average_weights,
-      input.structure_data.n_structures);
-  const std::vector<double> normalized_weights =
-      mcscf::normalize_weights(state_average_weights);
+    validate_state_selection(
+        selected_state_indices, state_average_weights, input.structure_data.n_structures);
+    const std::vector<double> normalized_weights = mcscf::normalize_weights(state_average_weights);
 
-  VbScfResult result;
-  result.n_structures = input.structure_data.n_structures;
-  result.nuclear_repulsion_energy = nuclear_repulsion_energy;
-  result.selected_state_indices = selected_state_indices;
-  result.state_average_weights = normalized_weights;
-  const auto prepared_active_space = prepare_timed_active_space_context(input).prepared_active_space;
-  result.structure_matrices = matrix_evaluator_.evaluate(
-      input,
-      prepared_active_space);
-  result.one_electron_reference_energy =
-      prepared_active_space.one_electron_reference_energy;
-  result.average_structure_overlap = compute_average_structure_overlap(
-      result.structure_matrices.overlap_matrix,
-      result.n_structures);
+    VbScfResult result;
+    result.n_structures = input.structure_data.n_structures;
+    result.nuclear_repulsion_energy = nuclear_repulsion_energy;
+    result.selected_state_indices = selected_state_indices;
+    result.state_average_weights = normalized_weights;
+    const auto prepared_active_space =
+        prepare_timed_active_space_context(input).prepared_active_space;
+    result.structure_matrices = matrix_evaluator_.evaluate(input, prepared_active_space);
+    result.one_electron_reference_energy = prepared_active_space.one_electron_reference_energy;
+    result.average_structure_overlap = compute_average_structure_overlap(
+        result.structure_matrices.overlap_matrix, result.n_structures);
 
-  const auto eigen_result = generalized_eigensolver_.solve_dense(
-      result.structure_matrices.hamiltonian_matrix,
-      result.structure_matrices.overlap_matrix,
-      result.n_structures);
-  result.electronic_state_energies = eigen_result.eigenvalues;
-  result.eigenvector_matrix = eigen_result.eigenvector_matrix;
+    const auto eigen_result =
+        generalized_eigensolver_.solve_dense(result.structure_matrices.hamiltonian_matrix,
+                                             result.structure_matrices.overlap_matrix,
+                                             result.n_structures);
+    result.electronic_state_energies = eigen_result.eigenvalues;
+    result.eigenvector_matrix = eigen_result.eigenvector_matrix;
 
-  result.electronic_energy = compute_selected_state_average_energy(
-      result.electronic_state_energies,
-      selected_state_indices,
-      normalized_weights);
-  result.selected_state_total_energies.resize(selected_state_indices.size(), 0.0);
-  for (std::size_t selection_index = 0;
-       selection_index < selected_state_indices.size();
-       ++selection_index) {
-    const int state_index = selected_state_indices[selection_index];
-    const double electronic_state_energy =
-        result.electronic_state_energies[state_index];
-    result.selected_state_total_energies[selection_index] =
-        result.one_electron_reference_energy +
-        electronic_state_energy + nuclear_repulsion_energy;
-  }
-  result.total_energy =
-      result.one_electron_reference_energy +
-      result.electronic_energy +
-      nuclear_repulsion_energy;
+    result.electronic_energy = compute_selected_state_average_energy(
+        result.electronic_state_energies, selected_state_indices, normalized_weights);
+    result.selected_state_total_energies.resize(selected_state_indices.size(), 0.0);
+    for (std::size_t selection_index = 0; selection_index < selected_state_indices.size();
+         ++selection_index) {
+        const int state_index = selected_state_indices[selection_index];
+        const double electronic_state_energy = result.electronic_state_energies[state_index];
+        result.selected_state_total_energies[selection_index] =
+            result.one_electron_reference_energy + electronic_state_energy +
+            nuclear_repulsion_energy;
+    }
+    result.total_energy =
+        result.one_electron_reference_energy + result.electronic_energy + nuclear_repulsion_energy;
 
-  return result;
+    return result;
 }
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

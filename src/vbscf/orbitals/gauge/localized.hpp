@@ -35,4 +35,4 @@ LocalizedRepresentativeSelector build_localized_representative_selector(
     const Eigen::Ref<const Eigen::MatrixXd>& active_auxiliary_orbitals,
     const Eigen::Ref<const Eigen::MatrixXd>& basis_overlap_matrix);
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

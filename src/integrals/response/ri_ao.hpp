@@ -10,10 +10,10 @@ namespace xmvb::integrals {
 
 /** @brief Narrow AO responses needed by the orbital Hessian pullback. */
 struct RiAoProjectedResponse {
-  Eigen::MatrixXd inactive; ///< 2 G(2 D + K/2) A0, AO by all inactive.
-  Eigen::MatrixXd active;   ///< G(D) C, AO by active.
-  Eigen::MatrixXd factor_direction{}; ///< Optional delta B, auxiliary by active pair.
-  Eigen::MatrixXd fixed_two_electron{}; ///< Optional fixed-adjoint image, AO by active.
+    Eigen::MatrixXd inactive;             ///< 2 G(2 D + K/2) A0, AO by all inactive.
+    Eigen::MatrixXd active;               ///< G(D) C, AO by active.
+    Eigen::MatrixXd factor_direction{};   ///< Optional delta B, auxiliary by active pair.
+    Eigen::MatrixXd fixed_two_electron{}; ///< Optional fixed-adjoint image, AO by active.
 };
 
 /** @brief Borrowed fixed-2e request in the accepted active coefficient frame.
@@ -21,8 +21,8 @@ struct RiAoProjectedResponse {
  * Wbar = direction * weight. `adjoint` is the accepted packed 2e cotangent.
  */
 struct RiActiveHvpInput {
-  const Eigen::MatrixXd& weight;
-  const std::vector<double>& adjoint;
+    const Eigen::MatrixXd& weight;
+    const std::vector<double>& adjoint;
 };
 
 /** @brief One directional request sharing the accepted RI state and inactive map.
@@ -30,9 +30,9 @@ struct RiActiveHvpInput {
  * product with the shared fixed weight, in the accepted active frame.
  */
 struct RiAoResponseDirection {
-  Eigen::Ref<const Eigen::MatrixXd> horizontal_direction;
-  Eigen::Ref<const Eigen::MatrixXd> weighted_active;
-  const Eigen::MatrixXd* active_direction = nullptr;
+    Eigen::Ref<const Eigen::MatrixXd> horizontal_direction;
+    Eigen::Ref<const Eigen::MatrixXd> weighted_active;
+    const Eigen::MatrixXd* active_direction = nullptr;
 };
 
 /** @brief Shared auxiliary slabs and narrow tile projections.
@@ -40,16 +40,16 @@ struct RiAoResponseDirection {
  * directional factor slabs are shared, with no per-thread integral copies.
  */
 struct RiAoResponseWorkspace {
-  workspace::Reservation residency;
-  Eigen::MatrixXd direction, accepted;
-  Eigen::MatrixXd direction_projection, accepted_projection, charges;
-  Eigen::VectorXd coulomb;
+    workspace::Reservation residency;
+    Eigen::MatrixXd direction, accepted;
+    Eigen::MatrixXd direction_projection, accepted_projection, charges;
+    Eigen::VectorXd coulomb;
 };
 
 /** @brief Borrowed accepted inactive transform, with exact column selection. */
 struct RiInactiveFactorView {
-  const Eigen::MatrixXd* factors = nullptr;
-  std::span<const int> orbitals;
+    const Eigen::MatrixXd* factors = nullptr;
+    std::span<const int> orbitals;
 };
 
 /** @brief G(C W C^T) from accepted L_A C and active-pair factors.
@@ -57,9 +57,8 @@ struct RiInactiveFactorView {
  * is needed when the accepted factors are resident; otherwise the same
  * operator consumes bounded auxiliary tiles.
  */
-Eigen::MatrixXd apply_ri_active_density_response(
-    const RiActiveTwoElectronResponseCache& active,
-    const Eigen::Ref<const Eigen::MatrixXd>& weights);
+Eigen::MatrixXd apply_ri_active_density_response(const RiActiveTwoElectronResponseCache& active,
+                                                 const Eigen::Ref<const Eigen::MatrixXd>& weights);
 
 /** @brief Compute a block of AO-by-orbital projections consumed by the HVP.
  * `moving_inactive_duals` and every horizontal direction contain matching
@@ -73,14 +72,14 @@ Eigen::MatrixXd apply_ri_active_density_response(
  * With `fixed_hvp`, each weighted_active must equal its active_direction
  * times fixed_hvp->weight. Optional images use the accepted active frame.
  */
-std::vector<RiAoProjectedResponse> apply_ri_projected_ao_response_batch(
-    const RiActiveTwoElectronResponseCache& active,
-    const Eigen::Ref<const Eigen::MatrixXd>& moving_inactive_duals,
-    std::span<const RiAoResponseDirection> directions,
-    const Eigen::Ref<const Eigen::MatrixXd>& full_inactive_duals,
-    RiAoResponseWorkspace& workspace,
-    std::size_t workspace_bytes = workspace::limit(),
-    RiInactiveFactorView inactive = {},
-    const RiActiveHvpInput* fixed_hvp = nullptr);
+std::vector<RiAoProjectedResponse>
+apply_ri_projected_ao_response_batch(const RiActiveTwoElectronResponseCache& active,
+                                     const Eigen::Ref<const Eigen::MatrixXd>& moving_inactive_duals,
+                                     std::span<const RiAoResponseDirection> directions,
+                                     const Eigen::Ref<const Eigen::MatrixXd>& full_inactive_duals,
+                                     RiAoResponseWorkspace& workspace,
+                                     std::size_t workspace_bytes = workspace::limit(),
+                                     RiInactiveFactorView inactive = {},
+                                     const RiActiveHvpInput* fixed_hvp = nullptr);
 
 } // namespace xmvb::integrals

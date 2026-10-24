@@ -12,22 +12,20 @@
 namespace xmvb::vb {
 
 struct AcceptedPairTileBuildOptions {
-  bool materialize_projected_pair_values = false;
-  bool populate_response_payload = false;
-  bool populate_opposite_spin_projection = true;
+    bool materialize_projected_pair_values = false;
+    bool populate_response_payload = false;
+    bool populate_opposite_spin_projection = true;
 };
 
 /** Bounded accepted-point pair payload for one rectangular spin-string tile. */
 struct AcceptedSpinPairTile {
-  int left_begin = 0;
-  int right_begin = 0;
-  int left_size = 0;
-  int right_size = 0;
-  std::vector<SpinDeterminantPairEvaluation> pairs;
+    int left_begin = 0;
+    int right_begin = 0;
+    int left_size = 0;
+    int right_size = 0;
+    std::vector<SpinDeterminantPairEvaluation> pairs;
 
-  const SpinDeterminantPairEvaluation& pair(
-      int left_local,
-      int right_local) const;
+    const SpinDeterminantPairEvaluation& pair(int left_local, int right_local) const;
 };
 
 /**
@@ -40,35 +38,34 @@ struct AcceptedSpinPairTile {
  * non-streamed evaluator.
  */
 class AcceptedPairTileProvider {
- public:
-  AcceptedPairTileProvider(
-      mcscf::StringTable unique_spin_strings,
-      int n_active_orbitals,
-      double linear_dependence_threshold = 1.0e-12);
+  public:
+    AcceptedPairTileProvider(mcscf::StringTable unique_spin_strings,
+                             int n_active_orbitals,
+                             double linear_dependence_threshold = 1.0e-12);
 
-  int size() const noexcept {
-    return static_cast<int>(unique_spin_strings_.size());
-  }
+    int size() const noexcept {
+        return static_cast<int>(unique_spin_strings_.size());
+    }
 
-  const mcscf::StringTable& unique_spin_strings() const noexcept {
-    return unique_spin_strings_;
-  }
+    const mcscf::StringTable& unique_spin_strings() const noexcept {
+        return unique_spin_strings_;
+    }
 
-  AcceptedSpinPairTile build(
-      int left_begin,
-      int left_end,
-      int right_begin,
-      int right_end,
-      const std::vector<double>& active_overlap,
-      const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron,
-      const xmvb::integrals::ActiveSpaceTwoElectronResult& active_two_electron,
-      AcceptedPairTileBuildOptions options = {}) const;
+    AcceptedSpinPairTile
+    build(int left_begin,
+          int left_end,
+          int right_begin,
+          int right_end,
+          const std::vector<double>& active_overlap,
+          const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron,
+          const xmvb::integrals::ActiveSpaceTwoElectronResult& active_two_electron,
+          AcceptedPairTileBuildOptions options = {}) const;
 
- private:
-  mcscf::StringTable unique_spin_strings_;
-  int n_active_orbitals_ = 0;
-  DeterminantOverlapResolver overlap_resolver_;
-  DeterminantPairEvaluator pair_evaluator_;
+  private:
+    mcscf::StringTable unique_spin_strings_;
+    int n_active_orbitals_ = 0;
+    DeterminantOverlapResolver overlap_resolver_;
+    DeterminantPairEvaluator pair_evaluator_;
 };
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

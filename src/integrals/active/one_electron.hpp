@@ -15,12 +15,12 @@ namespace xmvb::integrals {
  * `HHO = T_a^T F11 T_a`. All matrices use column-major storage.
  */
 class ActiveSpaceOneElectronBuilder {
-public:
-  /** @brief Project F with an explicit active coefficient frame; retain F C. */
-  ActiveSpaceOneElectronResult build(
-      const Eigen::Ref<const Eigen::MatrixXd>& ao_effective_h1e,
-      const Eigen::Ref<const Eigen::MatrixXd>& active_coefficients) const;
-  /**
+  public:
+    /** @brief Project F with an explicit active coefficient frame; retain F C. */
+    ActiveSpaceOneElectronResult
+    build(const Eigen::Ref<const Eigen::MatrixXd>& ao_effective_h1e,
+          const Eigen::Ref<const Eigen::MatrixXd>& active_coefficients) const;
+    /**
    * @brief Builds the active-space effective one-electron matrix.
    *
    * @param ao_effective_h1e Column-major AO `F11` matrix.
@@ -30,19 +30,18 @@ public:
    * @param n_active_orbitals Number of active orbitals.
    * @return ActiveSpaceOneElectronResult Active-space `HHO` matrix.
    */
-  ActiveSpaceOneElectronResult build(
-      const Eigen::Ref<const Eigen::MatrixXd>& ao_effective_h1e,
-      const std::vector<double>& auxiliary_orbital_matrix,
-      int n_basis_functions,
-      int n_inactive_doubly_occupied_orbitals,
-      int n_active_orbitals) const;
+    ActiveSpaceOneElectronResult build(const Eigen::Ref<const Eigen::MatrixXd>& ao_effective_h1e,
+                                       const std::vector<double>& auxiliary_orbital_matrix,
+                                       int n_basis_functions,
+                                       int n_inactive_doubly_occupied_orbitals,
+                                       int n_active_orbitals) const;
 
-  ActiveSpaceOneElectronResult build(
-      const Eigen::Ref<const Eigen::MatrixXd>& ao_effective_h1e,
-      const Eigen::Ref<const Eigen::MatrixXd>& auxiliary_orbital_matrix,
-      int n_basis_functions,
-      int n_inactive_doubly_occupied_orbitals,
-      int n_active_orbitals) const;
+    ActiveSpaceOneElectronResult
+    build(const Eigen::Ref<const Eigen::MatrixXd>& ao_effective_h1e,
+          const Eigen::Ref<const Eigen::MatrixXd>& auxiliary_orbital_matrix,
+          int n_basis_functions,
+          int n_inactive_doubly_occupied_orbitals,
+          int n_active_orbitals) const;
 };
 
-}  // namespace xmvb::integrals
+} // namespace xmvb::integrals

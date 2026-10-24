@@ -9,8 +9,7 @@ namespace xmvb::integrals {
 struct AoIntegralInput;
 
 using ExactCtxDenseMatrix = Eigen::MatrixXd;
-using ExactCtxPairMatrix =
-    Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+using ExactCtxPairMatrix = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
 
 /**
  * @brief Accepted-point cache for exact fixed-adjoint active-space 2e HVP work.
@@ -23,24 +22,24 @@ using ExactCtxPairMatrix =
  * result, whose lifetime must enclose every use of this cache.
  */
 struct ExactPackedActiveTwoElectronAdjointCache {
-  int n_basis_functions = 0;
-  int n_active_orbitals = 0;
-  std::vector<int> ao_pair_first_indices;
-  std::vector<int> ao_pair_second_indices;
-  std::vector<int> active_pair_first_indices;
-  std::vector<int> active_pair_second_indices;
-  const AoIntegralInput* ao_integral_input = nullptr;
-  const ExactCtxPairMatrix* accepted_pair_products = nullptr;
-  const ExactCtxDenseMatrix* accepted_active_coefficients = nullptr;
-  ExactCtxPairMatrix active_pair_gradient_matrix;
-  /**
+    int n_basis_functions = 0;
+    int n_active_orbitals = 0;
+    std::vector<int> ao_pair_first_indices;
+    std::vector<int> ao_pair_second_indices;
+    std::vector<int> active_pair_first_indices;
+    std::vector<int> active_pair_second_indices;
+    const AoIntegralInput* ao_integral_input = nullptr;
+    const ExactCtxPairMatrix* accepted_pair_products = nullptr;
+    const ExactCtxDenseMatrix* accepted_active_coefficients = nullptr;
+    ExactCtxPairMatrix active_pair_gradient_matrix;
+    /**
    * @brief Accepted one-orbital contraction, rows (AO, active), columns pairs.
    *
    * Uses O(n_bf*n_active^3) shared storage, capped at 64 MiB. This is an
    * integral intermediate, independent of the active density, not a Hessian.
    */
-  ExactCtxPairMatrix orbital_pair_products;
-  /**
+    ExactCtxPairMatrix orbital_pair_products;
+    /**
    * @brief Density-independent (AO active|AO active) integral image.
    *
    * Rows are triangular AO pairs (mu >= kappa), columns (b, d), row-major.
@@ -49,7 +48,7 @@ struct ExactPackedActiveTwoElectronAdjointCache {
    * input memory budget. The image is reused throughout the accepted point.
    * This is a partial integral transform, not an orbital Hessian.
    */
-  ExactCtxPairMatrix exchange_integrals;
+    ExactCtxPairMatrix exchange_integrals;
 };
 
 /**
@@ -60,14 +59,14 @@ struct ExactPackedActiveTwoElectronAdjointCache {
  * reallocation of the largest exact-2e intermediates on every Krylov matvec.
  */
 struct ExactPackedActiveTwoElectronApplyWorkspace {
-  ExactCtxDenseMatrix dense_active_direction;
-  ExactCtxDenseMatrix dense_active_gradient_direction;
-  ExactCtxPairMatrix mixed_pair_coefficients;
-  ExactCtxPairMatrix transformed_pair_coefficients;
-  ExactCtxPairMatrix pair_gradients;
-  ExactCtxPairMatrix pair_products_tile;
-  ExactCtxPairMatrix directional_pair_products_tile;
-  ExactCtxPairMatrix pair_gradients_tile;
+    ExactCtxDenseMatrix dense_active_direction;
+    ExactCtxDenseMatrix dense_active_gradient_direction;
+    ExactCtxPairMatrix mixed_pair_coefficients;
+    ExactCtxPairMatrix transformed_pair_coefficients;
+    ExactCtxPairMatrix pair_gradients;
+    ExactCtxPairMatrix pair_products_tile;
+    ExactCtxPairMatrix directional_pair_products_tile;
+    ExactCtxPairMatrix pair_gradients_tile;
 };
 
 /**
@@ -78,13 +77,13 @@ struct ExactPackedActiveTwoElectronApplyWorkspace {
  * avoids several large allocations on every `H v` application.
  */
 struct ExactPackedActiveTwoElectronDirectionalDerivativeWorkspace {
-  ExactCtxDenseMatrix dense_active_direction;
-  ExactCtxPairMatrix directional_pair_coefficients;
-  ExactCtxPairMatrix directional_pair_products;
-  ExactCtxDenseMatrix active_pair_contraction;
-  ExactCtxPairMatrix accepted_pair_products_tile;
-  ExactCtxPairMatrix pair_gradients_tile;
-  ExactCtxDenseMatrix dense_fixed_adjoint_direction;
+    ExactCtxDenseMatrix dense_active_direction;
+    ExactCtxPairMatrix directional_pair_coefficients;
+    ExactCtxPairMatrix directional_pair_products;
+    ExactCtxDenseMatrix active_pair_contraction;
+    ExactCtxPairMatrix accepted_pair_products_tile;
+    ExactCtxPairMatrix pair_gradients_tile;
+    ExactCtxDenseMatrix dense_fixed_adjoint_direction;
 };
 
-}  // namespace xmvb::integrals
+} // namespace xmvb::integrals

@@ -24,13 +24,13 @@ enum class AoPairLayout { Automatic, Unique, Chunked };
  * @param layout Unique moves the validated input stream without CSR expansion.
  * @return Exact AO-pair operator with one retained integral representation.
  */
-AoPairGraph build_ao_pair_graph(
-    std::vector<int> left_pairs,
-    std::vector<int> right_pairs,
-    std::vector<double> values,
-    int n_bf,AoPairLayout layout=AoPairLayout::Automatic);
+AoPairGraph build_ao_pair_graph(std::vector<int> left_pairs,
+                                std::vector<int> right_pairs,
+                                std::vector<double> values,
+                                int n_bf,
+                                AoPairLayout layout = AoPairLayout::Automatic);
 
 /** Consume producer chunks without a complete aggregate or symmetry expansion. */
-AoPairGraph build_ao_pair_graph(std::vector<AoIntegralChunk> chunks,int n_bf);
+AoPairGraph build_ao_pair_graph(std::vector<AoIntegralChunk> chunks, int n_bf);
 
-}  // namespace xmvb::integrals
+} // namespace xmvb::integrals

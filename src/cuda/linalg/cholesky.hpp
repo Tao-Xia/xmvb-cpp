@@ -11,21 +11,23 @@ namespace xmvb::cuda {
  * Calls use Context's stream and are serialized by the caller on that stream.
  */
 class Cholesky {
- public:
-  Cholesky(Context& context, linalg::ConstMatrixView matrix);
-  Cholesky(const Cholesky&) = delete;
-  Cholesky& operator=(const Cholesky&) = delete;
+  public:
+    Cholesky(Context& context, linalg::ConstMatrixView matrix);
+    Cholesky(const Cholesky&) = delete;
+    Cholesky& operator=(const Cholesky&) = delete;
 
-  /** Solve matrix * out = rhs. Exact in-place and overlapping views are valid. */
-  void solve(linalg::ConstMatrixView rhs, linalg::MatrixView out) const;
+    /** Solve matrix * out = rhs. Exact in-place and overlapping views are valid. */
+    void solve(linalg::ConstMatrixView rhs, linalg::MatrixView out) const;
 
-  int dimension() const noexcept { return dimension_; }
+    int dimension() const noexcept {
+        return dimension_;
+    }
 
- private:
-  Context* context_;
-  int dimension_;
-  Matrix<double> factor_;
-  mutable Buffer<int> info_;
+  private:
+    Context* context_;
+    int dimension_;
+    Matrix<double> factor_;
+    mutable Buffer<int> info_;
 };
 
-}  // namespace xmvb::cuda
+} // namespace xmvb::cuda

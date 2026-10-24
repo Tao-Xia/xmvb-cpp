@@ -10,26 +10,20 @@
 
 namespace xmvb::vb {
 
-const SpinDeterminantPairEvaluation& AcceptedSpinPairTile::pair(
-    int left_local,
-    int right_local) const {
-  if (left_local < 0 || left_local >= left_size ||
-      right_local < 0 || right_local >= right_size) {
-    throw std::out_of_range("accepted pair tile index is out of range");
-  }
-  return pairs[static_cast<std::size_t>(left_local) * right_size +
-      right_local];
+const SpinDeterminantPairEvaluation& AcceptedSpinPairTile::pair(int left_local,
+                                                                int right_local) const {
+    if (left_local < 0 || left_local >= left_size || right_local < 0 || right_local >= right_size) {
+        throw std::out_of_range("accepted pair tile index is out of range");
+    }
+    return pairs[static_cast<std::size_t>(left_local) * right_size + right_local];
 }
 
-AcceptedPairTileProvider::AcceptedPairTileProvider(
-    mcscf::StringTable unique_spin_strings,
-    int n_active_orbitals,
-    double linear_dependence_threshold)
-    : unique_spin_strings_(std::move(unique_spin_strings)),
-      n_active_orbitals_(n_active_orbitals),
+AcceptedPairTileProvider::AcceptedPairTileProvider(mcscf::StringTable unique_spin_strings,
+                                                   int n_active_orbitals,
+                                                   double linear_dependence_threshold)
+    : unique_spin_strings_(std::move(unique_spin_strings)), n_active_orbitals_(n_active_orbitals),
       overlap_resolver_(linear_dependence_threshold),
-      pair_evaluator_(overlap_resolver_,
-                      DeterminantHamiltonianResolver(overlap_resolver_)) {}
+      pair_evaluator_(overlap_resolver_, DeterminantHamiltonianResolver(overlap_resolver_)) {}
 
 AcceptedSpinPairTile AcceptedPairTileProvider::build(
     int left_begin,
@@ -40,66 +34,59 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
     const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron,
     const xmvb::integrals::ActiveSpaceTwoElectronResult& active_two_electron,
     AcceptedPairTileBuildOptions options) const {
-  if (left_begin < 0 || left_end <= left_begin || left_end > size() ||
-      right_begin < 0 || right_end <= right_begin || right_end > size()) {
-    throw std::invalid_argument("accepted pair tile bounds are invalid");
-  }
-  if (active_one_electron.rows() != n_active_orbitals_ ||
-      active_one_electron.cols() != n_active_orbitals_ ||
-      active_overlap.size() != static_cast<std::size_t>(n_active_orbitals_) *
-          n_active_orbitals_) {
-    throw std::invalid_argument(
-        "accepted pair tile active-space dimensions differ");
-  }
+    if (left_begin < 0 || left_end <= left_begin || left_end > size() || right_begin < 0 ||
+        right_end <= right_begin || right_end > size()) {
+        throw std::invalid_argument("accepted pair tile bounds are invalid");
+    }
+    if (active_one_electron.rows() != n_active_orbitals_ ||
+        active_one_electron.cols() != n_active_orbitals_ ||
+        active_overlap.size() !=
+            static_cast<std::size_t>(n_active_orbitals_) * n_active_orbitals_) {
+        throw std::invalid_argument("accepted pair tile active-space dimensions differ");
+    }
 
-  AcceptedSpinPairTile tile;
-  tile.left_begin = left_begin;
-  tile.right_begin = right_begin;
-  tile.left_size = left_end - left_begin;
-  tile.right_size = right_end - right_begin;
-  tile.pairs.resize(
-      static_cast<std::size_t>(tile.left_size) * tile.right_size);
+    AcceptedSpinPairTile tile;
+    tile.left_begin = left_begin;
+    tile.right_begin = right_begin;
+    tile.left_size = left_end - left_begin;
+    tile.right_size = right_end - right_begin;
+    tile.pairs.resize(static_cast<std::size_t>(tile.left_size) * tile.right_size);
 
-  std::vector<std::vector<int>> left_indices(tile.left_size),right_indices(tile.right_size);
-  for (int i=0;i<tile.left_size;++i) left_indices[i]=unique_spin_strings_[left_begin+i];
-  for (int i=0;i<tile.right_size;++i) right_indices[i]=unique_spin_strings_[right_begin+i];
-  const int pair_count = tile.left_size * tile.right_size;
-  const int n_threads = std::max(
-      1, std::min(xmvb::effective_openmp_thread_count(), pair_count));
-#pragma omp parallel for schedule(static) if(n_threads > 1) num_threads(n_threads)
-  for (int pair_index = 0; pair_index < pair_count; ++pair_index) {
-      const int left_local = pair_index / tile.right_size;
-      const int right_local = pair_index % tile.right_size;
-      const auto& occupied_left =
-          left_indices[left_local];
-      const auto& occupied_right =
-          right_indices[right_local];
-      SpinDeterminantPairEvaluation evaluation =
-          pair_evaluator_.evaluate_same_spin_pair(
-              occupied_left,
-              occupied_right,
-              active_overlap,
-              active_one_electron,
-              n_active_orbitals_,
-              active_two_electron,
-              true);
-      if (options.populate_opposite_spin_projection ||
-          options.populate_response_payload) {
-        complete_same_spin_pair_evaluation(
-            occupied_left,
-            occupied_right,
-            active_one_electron,
-            n_active_orbitals_,
-            active_two_electron,
-            options.populate_opposite_spin_projection,
-            options.materialize_projected_pair_values,
-            options.populate_response_payload,
-            &evaluation);
-      }
-      tile.pairs[static_cast<std::size_t>(pair_index)] =
-          std::move(evaluation);
-  }
-  return tile;
+    std::vector<std::vector<int>> left_indices(tile.left_size), right_indices(tile.right_size);
+    for (int i = 0; i < tile.left_size; ++i)
+        left_indices[i] = unique_spin_strings_[left_begin + i];
+    for (int i = 0; i < tile.right_size; ++i)
+        right_indices[i] = unique_spin_strings_[right_begin + i];
+    const int pair_count = tile.left_size * tile.right_size;
+    const int n_threads = std::max(1, std::min(xmvb::effective_openmp_thread_count(), pair_count));
+#pragma omp parallel for schedule(static) if (n_threads > 1) num_threads(n_threads)
+    for (int pair_index = 0; pair_index < pair_count; ++pair_index) {
+        const int left_local = pair_index / tile.right_size;
+        const int right_local = pair_index % tile.right_size;
+        const auto& occupied_left = left_indices[left_local];
+        const auto& occupied_right = right_indices[right_local];
+        SpinDeterminantPairEvaluation evaluation =
+            pair_evaluator_.evaluate_same_spin_pair(occupied_left,
+                                                    occupied_right,
+                                                    active_overlap,
+                                                    active_one_electron,
+                                                    n_active_orbitals_,
+                                                    active_two_electron,
+                                                    true);
+        if (options.populate_opposite_spin_projection || options.populate_response_payload) {
+            complete_same_spin_pair_evaluation(occupied_left,
+                                               occupied_right,
+                                               active_one_electron,
+                                               n_active_orbitals_,
+                                               active_two_electron,
+                                               options.populate_opposite_spin_projection,
+                                               options.materialize_projected_pair_values,
+                                               options.populate_response_payload,
+                                               &evaluation);
+        }
+        tile.pairs[static_cast<std::size_t>(pair_index)] = std::move(evaluation);
+    }
+    return tile;
 }
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

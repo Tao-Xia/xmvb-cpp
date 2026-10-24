@@ -11,61 +11,61 @@ namespace xmvb::vb {
  * @brief Input data required to rebuild auxiliary orbitals in C++.
  */
 struct OrbitalPreparationInput {
-  /**
+    /**
    * @brief Number of basis functions.
    */
-  std::size_t n_basis_functions = 0;
+    std::size_t n_basis_functions = 0;
 
-  /**
+    /**
    * @brief Number of orbitals stored in the VB orbital parameterization.
    */
-  std::size_t n_orbitals = 0;
+    std::size_t n_orbitals = 0;
 
-  /**
+    /**
    * @brief Number of active orbitals.
    */
-  std::size_t n_active_orbitals = 0;
+    std::size_t n_active_orbitals = 0;
 
-  /**
+    /**
    * @brief Number of total electrons.
    */
-  std::size_t n_total_electrons = 0;
+    std::size_t n_total_electrons = 0;
 
-  /**
+    /**
    * @brief Number of active electrons.
    */
-  std::size_t n_active_electrons = 0;
+    std::size_t n_active_electrons = 0;
 
-  /**
+    /**
    * @brief Spin multiplicity.
    */
-  int spin_multiplicity = 1;
+    int spin_multiplicity = 1;
 
-  /**
+    /**
    * @brief input orbital-type selector `orbtyp`.
    *
    * The value identifies the HAO, BDO, or OEO representation. The loader uses
    * it to distinguish the physical orbital manifold from the support layout
    * carried by a particular guess file.
    */
-  int orbital_type = 0;
+    int orbital_type = 0;
 
-  /**
+    /**
    * @brief Sparse orbital coefficient values, grouped by orbital.
    */
-  std::vector<double> orbital_value_table;
+    std::vector<double> orbital_value_table;
 
-  /**
+    /**
    * @brief One-based basis-function indices corresponding to `orbital_value_table`.
    */
-  std::vector<int> orbital_basis_index_table;
+    std::vector<int> orbital_basis_index_table;
 
-  /**
+    /**
    * @brief Number of explicit coefficients stored for each orbital.
    */
-  std::vector<int> orbital_basis_counts;
+    std::vector<int> orbital_basis_counts;
 
-  /**
+    /**
    * @brief Optional pre-expansion sparse support counts for MO-gauge canonicalization.
    *
    * When `GUESS=MO` needs inactive-support expansion for the optimizer chart,
@@ -74,18 +74,18 @@ struct OrbitalPreparationInput {
    * layout used only as a reference gauge, not as the active optimization
    * parameterization.
    */
-  std::vector<int> mo_gauge_reference_orbital_basis_counts;
+    std::vector<int> mo_gauge_reference_orbital_basis_counts;
 
-  /**
+    /**
    * @brief Optional pre-expansion sparse basis-index table for MO-gauge canonicalization.
    *
    * Entries follow the same padded row-major layout as
    * `orbital_basis_index_table`, but they retain the original sparse supports
    * from before any inactive-only union-support expansion.
    */
-  std::vector<int> mo_gauge_reference_orbital_basis_index_table;
+    std::vector<int> mo_gauge_reference_orbital_basis_index_table;
 
-  /**
+    /**
    * @brief Keep accepted inactive orbitals on the selected sparse gauge section.
    *
    * The initial representative enables this state only when its occupied
@@ -94,22 +94,22 @@ struct OrbitalPreparationInput {
    * otherwise the optimization trajectory could drift back into the gauge
    * pathology that required the initial chart repair.
    */
-  bool maintain_inactive_gauge = false;
+    bool maintain_inactive_gauge = false;
 
-  /**
+    /**
    * @brief Original parameter-space coefficient counts for each orbital.
    *
    * This count enumerates variational parameters and controls accumulation of
    * the final orbital gradient when stored supports have been expanded.
    */
-  std::vector<int> original_orbital_basis_counts;
+    std::vector<int> original_orbital_basis_counts;
 
-  /**
+    /**
    * @brief Column-major AO overlap matrix.
    */
-  Eigen::MatrixXd ao_overlap_matrix;
+    Eigen::MatrixXd ao_overlap_matrix;
 
-  /**
+    /**
    * @brief HF overlap matrix used by GUESS=AUTO block diagonalization.
    *
    * This is distinct from `ao_overlap_matrix` (`vb->ssf`) and is
@@ -117,53 +117,53 @@ struct OrbitalPreparationInput {
    * empty, the guess path reuses
    * `ao_overlap_matrix` instead of storing a duplicate copy.
    */
-  Eigen::MatrixXd hf_overlap_matrix;
+    Eigen::MatrixXd hf_overlap_matrix;
 
-  /**
+    /**
    * @brief Number of orbital blocks supplied by the input deck.
    *
    * When present, this should be preferred over inferred blocks so that
    * block-wise guesses match the stored sparse layout.
    */
-  std::size_t n_blocks = 0;
+    std::size_t n_blocks = 0;
 
-  /**
+    /**
    * @brief Block storage leading dimension.
    *
    * `blocks` is a dense `(n_blocks, block_storage_dimension)`
    * integer table.
    */
-  std::size_t block_storage_dimension = 0;
+    std::size_t block_storage_dimension = 0;
 
-  /**
+    /**
    * @brief Whether the stored blocks partially overlap.
    */
-  int block_partial_overlap = 0;
+    int block_partial_overlap = 0;
 
-  /**
+    /**
    * @brief Block membership table.
    *
    * Entries are orbital indices in the padded `blocks` array layout.
    */
-  std::vector<int> block_members;
+    std::vector<int> block_members;
 
-  /**
+    /**
    * @brief Number of orbitals in each block.
    */
-  std::vector<int> block_orbital_counts;
+    std::vector<int> block_orbital_counts;
 
-  /**
+    /**
    * @brief Number of basis functions in the representative orbital of each block.
    */
-  std::vector<int> block_basis_counts;
+    std::vector<int> block_basis_counts;
 
-  /**
+    /**
    * @brief AO scaling factors `snorm` supplied by input preparation.
    *
    * Block guesses are back-scaled with `snorm`, not with a separately inferred
    * AO normalization.
    */
-  std::vector<double> ao_normalization;
+    std::vector<double> ao_normalization;
 };
 
 /**
@@ -174,25 +174,24 @@ struct OrbitalPreparationInput {
  * description. This helper preserves that storage convention and returns the
  * number of occupied slots in the padded row.
  */
-inline int stored_sparse_orbital_coefficient_count(
-    const OrbitalPreparationInput& input,
-    std::size_t orbital_index) {
-  const int explicit_count = input.orbital_basis_counts[orbital_index];
-  if (explicit_count > 1) {
-    return explicit_count;
-  }
-
-  int coefficient_count = 0;
-  while (coefficient_count < static_cast<int>(input.n_basis_functions)) {
-    const int basis_function_index =
-        input.orbital_basis_index_table
-            [orbital_index * input.n_basis_functions + coefficient_count];
-    if (basis_function_index == 0) {
-      break;
+inline int stored_sparse_orbital_coefficient_count(const OrbitalPreparationInput& input,
+                                                   std::size_t orbital_index) {
+    const int explicit_count = input.orbital_basis_counts[orbital_index];
+    if (explicit_count > 1) {
+        return explicit_count;
     }
-    ++coefficient_count;
-  }
-  return coefficient_count;
+
+    int coefficient_count = 0;
+    while (coefficient_count < static_cast<int>(input.n_basis_functions)) {
+        const int basis_function_index =
+            input.orbital_basis_index_table[orbital_index * input.n_basis_functions +
+                                            coefficient_count];
+        if (basis_function_index == 0) {
+            break;
+        }
+        ++coefficient_count;
+    }
+    return coefficient_count;
 }
 
 /**
@@ -202,21 +201,20 @@ inline int stored_sparse_orbital_coefficient_count(
  * cases: `original_orbital_basis_counts` preserves the parameter count and
  * should be used when enumerating differentiable orbital variables.
  */
-inline int differentiable_sparse_orbital_parameter_count(
-    const OrbitalPreparationInput& input,
-    std::size_t orbital_index) {
-  const bool have_original_counts =
-      input.original_orbital_basis_counts.size() == input.n_orbitals;
-  const int explicit_count = have_original_counts
-      ? input.original_orbital_basis_counts[orbital_index]
-      : input.orbital_basis_counts[orbital_index];
-  if (explicit_count > 1) {
-    return explicit_count;
-  }
-  if (explicit_count == 1) {
-    return 1;
-  }
-  return stored_sparse_orbital_coefficient_count(input, orbital_index);
+inline int differentiable_sparse_orbital_parameter_count(const OrbitalPreparationInput& input,
+                                                         std::size_t orbital_index) {
+    const bool have_original_counts =
+        input.original_orbital_basis_counts.size() == input.n_orbitals;
+    const int explicit_count = have_original_counts
+                                   ? input.original_orbital_basis_counts[orbital_index]
+                                   : input.orbital_basis_counts[orbital_index];
+    if (explicit_count > 1) {
+        return explicit_count;
+    }
+    if (explicit_count == 1) {
+        return 1;
+    }
+    return stored_sparse_orbital_coefficient_count(input, orbital_index);
 }
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

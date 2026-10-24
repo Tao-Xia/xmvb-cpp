@@ -15,11 +15,11 @@ struct SelectedMetric;
  * coefficient_gradient differentiates the original, unnormalized input frame.
  */
 struct FixedStructureStates {
-  Eigen::MatrixXd coefficients;
-  std::vector<double> energies;
-  Eigen::MatrixXd residuals;
-  Eigen::MatrixXd coefficient_gradient;
-  std::optional<StructureActiveIntegralAdjoint> integral_adjoint;
+    Eigen::MatrixXd coefficients;
+    std::vector<double> energies;
+    Eigen::MatrixXd residuals;
+    Eigen::MatrixXd coefficient_gradient;
+    std::optional<StructureActiveIntegralAdjoint> integral_adjoint;
 };
 
 /** @brief Equal-weight fixed-state evaluation, without a CI eigenproblem.
@@ -28,10 +28,9 @@ struct FixedStructureStates {
  * carriers retain their occupied-pair H/M representation.
  * A supplied exact selected Gram must belong to action's orbital chart.
  */
-FixedStructureStates evaluate_fixed_states(
-    const StructureAction& action,
-    const Eigen::Ref<const Eigen::MatrixXd>& coefficients,
-    const std::vector<double>& weights,
-    const SelectedMetric* metric = nullptr);
+FixedStructureStates evaluate_fixed_states(const StructureAction& action,
+                                           const Eigen::Ref<const Eigen::MatrixXd>& coefficients,
+                                           const std::vector<double>& weights,
+                                           const SelectedMetric* metric = nullptr);
 
 } // namespace xmvb::vb

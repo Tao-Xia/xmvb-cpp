@@ -17,390 +17,366 @@ namespace xmvb::libcint {
 namespace {
 
 int pair_index(int first, int second) {
-  if (first >= second) {
-    return first * (first + 1) / 2 + second;
-  }
-  return second * (second + 1) / 2 + first;
+    if (first >= second) {
+        return first * (first + 1) / 2 + second;
+    }
+    return second * (second + 1) / 2 + first;
 }
 
-}  // namespace
+} // namespace
 
 MaterializedAoIntegralBuffers LibcintMaterializedIntegralProvider::build(
     const xmvb::integrals::LibcintInput& input,
     const LibcintMaterializedIntegralProviderOptions& options,
     IntegralBuildTimings* timings) const {
-  using Clock=std::chrono::steady_clock;
-  const auto start=Clock::now();
-  if (timings) *timings={};
-  if (!(options.integral_tolerance >= 0.0)) {
-    throw std::invalid_argument("integral_tolerance must be non-negative");
-  }
+    using Clock = std::chrono::steady_clock;
+    const auto start = Clock::now();
+    if (timings)
+        *timings = {};
+    if (!(options.integral_tolerance >= 0.0)) {
+        throw std::invalid_argument("integral_tolerance must be non-negative");
+    }
 
-  LibcintDirectShellEvaluator evaluator(input);
-  const int n_basis_functions = evaluator.n_basis_functions();
-  const int n_shells = input.n_shells;
-  int n_threads = 1;
+    LibcintDirectShellEvaluator evaluator(input);
+    const int n_basis_functions = evaluator.n_basis_functions();
+    const int n_shells = input.n_shells;
+    int n_threads = 1;
 #ifdef _OPENMP
-  n_threads = omp_get_max_threads();
+    n_threads = omp_get_max_threads();
 #endif
 
-  // Share immutable normalization/optimizers; only shell output and scratch
-  // belong to a worker. No integral or optimizer replica per thread.
-  std::vector<LibcintShellWorkspace> workspaces(n_threads);
+    // Share immutable normalization/optimizers; only shell output and scratch
+    // belong to a worker. No integral or optimizer replica per thread.
+    std::vector<LibcintShellWorkspace> workspaces(n_threads);
 
-  MaterializedAoIntegralBuffers buffers;
-  buffers.n_basis_functions = n_basis_functions;
-  buffers.ao_core_hamiltonian_matrix =
-      Eigen::MatrixXd::Zero(n_basis_functions, n_basis_functions);
+    MaterializedAoIntegralBuffers buffers;
+    buffers.n_basis_functions = n_basis_functions;
+    buffers.ao_core_hamiltonian_matrix =
+        Eigen::MatrixXd::Zero(n_basis_functions, n_basis_functions);
 
-  if (n_threads <= 1) {
-    for (int left_shell = 0; left_shell < n_shells; ++left_shell) {
-      for (int right_shell = 0; right_shell <= left_shell; ++right_shell) {
-        const auto core_h_block =
-            evaluator.evaluate_core_hamiltonian_shell_pair(left_shell, right_shell);
-        for (int column = 0; column < core_h_block.right_ao_count; ++column) {
-          const int global_column = core_h_block.right_ao_offset + column;
-          for (int row = 0; row < core_h_block.left_ao_count; ++row) {
-            const int global_row = core_h_block.left_ao_offset + row;
-            const std::size_t local_index =
-                column * core_h_block.left_ao_count + row;
-            const double value = core_h_block.values[local_index];
-            buffers.ao_core_hamiltonian_matrix(global_row, global_column) = value;
-            buffers.ao_core_hamiltonian_matrix(global_column, global_row) = value;
-          }
-        }
-      }
-    }
-  } else {
-#pragma omp parallel
-    {
-#pragma omp for schedule(dynamic)
-      for (int left_shell = 0; left_shell < n_shells; ++left_shell) {
-        for (int right_shell = 0; right_shell <= left_shell; ++right_shell) {
-          const auto core_h_block =
-              evaluator.evaluate_core_hamiltonian_shell_pair(left_shell, right_shell);
-          for (int column = 0; column < core_h_block.right_ao_count; ++column) {
-            const int global_column = core_h_block.right_ao_offset + column;
-            for (int row = 0; row < core_h_block.left_ao_count; ++row) {
-              const int global_row = core_h_block.left_ao_offset + row;
-              const std::size_t local_index =
-                  column * core_h_block.left_ao_count + row;
-              const double value = core_h_block.values[local_index];
-              buffers.ao_core_hamiltonian_matrix(global_row, global_column) = value;
-              buffers.ao_core_hamiltonian_matrix(global_column, global_row) = value;
-            }
-          }
-        }
-      }
-    }
-  }
-
-  std::vector<double> shell_pair_bounds;
-  if (options.use_shell_pair_prescreen) {
-    shell_pair_bounds.assign(
-        n_shells * (n_shells + 1) / 2,
-        0.0);
     if (n_threads <= 1) {
-      for (int shell_i = 0; shell_i < n_shells; ++shell_i) {
-        for (int shell_j = 0; shell_j <= shell_i; ++shell_j) {
-          shell_pair_bounds[pair_index(shell_i, shell_j)] =
-              evaluator.evaluate_two_electron_shell_pair_bound(
-                  shell_i, shell_j, workspaces[0]);
-        }
-      }
-    } else {
-#pragma omp parallel
-      {
-        int thread_index = 0;
-#ifdef _OPENMP
-        thread_index = omp_get_thread_num();
-#endif
-
-#pragma omp for schedule(dynamic)
-        for (int shell_i = 0; shell_i < n_shells; ++shell_i) {
-          for (int shell_j = 0; shell_j <= shell_i; ++shell_j) {
-            shell_pair_bounds[pair_index(shell_i, shell_j)] =
-                evaluator.evaluate_two_electron_shell_pair_bound(
-                    shell_i,
-                    shell_j, workspaces[thread_index]);
-          }
-        }
-      }
-    }
-  }
-
-  const auto setup_end=Clock::now();
-  double merge_seconds=0;
-  auto visit_shell_i_integrals =
-      [&](LibcintDirectShellEvaluator& shell_evaluator,
-          int shell_i,
-          auto&& visit_integral) {
-        int thread_index = 0;
-#ifdef _OPENMP
-        thread_index = omp_get_thread_num();
-#endif
-        // Keep the canonical `(i >= j, i >= k, k >= l)` AO ordering used by
-        // the downstream sparse AO kernels, but write the final `(i,j,k,l)`
-        // tuples directly instead of staging packed indices and decoding them
-        // again after a global sort.
-        for (int shell_j = 0; shell_j <= shell_i; ++shell_j) {
-          for (int shell_k = 0; shell_k <= shell_i; ++shell_k) {
-            for (int shell_l = 0; shell_l <= shell_k; ++shell_l) {
-              if (options.use_shell_pair_prescreen) {
-                const double shell_pair_product =
-                    shell_pair_bounds[pair_index(shell_i, shell_j)] *
-                    shell_pair_bounds[pair_index(shell_k, shell_l)];
-                if (std::sqrt(shell_pair_product) < options.integral_tolerance) {
-                  continue;
-                }
-              }
-              const auto& quartet = shell_evaluator.evaluate_two_electron_shell_quartet(
-                  shell_i,
-                  shell_j,
-                  shell_k,
-                  shell_l, workspaces[thread_index]);
-              for (int local_i = 0; local_i < quartet.ao_count_i; ++local_i) {
-                const int i = quartet.ao_offset_i + local_i;
-                for (int local_j = 0; local_j < quartet.ao_count_j; ++local_j) {
-                  const int j = quartet.ao_offset_j + local_j;
-                  if (j > i) {
-                    continue;
-                  }
-                  for (int local_k = 0; local_k < quartet.ao_count_k; ++local_k) {
-                    const int k = quartet.ao_offset_k + local_k;
-                    if (k > i) {
-                      continue;
+        for (int left_shell = 0; left_shell < n_shells; ++left_shell) {
+            for (int right_shell = 0; right_shell <= left_shell; ++right_shell) {
+                const auto core_h_block =
+                    evaluator.evaluate_core_hamiltonian_shell_pair(left_shell, right_shell);
+                for (int column = 0; column < core_h_block.right_ao_count; ++column) {
+                    const int global_column = core_h_block.right_ao_offset + column;
+                    for (int row = 0; row < core_h_block.left_ao_count; ++row) {
+                        const int global_row = core_h_block.left_ao_offset + row;
+                        const std::size_t local_index = column * core_h_block.left_ao_count + row;
+                        const double value = core_h_block.values[local_index];
+                        buffers.ao_core_hamiltonian_matrix(global_row, global_column) = value;
+                        buffers.ao_core_hamiltonian_matrix(global_column, global_row) = value;
                     }
-                    for (int local_l = 0; local_l < quartet.ao_count_l; ++local_l) {
-                      const int l = quartet.ao_offset_l + local_l;
-                      if ((i == k && l > j) || (i != k && l > k)) {
-                        continue;
-                      }
-                      const std::size_t local_index =
-                          local_i +
-                          local_j * quartet.ao_count_i +
-                          local_k * quartet.ao_count_i * quartet.ao_count_j +
-                          local_l * quartet.ao_count_i *
-                              quartet.ao_count_j * quartet.ao_count_k;
-                      const double value = quartet.values[local_index];
-                      if (std::abs(value) < options.integral_tolerance) {
-                        continue;
-                      }
-                      visit_integral(
-                          value,
-                          pair_index(i, j),
-                          pair_index(k, l));
-                    }
-                  }
                 }
-              }
             }
-          }
         }
-      };
-
-  const std::size_t n_basis = static_cast<std::size_t>(n_basis_functions);
-  const std::size_t n_ao_pairs = n_basis * (n_basis + 1) / 2;
-  const std::size_t max_32_bit_graph_edges =
-      static_cast<std::size_t>(std::numeric_limits<int>::max());
-  const bool symmetric_graph_can_exceed_32_bits =
-      n_ao_pairs != 0 &&
-      n_ao_pairs > max_32_bit_graph_edges / n_ao_pairs;
-
-  if (symmetric_graph_can_exceed_32_bits) {
-    // A fully connected symmetric AO-pair CSR graph has n_ao_pairs^2
-    // directed edges.  Once that can exceed INT_MAX, the downstream graph
-    // keeps this once-symmetry-reduced integral stream instead.  Avoid the
-    // much larger materialization peak from retaining every per-shell vector
-    // while also growing/copying a complete aggregate: count first, allocate
-    // the exact final buffers, then let each shell write its disjoint range.
-    std::vector<std::size_t> shell_integral_counts(n_shells, 0);
-    if (n_threads <= 1) {
-      for (int shell_i = 0; shell_i < n_shells; ++shell_i) {
-        visit_shell_i_integrals(
-            evaluator,
-            shell_i,
-            [&](double, int, int) {
-              ++shell_integral_counts[shell_i];
-            });
-      }
     } else {
 #pragma omp parallel
-      {
+        {
 #pragma omp for schedule(dynamic)
-        for (int shell_i = 0; shell_i < n_shells; ++shell_i) {
-          std::size_t count = 0;
-          visit_shell_i_integrals(
-              evaluator,
-              shell_i,
-              [&](double, int, int) { ++count; });
-          shell_integral_counts[shell_i] = count;
-        }
-      }
-    }
-
-    std::vector<std::size_t> shell_integral_offsets(n_shells + 1, 0);
-    for (int shell_i = 0; shell_i < n_shells; ++shell_i) {
-      const std::size_t previous_offset = shell_integral_offsets[shell_i];
-      const std::size_t shell_count = shell_integral_counts[shell_i];
-      if (shell_count >
-          std::numeric_limits<std::size_t>::max() - previous_offset) {
-        throw std::overflow_error("materialized ERI count exceeds size_t");
-      }
-      shell_integral_offsets[shell_i + 1] = previous_offset + shell_count;
-    }
-    const std::size_t total_integral_count = shell_integral_offsets.back();
-    // This large-basis path is consumed as a once-symmetry-reduced stream;
-    // unlike the CSR path below, it is never expanded into directed edges.
-    // Reserving twice the final value count retained an unused O(N_ERI)
-    // allocation for the entire calculation.
-    buffers.two_electron_values.resize(total_integral_count);
-    buffers.left_pair_indices.resize(total_integral_count);
-    buffers.right_pair_indices.resize(total_integral_count);
-
-    std::vector<std::size_t> filled_shell_counts(n_shells, 0);
-    auto fill_shell_i = [&](LibcintDirectShellEvaluator& shell_evaluator,
-                            int shell_i) {
-      const std::size_t begin = shell_integral_offsets[shell_i];
-      const std::size_t expected_count = shell_integral_counts[shell_i];
-      std::size_t count = 0;
-      visit_shell_i_integrals(
-          shell_evaluator,
-          shell_i,
-          [&](double value, int left_pair, int right_pair) {
-            if (count < expected_count) {
-              const std::size_t offset = begin + count;
-              buffers.two_electron_values[offset] = value;
-              buffers.left_pair_indices[offset] = left_pair;
-              buffers.right_pair_indices[offset] = right_pair;
+            for (int left_shell = 0; left_shell < n_shells; ++left_shell) {
+                for (int right_shell = 0; right_shell <= left_shell; ++right_shell) {
+                    const auto core_h_block =
+                        evaluator.evaluate_core_hamiltonian_shell_pair(left_shell, right_shell);
+                    for (int column = 0; column < core_h_block.right_ao_count; ++column) {
+                        const int global_column = core_h_block.right_ao_offset + column;
+                        for (int row = 0; row < core_h_block.left_ao_count; ++row) {
+                            const int global_row = core_h_block.left_ao_offset + row;
+                            const std::size_t local_index =
+                                column * core_h_block.left_ao_count + row;
+                            const double value = core_h_block.values[local_index];
+                            buffers.ao_core_hamiltonian_matrix(global_row, global_column) = value;
+                            buffers.ao_core_hamiltonian_matrix(global_column, global_row) = value;
+                        }
+                    }
+                }
             }
-            ++count;
-          });
-      filled_shell_counts[shell_i] = count;
-    };
-
-    if (n_threads <= 1) {
-      for (int shell_i = 0; shell_i < n_shells; ++shell_i) {
-        fill_shell_i(evaluator, shell_i);
-      }
-    } else {
-#pragma omp parallel
-      {
-#pragma omp for schedule(dynamic)
-        for (int shell_i = 0; shell_i < n_shells; ++shell_i) {
-          fill_shell_i(evaluator, shell_i);
         }
-      }
     }
 
-    for (int shell_i = 0; shell_i < n_shells; ++shell_i) {
-      if (filled_shell_counts[shell_i] != shell_integral_counts[shell_i]) {
-        throw std::runtime_error(
-            "materialized ERI count changed between count and fill passes");
-      }
+    std::vector<double> shell_pair_bounds;
+    if (options.use_shell_pair_prescreen) {
+        shell_pair_bounds.assign(n_shells * (n_shells + 1) / 2, 0.0);
+        if (n_threads <= 1) {
+            for (int shell_i = 0; shell_i < n_shells; ++shell_i) {
+                for (int shell_j = 0; shell_j <= shell_i; ++shell_j) {
+                    shell_pair_bounds[pair_index(shell_i, shell_j)] =
+                        evaluator.evaluate_two_electron_shell_pair_bound(
+                            shell_i, shell_j, workspaces[0]);
+                }
+            }
+        } else {
+#pragma omp parallel
+            {
+                int thread_index = 0;
+#ifdef _OPENMP
+                thread_index = omp_get_thread_num();
+#endif
+
+#pragma omp for schedule(dynamic)
+                for (int shell_i = 0; shell_i < n_shells; ++shell_i) {
+                    for (int shell_j = 0; shell_j <= shell_i; ++shell_j) {
+                        shell_pair_bounds[pair_index(shell_i, shell_j)] =
+                            evaluator.evaluate_two_electron_shell_pair_bound(
+                                shell_i, shell_j, workspaces[thread_index]);
+                    }
+                }
+            }
+        }
     }
-  } else if (n_threads <= 1) {
-    for (int shell_i = 0; shell_i < n_shells; ++shell_i) {
-      visit_shell_i_integrals(
-          evaluator,
-          shell_i,
-          [&](double value, int left_pair, int right_pair) {
-            buffers.two_electron_values.push_back(value);
-            buffers.left_pair_indices.push_back(left_pair);
-            buffers.right_pair_indices.push_back(right_pair);
-          });
-    }
-  } else {
-    std::vector<std::vector<double>> shell_integral_values(n_shells);
-    std::vector<std::vector<int>> shell_left_pairs(n_shells);
-    std::vector<std::vector<int>> shell_right_pairs(n_shells);
+
+    const auto setup_end = Clock::now();
+    double merge_seconds = 0;
+    auto visit_shell_i_integrals =
+        [&](LibcintDirectShellEvaluator& shell_evaluator, int shell_i, auto&& visit_integral) {
+            int thread_index = 0;
+#ifdef _OPENMP
+            thread_index = omp_get_thread_num();
+#endif
+            // Keep the canonical `(i >= j, i >= k, k >= l)` AO ordering used by
+            // the downstream sparse AO kernels, but write the final `(i,j,k,l)`
+            // tuples directly instead of staging packed indices and decoding them
+            // again after a global sort.
+            for (int shell_j = 0; shell_j <= shell_i; ++shell_j) {
+                for (int shell_k = 0; shell_k <= shell_i; ++shell_k) {
+                    for (int shell_l = 0; shell_l <= shell_k; ++shell_l) {
+                        if (options.use_shell_pair_prescreen) {
+                            const double shell_pair_product =
+                                shell_pair_bounds[pair_index(shell_i, shell_j)] *
+                                shell_pair_bounds[pair_index(shell_k, shell_l)];
+                            if (std::sqrt(shell_pair_product) < options.integral_tolerance) {
+                                continue;
+                            }
+                        }
+                        const auto& quartet = shell_evaluator.evaluate_two_electron_shell_quartet(
+                            shell_i, shell_j, shell_k, shell_l, workspaces[thread_index]);
+                        for (int local_i = 0; local_i < quartet.ao_count_i; ++local_i) {
+                            const int i = quartet.ao_offset_i + local_i;
+                            for (int local_j = 0; local_j < quartet.ao_count_j; ++local_j) {
+                                const int j = quartet.ao_offset_j + local_j;
+                                if (j > i) {
+                                    continue;
+                                }
+                                for (int local_k = 0; local_k < quartet.ao_count_k; ++local_k) {
+                                    const int k = quartet.ao_offset_k + local_k;
+                                    if (k > i) {
+                                        continue;
+                                    }
+                                    for (int local_l = 0; local_l < quartet.ao_count_l; ++local_l) {
+                                        const int l = quartet.ao_offset_l + local_l;
+                                        if ((i == k && l > j) || (i != k && l > k)) {
+                                            continue;
+                                        }
+                                        const std::size_t local_index =
+                                            local_i + local_j * quartet.ao_count_i +
+                                            local_k * quartet.ao_count_i * quartet.ao_count_j +
+                                            local_l * quartet.ao_count_i * quartet.ao_count_j *
+                                                quartet.ao_count_k;
+                                        const double value = quartet.values[local_index];
+                                        if (std::abs(value) < options.integral_tolerance) {
+                                            continue;
+                                        }
+                                        visit_integral(value, pair_index(i, j), pair_index(k, l));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+    const std::size_t n_basis = static_cast<std::size_t>(n_basis_functions);
+    const std::size_t n_ao_pairs = n_basis * (n_basis + 1) / 2;
+    const std::size_t max_32_bit_graph_edges =
+        static_cast<std::size_t>(std::numeric_limits<int>::max());
+    const bool symmetric_graph_can_exceed_32_bits =
+        n_ao_pairs != 0 && n_ao_pairs > max_32_bit_graph_edges / n_ao_pairs;
+
+    if (symmetric_graph_can_exceed_32_bits) {
+        // A fully connected symmetric AO-pair CSR graph has n_ao_pairs^2
+        // directed edges.  Once that can exceed INT_MAX, the downstream graph
+        // keeps this once-symmetry-reduced integral stream instead.  Avoid the
+        // much larger materialization peak from retaining every per-shell vector
+        // while also growing/copying a complete aggregate: count first, allocate
+        // the exact final buffers, then let each shell write its disjoint range.
+        std::vector<std::size_t> shell_integral_counts(n_shells, 0);
+        if (n_threads <= 1) {
+            for (int shell_i = 0; shell_i < n_shells; ++shell_i) {
+                visit_shell_i_integrals(evaluator, shell_i, [&](double, int, int) {
+                    ++shell_integral_counts[shell_i];
+                });
+            }
+        } else {
+#pragma omp parallel
+            {
+#pragma omp for schedule(dynamic)
+                for (int shell_i = 0; shell_i < n_shells; ++shell_i) {
+                    std::size_t count = 0;
+                    visit_shell_i_integrals(evaluator, shell_i, [&](double, int, int) { ++count; });
+                    shell_integral_counts[shell_i] = count;
+                }
+            }
+        }
+
+        std::vector<std::size_t> shell_integral_offsets(n_shells + 1, 0);
+        for (int shell_i = 0; shell_i < n_shells; ++shell_i) {
+            const std::size_t previous_offset = shell_integral_offsets[shell_i];
+            const std::size_t shell_count = shell_integral_counts[shell_i];
+            if (shell_count > std::numeric_limits<std::size_t>::max() - previous_offset) {
+                throw std::overflow_error("materialized ERI count exceeds size_t");
+            }
+            shell_integral_offsets[shell_i + 1] = previous_offset + shell_count;
+        }
+        const std::size_t total_integral_count = shell_integral_offsets.back();
+        // This large-basis path is consumed as a once-symmetry-reduced stream;
+        // unlike the CSR path below, it is never expanded into directed edges.
+        // Reserving twice the final value count retained an unused O(N_ERI)
+        // allocation for the entire calculation.
+        buffers.two_electron_values.resize(total_integral_count);
+        buffers.left_pair_indices.resize(total_integral_count);
+        buffers.right_pair_indices.resize(total_integral_count);
+
+        std::vector<std::size_t> filled_shell_counts(n_shells, 0);
+        auto fill_shell_i = [&](LibcintDirectShellEvaluator& shell_evaluator, int shell_i) {
+            const std::size_t begin = shell_integral_offsets[shell_i];
+            const std::size_t expected_count = shell_integral_counts[shell_i];
+            std::size_t count = 0;
+            visit_shell_i_integrals(
+                shell_evaluator, shell_i, [&](double value, int left_pair, int right_pair) {
+                    if (count < expected_count) {
+                        const std::size_t offset = begin + count;
+                        buffers.two_electron_values[offset] = value;
+                        buffers.left_pair_indices[offset] = left_pair;
+                        buffers.right_pair_indices[offset] = right_pair;
+                    }
+                    ++count;
+                });
+            filled_shell_counts[shell_i] = count;
+        };
+
+        if (n_threads <= 1) {
+            for (int shell_i = 0; shell_i < n_shells; ++shell_i) {
+                fill_shell_i(evaluator, shell_i);
+            }
+        } else {
+#pragma omp parallel
+            {
+#pragma omp for schedule(dynamic)
+                for (int shell_i = 0; shell_i < n_shells; ++shell_i) {
+                    fill_shell_i(evaluator, shell_i);
+                }
+            }
+        }
+
+        for (int shell_i = 0; shell_i < n_shells; ++shell_i) {
+            if (filled_shell_counts[shell_i] != shell_integral_counts[shell_i]) {
+                throw std::runtime_error(
+                    "materialized ERI count changed between count and fill passes");
+            }
+        }
+    } else if (n_threads <= 1) {
+        for (int shell_i = 0; shell_i < n_shells; ++shell_i) {
+            visit_shell_i_integrals(
+                evaluator, shell_i, [&](double value, int left_pair, int right_pair) {
+                    buffers.two_electron_values.push_back(value);
+                    buffers.left_pair_indices.push_back(left_pair);
+                    buffers.right_pair_indices.push_back(right_pair);
+                });
+        }
+    } else {
+        std::vector<std::vector<double>> shell_integral_values(n_shells);
+        std::vector<std::vector<int>> shell_left_pairs(n_shells);
+        std::vector<std::vector<int>> shell_right_pairs(n_shells);
 
 #pragma omp parallel
-    {
+        {
 #pragma omp for schedule(dynamic)
-      for (int shell_i = 0; shell_i < n_shells; ++shell_i) {
-        visit_shell_i_integrals(
-            evaluator,
-            shell_i,
-            [&](double value, int left_pair, int right_pair) {
-              shell_integral_values[shell_i].push_back(value);
-              shell_left_pairs[shell_i].push_back(left_pair);
-              shell_right_pairs[shell_i].push_back(right_pair);
-            });
-        if (options.ao_pair_layout==integrals::AoPairLayout::Chunked) {
-          // Only one compaction temporary may exist at a time; overlap it
-          // with other workers' integral evaluation, not their compactions.
+            for (int shell_i = 0; shell_i < n_shells; ++shell_i) {
+                visit_shell_i_integrals(
+                    evaluator, shell_i, [&](double value, int left_pair, int right_pair) {
+                        shell_integral_values[shell_i].push_back(value);
+                        shell_left_pairs[shell_i].push_back(left_pair);
+                        shell_right_pairs[shell_i].push_back(right_pair);
+                    });
+                if (options.ao_pair_layout == integrals::AoPairLayout::Chunked) {
+                    // Only one compaction temporary may exist at a time; overlap it
+                    // with other workers' integral evaluation, not their compactions.
 #pragma omp critical(ao_integral_chunk_compaction)
-          {
-            shell_integral_values[shell_i].shrink_to_fit();
-            shell_left_pairs[shell_i].shrink_to_fit();
-            shell_right_pairs[shell_i].shrink_to_fit();
-          }
+                    {
+                        shell_integral_values[shell_i].shrink_to_fit();
+                        shell_left_pairs[shell_i].shrink_to_fit();
+                        shell_right_pairs[shell_i].shrink_to_fit();
+                    }
+                }
+            }
         }
-      }
+
+        const auto merge_start = Clock::now();
+        std::size_t total_integral_count = 0;
+        for (const auto& values : shell_integral_values) {
+            total_integral_count += values.size();
+        }
+        if (options.ao_pair_layout == integrals::AoPairLayout::Chunked) {
+            buffers.chunks.resize(n_shells);
+            for (int i = 0; i < n_shells; ++i) {
+                buffers.chunks[i].values = std::move(shell_integral_values[i]);
+                buffers.chunks[i].rows = std::move(shell_left_pairs[i]);
+                buffers.chunks[i].columns = std::move(shell_right_pairs[i]);
+                if (timings)
+                    timings->buffered_bytes +=
+                        buffers.chunks[i].values.capacity() * sizeof(double) +
+                        (buffers.chunks[i].rows.capacity() + buffers.chunks[i].columns.capacity()) *
+                            sizeof(int);
+            }
+        } else {
+            if (timings)
+                for (int i = 0; i < n_shells; ++i)
+                    timings->buffered_bytes +=
+                        shell_integral_values[i].capacity() * sizeof(double) +
+                        (shell_left_pairs[i].capacity() + shell_right_pairs[i].capacity()) *
+                            sizeof(int);
+            const std::size_t expansion =
+                options.ao_pair_layout == integrals::AoPairLayout::Unique ? 1 : 2;
+            if (total_integral_count > std::numeric_limits<std::size_t>::max() / expansion) {
+                throw std::overflow_error("directed ERI capacity exceeds size_t");
+            }
+            // Row consumers expand this same allocation in place for symmetric CSR.
+            // Unique-stream consumers never expand it and retain only the raw count.
+            buffers.two_electron_values.reserve(expansion * total_integral_count);
+            buffers.left_pair_indices.reserve(total_integral_count);
+            buffers.right_pair_indices.reserve(total_integral_count);
+            for (int shell_i = 0; shell_i < n_shells; ++shell_i) {
+                auto& values = shell_integral_values[shell_i];
+                auto& left_pairs = shell_left_pairs[shell_i];
+                auto& right_pairs = shell_right_pairs[shell_i];
+                buffers.two_electron_values.insert(buffers.two_electron_values.end(),
+                                                   std::make_move_iterator(values.begin()),
+                                                   std::make_move_iterator(values.end()));
+                buffers.left_pair_indices.insert(buffers.left_pair_indices.end(),
+                                                 std::make_move_iterator(left_pairs.begin()),
+                                                 std::make_move_iterator(left_pairs.end()));
+                buffers.right_pair_indices.insert(buffers.right_pair_indices.end(),
+                                                  std::make_move_iterator(right_pairs.begin()),
+                                                  std::make_move_iterator(right_pairs.end()));
+                // The aggregate owns these entries now. Do not retain shell-sized
+                // copies while filling the rest of the output, in either input layout.
+                std::vector<double>().swap(values);
+                std::vector<int>().swap(left_pairs);
+                std::vector<int>().swap(right_pairs);
+            }
+        }
+        merge_seconds = std::chrono::duration<double>(Clock::now() - merge_start).count();
     }
 
-    const auto merge_start=Clock::now();
-    std::size_t total_integral_count = 0;
-    for (const auto& values : shell_integral_values) {
-      total_integral_count += values.size();
+    if (timings) {
+        timings->setup_seconds = std::chrono::duration<double>(setup_end - start).count();
+        timings->merge_seconds = merge_seconds;
+        timings->generation_seconds =
+            std::chrono::duration<double>(Clock::now() - setup_end).count() - merge_seconds;
     }
-    if (options.ao_pair_layout==integrals::AoPairLayout::Chunked) {
-      buffers.chunks.resize(n_shells);
-      for (int i=0;i<n_shells;++i) {
-        buffers.chunks[i].values=std::move(shell_integral_values[i]);
-        buffers.chunks[i].rows=std::move(shell_left_pairs[i]);
-        buffers.chunks[i].columns=std::move(shell_right_pairs[i]);
-        if (timings) timings->buffered_bytes+=buffers.chunks[i].values.capacity()*sizeof(double)+
-            (buffers.chunks[i].rows.capacity()+buffers.chunks[i].columns.capacity())*sizeof(int);
-      }
-    } else {
-      if (timings) for (int i=0;i<n_shells;++i)
-        timings->buffered_bytes+=shell_integral_values[i].capacity()*sizeof(double)+
-            (shell_left_pairs[i].capacity()+shell_right_pairs[i].capacity())*sizeof(int);
-      const std::size_t expansion=options.ao_pair_layout==integrals::AoPairLayout::Unique ? 1:2;
-      if (total_integral_count >
-          std::numeric_limits<std::size_t>::max() / expansion) {
-        throw std::overflow_error("directed ERI capacity exceeds size_t");
-      }
-      // Row consumers expand this same allocation in place for symmetric CSR.
-      // Unique-stream consumers never expand it and retain only the raw count.
-      buffers.two_electron_values.reserve(expansion * total_integral_count);
-      buffers.left_pair_indices.reserve(total_integral_count);
-      buffers.right_pair_indices.reserve(total_integral_count);
-      for (int shell_i = 0; shell_i < n_shells; ++shell_i) {
-        auto& values = shell_integral_values[shell_i];
-        auto& left_pairs = shell_left_pairs[shell_i];
-        auto& right_pairs = shell_right_pairs[shell_i];
-        buffers.two_electron_values.insert(
-            buffers.two_electron_values.end(),
-            std::make_move_iterator(values.begin()),
-            std::make_move_iterator(values.end()));
-        buffers.left_pair_indices.insert(
-            buffers.left_pair_indices.end(),
-            std::make_move_iterator(left_pairs.begin()),
-            std::make_move_iterator(left_pairs.end()));
-        buffers.right_pair_indices.insert(
-            buffers.right_pair_indices.end(),
-            std::make_move_iterator(right_pairs.begin()),
-            std::make_move_iterator(right_pairs.end()));
-        // The aggregate owns these entries now. Do not retain shell-sized
-        // copies while filling the rest of the output, in either input layout.
-        std::vector<double>().swap(values);
-        std::vector<int>().swap(left_pairs);
-        std::vector<int>().swap(right_pairs);
-      }
-    }
-    merge_seconds=std::chrono::duration<double>(Clock::now()-merge_start).count();
-  }
-
-  if (timings) {
-    timings->setup_seconds=std::chrono::duration<double>(setup_end-start).count();
-    timings->merge_seconds=merge_seconds;
-    timings->generation_seconds=std::chrono::duration<double>(Clock::now()-setup_end).count()-
-        merge_seconds;
-  }
-  return buffers;
+    return buffers;
 }
 
-}  // namespace xmvb::libcint
+} // namespace xmvb::libcint

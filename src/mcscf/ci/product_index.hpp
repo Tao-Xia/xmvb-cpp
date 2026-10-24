@@ -11,7 +11,7 @@ namespace xmvb::mcscf {
 using ProductIndex = std::int64_t;
 
 constexpr ProductIndex product_index(int alpha, int beta, int n_beta) noexcept {
-  return static_cast<ProductIndex>(alpha) * n_beta + beta;
+    return static_cast<ProductIndex>(alpha) * n_beta + beta;
 }
 
 } // namespace xmvb::mcscf

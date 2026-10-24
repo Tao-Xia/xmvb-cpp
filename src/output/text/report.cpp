@@ -22,505 +22,383 @@
 
 namespace xmvb::output {
 
-const char* optimizer_report_name(
-    const xmvb::vb::VbScfOptimizerOptions& options) {
-  switch (options.backend) {
-    case xmvb::vb::VbScfOptimizerBackend::Plbfgs:
-      return "P-LBFGS (nonredundant orbital-block inverse)";
-    case xmvb::vb::VbScfOptimizerBackend::Ciah:
-      return "CIAH (matrix-free projected structure response)";
-    case xmvb::vb::VbScfOptimizerBackend::NonredundantProjectedGradient:
-      return "nonredundant projected gradient";
-    case xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton:
-      return "TNHVP (matrix-free truncated Newton)";
-  }
-  throw std::invalid_argument("invalid VBSCF optimizer backend");
+const char* optimizer_report_name(const xmvb::vb::VbScfOptimizerOptions& options) {
+    switch (options.backend) {
+        case xmvb::vb::VbScfOptimizerBackend::Plbfgs:
+            return "P-LBFGS (nonredundant orbital-block inverse)";
+        case xmvb::vb::VbScfOptimizerBackend::Ciah:
+            return "CIAH (matrix-free projected structure response)";
+        case xmvb::vb::VbScfOptimizerBackend::NonredundantProjectedGradient:
+            return "nonredundant projected gradient";
+        case xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton:
+            return "TNHVP (matrix-free truncated Newton)";
+    }
+    throw std::invalid_argument("invalid VBSCF optimizer backend");
 }
 
 constexpr int kLogLabelWidth = 34;
 
 void print_log_subsection_title(const std::string& title) {
-  std::cout << '\n' << title << '\n'
-            << std::string(title.size(), '-') << '\n';
+    std::cout << '\n' << title << '\n' << std::string(title.size(), '-') << '\n';
 }
 
-void print_log_field(
-    const std::string& label,
-    const std::string& value) {
-  std::ostringstream stream;
-  stream << std::left << std::setw(kLogLabelWidth) << label
-         << " : " << value;
-  std::cout << stream.str() << '\n';
+void print_log_field(const std::string& label, const std::string& value) {
+    std::ostringstream stream;
+    stream << std::left << std::setw(kLogLabelWidth) << label << " : " << value;
+    std::cout << stream.str() << '\n';
 }
 
-std::string format_fixed_double(
-    double value,
-    int precision = 12) {
-  std::ostringstream stream;
-  stream << std::fixed << std::setprecision(precision) << value;
-  return stream.str();
+std::string format_fixed_double(double value, int precision = 12) {
+    std::ostringstream stream;
+    stream << std::fixed << std::setprecision(precision) << value;
+    return stream.str();
 }
 
-std::string format_scientific_double(
-    double value,
-    int precision = 8) {
-  std::ostringstream stream;
-  stream << std::scientific << std::setprecision(precision) << value;
-  return stream.str();
+std::string format_scientific_double(double value, int precision = 8) {
+    std::ostringstream stream;
+    stream << std::scientific << std::setprecision(precision) << value;
+    return stream.str();
 }
 
-std::string format_compact_double(
-    double value,
-    int precision = 6) {
-  std::ostringstream stream;
-  stream << std::defaultfloat << std::setprecision(precision) << value;
-  return stream.str();
+std::string format_compact_double(double value, int precision = 6) {
+    std::ostringstream stream;
+    stream << std::defaultfloat << std::setprecision(precision) << value;
+    return stream.str();
 }
 
-std::string format_convergence_threshold_summary(
-    double energy_tolerance,
-    double gradient_tolerance) {
-  return format_scientific_double(energy_tolerance, 0) +
-      " for energy and " +
-      format_compact_double(gradient_tolerance, 6) +
-      " for gradient.";
+std::string format_convergence_threshold_summary(double energy_tolerance,
+                                                 double gradient_tolerance) {
+    return format_scientific_double(energy_tolerance, 0) + " for energy and " +
+           format_compact_double(gradient_tolerance, 6) + " for gradient.";
 }
 
-std::string format_seconds(
-    double seconds,
-    int precision = 6) {
-  std::ostringstream stream;
-  stream << std::fixed << std::setprecision(precision) << seconds << " s";
-  return stream.str();
+std::string format_seconds(double seconds, int precision = 6) {
+    std::ostringstream stream;
+    stream << std::fixed << std::setprecision(precision) << seconds << " s";
+    return stream.str();
 }
 
-std::string format_timestamp(
-    const std::chrono::system_clock::time_point& time_point) {
-  const std::time_t raw_time = std::chrono::system_clock::to_time_t(time_point);
-  std::tm local_time{};
-  localtime_r(&raw_time, &local_time);
-  std::array<char, 32> buffer{};
-  if (std::strftime(
-          buffer.data(),
-          buffer.size(),
-          "%Y-%m-%d %H:%M:%S",
-          &local_time) == 0) {
-    return "<unavailable>";
-  }
-  return buffer.data();
+std::string format_timestamp(const std::chrono::system_clock::time_point& time_point) {
+    const std::time_t raw_time = std::chrono::system_clock::to_time_t(time_point);
+    std::tm local_time{};
+    localtime_r(&raw_time, &local_time);
+    std::array<char, 32> buffer{};
+    if (std::strftime(buffer.data(), buffer.size(), "%Y-%m-%d %H:%M:%S", &local_time) == 0) {
+        return "<unavailable>";
+    }
+    return buffer.data();
 }
 
 int openmp_max_thread_count() {
-  int n_threads = 1;
+    int n_threads = 1;
 #ifdef _OPENMP
-  n_threads = omp_get_max_threads();
+    n_threads = omp_get_max_threads();
 #endif
-  return n_threads;
+    return n_threads;
 }
 
 int allocated_cpu_thread_count() {
-  const char* slurm_value = std::getenv("SLURM_CPUS_PER_TASK");
-  if (slurm_value != nullptr && slurm_value[0] != '\0') {
-    char* end = nullptr;
-    errno = 0;
-    const long parsed = std::strtol(slurm_value, &end, 10);
-    if (errno == 0 && end != slurm_value && (end == nullptr || end[0] == '\0') &&
-        parsed > 0 && parsed <= static_cast<long>(std::numeric_limits<int>::max())) {
-      return static_cast<int>(parsed);
+    const char* slurm_value = std::getenv("SLURM_CPUS_PER_TASK");
+    if (slurm_value != nullptr && slurm_value[0] != '\0') {
+        char* end = nullptr;
+        errno = 0;
+        const long parsed = std::strtol(slurm_value, &end, 10);
+        if (errno == 0 && end != slurm_value && (end == nullptr || end[0] == '\0') && parsed > 0 &&
+            parsed <= static_cast<long>(std::numeric_limits<int>::max())) {
+            return static_cast<int>(parsed);
+        }
     }
-  }
-  return openmp_max_thread_count();
+    return openmp_max_thread_count();
 }
 
-std::string physical_chart_name(
-    const xmvb::vb::OrbitalPreparationInput& orbital_input) {
-  for (const int basis_count : orbital_input.orbital_basis_counts) {
-    if (basis_count > 0 && basis_count < orbital_input.n_basis_functions) {
-      return "strict_sparse_U_p";
+std::string physical_chart_name(const xmvb::vb::OrbitalPreparationInput& orbital_input) {
+    for (const int basis_count : orbital_input.orbital_basis_counts) {
+        if (basis_count > 0 && basis_count < orbital_input.n_basis_functions) {
+            return "strict_sparse_U_p";
+        }
     }
-  }
-  return "full_ao_U_p";
+    return "full_ao_U_p";
 }
 
-void print_tnhvp_summary(
-    const xmvb::vb::VbScfOptimizerOptions& options,
-    const xmvb::vb::VbScfInput& input) {
-  if (options.backend !=
-      xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton) {
-    return;
-  }
+void print_tnhvp_summary(const xmvb::vb::VbScfOptimizerOptions& options,
+                         const xmvb::vb::VbScfInput& input) {
+    if (options.backend != xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton) {
+        return;
+    }
 
-  const auto& orbital_input = input.orbital_preparation_input;
-  print_log_subsection_title("TNHVP Curvature-Corrected L-BFGS");
-  print_log_field(
-      "Hessian action",
-      "matrix-free relaxed orbital HVP");
-  print_log_field(
-      "Baseline inverse",
-      "transported L-BFGS + local orbital block");
-  print_log_field(
-      "Curvature correction",
-      "predictor HVP + Newton-defect expansion");
-  print_log_field(
-      "Curvature admission",
-      "observed gradient contraction vs Newton forcing");
-  print_log_field(
-      "Globalization",
-      "physical-metric trust region + model ratio");
-  print_log_field(
-      "Transport history",
-      std::to_string(options.history_size));
-  print_log_field(
-      "Physical chart",
-      physical_chart_name(orbital_input));
+    const auto& orbital_input = input.orbital_preparation_input;
+    print_log_subsection_title("TNHVP Curvature-Corrected L-BFGS");
+    print_log_field("Hessian action", "matrix-free relaxed orbital HVP");
+    print_log_field("Baseline inverse", "transported L-BFGS + local orbital block");
+    print_log_field("Curvature correction", "predictor HVP + Newton-defect expansion");
+    print_log_field("Curvature admission", "observed gradient contraction vs Newton forcing");
+    print_log_field("Globalization", "physical-metric trust region + model ratio");
+    print_log_field("Transport history", std::to_string(options.history_size));
+    print_log_field("Physical chart", physical_chart_name(orbital_input));
 }
 
-const char* orbital_preconditioner_name(
-    xmvb::vb::OrbitalPreconditioner preconditioner) {
-  switch (preconditioner) {
-    case xmvb::vb::OrbitalPreconditioner::Automatic:
-      return "automatic (backend-selected)";
-    case xmvb::vb::OrbitalPreconditioner::Identity:
-      return "identity";
-    case xmvb::vb::OrbitalPreconditioner::OneElectron:
-      return "one-electron block";
-    case xmvb::vb::OrbitalPreconditioner::HessianDiagonal:
-      return "analytic VBSCF Hessian diagonal";
-  }
-  throw std::invalid_argument("invalid orbital preconditioner");
+const char* orbital_preconditioner_name(xmvb::vb::OrbitalPreconditioner preconditioner) {
+    switch (preconditioner) {
+        case xmvb::vb::OrbitalPreconditioner::Automatic:
+            return "automatic (backend-selected)";
+        case xmvb::vb::OrbitalPreconditioner::Identity:
+            return "identity";
+        case xmvb::vb::OrbitalPreconditioner::OneElectron:
+            return "one-electron block";
+        case xmvb::vb::OrbitalPreconditioner::HessianDiagonal:
+            return "analytic VBSCF Hessian diagonal";
+    }
+    throw std::invalid_argument("invalid orbital preconditioner");
 }
 
-void print_header(
-    const std::string& input_path,
-    const xmvb::vb::VbScfOptimizerOptions& options,
-    const xmvb::vb::VbScfInputLoadResult& load_result,
-    const std::chrono::system_clock::time_point& start_time) {
-  print_program_preamble(
-      std::cout,
-      input_path,
-      start_time,
-      allocated_cpu_thread_count());
-  print_input_sections(
-      std::cout,
-      input_path,
-      load_result,
-      optimizer_report_name(options),
-      options.max_iterations);
-  if (options.backend == xmvb::vb::VbScfOptimizerBackend::Ciah) {
-    print_log_field(
-        "Orbital preconditioner",
-        orbital_preconditioner_name(options.orbital_preconditioner));
-  }
+void print_header(const std::string& input_path,
+                  const xmvb::vb::VbScfOptimizerOptions& options,
+                  const xmvb::vb::VbScfInputLoadResult& load_result,
+                  const std::chrono::system_clock::time_point& start_time) {
+    print_program_preamble(std::cout, input_path, start_time, allocated_cpu_thread_count());
+    print_input_sections(
+        std::cout, input_path, load_result, optimizer_report_name(options), options.max_iterations);
+    if (options.backend == xmvb::vb::VbScfOptimizerBackend::Ciah) {
+        print_log_field("Orbital preconditioner",
+                        orbital_preconditioner_name(options.orbital_preconditioner));
+    }
 }
 
 std::function<void(const xmvb::vb::VbScfAcceptedIterationSnapshot&)>
-combine_callbacks(
-    std::function<void(const xmvb::vb::VbScfAcceptedIterationSnapshot&)> first,
-    std::function<void(const xmvb::vb::VbScfAcceptedIterationSnapshot&)> second) {
-  if (!first) {
-    return second;
-  }
-  if (!second) {
-    return first;
-  }
-  return [first = std::move(first), second = std::move(second)](
-             const xmvb::vb::VbScfAcceptedIterationSnapshot& snapshot) {
-    first(snapshot);
-    second(snapshot);
-  };
+combine_callbacks(std::function<void(const xmvb::vb::VbScfAcceptedIterationSnapshot&)> first,
+                  std::function<void(const xmvb::vb::VbScfAcceptedIterationSnapshot&)> second) {
+    if (!first) {
+        return second;
+    }
+    if (!second) {
+        return first;
+    }
+    return [first = std::move(first),
+            second = std::move(second)](const xmvb::vb::VbScfAcceptedIterationSnapshot& snapshot) {
+        first(snapshot);
+        second(snapshot);
+    };
 }
 
-std::function<void(const xmvb::vb::VbScfAcceptedIterationSnapshot&)>
-iteration_logger() {
-  struct LoggerState {
-    bool has_reference_energy = false;
-    double previous_total_energy = 0.0;
-  };
+std::function<void(const xmvb::vb::VbScfAcceptedIterationSnapshot&)> iteration_logger() {
+    struct LoggerState {
+        bool has_reference_energy = false;
+        double previous_total_energy = 0.0;
+    };
 
-  auto state = std::make_shared<LoggerState>();
-  std::cout << "\n                ITER           ENERGY          DELTA_E"
-            << "      |G_PROJ|_INF\n";
-  std::cout.flush();
-
-  return [state](
-             const xmvb::vb::VbScfAcceptedIterationSnapshot& snapshot) {
-    const double delta_energy = state->has_reference_energy
-        ? snapshot.total_energy - state->previous_total_energy
-        : 0.0;
-    if (!snapshot.has_projected_gradient) {
-      throw std::runtime_error(
-          "iteration report requires a projected-gradient norm");
-    }
-    const double gradient_norm = snapshot.projected_gradient_inf_norm;
-    std::ostringstream stream;
-    stream << std::setw(19) << snapshot.accepted_iteration_index
-           << std::setw(22) << std::fixed << std::setprecision(10)
-           << snapshot.total_energy
-           << std::setw(18) << std::fixed << std::setprecision(10)
-           << delta_energy
-           << std::setw(18) << std::scientific << std::setprecision(8)
-           << gradient_norm
-           << '\n';
-    std::cout << stream.str();
+    auto state = std::make_shared<LoggerState>();
+    std::cout << "\n                ITER           ENERGY          DELTA_E"
+              << "      |G_PROJ|_INF\n";
     std::cout.flush();
-    state->previous_total_energy = snapshot.total_energy;
-    state->has_reference_energy = true;
-  };
+
+    return [state](const xmvb::vb::VbScfAcceptedIterationSnapshot& snapshot) {
+        const double delta_energy = state->has_reference_energy
+                                        ? snapshot.total_energy - state->previous_total_energy
+                                        : 0.0;
+        if (!snapshot.has_projected_gradient) {
+            throw std::runtime_error("iteration report requires a projected-gradient norm");
+        }
+        const double gradient_norm = snapshot.projected_gradient_inf_norm;
+        std::ostringstream stream;
+        stream << std::setw(19) << snapshot.accepted_iteration_index << std::setw(22) << std::fixed
+               << std::setprecision(10) << snapshot.total_energy << std::setw(18) << std::fixed
+               << std::setprecision(10) << delta_energy << std::setw(18) << std::scientific
+               << std::setprecision(8) << gradient_norm << '\n';
+        std::cout << stream.str();
+        std::cout.flush();
+        state->previous_total_energy = snapshot.total_energy;
+        state->has_reference_energy = true;
+    };
 }
 
+void print_summary(const vb::VbScfOptimizerOptions& options,
+                   const vb::VbScfInputLoadResult& load_result,
+                   const vb::VbScfOptimizerResult& result,
+                   const std::optional<std::filesystem::path>& trace_sample_directory,
+                   const std::optional<std::filesystem::path>& molden_output_path,
+                   const std::chrono::system_clock::time_point& command_start_time,
+                   const std::chrono::steady_clock::time_point& command_start_steady_time) {
+    const auto& input = result.optimized_input;
+    const bool command_converged = result.converged;
+    const double initial_electronic_energy =
+        result.initial_total_energy - load_result.nuclear_repulsion_energy;
+    const double final_electronic_energy =
+        result.final_total_energy - load_result.nuclear_repulsion_energy;
+    const double initial_valence_structure_eigenvalue =
+        result.initial_total_energy - load_result.nuclear_repulsion_energy -
+        result.initial_one_electron_reference_energy;
+    const double final_valence_structure_eigenvalue = result.final_total_energy -
+                                                      load_result.nuclear_repulsion_energy -
+                                                      result.final_one_electron_reference_energy;
+    const double optimizer_wall_time_seconds = result.total_wall_time_seconds;
+    const int effective_thread_count = allocated_cpu_thread_count();
 
-void print_summary(
-    const vb::VbScfOptimizerOptions& options,
-    const vb::VbScfInputLoadResult& load_result,
-    const vb::VbScfOptimizerResult& result,
-    const std::optional<std::filesystem::path>& trace_sample_directory,
-    const std::optional<std::filesystem::path>& molden_output_path,
-    const std::chrono::system_clock::time_point& command_start_time,
-    const std::chrono::steady_clock::time_point& command_start_steady_time) {
-  const auto& input = result.optimized_input;
-  const bool command_converged = result.converged;
-  const double initial_electronic_energy =
-      result.initial_total_energy - load_result.nuclear_repulsion_energy;
-  const double final_electronic_energy =
-      result.final_total_energy - load_result.nuclear_repulsion_energy;
-  const double initial_valence_structure_eigenvalue =
-      result.initial_total_energy -
-      load_result.nuclear_repulsion_energy -
-      result.initial_one_electron_reference_energy;
-  const double final_valence_structure_eigenvalue =
-      result.final_total_energy -
-      load_result.nuclear_repulsion_energy -
-      result.final_one_electron_reference_energy;
-  const double optimizer_wall_time_seconds = result.total_wall_time_seconds;
-  const int effective_thread_count = allocated_cpu_thread_count();
+    std::cout << "\n"
+              << (command_converged ? "                        VBSCF converged in "
+                                    : "                    VBSCF did not converge in ")
+              << std::setw(5) << result.n_iterations << " iterations\n\n"
+              << "                  Total Energy:   " << std::fixed << std::setprecision(10)
+              << result.final_total_energy << '\n';
+    const double average_structure_overlap =
+        print_final_state_sections(std::cout, load_result, result);
+    const auto command_finish_time = std::chrono::system_clock::now();
+    const double total_job_wall_time_seconds =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - command_start_steady_time)
+            .count();
 
-  std::cout << "\n"
-            << (command_converged ? "                        VBSCF converged in "
-                                  : "                    VBSCF did not converge in ")
-            << std::setw(5) << result.n_iterations << " iterations\n\n"
-            << "                  Total Energy:   "
-            << std::fixed << std::setprecision(10) << result.final_total_energy
-            << '\n';
-  const double average_structure_overlap =
-      print_final_state_sections(std::cout, load_result, result);
-  const auto command_finish_time = std::chrono::system_clock::now();
-  const double total_job_wall_time_seconds =
-      std::chrono::duration<double>(
-          std::chrono::steady_clock::now() - command_start_steady_time).count();
-
-  std::cout << "\n\n                 ===============================================\n"
-            << "                       XMVB-CPP RUN DIAGNOSTICS\n"
-            << "                 ===============================================\n";
-  print_log_field("Termination reason", result.termination_reason);
-  print_log_field("Start time", format_timestamp(command_start_time));
-  print_log_field("Finish time", format_timestamp(command_finish_time));
-  print_log_field("CPU threads", std::to_string(effective_thread_count));
-  print_log_field(
-      "Structure eigensolver",
-      xmvb::vb::structure_eigensolver_name(options.structure_eigensolver));
-  if (result.scf_result.davidson_diagnostics.has_value()) {
-    const auto& davidson = *result.scf_result.davidson_diagnostics;
-    print_log_field("Final Davidson iterations", std::to_string(davidson.iterations));
-    print_log_field("Final Davidson H/S block actions", std::to_string(davidson.block_actions));
-    print_log_field(
-        "Final Davidson peak subspace",
-        std::to_string(davidson.peak_subspace_dimension));
-    print_log_field(
-        "Final Davidson max rel. residual",
-        format_scientific_double(davidson.maximum_relative_residual, 8));
-    print_log_field(
-        "Final Davidson CI residual (Eh)",
-        format_scientific_double(davidson.maximum_stationarity_residual, 8));
-  }
-  if (trace_sample_directory.has_value()) {
-    print_log_field("Trace sample directory", trace_sample_directory->string());
-  }
-  if (molden_output_path.has_value()) {
-    print_log_field("Molden output", molden_output_path->string());
-  }
-  print_log_field("Gradient metric", "projected |g|_inf");
-  if (options.backend == vb::VbScfOptimizerBackend::Ciah) {
-    print_log_field("Orbital coordinates", "unwhitened quotient");
-    print_log_field("Projected infinity norm", "reference coordinates for stopping/final report");
-  }
-  const bool certifies_physical_gradient = input.complete_active_space &&
-      input.orbital_preparation_input.orbital_type == vb::kOrbitalTypeOeo &&
-      (options.backend == vb::VbScfOptimizerBackend::Plbfgs ||
-       options.backend == vb::VbScfOptimizerBackend::Ciah ||
-       options.backend == vb::VbScfOptimizerBackend::NonredundantTruncatedNewton);
-  if (certifies_physical_gradient) {
-    print_log_field("Additional stationarity metric", "physical |g|_(G^-1)");
-    print_log_field("Physical gradient threshold",
-                    format_scientific_double(options.gradient_tolerance, 8));
-  }
-  print_log_field(
-      "Convergence threshold",
-      format_convergence_threshold_summary(
-          options.energy_tolerance,
-          options.gradient_tolerance));
-  print_log_field(
-      "Nuclear repulsion energy",
-      format_fixed_double(load_result.nuclear_repulsion_energy, 12));
-  print_log_field(
-      "Initial total energy",
-      format_fixed_double(result.initial_total_energy, 12));
-  print_log_field(
-      "Final total energy",
-      format_fixed_double(result.final_total_energy, 12));
-  print_log_field(
-      "Total energy change",
-      format_scientific_double(result.final_total_energy - result.initial_total_energy, 8));
-  print_log_field(
-      "Initial electronic energy",
-      format_fixed_double(initial_electronic_energy, 12));
-  print_log_field(
-      "Final electronic energy",
-      format_fixed_double(final_electronic_energy, 12));
-  print_log_field(
-      "Initial reference energy",
-      format_fixed_double(result.initial_one_electron_reference_energy, 12));
-  print_log_field(
-      "Final reference energy",
-      format_fixed_double(result.final_one_electron_reference_energy, 12));
-  print_log_field(
-      "Initial VB eigenvalue",
-      format_fixed_double(initial_valence_structure_eigenvalue, 12));
-  print_log_field(
-      "Final VB eigenvalue",
-      format_fixed_double(final_valence_structure_eigenvalue, 12));
-  print_log_field(
-      "Average structure overlap",
-      format_fixed_double(average_structure_overlap, 12));
-  print_log_field(
-      "Final gradient |g|_inf",
-      format_scientific_double(result.final_gradient_inf_norm, 8));
-  print_log_field(
-      "Final gradient |g|_2",
-      format_scientific_double(result.final_gradient_l2_norm, 8));
-  print_log_field(
-      "Final projected |g|_inf",
-      format_scientific_double(result.final_projected_gradient_inf_norm, 8));
-  print_log_field(
-      "Final projected |g|_2",
-      format_scientific_double(result.final_projected_gradient_l2_norm, 8));
-  if (result.final_physical_gradient_norm.has_value()) {
-    print_log_field(
-        "Final physical |g|_(G^-1)",
-        format_scientific_double(
-            *result.final_physical_gradient_norm, 8));
-  } else {
-    print_log_field(
-        "Final physical gradient diagnostic",
-        "unavailable: " + result.final_physical_gradient_diagnostic);
-  }
-  if (options.backend ==
-      xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton) {
-    if (!result.tnhvp_iteration_trace.empty()) {
-      std::size_t exact_hvp_actions = 0;
-      std::size_t structure_response_actions = 0;
-      int rejected_trial_count = 0;
-      double outer_iteration_seconds = 0.0;
-      double accepted_point_setup_seconds = 0.0;
-      double exact_hvp_seconds = 0.0;
-      double outer_response_seconds = 0.0;
-      double trial_objective_seconds = 0.0;
-      for (const auto& step : result.tnhvp_iteration_trace) {
-        exact_hvp_actions += step.exact_hvp_block_actions;
-        structure_response_actions += step.structure_response_block_actions;
-        rejected_trial_count += step.rejected_trial_count;
-        outer_iteration_seconds += step.outer_iteration_wall_time_seconds;
-        accepted_point_setup_seconds +=
-            step.accepted_point_setup_wall_time_seconds;
-        exact_hvp_seconds += step.exact_hvp_wall_time_seconds;
-        outer_response_seconds += step.outer_response_wall_time_seconds;
-        trial_objective_seconds += step.trial_objective_wall_time_seconds;
-      }
-      const auto& final_step = result.tnhvp_iteration_trace.back();
-      print_log_field(
-          "Final nonredundant dimension",
-          std::to_string(final_step.reduced_dimension));
-      print_log_field(
-          "Final curvature subspace dimension",
-          std::to_string(final_step.curvature_subspace_dimension));
-      print_log_field(
-          "Exact HVP block actions",
-          std::to_string(exact_hvp_actions));
-      print_log_field(
-          "Structure-response block actions",
-          std::to_string(structure_response_actions));
-      print_log_field(
-          "Rejected trust trials",
-          std::to_string(rejected_trial_count));
-      print_log_field(
-          "Final model KKT residual",
-          format_scientific_double(
-              final_step.model_kkt_relative_residual, 4));
-      print_log_field(
-          "Final structure-response residual",
-          format_scientific_double(
-              final_step.max_structure_response_relative_residual, 4));
-      print_log_field(
-          "Final response model rank",
-          std::to_string(final_step.structure_response_schur_model_rank));
-      print_log_field(
-          "Final response effective rank",
-          format_scientific_double(
-              final_step.structure_response_schur_effective_rank, 4));
-      print_log_field(
-          "Final response 90% / 99% ranks",
-          std::to_string(final_step.structure_response_schur_rank_90) + " / " +
-              std::to_string(final_step.structure_response_schur_rank_99));
-      print_log_field(
-          "TNHVP outer iteration wall",
-          format_seconds(outer_iteration_seconds));
-      print_log_field(
-          "Accepted-point setup wall",
-          format_seconds(accepted_point_setup_seconds));
-      print_log_field(
-          "Exact HVP wall",
-          format_seconds(exact_hvp_seconds));
-      print_log_field(
-          "Outer-response wall",
-          format_seconds(outer_response_seconds));
-      print_log_field(
-          "Trial objective wall",
-          format_seconds(trial_objective_seconds));
+    std::cout << "\n\n                 ===============================================\n"
+              << "                       XMVB-CPP RUN DIAGNOSTICS\n"
+              << "                 ===============================================\n";
+    print_log_field("Termination reason", result.termination_reason);
+    print_log_field("Start time", format_timestamp(command_start_time));
+    print_log_field("Finish time", format_timestamp(command_finish_time));
+    print_log_field("CPU threads", std::to_string(effective_thread_count));
+    print_log_field("Structure eigensolver",
+                    xmvb::vb::structure_eigensolver_name(options.structure_eigensolver));
+    if (result.scf_result.davidson_diagnostics.has_value()) {
+        const auto& davidson = *result.scf_result.davidson_diagnostics;
+        print_log_field("Final Davidson iterations", std::to_string(davidson.iterations));
+        print_log_field("Final Davidson H/S block actions", std::to_string(davidson.block_actions));
+        print_log_field("Final Davidson peak subspace",
+                        std::to_string(davidson.peak_subspace_dimension));
+        print_log_field("Final Davidson max rel. residual",
+                        format_scientific_double(davidson.maximum_relative_residual, 8));
+        print_log_field("Final Davidson CI residual (Eh)",
+                        format_scientific_double(davidson.maximum_stationarity_residual, 8));
     }
-  }
-  print_tnhvp_summary(options, input);
-  print_log_subsection_title("Timing Breakdown (Wall Time)");
-  print_log_field(
-      "AO integral provider wall time",
-      format_seconds(load_result.ao_integral_provider_seconds));
-  print_log_field(
-      "AO integral input wall time",
-      format_seconds(load_result.ao_integral_input_build_seconds));
-  print_log_field(
-      "Orbital guess build wall time",
-      format_seconds(load_result.orbital_guess_seconds));
-  print_log_field(
-      "Raw-structure selection wall",
-      format_seconds(load_result.raw_structure_selection_seconds));
-  print_log_field(
-      "Structure expansion wall time",
-      format_seconds(load_result.structure_expansion_seconds));
-  print_log_field(
-      "Input preparation wall time",
-      format_seconds(load_result.total_seconds));
-  print_log_field(
-      "SCF iteration wall time",
-      format_seconds(optimizer_wall_time_seconds));
-  print_log_field(
-      "End-to-end wall time",
-      format_seconds(total_job_wall_time_seconds));
-  if (const auto bytes=workspace::peak_temporary_bytes()) {
-    print_log_field("Tracked CI temporary peak (GiB)",
-        format_fixed_double(static_cast<double>(bytes)/(1024.0*1024.0*1024.0),6));
-  }
-  std::cout << "\n        Wall time for the job: "
-            << std::fixed << std::setprecision(3)
-            << total_job_wall_time_seconds << " seconds.\n";
-
+    if (trace_sample_directory.has_value()) {
+        print_log_field("Trace sample directory", trace_sample_directory->string());
+    }
+    if (molden_output_path.has_value()) {
+        print_log_field("Molden output", molden_output_path->string());
+    }
+    print_log_field("Gradient metric", "projected |g|_inf");
+    if (options.backend == vb::VbScfOptimizerBackend::Ciah) {
+        print_log_field("Orbital coordinates", "unwhitened quotient");
+        print_log_field("Projected infinity norm",
+                        "reference coordinates for stopping/final report");
+    }
+    const bool certifies_physical_gradient =
+        input.complete_active_space &&
+        input.orbital_preparation_input.orbital_type == vb::kOrbitalTypeOeo &&
+        (options.backend == vb::VbScfOptimizerBackend::Plbfgs ||
+         options.backend == vb::VbScfOptimizerBackend::Ciah ||
+         options.backend == vb::VbScfOptimizerBackend::NonredundantTruncatedNewton);
+    if (certifies_physical_gradient) {
+        print_log_field("Additional stationarity metric", "physical |g|_(G^-1)");
+        print_log_field("Physical gradient threshold",
+                        format_scientific_double(options.gradient_tolerance, 8));
+    }
+    print_log_field(
+        "Convergence threshold",
+        format_convergence_threshold_summary(options.energy_tolerance, options.gradient_tolerance));
+    print_log_field("Nuclear repulsion energy",
+                    format_fixed_double(load_result.nuclear_repulsion_energy, 12));
+    print_log_field("Initial total energy", format_fixed_double(result.initial_total_energy, 12));
+    print_log_field("Final total energy", format_fixed_double(result.final_total_energy, 12));
+    print_log_field(
+        "Total energy change",
+        format_scientific_double(result.final_total_energy - result.initial_total_energy, 8));
+    print_log_field("Initial electronic energy",
+                    format_fixed_double(initial_electronic_energy, 12));
+    print_log_field("Final electronic energy", format_fixed_double(final_electronic_energy, 12));
+    print_log_field("Initial reference energy",
+                    format_fixed_double(result.initial_one_electron_reference_energy, 12));
+    print_log_field("Final reference energy",
+                    format_fixed_double(result.final_one_electron_reference_energy, 12));
+    print_log_field("Initial VB eigenvalue",
+                    format_fixed_double(initial_valence_structure_eigenvalue, 12));
+    print_log_field("Final VB eigenvalue",
+                    format_fixed_double(final_valence_structure_eigenvalue, 12));
+    print_log_field("Average structure overlap",
+                    format_fixed_double(average_structure_overlap, 12));
+    print_log_field("Final gradient |g|_inf",
+                    format_scientific_double(result.final_gradient_inf_norm, 8));
+    print_log_field("Final gradient |g|_2",
+                    format_scientific_double(result.final_gradient_l2_norm, 8));
+    print_log_field("Final projected |g|_inf",
+                    format_scientific_double(result.final_projected_gradient_inf_norm, 8));
+    print_log_field("Final projected |g|_2",
+                    format_scientific_double(result.final_projected_gradient_l2_norm, 8));
+    if (result.final_physical_gradient_norm.has_value()) {
+        print_log_field("Final physical |g|_(G^-1)",
+                        format_scientific_double(*result.final_physical_gradient_norm, 8));
+    } else {
+        print_log_field("Final physical gradient diagnostic",
+                        "unavailable: " + result.final_physical_gradient_diagnostic);
+    }
+    if (options.backend == xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton) {
+        if (!result.tnhvp_iteration_trace.empty()) {
+            std::size_t exact_hvp_actions = 0;
+            std::size_t structure_response_actions = 0;
+            int rejected_trial_count = 0;
+            double outer_iteration_seconds = 0.0;
+            double accepted_point_setup_seconds = 0.0;
+            double exact_hvp_seconds = 0.0;
+            double outer_response_seconds = 0.0;
+            double trial_objective_seconds = 0.0;
+            for (const auto& step : result.tnhvp_iteration_trace) {
+                exact_hvp_actions += step.exact_hvp_block_actions;
+                structure_response_actions += step.structure_response_block_actions;
+                rejected_trial_count += step.rejected_trial_count;
+                outer_iteration_seconds += step.outer_iteration_wall_time_seconds;
+                accepted_point_setup_seconds += step.accepted_point_setup_wall_time_seconds;
+                exact_hvp_seconds += step.exact_hvp_wall_time_seconds;
+                outer_response_seconds += step.outer_response_wall_time_seconds;
+                trial_objective_seconds += step.trial_objective_wall_time_seconds;
+            }
+            const auto& final_step = result.tnhvp_iteration_trace.back();
+            print_log_field("Final nonredundant dimension",
+                            std::to_string(final_step.reduced_dimension));
+            print_log_field("Final curvature subspace dimension",
+                            std::to_string(final_step.curvature_subspace_dimension));
+            print_log_field("Exact HVP block actions", std::to_string(exact_hvp_actions));
+            print_log_field("Structure-response block actions",
+                            std::to_string(structure_response_actions));
+            print_log_field("Rejected trust trials", std::to_string(rejected_trial_count));
+            print_log_field("Final model KKT residual",
+                            format_scientific_double(final_step.model_kkt_relative_residual, 4));
+            print_log_field(
+                "Final structure-response residual",
+                format_scientific_double(final_step.max_structure_response_relative_residual, 4));
+            print_log_field("Final response model rank",
+                            std::to_string(final_step.structure_response_schur_model_rank));
+            print_log_field(
+                "Final response effective rank",
+                format_scientific_double(final_step.structure_response_schur_effective_rank, 4));
+            print_log_field("Final response 90% / 99% ranks",
+                            std::to_string(final_step.structure_response_schur_rank_90) + " / " +
+                                std::to_string(final_step.structure_response_schur_rank_99));
+            print_log_field("TNHVP outer iteration wall", format_seconds(outer_iteration_seconds));
+            print_log_field("Accepted-point setup wall",
+                            format_seconds(accepted_point_setup_seconds));
+            print_log_field("Exact HVP wall", format_seconds(exact_hvp_seconds));
+            print_log_field("Outer-response wall", format_seconds(outer_response_seconds));
+            print_log_field("Trial objective wall", format_seconds(trial_objective_seconds));
+        }
+    }
+    print_tnhvp_summary(options, input);
+    print_log_subsection_title("Timing Breakdown (Wall Time)");
+    print_log_field("AO integral provider wall time",
+                    format_seconds(load_result.ao_integral_provider_seconds));
+    print_log_field("AO integral input wall time",
+                    format_seconds(load_result.ao_integral_input_build_seconds));
+    print_log_field("Orbital guess build wall time",
+                    format_seconds(load_result.orbital_guess_seconds));
+    print_log_field("Raw-structure selection wall",
+                    format_seconds(load_result.raw_structure_selection_seconds));
+    print_log_field("Structure expansion wall time",
+                    format_seconds(load_result.structure_expansion_seconds));
+    print_log_field("Input preparation wall time", format_seconds(load_result.total_seconds));
+    print_log_field("SCF iteration wall time", format_seconds(optimizer_wall_time_seconds));
+    print_log_field("End-to-end wall time", format_seconds(total_job_wall_time_seconds));
+    if (const auto bytes = workspace::peak_temporary_bytes()) {
+        print_log_field(
+            "Tracked CI temporary peak (GiB)",
+            format_fixed_double(static_cast<double>(bytes) / (1024.0 * 1024.0 * 1024.0), 6));
+    }
+    std::cout << "\n        Wall time for the job: " << std::fixed << std::setprecision(3)
+              << total_job_wall_time_seconds << " seconds.\n";
 }
 
-}  // namespace xmvb::output
+} // namespace xmvb::output

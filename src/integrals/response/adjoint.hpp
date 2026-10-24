@@ -28,9 +28,9 @@ Eigen::MatrixXd backpropagate_exact_packed_active_two_electron_gradient(
  * AO-by-active weighted orbital direction. Requires the admitted exchange
  * image and resident pair products. Storage is O(n_bf*n_active).
  */
-Eigen::MatrixXd project_exact_active_density_response(
-    const ExactPackedActiveTwoElectronAdjointCache& cache,
-    const Eigen::Ref<const Eigen::MatrixXd>& weighted_direction);
+Eigen::MatrixXd
+project_exact_active_density_response(const ExactPackedActiveTwoElectronAdjointCache& cache,
+                                      const Eigen::Ref<const Eigen::MatrixXd>& weighted_direction);
 
 /**
  * @brief Pulls an active H1e adjoint back to the symmetric inactive density.
@@ -41,9 +41,9 @@ Eigen::MatrixXd project_exact_active_density_response(
  * symmetric density variations are admissible in orbital preparation.
  * Requires resident pair products and the bounded exchange image.
  */
-std::vector<double> backpropagate_exact_active_h1e_gradient(
-    const std::vector<double>& active_gradient,
-    const ExactPackedActiveTwoElectronAdjointCache& cache);
+std::vector<double>
+backpropagate_exact_active_h1e_gradient(const std::vector<double>& active_gradient,
+                                        const ExactPackedActiveTwoElectronAdjointCache& cache);
 
 /**
  * @brief Backpropagates a changing packed active-2e adjoint at a fixed point.
@@ -64,8 +64,7 @@ Eigen::MatrixXd backpropagate_exact_packed_active_two_electron_gradient(
  * active-orbital coefficient matrix. The returned cache borrows it and any
  * resident forward pair products; both owners must outlive the cache.
  */
-ExactPackedActiveTwoElectronAdjointCache
-build_exact_packed_active_two_electron_adjoint_cache(
+ExactPackedActiveTwoElectronAdjointCache build_exact_packed_active_two_electron_adjoint_cache(
     const std::vector<double>& packed_active_two_electron_gradient,
     const Eigen::MatrixXd& accepted_dense_active_coefficients,
     const AoIntegralInput& ao_integral_input,
@@ -149,4 +148,4 @@ void apply_exact_packed_active_two_electron_adjoint_hessian_vector_fused(
     const ExactCtxPairMatrix& directional_pair_products,
     ExactPackedActiveTwoElectronApplyWorkspace* workspace,
     Eigen::MatrixXd* dense_active_gradient_direction);
-}  // namespace xmvb::integrals
+} // namespace xmvb::integrals

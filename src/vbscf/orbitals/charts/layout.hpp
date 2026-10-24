@@ -18,38 +18,35 @@ namespace xmvb::vb {
  * unpacking logic instead of reimplementing it in every backend.
  */
 class SparseParameterLayout {
-public:
-  explicit SparseParameterLayout(
-      const OrbitalPreparationInput& orbital_preparation_input);
+  public:
+    explicit SparseParameterLayout(const OrbitalPreparationInput& orbital_preparation_input);
 
-  int size() const noexcept {
-    return static_cast<int>(differentiable_parameter_indices_.size());
-  }
+    int size() const noexcept {
+        return static_cast<int>(differentiable_parameter_indices_.size());
+    }
 
-  int orbital_coefficient_count(int orbital_index) const;
+    int orbital_coefficient_count(int orbital_index) const;
 
-  int packed_index(int orbital_index, int coefficient_index) const;
+    int packed_index(int orbital_index, int coefficient_index) const;
 
-  Eigen::VectorXd pack(const OrbitalPreparationInput& orbital_preparation_input) const;
+    Eigen::VectorXd pack(const OrbitalPreparationInput& orbital_preparation_input) const;
 
-  Eigen::VectorXd gather_from_full(
-      const std::vector<double>& full_vector) const;
+    Eigen::VectorXd gather_from_full(const std::vector<double>& full_vector) const;
 
-  void unpack(
-      const Eigen::VectorXd& packed_parameters,
-      OrbitalPreparationInput* orbital_preparation_input) const;
+    void unpack(const Eigen::VectorXd& packed_parameters,
+                OrbitalPreparationInput* orbital_preparation_input) const;
 
-  const std::vector<int>& differentiable_parameter_indices() const noexcept {
-    return differentiable_parameter_indices_;
-  }
+    const std::vector<int>& differentiable_parameter_indices() const noexcept {
+        return differentiable_parameter_indices_;
+    }
 
-private:
-  int n_orbitals_ = 0;
-  int n_basis_functions_ = 0;
-  int total_slot_count_ = 0;
-  std::vector<int> orbital_coefficient_counts_;
-  std::vector<int> differentiable_parameter_indices_;
-  std::vector<int> flat_to_packed_index_;
+  private:
+    int n_orbitals_ = 0;
+    int n_basis_functions_ = 0;
+    int total_slot_count_ = 0;
+    std::vector<int> orbital_coefficient_counts_;
+    std::vector<int> differentiable_parameter_indices_;
+    std::vector<int> flat_to_packed_index_;
 };
 
 /**
@@ -60,7 +57,6 @@ private:
  * stale tail data so later dense reconstructions cannot accidentally interpret
  * padding as physical orbital support.
  */
-void enforce_strict_sparse_orbital_support(
-    OrbitalPreparationInput* orbital_preparation_input);
+void enforce_strict_sparse_orbital_support(OrbitalPreparationInput* orbital_preparation_input);
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

@@ -12,17 +12,16 @@ namespace diagnostics {
  * theta=||d-alpha*x||_S. All angles are in radians, before core projection.
  */
 struct OrbitalStepGeometry {
-  double alpha = 0.0;
-  double theta = 0.0;
-  double step_norm = 0.0;
-  double actual_angle = 0.0;
-  double norm_ratio = 1.0;
+    double alpha = 0.0;
+    double theta = 0.0;
+    double step_norm = 0.0;
+    double actual_angle = 0.0;
+    double norm_ratio = 1.0;
 };
 
-OrbitalStepGeometry measure_orbital_step(
-    const Eigen::Ref<const Eigen::VectorXd>& coefficients,
-    const Eigen::Ref<const Eigen::VectorXd>& displacement,
-    const Eigen::Ref<const Eigen::MatrixXd>& overlap);
+OrbitalStepGeometry measure_orbital_step(const Eigen::Ref<const Eigen::VectorXd>& coefficients,
+                                         const Eigen::Ref<const Eigen::VectorXd>& displacement,
+                                         const Eigen::Ref<const Eigen::MatrixXd>& overlap);
 
 /** @brief Explicit geometry logging only; never an optimizer policy. */
 bool orbital_step_audit_enabled();
@@ -31,8 +30,9 @@ bool orbital_step_audit_enabled();
 void audit_orbital_step(const OrbitalPreparationInput& input,
                         const OrbitalChart& chart,
                         const Eigen::VectorXd& reduced_step,
-                        const char* stage, int micro,
+                        const char* stage,
+                        int micro,
                         const Eigen::VectorXd& base_reduced = Eigen::VectorXd{});
 
-}  // namespace diagnostics
-}  // namespace xmvb::vb
+} // namespace diagnostics
+} // namespace xmvb::vb

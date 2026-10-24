@@ -15,43 +15,38 @@ namespace xmvb::vb {
  * with a selectable L-BFGS backend.
  */
 class VbScfOptimizer {
-public:
-  /**
+  public:
+    /**
    * @brief Creates an optimizer with default helper components.
    */
-  explicit VbScfOptimizer(
-      VbScfOptimizerOptions options = {});
+    explicit VbScfOptimizer(VbScfOptimizerOptions options = {});
 
-  /**
+    /**
    * @brief Creates an optimizer with explicit helper components.
    */
-  VbScfOptimizer(
-      OrbitalGradientEvaluator orbital_gradient_evaluator,
-      VbScfOptimizerOptions options);
+    VbScfOptimizer(OrbitalGradientEvaluator orbital_gradient_evaluator,
+                   VbScfOptimizerOptions options);
 
-  /**
+    /**
    * @brief Optimizes the ground-state orbital parameters.
    *
    * The optimizer consumes `input` and transfers it into the result.
    */
-  VbScfOptimizerResult optimize(
-      VbScfInput input,
-      double nuclear_repulsion_energy = 0.0) const;
+    VbScfOptimizerResult optimize(VbScfInput input, double nuclear_repulsion_energy = 0.0) const;
 
-  /**
+    /**
    * @brief Optimizes a selected-state or state-averaged objective.
    *
    * The optimizer consumes `input` and transfers it into the result.
    */
-  VbScfOptimizerResult optimize(
-      VbScfInput input,
-      const std::vector<int>& selected_state_indices,
-      const std::vector<double>& state_average_weights,
-      double nuclear_repulsion_energy) const;
+    VbScfOptimizerResult optimize(VbScfInput input,
+                                  const std::vector<int>& selected_state_indices,
+                                  const std::vector<double>& state_average_weights,
+                                  double nuclear_repulsion_energy) const;
 
-private:
-  OrbitalGradientEvaluator orbital_gradient_evaluator_;
-  VbScfOptimizerOptions options_;
+  private:
+    OrbitalGradientEvaluator orbital_gradient_evaluator_;
+    VbScfOptimizerOptions options_;
 };
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

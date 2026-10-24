@@ -9,47 +9,47 @@ namespace xmvb::linalg {
 
 /** @brief Termination state of a symmetric MINRES solve. */
 enum class MinresStopReason {
-  Converged,
-  IterationLimit,
-  LanczosBreakdown,
-  NonPositivePreconditioner,
+    Converged,
+    IterationLimit,
+    LanczosBreakdown,
+    NonPositivePreconditioner,
 };
 
 /** @brief Accuracy and algebraic work limit for matrix-free MINRES. */
 struct MinresOptions {
-  /** Relative Euclidean residual tolerance, measured against `||rhs||_2`. */
-  double relative_residual_tolerance = 1.0e-8;
-  /** Absolute Euclidean residual tolerance. */
-  double absolute_residual_tolerance = 0.0;
-  /**
+    /** Relative Euclidean residual tolerance, measured against `||rhs||_2`. */
+    double relative_residual_tolerance = 1.0e-8;
+    /** Absolute Euclidean residual tolerance. */
+    double absolute_residual_tolerance = 0.0;
+    /**
    * Maximum Lanczos iterations. Zero selects the algebraic dimension, which
    * is the exact-arithmetic completeness limit rather than an empirical cap.
    */
-  int maximum_iterations = 0;
+    int maximum_iterations = 0;
 };
 
 /** @brief Certified result of a matrix-free symmetric-indefinite solve. */
 struct MinresResult {
-  Eigen::VectorXd solution;
-  /** Explicit final operator image `A * solution`. */
-  Eigen::VectorXd operator_image;
-  /** Explicit final residual `rhs - operator_image`. */
-  Eigen::VectorXd residual;
-  MinresStopReason stop_reason = MinresStopReason::IterationLimit;
-  int iterations = 0;
-  int operator_actions = 0;
-  int preconditioner_actions = 0;
-  int residual_checks = 0;
-  int reliable_restarts = 0;
-  double rhs_norm = 0.0;
-  double residual_norm = 0.0;
-  double residual_target = 0.0;
-  double estimated_preconditioned_residual_norm = 0.0;
+    Eigen::VectorXd solution;
+    /** Explicit final operator image `A * solution`. */
+    Eigen::VectorXd operator_image;
+    /** Explicit final residual `rhs - operator_image`. */
+    Eigen::VectorXd residual;
+    MinresStopReason stop_reason = MinresStopReason::IterationLimit;
+    int iterations = 0;
+    int operator_actions = 0;
+    int preconditioner_actions = 0;
+    int residual_checks = 0;
+    int reliable_restarts = 0;
+    double rhs_norm = 0.0;
+    double residual_norm = 0.0;
+    double residual_target = 0.0;
+    double estimated_preconditioned_residual_norm = 0.0;
 
-  /** @brief Whether the explicitly evaluated Euclidean residual is certified. */
-  bool converged() const noexcept {
-    return stop_reason == MinresStopReason::Converged;
-  }
+    /** @brief Whether the explicitly evaluated Euclidean residual is certified. */
+    bool converged() const noexcept {
+        return stop_reason == MinresStopReason::Converged;
+    }
 };
 
 /**
@@ -66,11 +66,10 @@ struct MinresResult {
  * `A_lambda(p,z) = ((A + lambda M)p + B^T z, Bp + Cz)`. MINRES remains
  * independent of the block interpretation and leaves `lambda` to the caller.
  */
-MinresResult solve_symmetric_minres(
-    const VectorAction& apply_operator,
-    const Eigen::Ref<const Eigen::VectorXd>& rhs,
-    const MinresOptions& options,
-    const VectorAction& apply_inverse_preconditioner = {},
-    const Eigen::VectorXd& initial_guess = Eigen::VectorXd());
+MinresResult solve_symmetric_minres(const VectorAction& apply_operator,
+                                    const Eigen::Ref<const Eigen::VectorXd>& rhs,
+                                    const MinresOptions& options,
+                                    const VectorAction& apply_inverse_preconditioner = {},
+                                    const Eigen::VectorXd& initial_guess = Eigen::VectorXd());
 
-}  // namespace xmvb::linalg
+} // namespace xmvb::linalg

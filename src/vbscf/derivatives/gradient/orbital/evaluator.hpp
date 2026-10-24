@@ -22,10 +22,10 @@ struct AcceptedPointContext;
 
 /** @brief Orbital pullback and structure residual at a coupled keyframe. */
 struct OrbitalFixedStructureGradient {
-  OrbitalGradientResult gradient;
-  Eigen::MatrixXd normalized_coefficients;
-  Eigen::MatrixXd structure_residuals;
-  Eigen::MatrixXd coefficient_gradient;
+    OrbitalGradientResult gradient;
+    Eigen::MatrixXd normalized_coefficients;
+    Eigen::MatrixXd structure_residuals;
+    Eigen::MatrixXd coefficient_gradient;
 };
 
 /**
@@ -37,32 +37,31 @@ struct OrbitalFixedStructureGradient {
  * analytically.
  */
 class OrbitalGradientEvaluator {
-public:
-  OrbitalGradientEvaluator() = default;
+  public:
+    OrbitalGradientEvaluator() = default;
 
-  /**
+    /**
    * @brief Evaluates the ground-state orbital gradient.
    *
    * @param input VBSCF input bundle.
    * @param nuclear_repulsion_energy Nuclear repulsion energy.
    * @return OrbitalGradientResult Baseline result and orbital gradient.
    */
-  OrbitalGradientResult evaluate(
-      const VbScfInput& input,
-      double nuclear_repulsion_energy = 0.0) const;
+    OrbitalGradientResult evaluate(const VbScfInput& input,
+                                   double nuclear_repulsion_energy = 0.0) const;
 
-  /**
+    /**
    * @brief Evaluates the ground-state orbital gradient without the exact `E11` orbital gradient.
    *
    * This is intended for optimization inner loops that only need the objective
    * gradient. Accepted-iterate trace generation can request the exact `E11`
    * gradient later from the cached intermediates in the returned result.
    */
-  OrbitalGradientResult evaluate_without_reference_energy_gradient(
-      const VbScfInput& input,
-      double nuclear_repulsion_energy = 0.0) const;
+    OrbitalGradientResult
+    evaluate_without_reference_energy_gradient(const VbScfInput& input,
+                                               double nuclear_repulsion_energy = 0.0) const;
 
-  /**
+    /**
    * @brief Evaluates a state-averaged orbital gradient.
    *
    * @param input VBSCF input bundle.
@@ -71,76 +70,72 @@ public:
    * @param nuclear_repulsion_energy Nuclear repulsion energy.
    * @return OrbitalGradientResult Baseline result and orbital gradient.
    */
-  OrbitalGradientResult evaluate(
-      const VbScfInput& input,
-      const std::vector<int>& selected_state_indices,
-      const std::vector<double>& state_average_weights,
-      double nuclear_repulsion_energy) const;
+    OrbitalGradientResult evaluate(const VbScfInput& input,
+                                   const std::vector<int>& selected_state_indices,
+                                   const std::vector<double>& state_average_weights,
+                                   double nuclear_repulsion_energy) const;
 
-  /**
+    /**
    * @brief Evaluates the orbital gradient from a precomputed active-space result.
    *
    * This reuses an already differentiated active-space layer and performs only
    * the lower orbital/AO pullback plus the exact `E11` orbital gradient.
    */
-  OrbitalGradientResult evaluate(
-      const VbScfInput& input,
-      ActiveSpaceGradientResult active_space_gradient_result) const;
+    OrbitalGradientResult evaluate(const VbScfInput& input,
+                                   ActiveSpaceGradientResult active_space_gradient_result) const;
 
-  /**
+    /**
    * @brief Evaluates a state-averaged orbital gradient without the exact `E11` orbital gradient.
    */
-  OrbitalGradientResult evaluate_without_reference_energy_gradient(
-      const VbScfInput& input,
-      const std::vector<int>& selected_state_indices,
-      const std::vector<double>& state_average_weights,
-      double nuclear_repulsion_energy) const;
+    OrbitalGradientResult
+    evaluate_without_reference_energy_gradient(const VbScfInput& input,
+                                               const std::vector<int>& selected_state_indices,
+                                               const std::vector<double>& state_average_weights,
+                                               double nuclear_repulsion_energy) const;
 
-  /** @brief Evaluates selected structure roots with the requested eigensolver. */
-  OrbitalGradientResult evaluate_without_reference_energy_gradient(
-      const VbScfInput& input,
-      const std::vector<int>& selected_state_indices,
-      const std::vector<double>& state_average_weights,
-      double nuclear_repulsion_energy,
-      StructureEigensolver structure_eigensolver,
-      StructureSolveAccuracy structure_solve_accuracy,
-      const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors) const;
+    /** @brief Evaluates selected structure roots with the requested eigensolver. */
+    OrbitalGradientResult evaluate_without_reference_energy_gradient(
+        const VbScfInput& input,
+        const std::vector<int>& selected_state_indices,
+        const std::vector<double>& state_average_weights,
+        double nuclear_repulsion_energy,
+        StructureEigensolver structure_eigensolver,
+        StructureSolveAccuracy structure_solve_accuracy,
+        const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors) const;
 
-  /** @brief Evaluates a trial energy while retaining all reusable forward work. */
-  ActiveSpaceForwardEvaluation evaluate_forward(
-      const VbScfInput& input,
-      const std::vector<int>& selected_state_indices,
-      const std::vector<double>& state_average_weights,
-      double nuclear_repulsion_energy,
-      StructureEigensolver structure_eigensolver,
-      StructureSolveAccuracy structure_solve_accuracy,
-      const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors) const;
+    /** @brief Evaluates a trial energy while retaining all reusable forward work. */
+    ActiveSpaceForwardEvaluation
+    evaluate_forward(const VbScfInput& input,
+                     const std::vector<int>& selected_state_indices,
+                     const std::vector<double>& state_average_weights,
+                     double nuclear_repulsion_energy,
+                     StructureEigensolver structure_eigensolver,
+                     StructureSolveAccuracy structure_solve_accuracy,
+                     const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors) const;
 
-  /** @brief Completes the orbital gradient without repeating a trial forward pass. */
-  OrbitalGradientResult complete_gradient(
-      const VbScfInput& input,
-      ActiveSpaceForwardEvaluation forward_evaluation) const;
+    /** @brief Completes the orbital gradient without repeating a trial forward pass. */
+    OrbitalGradientResult complete_gradient(const VbScfInput& input,
+                                            ActiveSpaceForwardEvaluation forward_evaluation) const;
 
-  /** @brief Evaluates a coupled keyframe without solving the structure eigenproblem.
+    /** @brief Evaluates a coupled keyframe without solving the structure eigenproblem.
    * Retain the second-order context only when an HVP at this fixed frame is needed.
    */
-  OrbitalFixedStructureGradient evaluate_fixed_structure(
-      const VbScfInput& input,
-      const std::vector<int>& selected_state_indices,
-      const std::vector<double>& state_average_weights,
-      double nuclear_repulsion_energy,
-      const Eigen::Ref<const Eigen::MatrixXd>& structure_coefficients,
-      const SelectedMetric* metric = nullptr,
-      bool retain_context = false) const;
+    OrbitalFixedStructureGradient
+    evaluate_fixed_structure(const VbScfInput& input,
+                             const std::vector<int>& selected_state_indices,
+                             const std::vector<double>& state_average_weights,
+                             double nuclear_repulsion_energy,
+                             const Eigen::Ref<const Eigen::MatrixXd>& structure_coefficients,
+                             const SelectedMetric* metric = nullptr,
+                             bool retain_context = false) const;
 
-  /**
+    /**
    * @brief Evaluates the orbital gradient pullback from a precomputed active-space result.
    */
-  OrbitalGradientResult evaluate_without_reference_energy_gradient(
-      const VbScfInput& input,
-      ActiveSpaceGradientResult active_space_gradient_result) const;
+    OrbitalGradientResult evaluate_without_reference_energy_gradient(
+        const VbScfInput& input, ActiveSpaceGradientResult active_space_gradient_result) const;
 
-  /**
+    /**
    * @brief Evaluates a cheap accepted-point core gradient under frozen active-space adjoints.
    *
    * This keeps the accepted-point active-space adjoint buffers fixed and only
@@ -148,12 +143,13 @@ public:
    * new orbital point. It is intended as an intermediate HVP oracle between the
    * cheap reduced-curvature diagonal and the future full exact direct-action operator.
    */
-  OrbitalGradientResult evaluate_without_reference_energy_gradient_with_fixed_active_space_adjoint(
-      const VbScfInput& input,
-      const AcceptedPointContext& accepted_point_context,
-      double nuclear_repulsion_energy) const;
+    OrbitalGradientResult
+    evaluate_without_reference_energy_gradient_with_fixed_active_space_adjoint(
+        const VbScfInput& input,
+        const AcceptedPointContext& accepted_point_context,
+        double nuclear_repulsion_energy) const;
 
-  /**
+    /**
    * @brief Evaluates only the sparse orbital-energy gradient for a fixed active-space adjoint probe.
    *
    * Matrix-free exact-context HVP probes need only the orbital gradient vector
@@ -161,27 +157,26 @@ public:
    * materializing the full `OrbitalGradientResult`, avoiding repeated
    * integral and bookkeeping copies on every `H v` application.
    */
-  std::vector<double> evaluate_sparse_orbital_gradient_with_fixed_active_space_adjoint(
-      const VbScfInput& input,
-      const AcceptedPointContext& accepted_point_context,
-      double nuclear_repulsion_energy) const;
+    std::vector<double> evaluate_sparse_orbital_gradient_with_fixed_active_space_adjoint(
+        const VbScfInput& input,
+        const AcceptedPointContext& accepted_point_context,
+        double nuclear_repulsion_energy) const;
 
-  /**
+    /**
    * @brief Populates the exact `E11` orbital gradient if it is not already present.
    */
-  void populate_reference_energy_gradient(
-      const VbScfInput& input,
-      OrbitalGradientResult* result) const;
+    void populate_reference_energy_gradient(const VbScfInput& input,
+                                            OrbitalGradientResult* result) const;
 
-private:
-  ActiveSpaceGradientEvaluator active_space_gradient_evaluator_;
-  AoEffectiveOneElectronBackpropagator ao_effective_one_electron_backpropagator_;
+  private:
+    ActiveSpaceGradientEvaluator active_space_gradient_evaluator_;
+    AoEffectiveOneElectronBackpropagator ao_effective_one_electron_backpropagator_;
 
-  ActiveSpaceOrbitalBackpropagator active_space_orbital_backpropagator_;
-  OrbitalGradientResult evaluate_from_active_space_gradient_result(
-      const VbScfInput& input,
-      ActiveSpaceGradientResult active_space_gradient_result,
-      const std::chrono::steady_clock::time_point& total_start_time) const;
+    ActiveSpaceOrbitalBackpropagator active_space_orbital_backpropagator_;
+    OrbitalGradientResult evaluate_from_active_space_gradient_result(
+        const VbScfInput& input,
+        ActiveSpaceGradientResult active_space_gradient_result,
+        const std::chrono::steady_clock::time_point& total_start_time) const;
 };
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

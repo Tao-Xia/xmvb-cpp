@@ -21,10 +21,9 @@ namespace xmvb::integrals {
  * @throws std::length_error if even one auxiliary row cannot fit in the
  *         requested numerical workspace.
  */
-Eigen::MatrixXd transform_ri_pair_factors(
-    const Eigen::Ref<const Eigen::MatrixXd>& factors,
-    const Eigen::Ref<const Eigen::MatrixXd>& frame,
-    std::size_t workspace_bytes = workspace::available());
+Eigen::MatrixXd transform_ri_pair_factors(const Eigen::Ref<const Eigen::MatrixXd>& factors,
+                                          const Eigen::Ref<const Eigen::MatrixXd>& frame,
+                                          std::size_t workspace_bytes = workspace::available());
 
 /** @brief Differentiate the RI pair-factor transform in arbitrary directions.
  *
@@ -33,12 +32,12 @@ Eigen::MatrixXd transform_ri_pair_factors(
  * This implementation reuses B Q within each auxiliary tile. Its explicit
  * numerical workspace is three shared tile matrices.
  */
-Eigen::MatrixXd transform_ri_pair_factor_direction(
-    const Eigen::Ref<const Eigen::MatrixXd>& factors,
-    const Eigen::Ref<const Eigen::MatrixXd>& factor_direction,
-    const Eigen::Ref<const Eigen::MatrixXd>& frame,
-    const Eigen::Ref<const Eigen::MatrixXd>& frame_direction,
-    std::size_t workspace_bytes = workspace::available());
+Eigen::MatrixXd
+transform_ri_pair_factor_direction(const Eigen::Ref<const Eigen::MatrixXd>& factors,
+                                   const Eigen::Ref<const Eigen::MatrixXd>& factor_direction,
+                                   const Eigen::Ref<const Eigen::MatrixXd>& frame,
+                                   const Eigen::Ref<const Eigen::MatrixXd>& frame_direction,
+                                   std::size_t workspace_bytes = workspace::available());
 
 /** @brief Differentiate from accepted, already-transformed RI factors.
  *
@@ -54,4 +53,4 @@ Eigen::MatrixXd transform_ri_pair_factor_direction_from_orthogonal(
     const Eigen::Ref<const Eigen::MatrixXd>& frame_connection,
     std::size_t workspace_bytes = workspace::available());
 
-}  // namespace xmvb::integrals
+} // namespace xmvb::integrals

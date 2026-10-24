@@ -9,24 +9,24 @@
 namespace xmvb::integrals {
 
 struct AoEffectiveOneElectronRiOperatorOptions {
-  /**
+    /**
    * @brief Tries a spectral factorization `X = U S U^T` before the RI sweep.
    *
    * When the symmetric input matrix is numerically low-rank, the exchange
    * contribution can be evaluated from `L_A U` with `O(n_bf^2 r)` work per
    * auxiliary instead of `O(n_bf^3)`.
    */
-  bool attempt_spectral_factorization = false;
+    bool attempt_spectral_factorization = false;
 
-  /**
+    /**
    * @brief Absolute cutoff for keeping spectral components in `X`.
    */
-  double spectral_eigenvalue_cutoff = 1.0e-10;
+    double spectral_eigenvalue_cutoff = 1.0e-10;
 
-  /**
+    /**
    * @brief Enables the low-rank path only when `rank(X)` stays below this fraction.
    */
-  double low_rank_fraction_cutoff = 0.75;
+    double low_rank_fraction_cutoff = 0.75;
 };
 
 /**
@@ -40,9 +40,9 @@ struct AoEffectiveOneElectronRiOperatorOptions {
  * `X = U_{+} U_{+}^T - U_{-} U_{-}^T`.
  */
 struct AoEffectiveOneElectronRiLowRankFactors {
-  Eigen::MatrixXd scaled_factor_matrix;
-  int n_positive_components = 0;
-  int n_negative_components = 0;
+    Eigen::MatrixXd scaled_factor_matrix;
+    int n_positive_components = 0;
+    int n_negative_components = 0;
 };
 
 /**
@@ -52,13 +52,13 @@ struct AoEffectiveOneElectronRiLowRankFactors {
  * must not be used concurrently by more than one call.
  */
 struct AoEffectiveOneElectronRiFusedWorkspace {
-  std::vector<Eigen::MatrixXd> partial_forward;
-  std::vector<Eigen::MatrixXd> partial_adjoint;
-  std::vector<Eigen::MatrixXd> factor_matrices;
-  std::vector<Eigen::MatrixXd> left_products;
-  std::vector<Eigen::MatrixXd> exchange_products;
-  std::vector<double> weighted_packed_forward;
-  std::vector<double> weighted_packed_adjoint;
+    std::vector<Eigen::MatrixXd> partial_forward;
+    std::vector<Eigen::MatrixXd> partial_adjoint;
+    std::vector<Eigen::MatrixXd> factor_matrices;
+    std::vector<Eigen::MatrixXd> left_products;
+    std::vector<Eigen::MatrixXd> exchange_products;
+    std::vector<double> weighted_packed_forward;
+    std::vector<double> weighted_packed_adjoint;
 };
 
 /**
@@ -114,4 +114,4 @@ void apply_ao_effective_one_electron_ri_operator_fused(
     Eigen::MatrixXd* forward,
     Eigen::MatrixXd* transpose);
 
-}  // namespace xmvb::integrals
+} // namespace xmvb::integrals

@@ -15,17 +15,16 @@ namespace xmvb::vb {
  * by determinant-pair contractions.
  */
 class DeterminantOverlapResolver {
-public:
-
-  /**
+  public:
+    /**
    * @brief Constructs a resolver with a singular-value threshold.
    *
    * @param linear_dependence_threshold Singular values below this value are
    *   treated as zero when computing nullity.
    */
-  explicit DeterminantOverlapResolver(double linear_dependence_threshold = 1.0e-12);
+    explicit DeterminantOverlapResolver(double linear_dependence_threshold = 1.0e-12);
 
-  /**
+    /**
    * @brief Resolves determinant overlap quantities for a square overlap matrix.
    *
    * The input matrix must use column-major storage so that it remains layout
@@ -36,11 +35,10 @@ public:
    * @return DeterminantOverlapResult Thresholded nullity plus either a cached
    *   LU inverse for regular pairs or SVD factors for singular pairs.
    */
-  DeterminantOverlapResult resolve(
-      const std::vector<double>& overlap_submatrix,
-      int n_electrons) const;
+    DeterminantOverlapResult resolve(const std::vector<double>& overlap_submatrix,
+                                     int n_electrons) const;
 
-  /**
+    /**
    * @brief Resolves determinant overlap quantities from an Eigen matrix view.
    *
    * This overload keeps the same algebra as the column-major vector entry
@@ -52,24 +50,23 @@ public:
    * @return DeterminantOverlapResult Thresholded nullity plus either a cached
    *   LU inverse for regular pairs or SVD factors for singular pairs.
    */
-  DeterminantOverlapResult resolve_matrix(
-      const Eigen::MatrixXd& overlap_submatrix) const;
+    DeterminantOverlapResult resolve_matrix(const Eigen::MatrixXd& overlap_submatrix) const;
 
-  /** @brief Computes only the overlap determinant, without an inverse.
+    /** @brief Computes only the overlap determinant, without an inverse.
    * Uses the same LU/SVD rank decisions as resolve_matrix(). Intended for
    * norm and overlap consumers that do not need density/cofactor data.
    */
-  double determinant(const Eigen::MatrixXd& overlap_submatrix) const;
+    double determinant(const Eigen::MatrixXd& overlap_submatrix) const;
 
-  /**
+    /**
    * @brief Returns the singular-value threshold used by the resolver.
    */
-  double linear_dependence_threshold() const {
-    return linear_dependence_threshold_;
-  }
+    double linear_dependence_threshold() const {
+        return linear_dependence_threshold_;
+    }
 
-private:
-  double linear_dependence_threshold_;
+  private:
+    double linear_dependence_threshold_;
 };
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

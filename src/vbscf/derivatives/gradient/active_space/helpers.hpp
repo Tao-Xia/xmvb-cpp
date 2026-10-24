@@ -30,4 +30,4 @@ void initialize_active_space_gradient_probe_result(
     TimedPreparedActiveSpaceContext&& timed_active_space_context,
     ActiveSpaceGradientResult* result);
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

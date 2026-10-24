@@ -4,10 +4,10 @@ namespace xmvb::vb {
 
 /** @brief Orbital model used only to precondition a matrix-free solve. */
 enum class OrbitalPreconditioner {
-  Automatic,
-  Identity,
-  OneElectron,
-  HessianDiagonal,
+    Automatic,
+    Identity,
+    OneElectron,
+    HessianDiagonal,
 };
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

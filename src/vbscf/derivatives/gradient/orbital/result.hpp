@@ -21,130 +21,130 @@ struct AcceptedPointContext;
  * Entries corresponding to unused sparse slots are set to zero.
  */
 struct OrbitalGradientResult {
-  /**
+    /**
    * @brief Wall time spent in the active-space gradient evaluator.
    */
-  double active_space_gradient_wall_time_seconds = 0.0;
+    double active_space_gradient_wall_time_seconds = 0.0;
 
-  /**
+    /**
    * @brief Wall time spent in orbital preparation inside the active-space stage.
    */
-  double orbital_preparation_wall_time_seconds = 0.0;
+    double orbital_preparation_wall_time_seconds = 0.0;
 
-  /**
+    /**
    * @brief Wall time spent building the AO effective one-electron matrix inside the active-space stage.
    */
-  double ao_effective_one_electron_wall_time_seconds = 0.0;
+    double ao_effective_one_electron_wall_time_seconds = 0.0;
 
-  /**
+    /**
    * @brief Wall time spent building the active-space one-electron matrix inside the active-space stage.
    */
-  double active_one_electron_wall_time_seconds = 0.0;
+    double active_one_electron_wall_time_seconds = 0.0;
 
-  /**
+    /**
    * @brief Wall time spent building packed active-space two-electron integrals inside the active-space stage.
    */
-  double active_two_electron_wall_time_seconds = 0.0;
+    double active_two_electron_wall_time_seconds = 0.0;
 
-  /**
+    /**
    * @brief Wall time spent assembling the structure matrices inside the active-space stage.
    */
-  double structure_matrix_wall_time_seconds = 0.0;
+    double structure_matrix_wall_time_seconds = 0.0;
 
-  /**
+    /**
    * @brief Wall time spent in the generalized eigensolver inside the active-space stage.
    */
-  double eigensolver_wall_time_seconds = 0.0;
+    double eigensolver_wall_time_seconds = 0.0;
 
-  /**
+    /**
    * @brief Wall time spent in the active-space adjoint sweep.
    */
-  double active_space_adjoint_wall_time_seconds = 0.0;
+    double active_space_adjoint_wall_time_seconds = 0.0;
 
-  /**
+    /**
    * @brief Wall time spent backpropagating through the active-space matrix layer.
    */
-  double active_space_matrix_backpropagation_wall_time_seconds = 0.0;
+    double active_space_matrix_backpropagation_wall_time_seconds = 0.0;
 
-  /**
+    /**
    * @brief Wall time spent backpropagating packed active-space two-electron integrals.
    */
-  double active_space_two_electron_backpropagation_wall_time_seconds = 0.0;
+    double active_space_two_electron_backpropagation_wall_time_seconds = 0.0;
 
-  /**
+    /**
    * @brief Wall time spent backpropagating through the AO effective one-electron layer.
    */
-  double ao_effective_one_electron_backpropagation_wall_time_seconds = 0.0;
+    double ao_effective_one_electron_backpropagation_wall_time_seconds = 0.0;
 
-  /**
+    /**
    * @brief Wall time spent projecting the gradient back to sparse orbital coefficients.
    */
-  double orbital_backpropagation_wall_time_seconds = 0.0;
+    double orbital_backpropagation_wall_time_seconds = 0.0;
 
-  /**
+    /**
    * @brief Total wall time for the orbital gradient evaluation.
    */
-  double total_wall_time_seconds = 0.0;
+    double total_wall_time_seconds = 0.0;
 
-  /**
+    /**
    * @brief Baseline single-step VBSCF evaluation.
    */
-  VbScfResult scf_result;
+    VbScfResult scf_result;
 
-  /**
+    /**
    * @brief Cached orbital-preparation intermediates for optional follow-on work.
    *
    * The optimizer uses this to defer expensive accepted-iterate-only outputs
    * such as the exact `E11` orbital gradient.
    */
-  OrbitalPreparationResult orbital_preparation_result;
+    OrbitalPreparationResult orbital_preparation_result;
 
-  /**
+    /**
    * @brief Cached AO effective one-electron intermediates for optional follow-on work.
    */
-  AoEffectiveOneElectronResult ao_effective_one_electron_result;
+    AoEffectiveOneElectronResult ao_effective_one_electron_result;
 
-  /**
+    /**
    * @brief Column-major active-orbital overlap matrix `SSO`.
    */
-  std::vector<double> active_orbital_overlap_matrix;
+    std::vector<double> active_orbital_overlap_matrix;
 
-  /**
+    /**
    * @brief Active h in the same frame as packed G, specified by two_electron_frame.
    */
-  Eigen::MatrixXd active_one_electron_integrals;
+    Eigen::MatrixXd active_one_electron_integrals;
 
-  /**
+    /**
    * @brief Packed active integrals in the frame specified by two_electron_frame.
    */
-  std::vector<double> packed_active_two_electron_integrals;
+    std::vector<double> packed_active_two_electron_integrals;
 
-  /** @brief Upper R for the C R^-1 integral frame; empty denotes raw orbitals. */
-  Eigen::MatrixXd two_electron_frame;
+    /** @brief Upper R for the C R^-1 integral frame; empty denotes raw orbitals. */
+    Eigen::MatrixXd two_electron_frame;
 
-  /**
+    /**
    * @brief Flat indices of the explicit sparse orbital coefficients.
    */
-  std::vector<int> differentiable_parameter_indices;
+    std::vector<int> differentiable_parameter_indices;
 
-  /**
+    /**
    * @brief Energy gradient with respect to `orbital_value_table`.
    */
-  std::vector<double> sparse_orbital_energy_gradient;
+    std::vector<double> sparse_orbital_energy_gradient;
 
-  /**
+    /**
    * @brief Exact `E11` gradient with respect to `orbital_value_table`.
    */
-  std::vector<double> sparse_orbital_reference_energy_gradient;
+    std::vector<double> sparse_orbital_reference_energy_gradient;
 
-  /**
+    /**
    * @brief Accepted-point active-space context for exact direct-action HVP work.
    *
    * Relaxed orbital-gradient evaluations populate this cache so outer
    * optimizers can reuse the accepted-point unique-spin and structure-basis
    * intermediates without rebuilding them from scratch.
    */
-  std::shared_ptr<AcceptedPointContext> second_order_context;
+    std::shared_ptr<AcceptedPointContext> second_order_context;
 };
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

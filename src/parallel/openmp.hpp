@@ -22,43 +22,47 @@ namespace xmvb {
  */
 inline int effective_openmp_thread_count() {
 #ifdef _OPENMP
-  if (omp_in_parallel()) {
-    return 1;
-  }
-  const int n_threads = omp_get_max_threads();
-  return n_threads > 0 ? n_threads : 1;
+    if (omp_in_parallel()) {
+        return 1;
+    }
+    const int n_threads = omp_get_max_threads();
+    return n_threads > 0 ? n_threads : 1;
 #else
-  return 1;
+    return 1;
 #endif
 }
 
 /** @brief Available workers for shared-buffer tasks, including an existing team. */
 inline int cooperative_openmp_thread_count() {
 #ifdef _OPENMP
-  if (omp_in_parallel()) return omp_get_num_threads();
+    if (omp_in_parallel())
+        return omp_get_num_threads();
 #endif
-  return effective_openmp_thread_count();
+    return effective_openmp_thread_count();
 }
 
 /** @brief Independent work sharing caller-owned buffers, without a nested team.
  * The callback must not throw and all tasks finish before returning. Its
  * lifetime is borrowed: no coefficient matrix is firstprivate-copied.
  */
-template<class Function>
-void cooperative_openmp_for(std::ptrdiff_t count,int workers,Function&& action) {
-  if (workers<=1) {
-    for (std::ptrdiff_t i=0;i<count;++i) action(i);
-    return;
-  }
+template <class Function>
+void cooperative_openmp_for(std::ptrdiff_t count, int workers, Function&& action) {
+    if (workers <= 1) {
+        for (std::ptrdiff_t i = 0; i < count; ++i)
+            action(i);
+        return;
+    }
 #ifdef _OPENMP
-  if (omp_in_parallel()) {
+    if (omp_in_parallel()) {
 #pragma omp taskloop num_tasks(workers) shared(action)
-    for (std::ptrdiff_t i=0;i<count;++i) action(i);
-    return;
-  }
+        for (std::ptrdiff_t i = 0; i < count; ++i)
+            action(i);
+        return;
+    }
 #endif
 #pragma omp parallel for schedule(static) num_threads(workers)
-  for (std::ptrdiff_t i=0;i<count;++i) action(i);
+    for (std::ptrdiff_t i = 0; i < count; ++i)
+        action(i);
 }
 
 /**
@@ -68,18 +72,14 @@ void cooperative_openmp_for(std::ptrdiff_t count,int workers,Function&& action) 
  * exceed `requested`.  Comparing in `size_t` first is essential for kernels
  * whose work count can exceed `INT_MAX`, such as exact AO integral streams.
  */
-inline int bounded_openmp_thread_count(
-    int requested,
-    std::size_t work_items) {
-  if (requested <= 0) {
-    throw std::invalid_argument("OpenMP thread count must be positive");
-  }
-  if (work_items == 0) {
-    return 1;
-  }
-  return static_cast<int>(std::min(
-      static_cast<std::size_t>(requested),
-      work_items));
+inline int bounded_openmp_thread_count(int requested, std::size_t work_items) {
+    if (requested <= 0) {
+        throw std::invalid_argument("OpenMP thread count must be positive");
+    }
+    if (work_items == 0) {
+        return 1;
+    }
+    return static_cast<int>(std::min(static_cast<std::size_t>(requested), work_items));
 }
 
 /**
@@ -93,9 +93,9 @@ inline int bounded_openmp_thread_count(
  * or precision is discarded.
  */
 inline int coarse_openmp_thread_count(int requested, std::size_t work_items) {
-  const auto workers = static_cast<std::size_t>(
-      bounded_openmp_thread_count(requested, work_items));
-  return workers <= work_items / workers ? static_cast<int>(workers) : 1;
+    const auto workers =
+        static_cast<std::size_t>(bounded_openmp_thread_count(requested, work_items));
+    return workers <= work_items / workers ? static_cast<int>(workers) : 1;
 }
 
 /**
@@ -107,16 +107,18 @@ inline int coarse_openmp_thread_count(int requested, std::size_t work_items) {
  * Actual benefit depends on loop cost and is verified by native benchmarks.
  */
 inline std::size_t openmp_work_pieces(std::size_t work_items, int workers) {
-  if (workers <= 0) throw std::invalid_argument("OpenMP worker count must be positive");
-  if (work_items == 0) return 1;
-  const std::size_t p = workers;
-  return p > work_items / p ? work_items : std::min(work_items, p * p);
+    if (workers <= 0)
+        throw std::invalid_argument("OpenMP worker count must be positive");
+    if (work_items == 0)
+        return 1;
+    const std::size_t p = workers;
+    return p > work_items / p ? work_items : std::min(work_items, p * p);
 }
 
 /** @brief Positive, overflow-safe chunk size for a dynamically balanced loop. */
 inline std::size_t openmp_chunk_size(std::size_t work_items, int workers) {
-  const auto pieces = openmp_work_pieces(work_items, workers);
-  return std::max<std::size_t>(1, work_items / pieces + (work_items % pieces != 0));
+    const auto pieces = openmp_work_pieces(work_items, workers);
+    return std::max<std::size_t>(1, work_items / pieces + (work_items % pieces != 0));
 }
 
-}  // namespace xmvb
+} // namespace xmvb

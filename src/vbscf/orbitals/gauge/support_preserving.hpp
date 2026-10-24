@@ -25,9 +25,8 @@ bool orbital_input_has_support_preserving_gauge_reference(
  *        orbitals will be rotated inside their current span.
  * @return Whether the stored orbital representative changed.
  */
-bool apply_support_preserving_inactive_gauge(
-    const OrbitalPreparationInput& reference_layout,
-    OrbitalPreparationInput* orbital_preparation_input);
+bool apply_support_preserving_inactive_gauge(const OrbitalPreparationInput& reference_layout,
+                                             OrbitalPreparationInput* orbital_preparation_input);
 
 /**
  * @brief Balances inactive orbitals using their preferred sparse support.
@@ -38,8 +37,7 @@ bool apply_support_preserving_inactive_gauge(
  *
  * @return Whether the stored orbital representative changed.
  */
-bool apply_support_preserving_inactive_gauge(
-    OrbitalPreparationInput* orbital_preparation_input);
+bool apply_support_preserving_inactive_gauge(OrbitalPreparationInput* orbital_preparation_input);
 
 /**
  * @brief Balances a sparse active orbital inside its exact inactive-addition gauge.
@@ -55,4 +53,4 @@ bool apply_support_preserving_inactive_gauge(
  */
 bool balance_active_gauge(OrbitalPreparationInput* orbital_preparation_input);
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

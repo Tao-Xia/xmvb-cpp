@@ -17,9 +17,9 @@ namespace xmvb::vb {
  * actual basis asset consumed by the standalone path.
  */
 struct InputDeckBasisBuildResult {
-  std::filesystem::path basis_file_path;
-  std::string basis_display_name;
-  xmvb::integrals::LibcintInput libcint_input;
+    std::filesystem::path basis_file_path;
+    std::string basis_display_name;
+    xmvb::integrals::LibcintInput libcint_input;
 };
 
 /**
@@ -29,8 +29,7 @@ struct InputDeckBasisBuildResult {
  * per-primitive normalization factors required by the AO integral and
  * orbital-preparation code.
  */
-InputDeckBasisBuildResult build_input_deck_basis(
-    const InputDeck& input_deck,
-    const std::string& basis_name);
+InputDeckBasisBuildResult build_input_deck_basis(const InputDeck& input_deck,
+                                                 const std::string& basis_name);
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

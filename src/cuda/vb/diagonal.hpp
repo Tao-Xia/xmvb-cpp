@@ -15,14 +15,18 @@ class ExactAoPairOperator;
  * The AO graph is traversed in bounded pair-row and density channels; neither
  * a full AO four-index tensor nor a unit-rotation HVP loop is formed.
  */
-Matrix<double> build_analytic_rotation_diagonal(
-    Context& context,const ExactAoPairOperator& integrals,
-    linalg::ConstMatrixView accepted_mo,linalg::ConstMatrixView ao_core,
-    linalg::ConstMatrixView ao_effective,
-    linalg::ConstMatrixView active_one_adjoint,
-    linalg::ConstMatrixView full_pair_adjoint,
-    linalg::ConstMatrixView active_pair_kernel,int n_core,
-    ConstPairPanel accepted_products = {},ConstPairPanel exchange_products = {},
-    Buffer<double>* density_projection = nullptr,CoreDiagonalView prepared_core = {});
+Matrix<double> build_analytic_rotation_diagonal(Context& context,
+                                                const ExactAoPairOperator& integrals,
+                                                linalg::ConstMatrixView accepted_mo,
+                                                linalg::ConstMatrixView ao_core,
+                                                linalg::ConstMatrixView ao_effective,
+                                                linalg::ConstMatrixView active_one_adjoint,
+                                                linalg::ConstMatrixView full_pair_adjoint,
+                                                linalg::ConstMatrixView active_pair_kernel,
+                                                int n_core,
+                                                ConstPairPanel accepted_products = {},
+                                                ConstPairPanel exchange_products = {},
+                                                Buffer<double>* density_projection = nullptr,
+                                                CoreDiagonalView prepared_core = {});
 
-}  // namespace xmvb::cuda
+} // namespace xmvb::cuda

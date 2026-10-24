@@ -20,4 +20,4 @@ inline constexpr int kGuessTypeRdci = 3;
 inline constexpr int kGuessTypeMo = 4;
 inline constexpr int kGuessTypeNbo = 5;
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

@@ -17,26 +17,28 @@ namespace xmvb::vb::spinor {
  * per-shear carrier connection graph is retained.
  */
 class Transform {
-public:
-  Transform(std::shared_ptr<const Strings> strings,
-            const Eigen::Ref<const Eigen::MatrixXcd>& upper);
+  public:
+    Transform(std::shared_ptr<const Strings> strings,
+              const Eigen::Ref<const Eigen::MatrixXcd>& upper);
 
-  /** @brief In-place image transform of (carrier dimension, block width). */
-  void apply(Eigen::Ref<Eigen::MatrixXcd> block) const;
-  /** @brief In-place Hermitian adjoint, including conjugated shear factors. */
-  void apply_adjoint(Eigen::Ref<Eigen::MatrixXcd> block) const;
-  const std::shared_ptr<const Strings>& strings() const noexcept { return strings_; }
+    /** @brief In-place image transform of (carrier dimension, block width). */
+    void apply(Eigen::Ref<Eigen::MatrixXcd> block) const;
+    /** @brief In-place Hermitian adjoint, including conjugated shear factors. */
+    void apply_adjoint(Eigen::Ref<Eigen::MatrixXcd> block) const;
+    const std::shared_ptr<const Strings>& strings() const noexcept {
+        return strings_;
+    }
 
-private:
-  struct Shear {
-    int created;
-    int removed;
-    std::complex<double> coefficient;
-  };
-  void validate(const Eigen::Ref<const Eigen::MatrixXcd>& block) const;
-  std::shared_ptr<const Strings> strings_;
-  Eigen::VectorXcd scales_;
-  std::vector<Shear> shears_;
+  private:
+    struct Shear {
+        int created;
+        int removed;
+        std::complex<double> coefficient;
+    };
+    void validate(const Eigen::Ref<const Eigen::MatrixXcd>& block) const;
+    std::shared_ptr<const Strings> strings_;
+    Eigen::VectorXcd scales_;
+    std::vector<Shear> shears_;
 };
 
-}  // namespace xmvb::vb::spinor
+} // namespace xmvb::vb::spinor

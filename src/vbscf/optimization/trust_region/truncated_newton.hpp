@@ -12,76 +12,73 @@
 namespace xmvb::vb {
 
 struct TruncatedNewtonSubspace {
-  /** @brief Response-model revision shared by every cached Hessian image. */
-  std::uint64_t model_revision = 0;
-  Eigen::MatrixXd orthonormal_basis;
-  Eigen::MatrixXd tangent_basis;
-  Eigen::MatrixXd hessian_basis;
-  // Full-space metric images, one per admitted Newton direction.
-  Eigen::MatrixXd metric_basis;
-  Eigen::MatrixXd reduced_hessian;
-  // Only this small projected Gram matrix is factored by the trust solver.
-  Eigen::MatrixXd reduced_metric;
-  Eigen::VectorXd projected_gradient;
+    /** @brief Response-model revision shared by every cached Hessian image. */
+    std::uint64_t model_revision = 0;
+    Eigen::MatrixXd orthonormal_basis;
+    Eigen::MatrixXd tangent_basis;
+    Eigen::MatrixXd hessian_basis;
+    // Full-space metric images, one per admitted Newton direction.
+    Eigen::MatrixXd metric_basis;
+    Eigen::MatrixXd reduced_hessian;
+    // Only this small projected Gram matrix is factored by the trust solver.
+    Eigen::MatrixXd reduced_metric;
+    Eigen::VectorXd projected_gradient;
 };
 
 /** @brief Why the current-point Krylov expansion stopped. */
 enum class TruncatedNewtonStopReason {
-  None,
-  ModelKktConverged,
-  BelowOuterAccuracy,
-  CompleteSpace,
-  DependentDirections,
-  InvalidProjectedStep,
-  RadiusAdjusted,
-  PreconditionedGradient,
+    None,
+    ModelKktConverged,
+    BelowOuterAccuracy,
+    CompleteSpace,
+    DependentDirections,
+    InvalidProjectedStep,
+    RadiusAdjusted,
+    PreconditionedGradient,
 };
 
 struct TruncatedNewtonStepResult {
-  Eigen::VectorXd reduced_step;
-  Eigen::VectorXd reduced_hessian_times_step;
-  Eigen::VectorXd reduced_metric_times_step;
-  TruncatedNewtonSubspace subspace;
-  double retract_tangent_norm = 0.0;
-  bool reached_boundary = false;
-  bool encountered_negative_curvature = false;
-  int subspace_dimension = 0;
-  double projected_model_gradient_norm = 0.0;
-  double model_spectral_radius = 0.0;
-  double trust_region_shift = 0.0;
-  double predicted_decrease = 0.0;
-  /** @brief Requested full-space KKT residual divided by ||g||. */
-  double target_kkt_relative_residual =
-      std::numeric_limits<double>::quiet_NaN();
-  /** @brief Computed-model shifted KKT residual divided by Euclidean ||g||. */
-  double model_kkt_relative_residual =
-      std::numeric_limits<double>::infinity();
-  /** @brief The computed shifted model meets its forcing condition. */
-  bool model_kkt_converged = false;
-  /** @brief An interior unshifted step meets the Newton forcing condition. */
-  bool newton_forcing_converged = false;
-  TruncatedNewtonStopReason stop_reason = TruncatedNewtonStopReason::None;
+    Eigen::VectorXd reduced_step;
+    Eigen::VectorXd reduced_hessian_times_step;
+    Eigen::VectorXd reduced_metric_times_step;
+    TruncatedNewtonSubspace subspace;
+    double retract_tangent_norm = 0.0;
+    bool reached_boundary = false;
+    bool encountered_negative_curvature = false;
+    int subspace_dimension = 0;
+    double projected_model_gradient_norm = 0.0;
+    double model_spectral_radius = 0.0;
+    double trust_region_shift = 0.0;
+    double predicted_decrease = 0.0;
+    /** @brief Requested full-space KKT residual divided by ||g||. */
+    double target_kkt_relative_residual = std::numeric_limits<double>::quiet_NaN();
+    /** @brief Computed-model shifted KKT residual divided by Euclidean ||g||. */
+    double model_kkt_relative_residual = std::numeric_limits<double>::infinity();
+    /** @brief The computed shifted model meets its forcing condition. */
+    bool model_kkt_converged = false;
+    /** @brief An interior unshifted step meets the Newton forcing condition. */
+    bool newton_forcing_converged = false;
+    TruncatedNewtonStopReason stop_reason = TruncatedNewtonStopReason::None;
 };
 
 /** @brief Rechecks model stationarity after a step or its radius changes. */
-void refresh_truncated_newton_step_certificate(
-    const Eigen::VectorXd& reduced_gradient,
-    TruncatedNewtonStepResult* step);
+void refresh_truncated_newton_step_certificate(const Eigen::VectorXd& reduced_gradient,
+                                               TruncatedNewtonStepResult* step);
 
 /** @brief Objective observation of a measured quadratic trial model. */
 struct TruncatedNewtonTrialEvaluation {
-  double actual_decrease = 0.0;
-  double predicted_decrease = 0.0;
-  /** @brief Positive first-order decrease `-g^T s` along the trial step. */
-  double linear_decrease = 0.0;
+    double actual_decrease = 0.0;
+    double predicted_decrease = 0.0;
+    /** @brief Positive first-order decrease `-g^T s` along the trial step. */
+    double linear_decrease = 0.0;
 };
 
 /** @brief Local order of the error in the Hessian model used for a trial. */
 enum class TruncatedNewtonModelFidelity {
-  /** @brief A core/approximate Hessian leaves a quadratic model discrepancy. */
-  CoreApproximate,
-  /** @brief A full or directionally corrected Hessian has cubic remainder. */
-  DirectionallyExact,
+    /** @brief A core/approximate Hessian leaves a quadratic model discrepancy. */
+    CoreApproximate,
+    /** @brief A full or directionally corrected Hessian has cubic remainder. */
+    DirectionallyExact,
 };
 
 /**
@@ -93,11 +90,10 @@ enum class TruncatedNewtonModelFidelity {
  * contraction can meet the componentwise outer threshold, the forcing is
  * additionally bounded by @f$\epsilon_g/\|g_k\|_2@f$.
  */
-double inexact_newton_forcing_term(
-    double gradient_l2_norm,
-    double gradient_inf_norm,
-    double initial_gradient_l2_norm,
-    double gradient_tolerance);
+double inexact_newton_forcing_term(double gradient_l2_norm,
+                                   double gradient_inf_norm,
+                                   double initial_gradient_l2_norm,
+                                   double gradient_tolerance);
 
 /**
  * @brief Requests exact curvature when the last outer step missed its forcing.
@@ -106,10 +102,9 @@ double inexact_newton_forcing_term(
  * predictor. Exact HVP correction is admitted at the next point only when the
  * measured gradient contraction exceeds the inexact-Newton target.
  */
-bool observed_contraction_requires_newton_correction(
-    double source_gradient_l2_norm,
-    double accepted_gradient_l2_norm,
-    double forcing_term);
+bool observed_contraction_requires_newton_correction(double source_gradient_l2_norm,
+                                                     double accepted_gradient_l2_norm,
+                                                     double forcing_term);
 
 /**
  * @brief Tests whether further inner work is below both outer accuracies.
@@ -117,11 +112,10 @@ bool observed_contraction_requires_newton_correction(
  * This is an inner-work stopping rule, not an outer convergence declaration;
  * the accepted trial must still satisfy the measured dual stopping test.
  */
-bool truncated_newton_model_is_below_outer_accuracy(
-    double gradient_inf_norm,
-    double predicted_decrease,
-    double gradient_tolerance,
-    double energy_tolerance);
+bool truncated_newton_model_is_below_outer_accuracy(double gradient_inf_norm,
+                                                    double predicted_decrease,
+                                                    double gradient_tolerance,
+                                                    double energy_tolerance);
 
 /**
  * @brief Tests energy decrease and the fidelity-specific model certificate.
@@ -131,9 +125,8 @@ bool truncated_newton_model_is_below_outer_accuracy(
  * retained so its exact gradient updates the missing-curvature secants; its
  * measured model error contracts the next trust radius.
  */
-bool truncated_newton_trial_is_acceptable(
-    const TruncatedNewtonTrialEvaluation& trial,
-    bool accept_model_inaccurate_monotone);
+bool truncated_newton_trial_is_acceptable(const TruncatedNewtonTrialEvaluation& trial,
+                                          bool accept_model_inaccurate_monotone);
 
 void clamp_nonredundant_step_result_to_retract_tangent_radius(
     const OrbitalChart::ProjectionResult& current_projection,
@@ -148,24 +141,21 @@ void clamp_nonredundant_step_result_to_retract_tangent_radius(
  * additional HVP is evaluated. The step is shortened only when the positive
  * directional curvature places the one-dimensional minimizer inside it.
  */
-bool minimize_truncated_newton_step_on_ray(
-    const OrbitalChart::ProjectionResult& current_projection,
-    TruncatedNewtonStepResult* step);
+bool minimize_truncated_newton_step_on_ray(const OrbitalChart::ProjectionResult& current_projection,
+                                           TruncatedNewtonStepResult* step);
 
-bool truncated_newton_subspace_is_usable(
-    const TruncatedNewtonSubspace& subspace,
-    Eigen::Index reduced_size);
+bool truncated_newton_subspace_is_usable(const TruncatedNewtonSubspace& subspace,
+                                         Eigen::Index reduced_size);
 
-bool truncated_newton_step_is_usable(
-    const TruncatedNewtonStepResult& step,
-    const Eigen::VectorXd& reduced_gradient);
+bool truncated_newton_step_is_usable(const TruncatedNewtonStepResult& step,
+                                     const Eigen::VectorXd& reduced_gradient);
 
-TruncatedNewtonStepResult solve_trust_region_in_subspace(
-    const OrbitalChart::ProjectionResult& current_projection,
-    double trust_radius,
-    const NonredundantRetractionMetric& metric,
-    const TruncatedNewtonSubspace& subspace,
-    double target_kkt_relative_residual);
+TruncatedNewtonStepResult
+solve_trust_region_in_subspace(const OrbitalChart::ProjectionResult& current_projection,
+                               double trust_radius,
+                               const NonredundantRetractionMetric& metric,
+                               const TruncatedNewtonSubspace& subspace,
+                               double target_kkt_relative_residual);
 
 /**
  * @brief Corrects a fixed baseline step in an affine HVP subspace.
@@ -176,15 +166,15 @@ TruncatedNewtonStepResult solve_trust_region_in_subspace(
  * defect @f$Q^T(g+H p_B)@f$ rather than the original gradient, and the trust
  * constraint is imposed on the complete corrected step.
  */
-TruncatedNewtonStepResult solve_affine_trust_region_in_subspace(
-    const OrbitalChart::ProjectionResult& current_projection,
-    double trust_radius,
-    const NonredundantRetractionMetric& metric,
-    const TruncatedNewtonSubspace& correction_subspace,
-    const Eigen::VectorXd& baseline_step,
-    const Eigen::VectorXd& baseline_hessian_step,
-    const Eigen::VectorXd& baseline_metric_step,
-    double target_kkt_relative_residual);
+TruncatedNewtonStepResult
+solve_affine_trust_region_in_subspace(const OrbitalChart::ProjectionResult& current_projection,
+                                      double trust_radius,
+                                      const NonredundantRetractionMetric& metric,
+                                      const TruncatedNewtonSubspace& correction_subspace,
+                                      const Eigen::VectorXd& baseline_step,
+                                      const Eigen::VectorXd& baseline_hessian_step,
+                                      const Eigen::VectorXd& baseline_metric_step,
+                                      double target_kkt_relative_residual);
 
 Eigen::VectorXd build_nonredundant_preconditioned_reduced_gradient_step(
     const NonredundantRetractionMetric& retraction_metric,
@@ -202,10 +192,10 @@ double update_nonredundant_truncated_newton_trust_radius(
     TruncatedNewtonModelFidelity model_fidelity,
     bool accepted);
 
-double estimate_nonredundant_reduced_model_decrease(
-    const OrbitalChart::ProjectionResult& projection,
-    const Eigen::VectorXd& reduced_step,
-    ReducedHvp* hvp);
+double
+estimate_nonredundant_reduced_model_decrease(const OrbitalChart::ProjectionResult& projection,
+                                             const Eigen::VectorXd& reduced_step,
+                                             ReducedHvp* hvp);
 
 TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     const NonredundantRetractionMetric& retraction_metric,
@@ -220,4 +210,4 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     const Eigen::VectorXd* initial_reduced_step = nullptr,
     const TruncatedNewtonSubspace* initial_subspace = nullptr);
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

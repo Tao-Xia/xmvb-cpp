@@ -23,371 +23,329 @@ ExactHvpOperator::ExactHvpOperator(
     const VbScfInput* current_input,
     SparseParameterLayout parameter_view,
     const OrbitalChart* nonredundant_space)
-    : state_(std::make_unique<State>(
-          std::move(accepted_point_context),
-          current_input,
-          std::move(parameter_view),
-          nonredundant_space)) {}
+    : state_(std::make_unique<State>(std::move(accepted_point_context),
+                                     current_input,
+                                     std::move(parameter_view),
+                                     nonredundant_space)) {}
 
 ExactHvpOperator::~ExactHvpOperator() = default;
 
 bool ExactHvpOperator::supports_analytic_core_model() const noexcept {
-  return state_->supports_analytic_core_model();
+    return state_->supports_analytic_core_model();
 }
 
 std::uint64_t ExactHvpOperator::response_model_revision() const noexcept {
-  return state_->response_model_revision();
+    return state_->response_model_revision();
 }
 
 StructureResponseSchurModel ExactHvpOperator::structure_response_schur_model() const {
-  return state_->structure_response_schur_model();
+    return state_->structure_response_schur_model();
 }
 
 const StructureAction& ExactHvpOperator::structure_action() const {
-  return state_->structure_action();
+    return state_->structure_action();
 }
 
 const StructureAction& ExactHvpOperator::State::structure_action() const {
-  const StructureAction* action = outer_response_context()
-      .selected_state_eigen_response_operator.structure_action;
-  if (action == nullptr) {
-    throw std::logic_error(
-        "accepted-point canonical structure action is unavailable");
-  }
-  return *action;
+    const StructureAction* action =
+        outer_response_context().selected_state_eigen_response_operator.structure_action;
+    if (action == nullptr) {
+        throw std::logic_error("accepted-point canonical structure action is unavailable");
+    }
+    return *action;
 }
 
 std::uint64_t ExactHvpOperator::State::response_model_revision() const noexcept {
-  return accepted_outer_response_context_ != nullptr
-      ? accepted_outer_response_context_->selected_state_eigen_response_operator
-            .revision()
-      : 0;
+    return accepted_outer_response_context_ != nullptr
+               ? accepted_outer_response_context_->selected_state_eigen_response_operator.revision()
+               : 0;
 }
 
 ExactHvpOperator::Diagnostics ExactHvpOperator::diagnostics() const {
-  return state_->diagnostics();
+    return state_->diagnostics();
 }
 
-ExactHvpOperator::State::State(
-    std::shared_ptr<const AcceptedPointContext> accepted_point_context,
-    const VbScfInput* current_input,
-    SparseParameterLayout parameter_view,
-    const OrbitalChart* nonredundant_space)
-    : accepted_point_context_(std::move(accepted_point_context)),
-      current_input_(current_input),
-      parameter_view_(std::move(parameter_view)),
-      nonredundant_space_(nonredundant_space) {
-  if (accepted_point_context_ == nullptr) {
-    throw std::invalid_argument(
-        "accepted-point second-order context must not be null");
-  }
-  if (current_input_ == nullptr) {
-    throw std::invalid_argument("current_input must not be null");
-  }
-  if (nonredundant_space_ == nullptr) {
-    throw std::invalid_argument("nonredundant_space must not be null");
-  }
-  if (supports_analytic_core_model()) {
-    const int n_basis_functions =
-        current_input_->orbital_preparation_input.n_basis_functions;
-    const int n_active_orbitals =
-        current_input_->orbital_preparation_input.n_active_orbitals;
-    const int n_inactive_doubly_occupied_orbitals =
-        (current_input_->orbital_preparation_input.n_total_electrons -
-         current_input_->orbital_preparation_input.n_active_electrons) /
-        2;
-    const std::size_t ao_matrix_size =
-        n_basis_functions * n_basis_functions;
-    const std::size_t active_matrix_size =
-        n_active_orbitals * n_active_orbitals;
-    const auto& accepted_two_electron_result =
-        accepted_point_context_->prepared_active_space
-            .active_space_two_electron_result;
-    if (accepted_point_context_->prepared_active_space.orbital_result
-                .auxiliary_orbital_matrix.size() != ao_matrix_size ||
-        accepted_point_context_->prepared_active_space
-                .ao_effective_one_electron_result.ao_effective_h1e.size() !=
-            ao_matrix_size ||
-        accepted_point_context_->active_orbital_overlap_gradient.size() !=
-            active_matrix_size ||
-        accepted_point_context_->active_one_electron_gradient.size() !=
-            active_matrix_size ||
-        accepted_two_electron_result.dense_active_coefficients.rows() !=
-            n_basis_functions ||
-        accepted_two_electron_result.dense_active_coefficients.cols() !=
-            n_active_orbitals) {
-      throw std::invalid_argument(
-          "accepted-point exact HVP cache dimensions are inconsistent");
+ExactHvpOperator::State::State(std::shared_ptr<const AcceptedPointContext> accepted_point_context,
+                               const VbScfInput* current_input,
+                               SparseParameterLayout parameter_view,
+                               const OrbitalChart* nonredundant_space)
+    : accepted_point_context_(std::move(accepted_point_context)), current_input_(current_input),
+      parameter_view_(std::move(parameter_view)), nonredundant_space_(nonredundant_space) {
+    if (accepted_point_context_ == nullptr) {
+        throw std::invalid_argument("accepted-point second-order context must not be null");
     }
-    const Eigen::Map<const Eigen::MatrixXd> basis_overlap(
-        current_input_->orbital_preparation_input.ao_overlap_matrix.data(),
-        n_basis_functions,
-        n_basis_functions);
-    const Eigen::Map<const Eigen::MatrixXd> accepted_auxiliary_matrix(
-        accepted_point_context_->prepared_active_space.orbital_result
-            .auxiliary_orbital_matrix.data(),
-        n_basis_functions,
-        n_basis_functions);
-    accepted_active_auxiliary_orbitals_ =
-        accepted_auxiliary_matrix.middleCols(
-            n_inactive_doubly_occupied_orbitals,
+    if (current_input_ == nullptr) {
+        throw std::invalid_argument("current_input must not be null");
+    }
+    if (nonredundant_space_ == nullptr) {
+        throw std::invalid_argument("nonredundant_space must not be null");
+    }
+    if (supports_analytic_core_model()) {
+        const int n_basis_functions = current_input_->orbital_preparation_input.n_basis_functions;
+        const int n_active_orbitals = current_input_->orbital_preparation_input.n_active_orbitals;
+        const int n_inactive_doubly_occupied_orbitals =
+            (current_input_->orbital_preparation_input.n_total_electrons -
+             current_input_->orbital_preparation_input.n_active_electrons) /
+            2;
+        const std::size_t ao_matrix_size = n_basis_functions * n_basis_functions;
+        const std::size_t active_matrix_size = n_active_orbitals * n_active_orbitals;
+        const auto& accepted_two_electron_result =
+            accepted_point_context_->prepared_active_space.active_space_two_electron_result;
+        if (accepted_point_context_->prepared_active_space.orbital_result.auxiliary_orbital_matrix
+                    .size() != ao_matrix_size ||
+            accepted_point_context_->prepared_active_space.ao_effective_one_electron_result
+                    .ao_effective_h1e.size() != ao_matrix_size ||
+            accepted_point_context_->active_orbital_overlap_gradient.size() != active_matrix_size ||
+            accepted_point_context_->active_one_electron_gradient.size() != active_matrix_size ||
+            accepted_two_electron_result.dense_active_coefficients.rows() != n_basis_functions ||
+            accepted_two_electron_result.dense_active_coefficients.cols() != n_active_orbitals) {
+            throw std::invalid_argument(
+                "accepted-point exact HVP cache dimensions are inconsistent");
+        }
+        const Eigen::Map<const Eigen::MatrixXd> basis_overlap(
+            current_input_->orbital_preparation_input.ao_overlap_matrix.data(),
+            n_basis_functions,
+            n_basis_functions);
+        const Eigen::Map<const Eigen::MatrixXd> accepted_auxiliary_matrix(
+            accepted_point_context_->prepared_active_space.orbital_result.auxiliary_orbital_matrix
+                .data(),
+            n_basis_functions,
+            n_basis_functions);
+        accepted_active_auxiliary_orbitals_ = accepted_auxiliary_matrix.middleCols(
+            n_inactive_doubly_occupied_orbitals, n_active_orbitals);
+        accepted_basis_overlap_times_active_auxiliary_orbitals_ =
+            basis_overlap * accepted_active_auxiliary_orbitals_;
+        const Eigen::Map<const Eigen::MatrixXd> accepted_sso_gradient(
+            accepted_point_context_->active_orbital_overlap_gradient.data(),
+            n_active_orbitals,
             n_active_orbitals);
-    accepted_basis_overlap_times_active_auxiliary_orbitals_ =
-        basis_overlap * accepted_active_auxiliary_orbitals_;
-    const Eigen::Map<const Eigen::MatrixXd> accepted_sso_gradient(
-        accepted_point_context_->active_orbital_overlap_gradient.data(),
-        n_active_orbitals,
-        n_active_orbitals);
-    accepted_sso_gradient_symmetric_ =
-        accepted_sso_gradient + accepted_sso_gradient.transpose();
-    const Eigen::Map<const Eigen::MatrixXd> accepted_hho_gradient(
-        accepted_point_context_->active_one_electron_gradient.data(),
-        n_active_orbitals,
-        n_active_orbitals);
-    accepted_hho_gradient_symmetric_ =
-        accepted_hho_gradient + accepted_hho_gradient.transpose();
-    const auto& integral_frame = accepted_point_context_->prepared_active_space
-        .active_space_two_electron_result.orbital_transform;
-    accepted_hho_projection_weight_ = integral_frame.size()
-        ? Eigen::MatrixXd(integral_frame * accepted_hho_gradient_symmetric_)
-        : accepted_hho_gradient_symmetric_;
-    zero_core_hamiltonian_ =
-        Eigen::MatrixXd::Zero(n_basis_functions, n_basis_functions);
-    if (current_input_->standard_two_electron_mode ==
-        StandardTwoElectronMode::ResolutionOfIdentity) {
-      accepted_ri_factorization_ =
-          &ensure_vbscf_input_ri_cache(*current_input_);
-      accepted_ri_two_electron_cache_.emplace(
-          xmvb::integrals::build_ri_active_two_electron_response_cache(
-              *accepted_ri_factorization_,
-              accepted_two_electron_result,
-              n_active_orbitals));
-      xmvb::integrals::prepare_ri_orbital_pair_products(
-          *accepted_ri_two_electron_cache_);
-    } else {
-      accepted_exact_two_electron_cache_ =
-          xmvb::integrals::build_exact_packed_active_two_electron_adjoint_cache(
-              accepted_point_context_->packed_active_two_electron_gradient,
-              accepted_two_electron_result.dense_active_coefficients,
-              current_input_->ao_integral_input,
-              n_active_orbitals,
-              accepted_two_electron_result);
-    }
+        accepted_sso_gradient_symmetric_ =
+            accepted_sso_gradient + accepted_sso_gradient.transpose();
+        const Eigen::Map<const Eigen::MatrixXd> accepted_hho_gradient(
+            accepted_point_context_->active_one_electron_gradient.data(),
+            n_active_orbitals,
+            n_active_orbitals);
+        accepted_hho_gradient_symmetric_ =
+            accepted_hho_gradient + accepted_hho_gradient.transpose();
+        const auto& integral_frame = accepted_point_context_->prepared_active_space
+                                         .active_space_two_electron_result.orbital_transform;
+        accepted_hho_projection_weight_ =
+            integral_frame.size()
+                ? Eigen::MatrixXd(integral_frame * accepted_hho_gradient_symmetric_)
+                : accepted_hho_gradient_symmetric_;
+        zero_core_hamiltonian_ = Eigen::MatrixXd::Zero(n_basis_functions, n_basis_functions);
+        if (current_input_->standard_two_electron_mode ==
+            StandardTwoElectronMode::ResolutionOfIdentity) {
+            accepted_ri_factorization_ = &ensure_vbscf_input_ri_cache(*current_input_);
+            accepted_ri_two_electron_cache_.emplace(
+                xmvb::integrals::build_ri_active_two_electron_response_cache(
+                    *accepted_ri_factorization_, accepted_two_electron_result, n_active_orbitals));
+            xmvb::integrals::prepare_ri_orbital_pair_products(*accepted_ri_two_electron_cache_);
+        } else {
+            accepted_exact_two_electron_cache_ =
+                xmvb::integrals::build_exact_packed_active_two_electron_adjoint_cache(
+                    accepted_point_context_->packed_active_two_electron_gradient,
+                    accepted_two_electron_result.dense_active_coefficients,
+                    current_input_->ao_integral_input,
+                    n_active_orbitals,
+                    accepted_two_electron_result);
+        }
 
-    if (accepted_point_context_->total_active_auxiliary_gradient.rows() !=
-            n_basis_functions ||
-        accepted_point_context_->total_active_auxiliary_gradient.cols() !=
-            n_active_orbitals ||
-        accepted_point_context_->total_inactive_density_gradient.size() !=
-            ao_matrix_size) {
-      throw std::invalid_argument(
-          "accepted-point exact HVP is missing complete orbital-gradient adjoints");
-    }
+        if (accepted_point_context_->total_active_auxiliary_gradient.rows() != n_basis_functions ||
+            accepted_point_context_->total_active_auxiliary_gradient.cols() != n_active_orbitals ||
+            accepted_point_context_->total_inactive_density_gradient.size() != ao_matrix_size) {
+            throw std::invalid_argument(
+                "accepted-point exact HVP is missing complete orbital-gradient adjoints");
+        }
 
-    accepted_orbital_preparation_cache_ =
-        std::make_unique<AcceptedOrbitalPreparationCache>(
+        accepted_orbital_preparation_cache_ = std::make_unique<AcceptedOrbitalPreparationCache>(
             build_accepted_orbital_preparation_cache(
                 current_input_->orbital_preparation_input,
                 accepted_point_context_->total_active_auxiliary_gradient,
                 accepted_point_context_->total_inactive_density_gradient));
-    if (accepted_ri_two_electron_cache_ && n_inactive_doubly_occupied_orbitals > 0) {
-      xmvb::profiling::ScopedPhase phase(xmvb::profiling::Phase::RiInactiveBuild);
-      const auto& cache = *accepted_ri_two_electron_cache_;
-      const auto scratch=sizeof(double)*static_cast<std::size_t>(n_basis_functions)*
-          (n_inactive_doubly_occupied_orbitals+effective_openmp_thread_count());
-      auto factors=workspace::make_matrix<Eigen::MatrixXd>(
-          static_cast<std::size_t>(n_inactive_doubly_occupied_orbitals)*cache.n_auxiliary_functions,
-          n_basis_functions,scratch);
-      if (factors) {
-        integrals::fill_ri_one_index_tiled(
-            *cache.metric_whitened_ao_pair_factors,
-            accepted_orbital_preparation_cache_->inactive_auxiliary,*factors);
-        accepted_ri_inactive_one_index_factors_=std::move(factors);
-      }
+        if (accepted_ri_two_electron_cache_ && n_inactive_doubly_occupied_orbitals > 0) {
+            xmvb::profiling::ScopedPhase phase(xmvb::profiling::Phase::RiInactiveBuild);
+            const auto& cache = *accepted_ri_two_electron_cache_;
+            const auto scratch =
+                sizeof(double) * static_cast<std::size_t>(n_basis_functions) *
+                (n_inactive_doubly_occupied_orbitals + effective_openmp_thread_count());
+            auto factors = workspace::make_matrix<Eigen::MatrixXd>(
+                static_cast<std::size_t>(n_inactive_doubly_occupied_orbitals) *
+                    cache.n_auxiliary_functions,
+                n_basis_functions,
+                scratch);
+            if (factors) {
+                integrals::fill_ri_one_index_tiled(
+                    *cache.metric_whitened_ao_pair_factors,
+                    accepted_orbital_preparation_cache_->inactive_auxiliary,
+                    *factors);
+                accepted_ri_inactive_one_index_factors_ = std::move(factors);
+            }
+        }
+        if (accepted_ri_two_electron_cache_ && profiling::phase_totals().enabled) {
+            const auto& cache = *accepted_ri_two_electron_cache_;
+            std::fprintf(
+                stderr,
+                "XMVB_RI_CONTRACTION,basis=%d,active=%d,auxiliary=%d,"
+                "three_active_bytes=%zu,direct_pair_plan=%d,inactive_bytes=%zu,"
+                "workspace_limit=%zu,workspace_retained=%zu\n",
+                cache.n_basis_functions,
+                cache.n_active_orbitals,
+                cache.n_auxiliary_functions,
+                cache.orbital_pair_products
+                    ? static_cast<std::size_t>(cache.orbital_pair_products->size()) * sizeof(double)
+                    : 0,
+                static_cast<int>(integrals::ri_uses_orbital_pairs(cache)),
+                accepted_ri_inactive_one_index_factors_
+                    ? static_cast<std::size_t>(accepted_ri_inactive_one_index_factors_->size()) *
+                          sizeof(double)
+                    : 0,
+                workspace::limit(),
+                workspace::retained());
+        }
     }
-    if (accepted_ri_two_electron_cache_ && profiling::phase_totals().enabled) {
-      const auto& cache = *accepted_ri_two_electron_cache_;
-      std::fprintf(stderr,
-          "XMVB_RI_CONTRACTION,basis=%d,active=%d,auxiliary=%d,"
-          "three_active_bytes=%zu,direct_pair_plan=%d,inactive_bytes=%zu,"
-          "workspace_limit=%zu,workspace_retained=%zu\n",
-          cache.n_basis_functions, cache.n_active_orbitals, cache.n_auxiliary_functions,
-          cache.orbital_pair_products ? static_cast<std::size_t>(cache.orbital_pair_products->size()) * sizeof(double):0,
-          static_cast<int>(integrals::ri_uses_orbital_pairs(cache)),
-          accepted_ri_inactive_one_index_factors_ ?
-              static_cast<std::size_t>(accepted_ri_inactive_one_index_factors_->size()) * sizeof(double):0,
-          workspace::limit(),workspace::retained());
-    }
-  }
 }
 
-const AcceptedOuterResponseContext&
-ExactHvpOperator::State::outer_response_context() const {
-  const bool has_direct_ci_action =
-      accepted_point_context_->structure_action.has_value() &&
-      accepted_point_context_->structure_action->supports_integral_direction();
-  if (!accepted_point_context_->same_spin_pair_cache.has_pair_providers() &&
-      !has_direct_ci_action) {
-    throw std::logic_error(
-        "outer response requires a pair cache or direct-CI action");
-  }
-  if (accepted_outer_response_context_ == nullptr) {
-    if (!accepted_point_context_->structure_action.has_value()) {
-      accepted_point_context_->structure_action.emplace(
-          current_input_->structure_data.incidence(),
-          current_input_->structure_data.n_structures,
-          accepted_point_context_->same_spin_pair_cache,
-          accepted_point_context_->prepared_active_space.orbital_result
-              .active_orbital_overlap_matrix,
-          accepted_point_context_->prepared_active_space
-              .active_space_one_electron_result.h1e_act,
-          accepted_point_context_->prepared_active_space
-              .active_space_two_electron_result,
-          current_input_->orbital_preparation_input.n_active_orbitals);
+const AcceptedOuterResponseContext& ExactHvpOperator::State::outer_response_context() const {
+    const bool has_direct_ci_action =
+        accepted_point_context_->structure_action.has_value() &&
+        accepted_point_context_->structure_action->supports_integral_direction();
+    if (!accepted_point_context_->same_spin_pair_cache.has_pair_providers() &&
+        !has_direct_ci_action) {
+        throw std::logic_error("outer response requires a pair cache or direct-CI action");
     }
-    accepted_outer_response_context_ =
-        std::make_unique<AcceptedOuterResponseContext>(
-            build_accepted_outer_response_context(
-                current_input_,
-                accepted_point_context_.get()));
-  }
-  return *accepted_outer_response_context_;
+    if (accepted_outer_response_context_ == nullptr) {
+        if (!accepted_point_context_->structure_action.has_value()) {
+            accepted_point_context_->structure_action.emplace(
+                current_input_->structure_data.incidence(),
+                current_input_->structure_data.n_structures,
+                accepted_point_context_->same_spin_pair_cache,
+                accepted_point_context_->prepared_active_space.orbital_result
+                    .active_orbital_overlap_matrix,
+                accepted_point_context_->prepared_active_space.active_space_one_electron_result
+                    .h1e_act,
+                accepted_point_context_->prepared_active_space.active_space_two_electron_result,
+                current_input_->orbital_preparation_input.n_active_orbitals);
+        }
+        accepted_outer_response_context_ = std::make_unique<AcceptedOuterResponseContext>(
+            build_accepted_outer_response_context(current_input_, accepted_point_context_.get()));
+    }
+    return *accepted_outer_response_context_;
 }
 
 bool ExactHvpOperator::State::supports_analytic_core_model() const noexcept {
-  if (accepted_point_context_ == nullptr ||
-      current_input_ == nullptr ||
-      nonredundant_space_ == nullptr) {
-    return false;
-  }
-  const bool uses_ri = current_input_->standard_two_electron_mode ==
-      StandardTwoElectronMode::ResolutionOfIdentity;
-  if (!uses_ri && current_input_->ao_integral_input.pair_graph.empty()) {
-    return false;
-  }
-  if (uses_ri && current_input_->ri_factorization == nullptr &&
-      current_input_->ri_factorization_provider == nullptr) {
-    return false;
-  }
-  const int n_active_orbitals =
-      current_input_->orbital_preparation_input.n_active_orbitals;
-  return n_active_orbitals > 0 &&
-      has_active_matrix_gradient(*accepted_point_context_, n_active_orbitals);
+    if (accepted_point_context_ == nullptr || current_input_ == nullptr ||
+        nonredundant_space_ == nullptr) {
+        return false;
+    }
+    const bool uses_ri =
+        current_input_->standard_two_electron_mode == StandardTwoElectronMode::ResolutionOfIdentity;
+    if (!uses_ri && current_input_->ao_integral_input.pair_graph.empty()) {
+        return false;
+    }
+    if (uses_ri && current_input_->ri_factorization == nullptr &&
+        current_input_->ri_factorization_provider == nullptr) {
+        return false;
+    }
+    const int n_active_orbitals = current_input_->orbital_preparation_input.n_active_orbitals;
+    return n_active_orbitals > 0 &&
+           has_active_matrix_gradient(*accepted_point_context_, n_active_orbitals);
 }
 
-ExactHvpOperator::Diagnostics
-ExactHvpOperator::State::diagnostics() const {
-  Diagnostics info;
-  if (accepted_point_context_ == nullptr || nonredundant_space_ == nullptr) {
+ExactHvpOperator::Diagnostics ExactHvpOperator::State::diagnostics() const {
+    Diagnostics info;
+    if (accepted_point_context_ == nullptr || nonredundant_space_ == nullptr) {
+        return info;
+    }
+    info.supports_analytic_core_model = supports_analytic_core_model();
+    info.outer_response_enabled = true;
+    info.used_reduced_curvature_diagonal = nonredundant_space_->has_reduced_curvature_diagonal();
+    info.has_same_spin_matrix_form = accepted_point_context_->use_full_matrix_form_adjoint;
+    info.has_opposite_spin_pair_graph =
+        accepted_point_context_->use_pair_graph_opposite_spin_adjoint;
+    info.streams_exact_pair_products =
+        !accepted_ri_two_electron_cache_.has_value() &&
+        accepted_exact_two_electron_cache_.accepted_pair_products == nullptr;
+    info.n_selected_states =
+        static_cast<int>(accepted_point_context_->selected_state_indices.size());
+    info.n_active_orbitals = accepted_point_context_->n_active_orbitals;
+    info.n_blocks = nonredundant_space_->n_blocks();
+    if (!accepted_ri_two_electron_cache_.has_value() &&
+        accepted_exact_two_electron_cache_.accepted_pair_products != nullptr) {
+        info.resident_exact_pair_elements = static_cast<std::size_t>(
+            accepted_exact_two_electron_cache_.accepted_pair_products->size() +
+            accepted_exact_two_electron_cache_.orbital_pair_products.size() +
+            accepted_exact_two_electron_cache_.exchange_integrals.size());
+    }
+    info.exact_pair_tile_rows =
+        accepted_ri_two_electron_cache_.has_value()
+            ? 0
+            : static_cast<std::size_t>(accepted_exact_two_electron_cache_.n_basis_functions);
+    info.apply_count = apply_timing_totals_.apply_count;
+    info.batch_apply_count = apply_timing_totals_.batch_apply_count;
+    info.orbital_coupling_batch_count = apply_timing_totals_.orbital_coupling_batch_count;
+    info.normalization_adjoint_reuses = apply_timing_totals_.normalization_adjoint_reuses;
+    info.orbital_coupling_batch_chunk_count =
+        apply_timing_totals_.orbital_coupling_batch_chunk_count;
+    info.max_orbital_coupling_batch_width = apply_timing_totals_.max_orbital_coupling_batch_width;
+    info.structure_response_block_actions = apply_timing_totals_.structure_response_block_actions;
+    info.structure_response_schur_build_count =
+        apply_timing_totals_.structure_response_schur_build_count;
+    info.structure_response_schur_new_columns =
+        apply_timing_totals_.structure_response_schur_new_columns;
+    info.max_structure_response_iterations = apply_timing_totals_.max_structure_response_iterations;
+    info.max_structure_response_relative_residual =
+        apply_timing_totals_.max_structure_response_relative_residual;
+    info.total_apply_wall_time_seconds = apply_timing_totals_.total_apply_wall_time_seconds;
+    info.core_setup_wall_time_seconds = apply_timing_totals_.core_setup_wall_time_seconds;
+    info.ao_effective_one_electron_build_wall_time_seconds =
+        apply_timing_totals_.ao_effective_one_electron_build_wall_time_seconds;
+    info.ao_effective_one_electron_fused_wall_time_seconds =
+        apply_timing_totals_.ao_effective_one_electron_fused_wall_time_seconds;
+    info.active_two_electron_wall_time_seconds =
+        apply_timing_totals_.active_two_electron_wall_time_seconds;
+    info.ao_effective_one_electron_backprop_wall_time_seconds =
+        apply_timing_totals_.ao_effective_one_electron_backprop_wall_time_seconds;
+    info.orbital_backprop_wall_time_seconds =
+        apply_timing_totals_.orbital_backprop_wall_time_seconds;
+    info.fixed_upstream_pullback_wall_time_seconds =
+        apply_timing_totals_.fixed_upstream_pullback_wall_time_seconds;
+    info.outer_response_wall_time_seconds = apply_timing_totals_.outer_response_wall_time_seconds;
+    info.outer_response_active_space_integrals_wall_time_seconds =
+        apply_timing_totals_.outer_response_active_space_integrals_wall_time_seconds;
+    info.outer_response_structure_matrices_wall_time_seconds =
+        apply_timing_totals_.outer_response_structure_matrices_wall_time_seconds;
+    info.outer_response_eigensystem_wall_time_seconds =
+        apply_timing_totals_.outer_response_eigensystem_wall_time_seconds;
+    info.outer_response_pair_weights_wall_time_seconds =
+        apply_timing_totals_.outer_response_pair_weights_wall_time_seconds;
+    info.outer_response_active_gradient_wall_time_seconds =
+        apply_timing_totals_.outer_response_active_gradient_wall_time_seconds;
+    info.outer_response_local_active_gradient_wall_time_seconds =
+        apply_timing_totals_.outer_response_local_active_gradient_wall_time_seconds;
+    info.outer_response_structure_active_gradient_wall_time_seconds =
+        apply_timing_totals_.outer_response_structure_active_gradient_wall_time_seconds;
+    info.outer_response_selected_state_rebuild_wall_time_seconds =
+        apply_timing_totals_.outer_response_selected_state_rebuild_wall_time_seconds;
+    info.outer_response_same_spin_backward_wall_time_seconds =
+        apply_timing_totals_.outer_response_same_spin_backward_wall_time_seconds;
+    info.outer_response_opposite_spin_backward_wall_time_seconds =
+        apply_timing_totals_.outer_response_opposite_spin_backward_wall_time_seconds;
+    info.outer_response_opposite_spin_packed_gradient_wall_time_seconds =
+        apply_timing_totals_.outer_response_opposite_spin_packed_gradient_wall_time_seconds;
+    info.outer_response_opposite_spin_alpha_overlap_wall_time_seconds =
+        apply_timing_totals_.outer_response_opposite_spin_alpha_overlap_wall_time_seconds;
+    info.outer_response_opposite_spin_beta_overlap_wall_time_seconds =
+        apply_timing_totals_.outer_response_opposite_spin_beta_overlap_wall_time_seconds;
+    info.outer_response_orbital_pullback_wall_time_seconds =
+        apply_timing_totals_.outer_response_orbital_pullback_wall_time_seconds;
+    info.structure_response_schur_wall_time_seconds =
+        apply_timing_totals_.structure_response_schur_wall_time_seconds;
+    info.structure_response_schur_structure_action_wall_time_seconds =
+        apply_timing_totals_.structure_response_schur_structure_action_wall_time_seconds;
+    info.structure_response_schur_adjoint_wall_time_seconds =
+        apply_timing_totals_.structure_response_schur_adjoint_wall_time_seconds;
     return info;
-  }
-  info.supports_analytic_core_model = supports_analytic_core_model();
-  info.outer_response_enabled = true;
-  info.used_reduced_curvature_diagonal =
-      nonredundant_space_->has_reduced_curvature_diagonal();
-  info.has_same_spin_matrix_form =
-      accepted_point_context_->use_full_matrix_form_adjoint;
-  info.has_opposite_spin_pair_graph =
-      accepted_point_context_->use_pair_graph_opposite_spin_adjoint;
-  info.streams_exact_pair_products =
-      !accepted_ri_two_electron_cache_.has_value() &&
-      accepted_exact_two_electron_cache_.accepted_pair_products == nullptr;
-  info.n_selected_states =
-      static_cast<int>(accepted_point_context_->selected_state_indices.size());
-  info.n_active_orbitals = accepted_point_context_->n_active_orbitals;
-  info.n_blocks = nonredundant_space_->n_blocks();
-  if (!accepted_ri_two_electron_cache_.has_value() &&
-      accepted_exact_two_electron_cache_.accepted_pair_products != nullptr) {
-    info.resident_exact_pair_elements = static_cast<std::size_t>(
-        accepted_exact_two_electron_cache_.accepted_pair_products->size() +
-        accepted_exact_two_electron_cache_.orbital_pair_products.size() +
-        accepted_exact_two_electron_cache_.exchange_integrals.size());
-  }
-  info.exact_pair_tile_rows = accepted_ri_two_electron_cache_.has_value()
-      ? 0
-      : static_cast<std::size_t>(
-            accepted_exact_two_electron_cache_.n_basis_functions);
-  info.apply_count = apply_timing_totals_.apply_count;
-  info.batch_apply_count = apply_timing_totals_.batch_apply_count;
-  info.orbital_coupling_batch_count =
-      apply_timing_totals_.orbital_coupling_batch_count;
-  info.normalization_adjoint_reuses = apply_timing_totals_.normalization_adjoint_reuses;
-  info.orbital_coupling_batch_chunk_count =
-      apply_timing_totals_.orbital_coupling_batch_chunk_count;
-  info.max_orbital_coupling_batch_width =
-      apply_timing_totals_.max_orbital_coupling_batch_width;
-  info.structure_response_block_actions =
-      apply_timing_totals_.structure_response_block_actions;
-  info.structure_response_schur_build_count =
-      apply_timing_totals_.structure_response_schur_build_count;
-  info.structure_response_schur_new_columns =
-      apply_timing_totals_.structure_response_schur_new_columns;
-  info.max_structure_response_iterations =
-      apply_timing_totals_.max_structure_response_iterations;
-  info.max_structure_response_relative_residual =
-      apply_timing_totals_.max_structure_response_relative_residual;
-  info.total_apply_wall_time_seconds =
-      apply_timing_totals_.total_apply_wall_time_seconds;
-  info.core_setup_wall_time_seconds =
-      apply_timing_totals_.core_setup_wall_time_seconds;
-  info.ao_effective_one_electron_build_wall_time_seconds =
-      apply_timing_totals_.ao_effective_one_electron_build_wall_time_seconds;
-  info.ao_effective_one_electron_fused_wall_time_seconds =
-      apply_timing_totals_.ao_effective_one_electron_fused_wall_time_seconds;
-  info.active_two_electron_wall_time_seconds =
-      apply_timing_totals_.active_two_electron_wall_time_seconds;
-  info.ao_effective_one_electron_backprop_wall_time_seconds =
-      apply_timing_totals_.ao_effective_one_electron_backprop_wall_time_seconds;
-  info.orbital_backprop_wall_time_seconds =
-      apply_timing_totals_.orbital_backprop_wall_time_seconds;
-  info.fixed_upstream_pullback_wall_time_seconds =
-      apply_timing_totals_.fixed_upstream_pullback_wall_time_seconds;
-  info.outer_response_wall_time_seconds =
-      apply_timing_totals_.outer_response_wall_time_seconds;
-  info.outer_response_active_space_integrals_wall_time_seconds =
-      apply_timing_totals_.outer_response_active_space_integrals_wall_time_seconds;
-  info.outer_response_structure_matrices_wall_time_seconds =
-      apply_timing_totals_.outer_response_structure_matrices_wall_time_seconds;
-  info.outer_response_eigensystem_wall_time_seconds =
-      apply_timing_totals_.outer_response_eigensystem_wall_time_seconds;
-  info.outer_response_pair_weights_wall_time_seconds =
-      apply_timing_totals_.outer_response_pair_weights_wall_time_seconds;
-  info.outer_response_active_gradient_wall_time_seconds =
-      apply_timing_totals_.outer_response_active_gradient_wall_time_seconds;
-  info.outer_response_local_active_gradient_wall_time_seconds =
-      apply_timing_totals_
-          .outer_response_local_active_gradient_wall_time_seconds;
-  info.outer_response_structure_active_gradient_wall_time_seconds =
-      apply_timing_totals_
-          .outer_response_structure_active_gradient_wall_time_seconds;
-  info.outer_response_selected_state_rebuild_wall_time_seconds =
-      apply_timing_totals_
-          .outer_response_selected_state_rebuild_wall_time_seconds;
-  info.outer_response_same_spin_backward_wall_time_seconds =
-      apply_timing_totals_
-          .outer_response_same_spin_backward_wall_time_seconds;
-  info.outer_response_opposite_spin_backward_wall_time_seconds =
-      apply_timing_totals_
-          .outer_response_opposite_spin_backward_wall_time_seconds;
-  info.outer_response_opposite_spin_packed_gradient_wall_time_seconds =
-      apply_timing_totals_
-          .outer_response_opposite_spin_packed_gradient_wall_time_seconds;
-  info.outer_response_opposite_spin_alpha_overlap_wall_time_seconds =
-      apply_timing_totals_
-          .outer_response_opposite_spin_alpha_overlap_wall_time_seconds;
-  info.outer_response_opposite_spin_beta_overlap_wall_time_seconds =
-      apply_timing_totals_
-          .outer_response_opposite_spin_beta_overlap_wall_time_seconds;
-  info.outer_response_orbital_pullback_wall_time_seconds =
-      apply_timing_totals_.outer_response_orbital_pullback_wall_time_seconds;
-  info.structure_response_schur_wall_time_seconds =
-      apply_timing_totals_.structure_response_schur_wall_time_seconds;
-  info.structure_response_schur_structure_action_wall_time_seconds =
-      apply_timing_totals_
-          .structure_response_schur_structure_action_wall_time_seconds;
-  info.structure_response_schur_adjoint_wall_time_seconds =
-      apply_timing_totals_.structure_response_schur_adjoint_wall_time_seconds;
-  return info;
 }
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

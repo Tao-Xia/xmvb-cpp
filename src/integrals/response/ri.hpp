@@ -23,25 +23,25 @@ namespace xmvb::integrals {
  * AO-pair adjoints or an orbital Hessian. Borrowed data must outlive the cache.
  */
 struct RiActiveTwoElectronResponseCache {
-  int n_basis_functions = 0;
-  int n_active_orbitals = 0;
-  int n_auxiliary_functions = 0;
-  std::vector<int> active_pair_first_indices;
-  std::vector<int> active_pair_second_indices;
-  const Eigen::MatrixXd* metric_whitened_ao_pair_factors = nullptr;
-  const Eigen::MatrixXd* accepted_active_coefficients = nullptr;
-  const Eigen::MatrixXd* accepted_active_pair_factors = nullptr;
-  /** @brief Bounded one-index factors, row `a*n_aux+A`, column AO `mu`.
+    int n_basis_functions = 0;
+    int n_active_orbitals = 0;
+    int n_auxiliary_functions = 0;
+    std::vector<int> active_pair_first_indices;
+    std::vector<int> active_pair_second_indices;
+    const Eigen::MatrixXd* metric_whitened_ao_pair_factors = nullptr;
+    const Eigen::MatrixXd* accepted_active_coefficients = nullptr;
+    const Eigen::MatrixXd* accepted_active_pair_factors = nullptr;
+    /** @brief Bounded one-index factors, row `a*n_aux+A`, column AO `mu`.
    * Empty means the identical transform is generated in auxiliary tiles.
    */
-  std::shared_ptr<const Eigen::MatrixXd> accepted_one_index_factors;
-  /** @brief Shared (AO active|active pair) image for repeated pullbacks.
+    std::shared_ptr<const Eigen::MatrixXd> accepted_one_index_factors;
+    /** @brief Shared (AO active|active pair) image for repeated pullbacks.
    * Independent of the density adjoint and of the chosen VB structures.
    * Shared ownership avoids deep copies and charges the common budget once.
    */
-  std::shared_ptr<const OrbitalPairMatrix> orbital_pair_products;
-  /** @brief Resource-derived auxiliary tile width, unrelated to accuracy. */
-  int auxiliary_tile_size = 0;
+    std::shared_ptr<const OrbitalPairMatrix> orbital_pair_products;
+    /** @brief Resource-derived auxiliary tile width, unrelated to accuracy. */
+    int auxiliary_tile_size = 0;
 };
 
 /**
@@ -83,8 +83,7 @@ Eigen::MatrixXd compute_ri_active_pair_factor_directional_derivative(
  * All directions share the accepted `L_A C` transform. No AO-pair by
  * active-pair directional map is formed.
  */
-std::vector<Eigen::MatrixXd>
-compute_ri_active_pair_factor_directional_derivative_batch(
+std::vector<Eigen::MatrixXd> compute_ri_active_pair_factor_directional_derivative_batch(
     const RiActiveTwoElectronResponseCache& accepted_cache,
     const std::vector<Eigen::MatrixXd>& dense_active_directions);
 
@@ -95,17 +94,14 @@ compute_ri_active_pair_factor_directional_derivative_batch(
  * @param directional_active_pair_factors Factor direction `delta B` with the
  *        same shape as accepted `B`.
  */
-std::vector<double>
-compute_ri_packed_active_two_electron_integral_directional_derivative(
+std::vector<double> compute_ri_packed_active_two_electron_integral_directional_derivative(
     const RiActiveTwoElectronResponseCache& accepted_cache,
-    const Eigen::Ref<const Eigen::MatrixXd>&
-        directional_active_pair_factors);
+    const Eigen::Ref<const Eigen::MatrixXd>& directional_active_pair_factors);
 
 /**
  * @brief Forms packed `delta G` columns for a block of factor directions.
  */
-Eigen::MatrixXd
-compute_ri_packed_active_two_electron_integral_directional_derivative_batch(
+Eigen::MatrixXd compute_ri_packed_active_two_electron_integral_directional_derivative_batch(
     const RiActiveTwoElectronResponseCache& accepted_cache,
     const std::vector<Eigen::MatrixXd>& directional_active_pair_factors);
 
@@ -141,8 +137,7 @@ std::vector<Eigen::MatrixXd> backpropagate_ri_packed_active_two_electron_gradien
  * `directional_active_pair_factors` may be supplied to share the factor action
  * with the packed-integral directional derivative.
  */
-Eigen::MatrixXd
-apply_ri_packed_active_two_electron_adjoint_hessian_vector(
+Eigen::MatrixXd apply_ri_packed_active_two_electron_adjoint_hessian_vector(
     const std::vector<double>& packed_active_two_electron_gradient,
     const RiActiveTwoElectronResponseCache& accepted_cache,
     const Eigen::Ref<const Eigen::MatrixXd>& dense_active_direction,
@@ -154,11 +149,11 @@ apply_ri_packed_active_two_electron_adjoint_hessian_vector(
  * orbital frame. A precomputed factor direction from the CI integral action
  * may be borrowed. The result excludes any external frame pullback.
  */
-Eigen::MatrixXd apply_ri_active_two_electron_jet(
-    const std::vector<double>& packed_accepted_gradient,
-    const RiActiveTwoElectronResponseCache& accepted_cache,
-    const Eigen::Ref<const Eigen::MatrixXd>& dense_active_direction,
-    const std::vector<double>& packed_gradient_direction,
-    const Eigen::MatrixXd* directional_active_pair_factors = nullptr);
+Eigen::MatrixXd
+apply_ri_active_two_electron_jet(const std::vector<double>& packed_accepted_gradient,
+                                 const RiActiveTwoElectronResponseCache& accepted_cache,
+                                 const Eigen::Ref<const Eigen::MatrixXd>& dense_active_direction,
+                                 const std::vector<double>& packed_gradient_direction,
+                                 const Eigen::MatrixXd* directional_active_pair_factors = nullptr);
 
-}  // namespace xmvb::integrals
+} // namespace xmvb::integrals

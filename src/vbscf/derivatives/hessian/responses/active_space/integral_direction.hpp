@@ -18,53 +18,54 @@ struct VbScfInput;
  * the matrix-free workspaces owned by the HVP operator.
  */
 struct ActiveSpaceIntegralDirectionView {
-  const std::vector<double>& overlap;
-  const std::vector<double>& one_electron;
-  const std::vector<double>& packed_two_electron;
+    const std::vector<double>& overlap;
+    const std::vector<double>& one_electron;
+    const std::vector<double>& packed_two_electron;
 };
 
 /**
  * @brief Accepted-point data shared by every active-integral direction.
  */
 struct ActiveSpaceIntegralDirectionContext {
-  const VbScfInput& input;
-  /**
+    const VbScfInput& input;
+    /**
    * @brief Optional exact AO-pair cache used when no 2e direction is supplied.
    *
    * Factorized integral representations provide their packed active-space
    * direction through `ActiveSpaceIntegralTangent::precomputed_packed_two_electron`
    * and therefore do not carry an exact AO-pair cache.
    */
-  const xmvb::integrals::ExactPackedActiveTwoElectronAdjointCache* exact_two_electron_cache = nullptr;
-  const Eigen::MatrixXd& overlap_times_active_auxiliary_orbitals;
-  /** Accepted F Cbar; the physical AO builder produces symmetric F. */
-  const Eigen::MatrixXd& effective_h1e_image;
-  const Eigen::MatrixXd& dense_active_coefficients;
+    const xmvb::integrals::ExactPackedActiveTwoElectronAdjointCache* exact_two_electron_cache =
+        nullptr;
+    const Eigen::MatrixXd& overlap_times_active_auxiliary_orbitals;
+    /** Accepted F Cbar; the physical AO builder produces symmetric F. */
+    const Eigen::MatrixXd& effective_h1e_image;
+    const Eigen::MatrixXd& dense_active_coefficients;
 };
 
 /**
  * @brief Direction-dependent inputs to the active-integral linearization.
  */
 struct ActiveSpaceIntegralTangent {
-  const Eigen::MatrixXd& active_auxiliary_orbitals;
-  const Eigen::MatrixXd& dense_active_coefficients;
-  /** AO response projection delta F Cbar, in the accepted integral frame. */
-  const Eigen::MatrixXd& delta_effective_h1e_times_active_auxiliary_orbitals;
-  const Eigen::VectorXd* precomputed_packed_two_electron = nullptr;
-  /** Skip the packed 2e tangent when all consumers operate on RI factors. */
-  bool packed_two_electron_required = true;
+    const Eigen::MatrixXd& active_auxiliary_orbitals;
+    const Eigen::MatrixXd& dense_active_coefficients;
+    /** AO response projection delta F Cbar, in the accepted integral frame. */
+    const Eigen::MatrixXd& delta_effective_h1e_times_active_auxiliary_orbitals;
+    const Eigen::VectorXd* precomputed_packed_two_electron = nullptr;
+    /** Skip the packed 2e tangent when all consumers operate on RI factors. */
+    bool packed_two_electron_required = true;
 };
 
 struct ActiveSpaceIntegralDirectionWorkspace {
-  std::vector<double> overlap;
-  std::vector<double> one_electron;
-  std::vector<double> packed_two_electron;
-  xmvb::integrals::ExactPackedActiveTwoElectronDirectionalDerivativeWorkspace two_electron;
+    std::vector<double> overlap;
+    std::vector<double> one_electron;
+    std::vector<double> packed_two_electron;
+    xmvb::integrals::ExactPackedActiveTwoElectronDirectionalDerivativeWorkspace two_electron;
 };
 
-ActiveSpaceIntegralDirectionView build_active_space_integral_direction(
-    const ActiveSpaceIntegralDirectionContext& context,
-    const ActiveSpaceIntegralTangent& tangent,
-    ActiveSpaceIntegralDirectionWorkspace* workspace);
+ActiveSpaceIntegralDirectionView
+build_active_space_integral_direction(const ActiveSpaceIntegralDirectionContext& context,
+                                      const ActiveSpaceIntegralTangent& tangent,
+                                      ActiveSpaceIntegralDirectionWorkspace* workspace);
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

@@ -9,23 +9,23 @@ namespace xmvb::cuda {
  * means that the caller cannot certify reuse and forces a frame update.
  */
 class OrbitalFrameIdentity {
- public:
-  OrbitalFrameIdentity() = default;
-  static OrbitalFrameIdentity fresh();
-  explicit operator bool() const noexcept { return value_ != 0; }
+  public:
+    OrbitalFrameIdentity() = default;
+    static OrbitalFrameIdentity fresh();
+    explicit operator bool() const noexcept {
+        return value_ != 0;
+    }
 
-  friend bool operator==(OrbitalFrameIdentity lhs,
-                         OrbitalFrameIdentity rhs) noexcept {
-    return lhs.value_ == rhs.value_;
-  }
-  friend bool operator!=(OrbitalFrameIdentity lhs,
-                         OrbitalFrameIdentity rhs) noexcept {
-    return !(lhs == rhs);
-  }
+    friend bool operator==(OrbitalFrameIdentity lhs, OrbitalFrameIdentity rhs) noexcept {
+        return lhs.value_ == rhs.value_;
+    }
+    friend bool operator!=(OrbitalFrameIdentity lhs, OrbitalFrameIdentity rhs) noexcept {
+        return !(lhs == rhs);
+    }
 
- private:
-  explicit OrbitalFrameIdentity(std::uint64_t value) : value_(value) {}
-  std::uint64_t value_ = 0;
+  private:
+    explicit OrbitalFrameIdentity(std::uint64_t value) : value_(value) {}
+    std::uint64_t value_ = 0;
 };
 
 } // namespace xmvb::cuda

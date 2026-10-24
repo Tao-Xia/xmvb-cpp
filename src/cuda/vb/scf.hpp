@@ -12,21 +12,21 @@
 namespace xmvb::cuda {
 
 struct ScfIteration {
-  int iteration=0,hvp=0,ci_actions=0,keyframes=0;
-  double energy=0.0,energy_change=0.0,gradient_inf=0.0,seconds=0.0;
+    int iteration = 0, hvp = 0, ci_actions = 0, keyframes = 0;
+    double energy = 0.0, energy_change = 0.0, gradient_inf = 0.0, seconds = 0.0;
 };
 
 struct ScfResult {
-  Matrix<double> orbitals,coefficients;
-  bool converged=false;
-  std::string reason;
-  double energy=0.0,gradient_inf=0.0,seconds=0.0;
-  double ao_upload_seconds=0.0,host_integral_release_seconds=0.0;
-  /** Initial CI relaxation, excluding orbital/integral preparation and gradient. */
-  double initial_ci_seconds=0.0;
-  int iterations=0,hvp=0,ci_actions=0;
-  std::uint64_t ci_prepared_points=0,selected_metric_builds=0;
-  std::vector<ScfIteration> trace;
+    Matrix<double> orbitals, coefficients;
+    bool converged = false;
+    std::string reason;
+    double energy = 0.0, gradient_inf = 0.0, seconds = 0.0;
+    double ao_upload_seconds = 0.0, host_integral_release_seconds = 0.0;
+    /** Initial CI relaxation, excluding orbital/integral preparation and gradient. */
+    double initial_ci_seconds = 0.0;
+    int iterations = 0, hvp = 0, ci_actions = 0;
+    std::uint64_t ci_prepared_points = 0, selected_metric_builds = 0;
+    std::vector<ScfIteration> trace;
 };
 
 /** Exact, real single-state GPU VBSCF. Host input supplies AO integrals and
@@ -36,9 +36,11 @@ struct ScfResult {
  * representation. Other input topology is borrowed. The Context must outlive
  * the returned orbital/structure vectors. AO setup remains in seconds.
  */
-ScfResult solve_scf(Context& context,const vb::VbScfInput& input,
-    integrals::AoPairGraph&& integral_stream,double nuclear_repulsion,
-    const vb::VbScfOptimizerOptions& options,
-    const std::function<void(const ScfIteration&)>& observe={});
+ScfResult solve_scf(Context& context,
+                    const vb::VbScfInput& input,
+                    integrals::AoPairGraph&& integral_stream,
+                    double nuclear_repulsion,
+                    const vb::VbScfOptimizerOptions& options,
+                    const std::function<void(const ScfIteration&)>& observe = {});
 
-}  // namespace xmvb::cuda
+} // namespace xmvb::cuda

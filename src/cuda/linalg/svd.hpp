@@ -12,10 +12,10 @@ namespace xmvb::cuda {
  * Rank decisions belong to the caller and retain the original input shape.
  */
 struct RightSvd {
-  Matrix<double> right;
-  std::vector<double> values;
+    Matrix<double> right;
+    std::vector<double> values;
 };
 
-RightSvd right_svd(Context&,linalg::ConstMatrixView);
+RightSvd right_svd(Context&, linalg::ConstMatrixView);
 
 } // namespace xmvb::cuda
