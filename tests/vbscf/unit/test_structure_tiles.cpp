@@ -2403,6 +2403,12 @@ void check_sparse_beta_gather() {
         composed.push_back({.alpha=halo[h],.channel_group=grouped ? groups[index[h]]:0,
             .image=static_cast<std::size_t>(image)});
       }
+      std::vector<int> target_index(halo.size(),-1),halo_index(11,-1),identity_index(11,-1);
+      for (int h=0;h<static_cast<int>(halo.size());++h) halo_index[halo[h]]=h;
+      for (int i=0;i<static_cast<int>(composed.size());++i) {
+        target_index[halo_index[composed[i].alpha]]=i;
+        identity_index[composed[i].alpha]=i;
+      }
       for (int rhs=0;rhs<width;++rhs) for (const bool selected:{false,true})
         for (int first=0;first<=static_cast<int>(halo.size());++first)
           for (int last=first;last<=static_cast<int>(halo.size());++last) {
@@ -2420,15 +2426,31 @@ void check_sparse_beta_gather() {
             gather_beta_rows(SigmaGatherImage<false,false>{.values=values.data()+(column_major ? channel*image_rows:channel),
                 .rhs_strides=layout.rhs_strides(),.element_stride=column_major ? 1:pairs},rhs,-1.0,
                 composed,begin,end,actual.data(),
-                selected ? sparse.data():nullptr,selected ? sparse.size():0);
+                selected ? sparse.data():nullptr,selected ? sparse.size():0,target_index.data(),halo_index.data());
             require((actual-expected).norm()==0,"sparse beta gather changed a halo interval or destination support");
+            actual.setConstant(0.25);
+            gather_beta_rows(SigmaGatherImage<false,false>{.values=values.data()+(column_major ? channel*image_rows:channel),
+                .rhs_strides=layout.rhs_strides(),.element_stride=column_major ? 1:pairs},rhs,-1.0,
+                composed,begin,end,actual.data(),selected ? sparse.data():nullptr,selected ? sparse.size():0,
+                identity_index.data(),nullptr);
+            require((actual-expected).norm()==0,"direct sparse gather changed identity-halo addresses");
+            if (selected) {
+              const int lo=std::lower_bound(sparse.begin(),sparse.end(),begin)-sparse.begin();
+              const int hi=std::lower_bound(sparse.begin()+lo,sparse.end(),end)-sparse.begin();
+              actual.setConstant(0.25);
+              gather_beta_rows(SigmaGatherImage<false,false>{.values=values.data()+(column_major ? channel*image_rows:channel),
+                  .rhs_strides=layout.rhs_strides(),.element_stride=column_major ? 1:pairs},rhs,-1.0,
+                  composed,begin,end,actual.data()+lo,sparse.data()+lo,hi-lo,
+                  target_index.data(),halo_index.data());
+              require((actual-expected).norm()==0,"clipped sparse gather changed output offsets");
+            }
             if (width==1) {
               actual.setConstant(0.25);
               gather_beta_rows(SigmaGatherImage<false,true>{
                   .values=values.data()+(column_major ? channel*image_rows:channel),
                   .rhs_strides=nullptr,.element_stride=column_major ? 1:pairs},0,-1.0,
                   composed,begin,end,actual.data(),
-                  selected ? sparse.data():nullptr,selected ? sparse.size():0);
+                  selected ? sparse.data():nullptr,selected ? sparse.size():0,target_index.data(),halo_index.data());
               require((actual-expected).norm()==0,
                   "single-RHS gather changed sparse joins or read a group stride");
             }

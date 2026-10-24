@@ -53,18 +53,38 @@ struct SigmaGatherImage {
 
 /** @brief Contract one beta edge over existing target rows only.
  * Join the sparse destination before decoding channels or loading coefficients.
- * The alpha order permits one monotone merge.
+ * Traverse the smaller of sorted target rows and requested output support.
+ * The latter borrows the tile's existing halo-to-target map; it does not
+ * build an excitation join or retain a second address table.
  */
 template<bool Projected,bool FirstRhs>
 inline void gather_beta_rows(const SigmaGatherImage<Projected,FirstRhs>& image,int rhs,double sign,
     std::span<const SigmaGatherRow> targets,int first,int last,
-    double* destination,const int* rows,int n_rows) {
+    double* destination,const int* rows,int n_rows,
+    const int* target_index,const int* halo_index) {
   const auto before=[](const SigmaGatherRow& row,int alpha) { return row.alpha<alpha; };
   auto target=std::lower_bound(targets.begin(),targets.end(),first,before);
   const auto end=std::lower_bound(target,targets.end(),last,before);
   if (target==end) return;
   int output=0;
-  if (rows) output=std::lower_bound(rows,rows+n_rows,target->alpha)-rows;
+  if (rows) {
+    output=std::lower_bound(rows,rows+n_rows,target->alpha)-rows;
+    const int stop=std::upper_bound(rows+output,rows+n_rows,(end-1)->alpha)-rows;
+    // Exact cardinalities choose the shorter join, without a fitted cutoff.
+    // Each output coordinate has at most one row in this beta group.
+    if (stop-output<end-target) {
+      for (;output<stop;++output) {
+        const int alpha=rows[output];
+        const int halo=halo_index ? halo_index[alpha]:alpha;
+        const int index=halo<0 ? -1:target_index[halo];
+        if (index<0) continue;
+        const auto& row=targets[index];
+        const int channel=image.channel(row);
+        if (channel>=0) destination[output]+=sign*image.load(row,rhs,channel);
+      }
+      return;
+    }
+  }
   const auto consume=[&](const SigmaGatherRow& row) {
     // The sparse output join is cheaper than decoding a channel address.
     // Every skipped output row has exactly zero contribution to the consumer.

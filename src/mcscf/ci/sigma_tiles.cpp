@@ -324,7 +324,7 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
                 // Store one row-record index for all RHSs and responses. The
                 // composed address already includes the packed group offset.
                 for (int i=groups[g].begin;i<groups[g].end;++i)
-                  image_index[static_cast<std::size_t>(g)*n_halo+halo_index[target_rows[i].alpha]]=i;
+                  image_index[static_cast<std::size_t>(g)*n_halo+halo_index[target_rows[i].alpha]]=i-groups[g].begin;
               });
               indices_phase.stop();
               profiling::ScopedPhase links_phase(profiling::Phase::CiTileLinks);
@@ -547,7 +547,7 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
                   if (local<first || local>=last) continue;
                   double sum = 0;
                   if (index[local] >= 0) {
-                    const int row=index[local];
+                    const int row=groups[same].begin+index[local];
                     for (const int p : OccupiedOrbitals(alpha_masks[a]))
                       sum += value(row,v,
                           core::PairIndex::packed_pair_index(p,p));
@@ -560,7 +560,7 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
                     const int h = identity_halo ? links[link].source:halo_index[links[link].source];
                     const int target = h < 0 ? -1 : index[h];
                     if (target >= 0)
-                      sum += links[link].sign * value(target,v,
+                      sum += links[link].sign * value(groups[same].begin+target,v,
                           links[link].pair);
                   }
                   destination[rows ? i:a] += sum;
@@ -580,7 +580,9 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
                 detail::gather_beta_rows(image,v,link.sign,
                     {target_rows.data()+group.begin,static_cast<std::size_t>(group.end-group.begin)},
                     rows ? rows[begin]:halo[first],rows ? rows[end-1]+1:halo[last-1]+1,
-                    destination,rows,n_rows);
+                    destination+(rows ? begin:0),rows ? rows+begin:nullptr,rows ? end-begin:0,
+                    image_index.data()+static_cast<std::size_t>(link.group)*n_halo,
+                    identity_halo ? nullptr:halo_index.data());
               }
             };
               writer(columns, halo, accumulate);
