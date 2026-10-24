@@ -132,9 +132,7 @@ class ExteriorOrbitalTransform {
     int dimension() const noexcept {
         return strings_.size();
     }
-    const ExteriorRowPlan& row_plan() const noexcept {
-        return *row_plan_;
-    }
+
     /** Borrowed factors in the exact order used by the CPU exterior action. */
     const Eigen::VectorXd& determinant_scales() const noexcept {
         return determinant_scales_;

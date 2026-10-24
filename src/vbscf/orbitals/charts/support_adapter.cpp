@@ -293,45 +293,6 @@ void rebuild_exact_support_block_metadata(const std::vector<std::vector<int>>& o
     orbital_preparation_input->block_basis_counts = std::move(block_basis_counts);
 }
 
-void rebuild_overlap_connected_block_metadata(
-    const std::vector<std::vector<int>>& overlap_components,
-    const std::vector<std::vector<int>>& orbital_supports,
-    OrbitalPreparationInput* orbital_preparation_input) {
-    if (orbital_preparation_input == nullptr) {
-        throw std::invalid_argument("orbital_preparation_input must not be null");
-    }
-
-    std::size_t block_storage_dimension = 0;
-    for (const auto& component : overlap_components) {
-        block_storage_dimension = std::max(block_storage_dimension, component.size());
-    }
-    const std::size_t block_storage_stride = std::max<std::size_t>(1, block_storage_dimension);
-
-    std::vector<int> block_members(overlap_components.size() * block_storage_stride, 0);
-    std::vector<int> block_orbital_counts(overlap_components.size(), 0);
-    std::vector<int> block_basis_counts;
-    block_basis_counts.reserve(overlap_components.size());
-
-    for (std::size_t block_index = 0; block_index < overlap_components.size(); ++block_index) {
-        const auto& component = overlap_components[block_index];
-        block_orbital_counts[block_index] = static_cast<int>(component.size());
-        for (std::size_t orbital_offset = 0; orbital_offset < component.size(); ++orbital_offset) {
-            block_members[block_index * block_storage_stride + orbital_offset] =
-                component[orbital_offset];
-        }
-        block_basis_counts.push_back(static_cast<int>(
-            build_component_union_support(
-                component, orbital_supports, orbital_preparation_input->n_basis_functions)
-                .size()));
-    }
-
-    orbital_preparation_input->n_blocks = overlap_components.size();
-    orbital_preparation_input->block_storage_dimension = block_storage_dimension;
-    orbital_preparation_input->block_members = std::move(block_members);
-    orbital_preparation_input->block_orbital_counts = std::move(block_orbital_counts);
-    orbital_preparation_input->block_basis_counts = std::move(block_basis_counts);
-}
-
 bool support_layout_has_partial_overlap(const std::vector<std::vector<int>>& orbital_supports,
                                         int n_basis_functions) {
     const int n_orbitals = static_cast<int>(orbital_supports.size());

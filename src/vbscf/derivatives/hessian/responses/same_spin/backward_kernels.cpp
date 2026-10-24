@@ -102,33 +102,6 @@ bool same_spin_weight_tile_has_any_weight(const HWeight& hamiltonian_weight_tile
     return false;
 }
 
-template <typename HWeight,
-          typename SWeight,
-          typename TWeight,
-          typename DHWeight,
-          typename DSWeight,
-          typename DTWeight>
-bool same_spin_local_weight_tile_has_any_weight(const HWeight& hamiltonian_weight_tile,
-                                                const SWeight& overlap_weight_tile,
-                                                const TWeight& partner_total_transfer_tile,
-                                                const DHWeight& delta_hamiltonian_weight_tile,
-                                                const DSWeight& delta_overlap_weight_tile,
-                                                const DTWeight& delta_partner_total_transfer_tile) {
-    for (int column = 0; column < hamiltonian_weight_tile.cols(); ++column) {
-        for (int row = 0; row < hamiltonian_weight_tile.rows(); ++row) {
-            if (std::abs(hamiltonian_weight_tile(row, column)) > kContributionTolerance ||
-                std::abs(overlap_weight_tile(row, column)) > kContributionTolerance ||
-                std::abs(partner_total_transfer_tile(row, column)) > kContributionTolerance ||
-                std::abs(delta_hamiltonian_weight_tile(row, column)) > kContributionTolerance ||
-                std::abs(delta_overlap_weight_tile(row, column)) > kContributionTolerance ||
-                std::abs(delta_partner_total_transfer_tile(row, column)) > kContributionTolerance) {
-                return true;
-            }
-        }
-    }
-    return false;
-}
-
 void accumulate_spin_pair_backward(const std::vector<int>& occ_L,
                                    const std::vector<int>& occ_R,
                                    const SpinDeterminantPairEvaluation& pair_evaluation,

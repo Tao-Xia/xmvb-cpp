@@ -1,7 +1,6 @@
 #pragma once
 
 #include <algorithm>
-#include <cmath>
 #include <cstddef>
 #include <stdexcept>
 #include <vector>
@@ -99,43 +98,6 @@ inline int square_tile_task_index(int row_tile, int column_tile, int n_tiles) {
             "square tile task index requires non-negative tiles and positive n_tiles");
     }
     return row_tile * n_tiles + column_tile;
-}
-
-/**
- * @brief Chooses a square-ish tile size for bounded-memory parallel work.
- *
- * The configured tile size defines the maximum working-set size. When there
- * are multiple worker threads, a slightly smaller square tile can expose more
- * independent work without violating the same bounded-memory contract.
- */
-inline int choose_square_parallel_tile_size(int extent, int configured_tile_size, int n_threads) {
-    if (extent <= 0) {
-        throw std::invalid_argument("extent must be positive");
-    }
-    if (configured_tile_size <= 0) {
-        throw std::invalid_argument("configured_tile_size must be positive");
-    }
-    if (n_threads <= 0) {
-        throw std::invalid_argument("n_threads must be positive");
-    }
-
-    const int clamped_tile_size = std::min(extent, configured_tile_size);
-    if (clamped_tile_size <= 1) {
-        return clamped_tile_size;
-    }
-    if (extent <= clamped_tile_size || (extent) * (extent) <= 4096u) {
-        return clamped_tile_size;
-    }
-    if (n_threads <= 1) {
-        return clamped_tile_size;
-    }
-
-    const int target_tiles_per_dimension = std::min(
-        extent,
-        std::max(1, static_cast<int>(std::ceil(std::sqrt(2.0 * static_cast<double>(n_threads))))));
-    const int parallel_tile_size =
-        std::max(1, (extent + target_tiles_per_dimension - 1) / target_tiles_per_dimension);
-    return std::min(clamped_tile_size, parallel_tile_size);
 }
 
 /**

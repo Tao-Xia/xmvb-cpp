@@ -105,18 +105,6 @@ class VbScfObjective {
     const std::vector<double>& iteration_time_history_seconds() const {
         return iteration_time_history_seconds_;
     }
-    std::size_t call_count() const {
-        return energy_history_.size();
-    }
-    double objective_wall_time_seconds() const {
-        return objective_wall_time_seconds_;
-    }
-    double last_gradient_inf_norm() const {
-        if (gradient_inf_norm_history_.empty()) {
-            return 0.0;
-        }
-        return gradient_inf_norm_history_.back();
-    }
 
     /** @brief Evaluates a trial point without changing the accepted point. */
     TrialEvaluation evaluate_trial(const Eigen::VectorXd& parameter_vector,
@@ -163,7 +151,6 @@ class VbScfObjective {
     std::vector<double> energy_history_;
     std::vector<double> gradient_inf_norm_history_;
     std::vector<double> iteration_time_history_seconds_;
-    double objective_wall_time_seconds_ = 0.0;
 
     TrialEvaluation evaluate_trial_energy_with_initial_eigenvectors(
         const Eigen::VectorXd& parameter_vector,

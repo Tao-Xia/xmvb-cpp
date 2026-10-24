@@ -207,7 +207,6 @@ void VbScfObjective::commit(TrialEvaluation evaluation) {
     energy_history_.push_back(evaluation.energy);
     gradient_inf_norm_history_.push_back(evaluation.gradient_inf_norm);
     iteration_time_history_seconds_.push_back(evaluation.wall_time_seconds);
-    objective_wall_time_seconds_ += evaluation.wall_time_seconds;
 }
 
 } // namespace xmvb::vb

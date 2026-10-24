@@ -23,11 +23,6 @@ std::size_t square_storage_size(int dimension) {
     return static_cast<std::size_t>(dimension) * static_cast<std::size_t>(dimension);
 }
 
-void set_symmetric_entry(Eigen::MatrixXd* matrix, int row, int column, double value) {
-    (*matrix)(row, column) = value;
-    (*matrix)(column, row) = value;
-}
-
 } // namespace
 
 const SameSpinPolynomialDirectionalPairData&

@@ -44,9 +44,6 @@ class SingleStateCiTangent {
     SingleStateCiTangent(const SingleStateCiTangent&) = delete;
     SingleStateCiTangent& operator=(const SingleStateCiTangent&) = delete;
 
-    int ambient_size() const noexcept {
-        return structures_;
-    }
     int tangent_size() const noexcept {
         return structures_ - 1;
     }

@@ -71,9 +71,4 @@ inline bool finite_vector_matches_size(const Eigen::VectorXd& vector, Eigen::Ind
     return vector.size() == expected_size && vector.allFinite();
 }
 
-inline bool finite_nonzero_vector_matches_size(const Eigen::VectorXd& vector,
-                                               Eigen::Index expected_size) {
-    return finite_vector_matches_size(vector, expected_size) && vector.squaredNorm() > 0.0;
-}
-
 } // namespace xmvb::vb
