@@ -37,7 +37,7 @@ struct SigmaTile {
   std::vector<int> active,group_index,halo,columns,halo_index,column_index,released;
   std::vector<unsigned char> active_support;
   std::vector<int> channel_groups,diagonal_rows;
-  std::size_t unsupported_targets=0;
+  std::size_t unsupported_targets=0,bulk_targets=0;
 };
 
 /** @brief Stream each target once, admitting its actual shared neighborhoods.
@@ -61,6 +61,7 @@ private:
   bool pull(Node& node);
   void reset_tile();
   void append_node(const Node& node,bool new_group,bool expand_alpha);
+  bool append_column_tail(const Node& first);
   bool finish_tile(bool sorted_halo=false,bool sorted_columns=false);
   const SpinConnections& alpha_;
   const SpinConnections& beta_;

@@ -171,7 +171,7 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
   auto& column_index=plan.column_index;
   auto& active_support=plan.active_support;
   auto& released_columns=plan.released;
-  const auto& diagonal_rows=plan.diagonal_rows;
+  auto& diagonal_images=plan.diagonal_rows;
   std::vector<int> same_group,offsets,positions,image_index;
   std::vector<detail::SigmaGatherRow> target_rows;
   const auto& channel_groups=plan.channel_groups;
@@ -194,6 +194,7 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
   std::size_t gram_scratch_bytes=0;
   int gram_partitions=0,gram_extent=0;
   std::size_t batches = 0, source_columns = 0, source_elements = 0, peak_payload = 0;
+  std::size_t bulk_targets=0,unindexed_exchange_checks=0,exchange_row_products=0;
   std::size_t targets = 0, unsupported_targets = 0, identity_halo_targets=0,beta_map_bytes=0;
   std::size_t source_channels=0;
   long double projected_products=0,full_products=0;
@@ -216,11 +217,26 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
           }
           if (!failure) {
             unsupported_targets+=plan.unsupported_targets;
+            bulk_targets+=plan.bulk_targets;
             if (!active.empty()) {
               count = active.size();
               {
                 profiling::ScopedPhase phase(profiling::Phase::CiTileLayout);
                 channel_layout.reset(channel_product,channel_groups,count,width,true,projected_image);
+                channel_layout.prepare_diagonals(diagonal_images);
+              }
+              if (timing && exchange_parity) {
+                std::size_t products=0,owners=0;
+                for (const auto& request:requests)
+                  products+=static_cast<bool>(request.image)+static_cast<bool>(request.direction)*
+                      static_cast<bool>(request.image || request.forcing);
+                for (int group=0;group<channel_product.groups();++group)
+                  owners+=std::min(team,channel_layout.size(group));
+                const auto diagonal_products=static_cast<std::size_t>(width)*diagonal_images.size()*products;
+                // Exact scan count of the former all-diagonals-per-owner loop;
+                // indexed ownership leaves only these physical row products.
+                unindexed_exchange_checks+=diagonal_products*owners;
+                exchange_row_products+=diagonal_products;
               }
               packed_size=channel_layout.entries();
               source_channels+=packed_size/width;
@@ -431,7 +447,7 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
             }
           }
           detail::contract_channel_gram(channel_product,channel_layout,scattered,
-              state ? state_channels:scattered,kernel_adjoint,diagonal_rows,count,width,
+              state ? state_channels:scattered,kernel_adjoint,diagonal_images,count,width,
               exchange_parity!=0,workspace.get(),scratch_size,thread,team);
           if (timing) {
 #pragma omp single
@@ -442,13 +458,13 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
         // have different owners. Publish all source rows before multiplication.
 #pragma omp barrier
         if (add_columns) detail::multiply_channels(channel_product,channel_layout,
-            scattered,transformed,thread,team,false,diagonal_rows,count,width,exchange_parity!=0);
+            scattered,transformed,thread,team,false,diagonal_images,width,exchange_parity!=0);
         if (add_forcing) {
           // Expanding packed A into a full forcing image may overlap rows
           // owned by other workers. Every base multiplication must finish.
 #pragma omp barrier
           detail::multiply_channels(directional_products[request_id],channel_layout,
-              state_channels,scattered,thread,team,false,diagonal_rows,count,width,exchange_parity!=0);
+              state_channels,scattered,thread,team,false,diagonal_images,width,exchange_parity!=0);
           if (add_columns) {
             // Both images use identical group row ownership.
             const Eigen::OuterStride<> image_stride(count*width);
@@ -466,7 +482,7 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
           }
         } else if (direction && add_columns) {
           detail::multiply_channels(directional_products[request_id],channel_layout,
-              state_channels,transformed,thread,team,true,diagonal_rows,count,width,exchange_parity!=0);
+              state_channels,transformed,thread,team,true,diagonal_images,width,exchange_parity!=0);
         }
         // Publish grouped images before the single writer schedules tasks.
 #pragma omp barrier
@@ -591,7 +607,7 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
         "gram_extent=%d,gram_scratch_bytes=%zu,workspace_reused=%d,"
         "workspace_allocations=%zu,workspace_bytes=%zu,"
         "restricted_channels=%d,source_channels=%zu,channel_kernel_bytes=%zu,"
-        "rhs_width=%d,responses=%zu,projected_image=%d,channel_products=%.0Lf,unrestricted_channel_products=%.0Lf\n",
+        "unindexed_exchange_checks=%zu,exchange_row_products=%zu,bulk_targets=%zu,rhs_width=%d,responses=%zu,projected_image=%d,channel_products=%.0Lf,unrestricted_channel_products=%.0Lf\n",
         batches, source_columns, source_elements, peak_payload,
         prepare_time, read_time, compute_time, write_time, targets, exchange_parity,
         unsupported_targets * static_cast<std::size_t>(width) *
@@ -600,7 +616,8 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
         gram_partitions,gram_extent,gram_scratch_bytes,
         static_cast<int>(workspace.reused()),workspace.allocations(),workspace.bytes(),
         static_cast<int>(restricted_channels),source_channels,restricted_channels ? kernel_bytes:0,
-        width,requests.size(),static_cast<int>(projected_image),projected_products,full_products);
+        unindexed_exchange_checks,exchange_row_products,bulk_targets,width,requests.size(),
+        static_cast<int>(projected_image),projected_products,full_products);
   std::vector<DirectCiIntegralAdjoint> results(requests.size());
   if (collect_integrals) for (std::size_t r=0;r<requests.size();++r)
     results[r]=pullback_channel_kernel(kernel_adjoints[r]);

@@ -97,10 +97,25 @@ public:
     if (identity_ || !store_images) { image_rows_.clear(); return; }
     image_rows_.resize(count*width);
     auto position=offsets_;
-    for (int row=0;row<count*width;++row) {
-      const int group=groups[row%count],image=position[group]++;
-      image_rows_[row]=image;
-    }
+    for (int rhs=0;rhs<width;++rhs) for (int row=0;row<count;++row)
+      image_rows_[rhs*count+row]=position[groups[row]]++;
+  }
+
+  /** @brief Reuse the tile's diagonal-index storage as sorted RHS-zero images.
+   * Invoke once after reset(). No coefficients or per-RHS index copies are made.
+   */
+  void prepare_diagonals(std::span<int> rows) const {
+    for (int& row:rows) row=image(row);
+    std::sort(rows.begin(),rows.end());
+  }
+
+  /** @brief Diagonals owned by one group and local RHS-zero row interval. */
+  std::span<const int> diagonals(std::span<const int> images,int group,int first,int last) const {
+    first=std::max(0,first);last=std::min(rhs_stride(group),last);
+    if (first>=last || images.empty()) return {};
+    const auto begin=std::lower_bound(images.begin(),images.end(),this->begin(group)+first);
+    const auto end=std::lower_bound(begin,images.end(),this->begin(group)+last);
+    return {begin,end};
   }
   struct Panel { int first,rows; std::size_t packed; };
 
@@ -160,7 +175,7 @@ public:
  */
 inline void multiply_channels(const ChannelProduct& basis,const ChannelLayout& layout,
     const double* source,double* destination,int thread,int team,bool add,
-    std::span<const int> diagonal_rows,int count,int width,bool exchange) {
+    std::span<const int> diagonal_images,int width,bool exchange) {
   const double scale=exchange ? 2.0:1.0;
   for (int group=0;group<basis.groups();++group) {
     const int size=layout.size(group),first=size*thread/team,last=size*(thread+1)/team;
@@ -177,10 +192,12 @@ inline void multiply_channels(const ChannelProduct& basis,const ChannelLayout& l
     else output.noalias()=scale*input*basis.kernel(group).transpose();
     // Exchange orbits have weight two except on alpha=beta. Correct only
     // those rows; a separate read/write pass over every full image is avoided.
-    if (exchange) for (int v=0;v<width;++v) for (const int row:diagonal_rows) {
-      const int local=layout.image(v*count+row)-layout.begin(group)-first;
-      if (local>=0 && local<last-first)
+    if (exchange) for (int v=0;v<width;++v) {
+      const int shift=v*layout.rhs_stride(group);
+      for (const int image:layout.diagonals(diagonal_images,group,first-shift,last-shift)) {
+        const int local=image-layout.begin(group)+shift-first;
         output.row(local).noalias()-=input.row(local)*basis.kernel(group).transpose();
+      }
     }
   }
 }
@@ -192,7 +209,7 @@ inline void multiply_channels(const ChannelProduct& basis,const ChannelLayout& l
  */
 inline void contract_channel_gram(const ChannelProduct& basis,const ChannelLayout& layout,
     const double* left,const double* right,Eigen::MatrixXd& result,
-    std::span<const int> diagonal_rows,int count,int width,bool exchange,
+    std::span<const int> diagonal_images,int count,int width,bool exchange,
     double* scratch,std::size_t capacity,int thread,int team) {
   const int pairs=basis.channels(0),parts=std::min(team,count*width);
   const auto area=static_cast<std::size_t>(pairs)*pairs;
@@ -208,10 +225,12 @@ inline void contract_channel_gram(const ChannelProduct& basis,const ChannelLayou
         Eigen::Map<const ChannelRows> b(right+layout.offset(group)+static_cast<std::size_t>(first)*k,last-first,k);
         Eigen::Map<Eigen::MatrixXd> gram(scratch+(2*thread+1)*area,k,k);
         gram.noalias()=(exchange ? 2.0:1.0)*a.transpose()*b;
-        if (exchange) for (int v=0;v<width;++v) for (const int local:diagonal_rows) {
-          const int image=layout.image(v*count+local)-layout.begin(group);
-          if (image>=first && image<last)
-            gram.noalias()-=a.row(image-first).transpose()*b.row(image-first);
+        if (exchange) for (int v=0;v<width;++v) {
+          const int shift=v*layout.rhs_stride(group);
+          for (const int base:layout.diagonals(diagonal_images,group,first-shift,last-shift)) {
+            const int local=base-layout.begin(group)+shift-first;
+            gram.noalias()-=a.row(local).transpose()*b.row(local);
+          }
         }
         if (!group) partial+=gram;
         else for (int j=0;j<k;++j) for (int i=0;i<k;++i)
@@ -239,10 +258,11 @@ inline void contract_channel_gram(const ChannelProduct& basis,const ChannelLayou
         const Vector a(left+layout.offset(group)+i,size,Eigen::InnerStride<>(k));
         const Vector b(right+layout.offset(group)+j,size,Eigen::InnerStride<>(k));
         value+=(exchange ? 2.0:1.0)*a.dot(b);
-        if (exchange) for (int v=0;v<width;++v) for (const int local:diagonal_rows) {
-          const int image=layout.image(v*count+local)-layout.begin(group);
-          if (image>=0 && image<size) value-=a[image]*b[image];
-        }
+        if (exchange) for (int v=0;v<width;++v)
+          for (const int base:layout.diagonals(diagonal_images,group,0,layout.rhs_stride(group))) {
+            const int image=base-layout.begin(group)+v*layout.rhs_stride(group);
+            value-=a[image]*b[image];
+          }
       }
       result.data()[entry]+=value;
     }

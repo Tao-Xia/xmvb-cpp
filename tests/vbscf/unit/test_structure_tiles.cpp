@@ -2262,6 +2262,7 @@ void check_sigma_tile_plan() {
   }
   const std::vector<std::uint64_t> masks{1,2,4,8};
   const ProductSupport support(4,masks,masks,{3,12});
+  std::size_t bulk_targets=0;
   for (const ProductSupport* selected:std::array<const ProductSupport*,2>{nullptr,&support})
     for (int parity:{0,1,-1})
       for (const std::size_t bytes:{800U,8192U})
@@ -2271,6 +2272,7 @@ void check_sigma_tile_plan() {
         std::array<int,16> visits{};
         std::array<bool,4> retired{};
         while (plan.next()) {
+          bulk_targets+=plan.bulk_targets;
           require(!max_groups || plan.groups.size()<=static_cast<std::size_t>(max_groups),
               "sigma plan exceeds its consumer panel extent");
           check_sigma_payload(plan,{2,10,2,bytes},4);
@@ -2298,6 +2300,7 @@ void check_sigma_tile_plan() {
         require(std::all_of(retired.begin(),retired.end(),[](bool value) { return value; }),
             "sigma plan omitted a final column release");
       }
+  require(bulk_targets>0,"sigma-plan oracle did not exercise certified column batching");
 }
 
 /** @brief Full-channel images are column-major; ragged sources remain row-major. */
@@ -2316,6 +2319,8 @@ void check_full_channel_image_layout() {
     const ChannelProduct basis(kernel,3,restricted),derivative(direction,3,restricted);
     ChannelLayout layout;
     layout.reset(basis,restricted ? std::span<const int>(selected_groups):std::span<const int>{},count,width);
+    auto diagonal_images=diagonal_rows;
+    layout.prepare_diagonals(diagonal_images);
     std::vector<double> source(layout.entries()),image(count*width*pairs,-1.0);
     for (std::size_t i=0;i<source.size();++i) source[i]=0.02*(i+1)-0.17;
     Eigen::MatrixXd expected=Eigen::MatrixXd::Zero(count*width,pairs);
@@ -2335,16 +2340,44 @@ void check_full_channel_image_layout() {
     };
     for (int thread=0;thread<threads;++thread)
       multiply_channels(basis,layout,source.data(),image.data(),thread,threads,false,
-          diagonal_rows,count,width,exchange);
+          diagonal_images,width,exchange);
     accumulate(kernel,false);
     Eigen::Map<const Eigen::MatrixXd> first(image.data(),count*width,pairs);
     require((first-expected).norm()<1e-12,"full-channel image layout changed the dense product");
     for (int thread=0;thread<threads;++thread)
       multiply_channels(derivative,layout,source.data(),image.data(),thread,threads,true,
-          diagonal_rows,count,width,exchange);
+          diagonal_images,width,exchange);
     accumulate(direction,true);
     Eigen::Map<const Eigen::MatrixXd> combined(image.data(),count*width,pairs);
     require((combined-expected).norm()<1e-12,"full-channel forcing changed the dense product");
+    // Independent weighted row outer products check both bounded Gram paths.
+    Eigen::VectorXd right=Eigen::Map<const Eigen::VectorXd>(source.data(),source.size()).reverse();
+    right.array()+=0.031;
+    Eigen::MatrixXd expected_gram=Eigen::MatrixXd::Zero(pairs,pairs);
+    for (int row=0;row<count*width;++row) {
+      const int group=restricted ? selected_groups[row%count]:0;
+      const bool diagonal=std::find(diagonal_rows.begin(),diagonal_rows.end(),row%count)!=diagonal_rows.end();
+      const double weight=exchange ? (diagonal ? 1.0:2.0):1.0;
+      const auto first=layout.packed(row,group);
+      for (int j=0;j<basis.channels(group);++j) for (int i=0;i<basis.channels(group);++i)
+        expected_gram(basis.global(group,i),basis.global(group,j))+=
+            weight*source[first+i]*right[first+j];
+    }
+    for (const std::size_t capacity:{std::size_t{0},static_cast<std::size_t>(2*threads*pairs*pairs)}) {
+      std::vector<double> scratch(capacity);
+      Eigen::MatrixXd actual=Eigen::MatrixXd::Zero(pairs,pairs);
+#pragma omp parallel num_threads(threads)
+      {
+        int thread=0,team=1;
+#ifdef _OPENMP
+        thread=omp_get_thread_num();team=omp_get_num_threads();
+#endif
+        contract_channel_gram(basis,layout,source.data(),right.data(),actual,
+            diagonal_images,count,width,exchange,scratch.data(),scratch.size(),thread,team);
+      }
+      require((actual-expected_gram).norm()<1e-12,
+          "grouped diagonal indexing changed a bounded weighted Gram");
+    }
   }
 }
 

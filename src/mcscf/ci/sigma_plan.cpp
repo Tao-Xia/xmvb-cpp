@@ -119,7 +119,7 @@ void SigmaTilePlan::reset_tile() {
   for (const int a:seen_alpha_) alpha_seen_[a]=0;
   groups.clear(); active.clear(); group_index.clear(); halo.clear(); columns.clear();
   active_support.clear(); seen_alpha_.clear(); released.clear(); channel_groups.clear(); payload_=0;
-  diagonal_rows.clear(); unsupported_targets=0;
+  diagonal_rows.clear(); unsupported_targets=0;bulk_targets=0;
 }
 
 void SigmaTilePlan::append_node(const Node& node,bool new_group,bool expand_alpha) {
@@ -134,6 +134,38 @@ void SigmaTilePlan::append_node(const Node& node,bool new_group,bool expand_alph
   if (budget_.packed_slabs) channel_groups.push_back(node.group);
   group_index.push_back(groups.size()-1);
   groups.back().end=active.size();
+}
+
+/** @brief Admit a proved-fitting column tail after alpha-halo saturation.
+ * The beta group/neighborhood is unchanged. Every channel count is at most
+ * budget_.pairs, so this upper bound certifies the whole tail before writing
+ * it. Accumulate the exact payload while filling, without per-node admission,
+ * neighbor tests or geometric-growth push_back calls. No plan cache is kept.
+ */
+bool SigmaTilePlan::append_column_tail(const Node& first) {
+  const int size=support_ ? static_cast<int>(column_rows_.size()):
+      parity_ ? first.beta+(parity_>0):alpha_.n_strings();
+  const int count=size-next_alpha_+1;
+  const auto limit=static_cast<std::size_t>(std::numeric_limits<int>::max()/budget_.width);
+  if (count<=1 || active.size()>=limit || static_cast<std::size_t>(count)>limit-active.size() ||
+      payload_+static_cast<Bytes>(count)*(row_bytes_+entry_bytes_*budget_.pairs)>budget_.bytes)
+    return false;
+  const int begin=active.size(),end=begin+count,group=groups.size()-1;
+  active.resize(end);active_support.resize(end);group_index.resize(end,group);
+  if (budget_.packed_slabs) channel_groups.resize(end);
+  std::size_t channels=0;
+  for (int i=begin;i<end;++i) {
+    const auto node=i==begin ? first:column_node(next_alpha_++);
+    active[i]=node.alpha;active_support[i]=node.supported;
+    unsupported_targets+=!node.supported;
+    if (budget_.packed_slabs) channel_groups[i]=node.group;
+    if (parity_ && node.alpha==node.beta) diagonal_rows.push_back(i);
+    channels+=node.channels;
+  }
+  groups.back().end=end;
+  payload_+=static_cast<Bytes>(count)*row_bytes_+entry_bytes_*channels;
+  bulk_targets+=count;
+  return true;
 }
 
 bool SigmaTilePlan::finish_tile(bool sorted_halo,bool sorted_columns) {
@@ -158,6 +190,8 @@ bool SigmaTilePlan::next() {
       pending_=node;
       break;
     }
+    if (!new_group && halo.size()==static_cast<std::size_t>(alpha_.n_strings()) &&
+        append_column_tail(node)) continue;
     const auto include=[](int id,const std::vector<int>& index,std::vector<int>& added) {
       if (index[id]<0) added.push_back(id);
     };
