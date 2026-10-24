@@ -20,7 +20,11 @@ struct SigmaGatherRow {
   }
 };
 
-/** @brief Borrowed numerical image and its exact symbolic addressing. */
+/** @brief Borrowed image with action-invariant addressing resolved at entry.
+ * FirstRhs is valid for a single-RHS action. Its full-channel load needs
+ * neither a selector nor a row-group stride lookup: the RHS offset is zero.
+ */
+template<bool Projected,bool FirstRhs>
 struct SigmaGatherImage {
   const double* values;
   const int* rhs_strides;
@@ -30,14 +34,20 @@ struct SigmaGatherImage {
   bool raises_source=true;
 
   int channel(const SigmaGatherRow& row) const noexcept {
-    if (!projected) return 0;
+    if constexpr (!Projected) return 0;
     if (row.channel_group && !raises_source) return -1;
     return projected->local(row.channel_group,pair);
   }
   double load(const SigmaGatherRow& row,int rhs,int channel) const noexcept {
-    const int stride=rhs_strides[row.channel_group];
-    return values[projected ? row.address(rhs,channel,stride,static_cast<std::size_t>(width)*stride):
-        row.address(rhs,0,stride,0)*element_stride];
+    if constexpr (!Projected && FirstRhs)
+      return values[row.image*element_stride];
+    else {
+      const int stride=rhs_strides[row.channel_group];
+      if constexpr (Projected)
+        return values[row.address(FirstRhs ? 0:rhs,channel,stride,
+            static_cast<std::size_t>(width)*stride)];
+      else return values[row.address(rhs,0,stride,0)*element_stride];
+    }
   }
 };
 
@@ -45,7 +55,8 @@ struct SigmaGatherImage {
  * Join the sparse destination before decoding channels or loading coefficients.
  * The alpha order permits one monotone merge.
  */
-inline void gather_beta_rows(const SigmaGatherImage& image,int rhs,double sign,
+template<bool Projected,bool FirstRhs>
+inline void gather_beta_rows(const SigmaGatherImage<Projected,FirstRhs>& image,int rhs,double sign,
     std::span<const SigmaGatherRow> targets,int first,int last,
     double* destination,const int* rows,int n_rows) {
   const auto before=[](const SigmaGatherRow& row,int alpha) { return row.alpha<alpha; };

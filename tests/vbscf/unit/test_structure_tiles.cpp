@@ -2383,11 +2383,21 @@ void check_sparse_beta_gather() {
             }
             const int begin=first<static_cast<int>(halo.size()) ? halo[first]:11;
             const int end=last>first ? halo[last-1]+1:begin;
-            gather_beta_rows({.values=values.data()+(column_major ? channel*image_rows:channel),
+            gather_beta_rows(SigmaGatherImage<false,false>{.values=values.data()+(column_major ? channel*image_rows:channel),
                 .rhs_strides=layout.rhs_strides(),.element_stride=column_major ? 1:pairs},rhs,-1.0,
                 composed,begin,end,actual.data(),
                 selected ? sparse.data():nullptr,selected ? sparse.size():0);
             require((actual-expected).norm()==0,"sparse beta gather changed a halo interval or destination support");
+            if (width==1) {
+              actual.setConstant(0.25);
+              gather_beta_rows(SigmaGatherImage<false,true>{
+                  .values=values.data()+(column_major ? channel*image_rows:channel),
+                  .rhs_strides=nullptr,.element_stride=column_major ? 1:pairs},0,-1.0,
+                  composed,begin,end,actual.data(),
+                  selected ? sparse.data():nullptr,selected ? sparse.size():0);
+              require((actual-expected).norm()==0,
+                  "single-RHS gather changed sparse joins or read a group stride");
+            }
           }
     }
   }

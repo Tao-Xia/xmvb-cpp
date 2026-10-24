@@ -100,6 +100,8 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
   }
 
   const auto& beta_graph = beta_connections();
+  const auto& alpha_masks=alpha_->basis.masks();
+  const auto& beta_masks=beta_graph.basis.masks();
   const int pairs = hamiltonian_pair_kernel_.rows();
   const std::size_t n=n_orbitals_;
   const std::size_t envelopes=n*(n-1)*(n+1)*(n+2)/24;
@@ -344,9 +346,9 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
         // one-body neighbors can still contribute to E*c and must be kept.
         if (active_support[local]) {
           const double value = column[h];
-          for (const int p : alpha_->occupied(a))
+          for (const int p : OccupiedOrbitals(alpha_masks[a]))
             target[core::PairIndex::packed_pair_index(p, p)] += value;
-          for (const int p : beta_graph.occupied(beta))
+          for (const int p : OccupiedOrbitals(beta_masks[beta]))
             target[core::PairIndex::packed_pair_index(p, p)] += value;
         }
         const auto& alpha_links = alpha_->singles(a);
@@ -474,15 +476,19 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
           try {
             // Evaluate E^T K E directly in the caller's output panel. The callback
             // owns panel lifetimes and schedules disjoint beta/RHS/alpha ranges.
-            const auto write_image = [&](const DirectCiTileWriter& writer,
-                                         const double* channel_values) {
+            const auto write_image = [&]<bool Projected,bool FirstRhs>(
+                const DirectCiTileWriter& writer,const double* channel_values) {
               const std::size_t image_rows=static_cast<std::size_t>(count)*width;
               const auto value=[&](int row,int rhs,int pair) {
                 const auto& target=target_rows[row];
-                const int channel=projected_image ? channel_product.local(target.channel_group,pair):pair;
-                const int stride=channel_layout.rhs_stride(target.channel_group);
-                return channel<0 ? 0.0:channel_values[target.address(rhs,channel,stride,
-                    projected_image ? static_cast<std::size_t>(width)*stride:image_rows)];
+                if constexpr (!Projected && FirstRhs)
+                  return channel_values[target.image+static_cast<std::size_t>(pair)*image_rows];
+                else {
+                  const int channel=Projected ? channel_product.local(target.channel_group,pair):pair;
+                  const int stride=channel_layout.rhs_stride(target.channel_group);
+                  return channel<0 ? 0.0:channel_values[target.address(FirstRhs ? 0:rhs,channel,stride,
+                      Projected ? static_cast<std::size_t>(width)*stride:image_rows)];
+                }
               };
               const DirectCiColumnAccumulator accumulate = [&,channel_values](int source, int v,
                 int first,int last,double* destination,const int* rows,int n_rows) {
@@ -497,7 +503,7 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
               if (same >= 0) {
                 const int* index=image_index.data()+
                     static_cast<std::size_t>(same)*n_halo;
-                const auto beta_occupied=beta_graph.occupied(columns[source]);
+                const auto beta_occupied=OccupiedOrbitals(beta_masks[columns[source]]);
                 for (int i=begin;i<end;++i) {
                   const int a=rows ? rows[i]:halo[i];
                   const int local=rows ? (identity_halo ? a:halo_index[a]):i;
@@ -505,7 +511,7 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
                   double sum = 0;
                   if (index[local] >= 0) {
                     const int row=index[local];
-                    for (const int p : alpha_->occupied(a))
+                    for (const int p : OccupiedOrbitals(alpha_masks[a]))
                       sum += value(row,v,
                           core::PairIndex::packed_pair_index(p,p));
                     for (const int p : beta_occupied)
@@ -528,10 +534,10 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
               for (int edge = offsets[source]; edge < offsets[source + 1]; ++edge) {
                 const auto& link = incoming[edge];
                 const auto& group=groups[link.group];
-                const detail::SigmaGatherImage image{
-                  .values=projected_image ? channel_values:channel_values+static_cast<std::size_t>(link.pair)*image_rows,
+                const detail::SigmaGatherImage<Projected,FirstRhs> image{
+                  .values=Projected ? channel_values:channel_values+static_cast<std::size_t>(link.pair)*image_rows,
                   .rhs_strides=channel_layout.rhs_strides(),
-                  .projected=projected_image ? &channel_product:nullptr,
+                  .projected=Projected ? &channel_product:nullptr,
                   .pair=link.pair,.width=width,
                   .raises_source=link.created>link.annihilated};
                 detail::gather_beta_rows(image,v,link.sign,
@@ -544,8 +550,19 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
             };
             const auto write_start = tick();
             compute_time += seconds(compute_start, write_start);
-            if (add_columns) write_image(add_columns,transformed);
-            if (add_forcing) write_image(add_forcing,scattered);
+            // Resolve uniform image/RHS geometry once, outside all excitation
+            // and sparse-row loops. No image is repacked or retained here.
+            const auto write=[&](const DirectCiTileWriter& writer,const double* values) {
+              if (projected_image) {
+                if (width==1) write_image.template operator()<true,true>(writer,values);
+                else write_image.template operator()<true,false>(writer,values);
+              } else {
+                if (width==1) write_image.template operator()<false,true>(writer,values);
+                else write_image.template operator()<false,false>(writer,values);
+              }
+            };
+            if (add_columns) write(add_columns,transformed);
+            if (add_forcing) write(add_forcing,scattered);
             // Retire inside the final writer's existing single/barrier.
             // Testing the shared retirement vector outside this region races
             // the next plan.next(): one worker could enter a conditional
@@ -574,7 +591,7 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
         "gram_extent=%d,gram_scratch_bytes=%zu,workspace_reused=%d,"
         "workspace_allocations=%zu,workspace_bytes=%zu,"
         "restricted_channels=%d,source_channels=%zu,channel_kernel_bytes=%zu,"
-        "projected_image=%d,channel_products=%.0Lf,unrestricted_channel_products=%.0Lf\n",
+        "rhs_width=%d,responses=%zu,projected_image=%d,channel_products=%.0Lf,unrestricted_channel_products=%.0Lf\n",
         batches, source_columns, source_elements, peak_payload,
         prepare_time, read_time, compute_time, write_time, targets, exchange_parity,
         unsupported_targets * static_cast<std::size_t>(width) *
@@ -583,7 +600,7 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
         gram_partitions,gram_extent,gram_scratch_bytes,
         static_cast<int>(workspace.reused()),workspace.allocations(),workspace.bytes(),
         static_cast<int>(restricted_channels),source_channels,restricted_channels ? kernel_bytes:0,
-        static_cast<int>(projected_image),projected_products,full_products);
+        width,requests.size(),static_cast<int>(projected_image),projected_products,full_products);
   std::vector<DirectCiIntegralAdjoint> results(requests.size());
   if (collect_integrals) for (std::size_t r=0;r<requests.size();++r)
     results[r]=pullback_channel_kernel(kernel_adjoints[r]);
