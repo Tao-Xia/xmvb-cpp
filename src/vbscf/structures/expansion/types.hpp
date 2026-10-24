@@ -6,6 +6,7 @@
 #include <vector>
 
 #include <Eigen/Core>
+#include "mcscf/ci/string_table.hpp"
 
 namespace xmvb::vb {
 
@@ -30,69 +31,54 @@ struct StructureExpansionTerm {
   double coefficient = 0.0;
 };
 
-/** Borrowed rows of spin strings, either interned by pair ID or supplied directly. */
+/** @brief Borrowed spin-string pairs; topology queries never decode occupations. */
 class SpinStringRows {
 public:
-  SpinStringRows(const std::vector<std::vector<int>>& strings,
-                 const std::vector<int>& pair_ids)
-      : strings_(&strings), pair_ids_(&pair_ids) {}
-
+  SpinStringRows(const mcscf::StringTable& strings,const std::vector<int>& ids)
+      :strings_(strings),pair_ids_(&ids) {}
+  SpinStringRows(const mcscf::StringTable& strings):strings_(strings) {}
   SpinStringRows(const std::vector<std::vector<int>>& rows)
-      : strings_(&rows) {}
-
-  std::size_t size() const { return pair_ids_ ? pair_ids_->size() : strings_->size(); }
-  bool empty() const { return size() == 0; }
-  const std::vector<std::vector<int>>& strings() const { return *strings_; }
+      :strings_(rows) {}
+  std::size_t size() const { return pair_ids_ ? pair_ids_->size():strings_.size(); }
+  bool empty() const { return size()==0; }
+  const mcscf::StringTable& strings() const { return strings_; }
   std::span<const int> indices() const {
-    return pair_ids_ ? std::span<const int>(*pair_ids_) : std::span<const int>();
+    return pair_ids_ ? std::span<const int>(*pair_ids_):std::span<const int>();
   }
-  const std::vector<int>& operator[](std::size_t index) const {
-    return (*strings_)[pair_ids_ ? static_cast<std::size_t>((*pair_ids_)[index]) : index];
-  }
-  const std::vector<int>& front() const { return (*this)[0]; }
-
+  std::size_t string_id(std::size_t i) const { return pair_ids_ ? (*pair_ids_)[i]:i; }
+  std::uint64_t mask(std::size_t i) const { return strings_.mask(string_id(i)); }
+  std::span<const std::uint64_t> words(std::size_t i) const { return strings_.words(string_id(i)); }
+  int electron_count(std::size_t i=0) const { return strings_.electron_count(string_id(i)); }
+  bool less(std::size_t a,std::size_t b) const { return strings_.less(string_id(a),string_id(b)); }
+  std::vector<int> operator[](std::size_t i) const { return strings_[string_id(i)]; }
+  std::vector<int> front() const { return (*this)[0]; }
   class Iterator {
   public:
-    using iterator_category = std::forward_iterator_tag;
-    using value_type = std::vector<int>;
-    using difference_type = std::ptrdiff_t;
-    using reference = const value_type&;
-    using pointer = const value_type*;
-
-    Iterator(const std::vector<std::vector<int>>* strings,
-             const std::vector<int>* pair_ids, std::size_t index)
-        : strings_(strings), pair_ids_(pair_ids), index_(index) {}
-    reference operator*() const {
-      return (*strings_)[pair_ids_ ? static_cast<std::size_t>((*pair_ids_)[index_]) : index_];
-    }
-    pointer operator->() const { return &**this; }
-    Iterator& operator++() { ++index_; return *this; }
-    Iterator operator++(int) { auto previous = *this; ++*this; return previous; }
-    bool operator==(const Iterator& other) const {
-      return strings_ == other.strings_ && pair_ids_ == other.pair_ids_ &&
-             index_ == other.index_;
-    }
-
+    using iterator_category=std::input_iterator_tag;
+    using value_type=std::vector<int>;
+    using difference_type=std::ptrdiff_t;
+    using reference=value_type;
+    using pointer=void;
+    Iterator(const SpinStringRows* rows,std::size_t i):rows_(rows),i_(i) {}
+    value_type operator*() const { return (*rows_)[i_]; }
+    Iterator& operator++() { ++i_;return *this; }
+    Iterator operator++(int) { auto previous=*this;++*this;return previous; }
+    bool operator==(const Iterator&) const=default;
   private:
-    const std::vector<std::vector<int>>* strings_;
-    const std::vector<int>* pair_ids_;
-    std::size_t index_;
+    const SpinStringRows* rows_;
+    std::size_t i_;
   };
-
-  Iterator begin() const { return {strings_, pair_ids_, 0}; }
-  Iterator end() const { return {strings_, pair_ids_, size()}; }
-
-  friend bool operator==(const SpinStringRows& left, const SpinStringRows& right) {
-    if (left.size() != right.size()) return false;
-    for (std::size_t index = 0; index < left.size(); ++index) {
-      if (left[index] != right[index]) return false;
-    }
+  Iterator begin() const { return {this,0}; }
+  Iterator end() const { return {this,size()}; }
+  friend bool operator==(const SpinStringRows& a,const SpinStringRows& b) {
+    if (a.size()!=b.size()) return false;
+    for (std::size_t i=0;i<a.size();++i)
+      if (!a.strings_.same_row(a.string_id(i),b.strings_,b.string_id(i))) return false;
     return true;
   }
-
 private:
-  const std::vector<std::vector<int>>* strings_;
-  const std::vector<int>* pair_ids_ = nullptr;
+  mcscf::StringTable strings_;
+  const std::vector<int>* pair_ids_=nullptr;
 };
 
 /** Borrowed pair-to-structure rows backed by CSR or existing row storage. */
@@ -278,12 +264,12 @@ struct StructureExpansion {
   /**
    * @brief Unique zero-based alpha occupied spin strings.
    */
-  std::vector<std::vector<int>> alpha_strings;
+  mcscf::StringTable alpha_strings;
 
   /**
    * @brief Unique zero-based beta occupied spin strings.
    */
-  std::vector<std::vector<int>> beta_strings;
+  mcscf::StringTable beta_strings;
 
   /** Spin-string table indices for each unique pair. */
   std::vector<int> pair_alpha;

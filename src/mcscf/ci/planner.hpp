@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <vector>
+#include "mcscf/ci/string_table.hpp"
 
 namespace xmvb::mcscf {
 
@@ -48,6 +49,11 @@ struct DirectCiActionPlan {
  * Fock spaces. Completeness is verified from the occupied-orbital lists, not
  * inferred from their counts alone.
  */
+DirectCiActionPlan plan_orthogonal_direct_ci_action(
+    const SpinStrings& alpha,const SpinStrings& beta,int n_active_orbitals,int block_width);
+DirectCiActionPlan plan_orthogonal_direct_ci_action(
+    const StringTable& alpha,const StringTable& beta,int n_active_orbitals,int block_width);
+
 DirectCiActionPlan plan_orthogonal_direct_ci_action(
     const std::vector<std::vector<int>>& alpha_strings,
     const std::vector<std::vector<int>>& beta_strings,

@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <iostream>
 #include <map>
@@ -260,6 +261,15 @@ void check_exact_pairs(const xmvb::vb::StructureExpansion& expansion,
                   expansion.beta_strings.size(),
           "small expansion repeats a spin string");
   for (std::size_t pair = 0; pair < expected.size(); ++pair) {
+    const auto check_words=[&](const auto& rows,const std::vector<int>& occupied) {
+      const auto words=rows.words(pair);
+      std::vector<std::uint64_t> reference(words.size(),0);
+      for (const int p:occupied) reference[p/64]|=std::uint64_t{1}<<(p%64);
+      require(std::equal(words.begin(),words.end(),reference.begin()),
+          "generation changed a native occupation word");
+    };
+    check_words(expansion.alpha(),expected[pair].alpha);
+    check_words(expansion.beta(),expected[pair].beta);
     require(expansion.alpha()[pair] == expected[pair].alpha &&
                 expansion.beta()[pair] == expected[pair].beta,
             "small expansion changed pair ordering");
@@ -284,6 +294,9 @@ void check_small_exact_signs() {
                     {{{0, 1, 2}, {}, {{0, -1.0}}}});
   check_exact_pairs(expander.expand(raw_structures(2, 3, {{65, 64}, {64, 65}})),
                     {{{63, 64}, {}, {{0, -1.0}, {1, 1.0}}}});
+  const auto wide_singlet=expander.expand(raw_structures(2,1,{{64,65}}));
+  const auto wide_spin=xmvb::vb::analyze_structure_spin(wide_singlet,1);
+  require(wide_spin.maximum_raising_residual==0,"multiword singlet spin signs changed");
 
   const auto ionic = raw_structures(2, 1, {{1, 1}, {1, 2}, {2, 2}});
   check_exact_pairs(expander.expand_subset(ionic, {2, 0}),
@@ -299,14 +312,38 @@ void check_small_exact_signs() {
                      {{1, 3}, {0, 2}, {{0, 1.0}, {1, -1.0}}},
                      {{2, 3}, {0, 1}, {{1, -1.0}}},
                      {{0, 1}, {2, 3}, {{1, -1.0}}}});
+  const auto alpha_index=crossing.alpha_strings.basis(4);
+  require(alpha_index.shares_storage(crossing.alpha_strings.basis(4)),
+      "generated spin-string index was rebuilt by a second consumer");
   const auto shared_pair = crossing.incidence()[0];
   require(shared_pair[0].coefficient + shared_pair[1].coefficient == 0.0,
           "crossing structures do not cancel on their shared pair");
 }
 
+void check_shared_bit_topology() {
+  using xmvb::mcscf::StringTable;
+  using xmvb::mcscf::SpinStrings;
+  const SpinStrings basis(6,3);
+  const auto frozen=StringTable::from_basis(basis);
+  require(frozen.basis(6).shares_storage(basis),"frozen table rebuilt its spin index");
+  for (std::size_t i=0;i<frozen.size();++i)
+    for (std::size_t j=0;j<frozen.size();++j)
+      require(frozen.less(i,j)==(frozen[i]<frozen[j]),"bit-string display ordering changed");
+  auto extended=frozen;
+  extended.push_mask(7);
+  require(frozen.size()==20 && extended.size()==21 && frozen.mask(0)==7,
+      "extending a table modified shared immutable topology");
+  StringTable wide;
+  wide.push_mask(3);
+  wide.push_words(std::array<std::uint64_t,2>{1,2});
+  require(wide.word_width()==2 && wide[0]==std::vector<int>({0,1}) &&
+      wide[1]==std::vector<int>({0,65}),"wide words changed existing string IDs");
+}
+
 }  // namespace
 
 int main() {
+  check_shared_bit_topology();
   check_small_exact_signs();
   check_case({"FeCl2 CAS(10,8) quintet", 8, 10, 5, 0, 420, 448});
   check_case({"pyrrole CAS(11,10) doublet", 10, 11, 2, 0, 27720, 52920});

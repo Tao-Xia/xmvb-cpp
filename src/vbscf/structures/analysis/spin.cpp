@@ -1,6 +1,8 @@
 #include "vbscf/structures/analysis/spin.hpp"
 
 #include <algorithm>
+#include <bit>
+#include <cstdint>
 #include <cmath>
 #include <cstddef>
 #include <stdexcept>
@@ -12,8 +14,8 @@ namespace xmvb::vb {
 namespace {
 
 struct RaisedDeterminant {
-  std::vector<int> alpha;
-  std::vector<int> beta;
+  std::vector<std::uint64_t> alpha;
+  std::vector<std::uint64_t> beta;
 
   bool operator==(const RaisedDeterminant& other) const noexcept {
     return alpha == other.alpha && beta == other.beta;
@@ -23,11 +25,11 @@ struct RaisedDeterminant {
 struct RaisedDeterminantHash {
   std::size_t operator()(const RaisedDeterminant& determinant) const noexcept {
     std::size_t value = 0;
-    for (const int orbital : determinant.alpha) {
+    for (const auto orbital : determinant.alpha) {
       value = value * 1315423911u + static_cast<std::size_t>(orbital + 257);
     }
     value = value * 2654435761u + 17u;
-    for (const int orbital : determinant.beta) {
+    for (const auto orbital : determinant.beta) {
       value = value * 1315423911u + static_cast<std::size_t>(orbital + 257);
     }
     return value;
@@ -39,30 +41,22 @@ struct DeterminantTerm {
   double coefficient = 0.0;
 };
 
-void validate_spin_string(const std::vector<int>& occupied) {
-  if (!std::is_sorted(occupied.begin(), occupied.end()) ||
-      std::adjacent_find(occupied.begin(), occupied.end()) != occupied.end() ||
-      (!occupied.empty() && occupied.front() < 0)) {
-    throw std::invalid_argument(
-        "spin analysis requires sorted unique non-negative occupations");
-  }
-}
-
 }  // namespace
 
 StructureSpinAnalysis analyze_structure_spin(
     const StructureExpansion& structures,
     int spin_multiplicity) {
+  const auto alpha_rows=structures.alpha(),beta_rows=structures.beta();
   if (spin_multiplicity <= 0 || structures.n_structures <= 0 ||
-      structures.alpha().empty() ||
-      structures.alpha().size() != structures.beta().size() ||
-      structures.alpha().size() !=
+      alpha_rows.empty() ||
+      alpha_rows.size() != beta_rows.size() ||
+      alpha_rows.size() !=
           structures.incidence().size()) {
     throw std::invalid_argument("structure spin dimensions are inconsistent");
   }
 
-  const int n_alpha = static_cast<int>(structures.alpha().front().size());
-  const int n_beta = static_cast<int>(structures.beta().front().size());
+  const int n_alpha = alpha_rows.electron_count();
+  const int n_beta = beta_rows.electron_count();
   if (n_alpha - n_beta != spin_multiplicity - 1) {
     throw std::invalid_argument(
         "determinant spin projection differs from the requested multiplicity");
@@ -71,17 +65,11 @@ StructureSpinAnalysis analyze_structure_spin(
   std::vector<std::vector<DeterminantTerm>> structure_terms(
       structures.n_structures);
   for (int determinant = 0;
-       determinant < static_cast<int>(structures.alpha().size());
+       determinant < static_cast<int>(alpha_rows.size());
        ++determinant) {
-    const auto& alpha = structures.alpha()[determinant];
-    const auto& beta = structures.beta()[determinant];
-    validate_spin_string(alpha);
-    validate_spin_string(beta);
-    if (static_cast<int>(alpha.size()) != n_alpha ||
-        static_cast<int>(beta.size()) != n_beta) {
-      throw std::invalid_argument(
-          "structure expansion mixes electron-number sectors");
-    }
+    if (alpha_rows.electron_count(determinant)!=n_alpha ||
+        beta_rows.electron_count(determinant)!=n_beta)
+      throw std::invalid_argument("structure expansion mixes electron-number sectors");
     for (const StructureExpansionTerm& term :
          structures.incidence()[determinant]) {
       if (term.structure_index < 0 ||
@@ -106,29 +94,28 @@ StructureSpinAnalysis analyze_structure_spin(
     std::unordered_map<RaisedDeterminant, double, RaisedDeterminantHash>
         raised_coefficients;
     for (const DeterminantTerm& term : structure_terms[structure]) {
-      const auto& alpha = structures.alpha()[term.determinant];
-      const auto& beta = structures.beta()[term.determinant];
-      for (int beta_position = 0;
-           beta_position < static_cast<int>(beta.size());
-           ++beta_position) {
-        const int orbital = beta[beta_position];
-        const auto alpha_position =
-            std::lower_bound(alpha.begin(), alpha.end(), orbital);
-        if (alpha_position != alpha.end() && *alpha_position == orbital) {
-          continue;
+      const auto alpha=alpha_rows.words(term.determinant);
+      const auto beta=beta_rows.words(term.determinant);
+      const auto width=std::max(alpha.size(),beta.size());
+      int alpha_before=0,beta_before=0;
+      for (std::size_t word=0;word<width;++word) {
+        const auto a=word<alpha.size()?alpha[word]:0;
+        const auto b=word<beta.size()?beta[word]:0;
+        auto candidates=b&~a;
+        while (candidates) {
+          const int orbital=std::countr_zero(candidates);
+          const auto bit=std::uint64_t{1}<<orbital,below=bit-1;
+          const int parity=n_alpha+alpha_before+beta_before+
+              std::popcount(a&below)+std::popcount(b&below);
+          RaisedDeterminant raised;
+          raised.alpha.assign(width,0);raised.beta.assign(width,0);
+          std::copy(alpha.begin(),alpha.end(),raised.alpha.begin());
+          std::copy(beta.begin(),beta.end(),raised.beta.begin());
+          raised.alpha[word]|=bit;raised.beta[word]&=~bit;
+          raised_coefficients[std::move(raised)]+=(parity%2 ? -1.0:1.0)*term.coefficient;
+          candidates&=candidates-1;
         }
-        const int insertion_position =
-            static_cast<int>(alpha_position - alpha.begin());
-        const int fermion_parity =
-            n_alpha + beta_position + insertion_position;
-        const double sign = fermion_parity % 2 == 0 ? 1.0 : -1.0;
-
-        RaisedDeterminant raised{alpha, beta};
-        raised.alpha.insert(
-            raised.alpha.begin() + insertion_position,
-            orbital);
-        raised.beta.erase(raised.beta.begin() + beta_position);
-        raised_coefficients[std::move(raised)] += sign * term.coefficient;
+        alpha_before+=std::popcount(a);beta_before+=std::popcount(b);
       }
     }
 

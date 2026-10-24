@@ -12,6 +12,7 @@
 
 #include "mcscf/ci/integrals.hpp"
 #include "mcscf/ci/links.hpp"
+#include "mcscf/ci/string_table.hpp"
 
 namespace xmvb::mcscf {
 
@@ -162,6 +163,9 @@ public:
       const Eigen::Ref<const Eigen::MatrixXd>& channel_adjoint) const;
 
   DirectCiSigmaAction(SpinStrings alpha,SpinStrings beta,const ActiveIntegrals& integrals);
+  DirectCiSigmaAction(const StringTable& alpha,const StringTable& beta,const ActiveIntegrals& integrals)
+      :DirectCiSigmaAction(alpha.basis(integrals.one_electron.rows()),
+          beta.basis(integrals.one_electron.rows()),integrals) {}
 
   DirectCiSigmaAction(
       const std::vector<std::vector<int>>& alpha_determinants,

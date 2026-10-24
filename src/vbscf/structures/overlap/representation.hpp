@@ -1,5 +1,7 @@
 #pragma once
 
+#include "mcscf/ci/string_table.hpp"
+
 #include <memory>
 #include <vector>
 
@@ -37,8 +39,8 @@ class RepresentationOverlap {
 public:
   RepresentationOverlap(
       const StructureAction& action,
-      const std::vector<std::vector<int>>& alpha_strings,
-      const std::vector<std::vector<int>>& beta_strings,
+      const xmvb::mcscf::StringTable& alpha_strings,
+      const xmvb::mcscf::StringTable& beta_strings,
       int n_active);
 
   /** Reusable symmetric Gram action for one fixed orbital chart.
@@ -62,14 +64,14 @@ public:
   private:
     friend class RepresentationOverlap;
     PreparedMetric(const StructureAction& action,
-                   const std::vector<std::vector<int>>& alpha_strings,
-                   const std::vector<std::vector<int>>& beta_strings,
+                   const xmvb::mcscf::StringTable& alpha_strings,
+                   const xmvb::mcscf::StringTable& beta_strings,
                    bool complete_carrier,
                    const Eigen::Ref<const Eigen::MatrixXd>& upper);
 
     const StructureAction* action_;
-    const std::vector<std::vector<int>>* alpha_;
-    const std::vector<std::vector<int>>* beta_;
+    mcscf::StringTable alpha_;
+    mcscf::StringTable beta_;
     std::shared_ptr<const ExteriorOrbitalTransform> alpha_transform_;
     std::shared_ptr<const ExteriorOrbitalTransform> beta_transform_;
     Eigen::MatrixXd kernel_;
@@ -124,8 +126,8 @@ public:
 
 private:
   const StructureAction* action_;
-  const std::vector<std::vector<int>>& alpha_;
-  const std::vector<std::vector<int>>& beta_;
+  mcscf::StringTable alpha_;
+  mcscf::StringTable beta_;
   int n_active_;
   bool complete_carrier_;
 };

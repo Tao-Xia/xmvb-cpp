@@ -18,31 +18,13 @@
 namespace xmvb::vb {
 namespace {
 
-using Strings = std::vector<std::vector<int>>;
+using Strings = mcscf::StringTable;
 constexpr std::size_t kRowWorkspaceBytes = 8 * 1024 * 1024;
 
 void validate_strings(const Strings& strings, int orbitals) {
   if (strings.empty()) throw std::invalid_argument("empty spin-string carrier");
-  const std::size_t electrons = strings.front().size();
-  for (const auto& occupied : strings) {
-    if (occupied.size() != electrons ||
-        !std::is_sorted(occupied.begin(), occupied.end()) ||
-        std::adjacent_find(occupied.begin(), occupied.end()) != occupied.end() ||
-        (!occupied.empty() && (occupied.front() < 0 || occupied.back() >= orbitals))) {
-      throw std::invalid_argument("invalid spin-string occupation list");
-    }
-  }
-  std::vector<const std::vector<int>*> ordered;
-  ordered.reserve(strings.size());
-  for (const auto& occupied : strings) ordered.push_back(&occupied);
-  std::sort(ordered.begin(), ordered.end(), [](const auto* lhs, const auto* rhs) {
-    return *lhs < *rhs;
-  });
-  if (std::adjacent_find(ordered.begin(), ordered.end(),
-                         [](const auto* lhs, const auto* rhs) {
-                           return *lhs == *rhs;
-                         }) != ordered.end())
-    throw std::invalid_argument("duplicate spin string");
+  (void)strings.basis(orbitals); // validates occupations and uniqueness without decoding
+
 }
 
 void validate_chart(const Eigen::Ref<const Eigen::MatrixXd>& r, int n) {
@@ -217,7 +199,7 @@ bool RepresentationOverlap::PreparedMetric::fits_selected(int dimension) noexcep
 RepresentationOverlap::PreparedMetric::PreparedMetric(
     const StructureAction& action, const Strings& alpha, const Strings& beta,
     bool complete_carrier, const Eigen::Ref<const Eigen::MatrixXd>& upper)
-    : action_(&action), alpha_(&alpha), beta_(&beta) {
+    : action_(&action), alpha_(alpha), beta_(beta) {
   if (complete_carrier) {
     alpha_transform_ =
         std::make_shared<ExteriorOrbitalTransform>(alpha, upper);
@@ -251,7 +233,7 @@ Eigen::MatrixXd RepresentationOverlap::PreparedMetric::operator()(
       !coeff.allFinite()) throw std::invalid_argument("invalid structure block");
   if (selected_metric_) return selected_metric_->overlap * coeff;
   if (!alpha_transform_)
-    return apply_pair_kernel(*action_, *alpha_, *beta_, kernel_, coeff);
+    return apply_pair_kernel(*action_, alpha_, beta_, kernel_, coeff);
 
   return action_->cross_overlap(coeff, *alpha_transform_, *beta_transform_,
                                 *alpha_transform_, *beta_transform_);

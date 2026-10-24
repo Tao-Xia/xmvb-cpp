@@ -46,8 +46,8 @@ class SpinMetric {
    * Host work is limited to occupation grouping and CSC topology packing.
    */
   SpinMetric(Context& context, const vb::StructureAction& source,
-             const std::vector<std::vector<int>>& alpha,
-             const std::vector<std::vector<int>>& beta,
+             const mcscf::StringTable& alpha,
+             const mcscf::StringTable& beta,
              std::size_t factor_byte_limit);
   SpinMetric(const SpinMetric&) = delete;
   SpinMetric& operator=(const SpinMetric&) = delete;

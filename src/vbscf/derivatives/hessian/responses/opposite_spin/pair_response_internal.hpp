@@ -1,5 +1,7 @@
 #pragma once
 
+#include "mcscf/ci/string_table.hpp"
+
 #include <vector>
 
 #include <Eigen/Core>
@@ -90,7 +92,7 @@ private:
  * factor matrix.
  */
 DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
-    const std::vector<std::vector<int>>& unique_determinants,
+    const xmvb::mcscf::StringTable& unique_determinants,
     const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
     int n_unique_determinants,
     int n_active_orbitals,
@@ -101,7 +103,7 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
     const Eigen::MatrixXd* directional_ri_active_pair_factors = nullptr);
 
 DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
-    const std::vector<std::vector<int>>& unique_determinants,
+    const xmvb::mcscf::StringTable& unique_determinants,
     const AcceptedSpinPairTile& accepted_pair_tile,
     int n_active_orbitals,
     const xmvb::integrals::ActiveSpaceTwoElectronResult& active_space_two_electron_result,

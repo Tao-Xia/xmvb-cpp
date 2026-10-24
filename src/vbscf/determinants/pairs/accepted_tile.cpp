@@ -1,5 +1,7 @@
 #include "vbscf/determinants/pairs/accepted_tile.hpp"
 
+#include "mcscf/ci/string_table.hpp"
+
 #include <algorithm>
 #include <stdexcept>
 #include <utility>
@@ -20,7 +22,7 @@ const SpinDeterminantPairEvaluation& AcceptedSpinPairTile::pair(
 }
 
 AcceptedPairTileProvider::AcceptedPairTileProvider(
-    std::vector<std::vector<int>> unique_spin_strings,
+    mcscf::StringTable unique_spin_strings,
     int n_active_orbitals,
     double linear_dependence_threshold)
     : unique_spin_strings_(std::move(unique_spin_strings)),
@@ -58,6 +60,9 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
   tile.pairs.resize(
       static_cast<std::size_t>(tile.left_size) * tile.right_size);
 
+  std::vector<std::vector<int>> left_indices(tile.left_size),right_indices(tile.right_size);
+  for (int i=0;i<tile.left_size;++i) left_indices[i]=unique_spin_strings_[left_begin+i];
+  for (int i=0;i<tile.right_size;++i) right_indices[i]=unique_spin_strings_[right_begin+i];
   const int pair_count = tile.left_size * tile.right_size;
   const int n_threads = std::max(
       1, std::min(xmvb::effective_openmp_thread_count(), pair_count));
@@ -66,9 +71,9 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
       const int left_local = pair_index / tile.right_size;
       const int right_local = pair_index % tile.right_size;
       const auto& occupied_left =
-          unique_spin_strings_[left_begin + left_local];
+          left_indices[left_local];
       const auto& occupied_right =
-          unique_spin_strings_[right_begin + right_local];
+          right_indices[right_local];
       SpinDeterminantPairEvaluation evaluation =
           pair_evaluator_.evaluate_same_spin_pair(
               occupied_left,

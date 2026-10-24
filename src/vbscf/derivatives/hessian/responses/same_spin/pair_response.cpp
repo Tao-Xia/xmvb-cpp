@@ -1,5 +1,7 @@
 #include "vbscf/derivatives/hessian/responses/same_spin/pair_response_internal.hpp"
 
+#include "mcscf/ci/string_table.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -330,7 +332,7 @@ SameSpinPolynomialDirectionalPairData build_polynomial_spin_directional_data(
 namespace {
 
 SameSpinDirectionalPairTile build_directional_pair_tile_impl(
-    const std::vector<std::vector<int>>& unique_determinants,
+    const xmvb::mcscf::StringTable& unique_determinants,
     const std::vector<SpinDeterminantPairEvaluation>* ordered_pair_cache,
     const AcceptedSpinPairTile* accepted_pair_tile,
     int n_unique_determinants,
@@ -511,7 +513,7 @@ SameSpinDirectionalPairTile build_directional_pair_tile_impl(
 }  // namespace
 
 SameSpinDirectionalPairTile build_directional_pair_tile(
-    const std::vector<std::vector<int>>& unique_determinants,
+    const xmvb::mcscf::StringTable& unique_determinants,
     const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
     int n_unique_determinants,
     int n_active_orbitals,
@@ -540,7 +542,7 @@ SameSpinDirectionalPairTile build_directional_pair_tile(
 }
 
 SameSpinDirectionalPairTile build_directional_pair_tile(
-    const std::vector<std::vector<int>>& unique_determinants,
+    const xmvb::mcscf::StringTable& unique_determinants,
     const AcceptedSpinPairTile& accepted_pair_tile,
     int n_active_orbitals,
     const ActiveSpaceIntegralDirectionView& direction,

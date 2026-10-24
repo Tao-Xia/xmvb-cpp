@@ -1,5 +1,7 @@
 #include "vbscf/derivatives/hessian/responses/same_spin/pair_tile_stream_internal.hpp"
 
+#include "mcscf/ci/string_table.hpp"
+
 #include <algorithm>
 #include <optional>
 #include <stdexcept>
@@ -12,7 +14,7 @@ namespace xmvb::vb::detail {
 namespace {
 
 void stream_spin_table(
-    const std::vector<std::vector<int>>& unique_determinants,
+    const xmvb::mcscf::StringTable& unique_determinants,
     const AcceptedPairTileProvider& accepted_pair_provider,
     bool alpha_channel,
     bool beta_channel,

@@ -223,8 +223,8 @@ void SpinMetric::initialize_layout(
 }
 
 SpinMetric::SpinMetric(Context& context,const vb::StructureAction& source,
-    const std::vector<std::vector<int>>& alpha,
-    const std::vector<std::vector<int>>& beta,
+    const mcscf::StringTable& alpha,
+    const mcscf::StringTable& beta,
     std::size_t factor_byte_limit)
     : context_(&context),dimension_(source.n_structures()),
       scratch_(context,dimension_,1) {

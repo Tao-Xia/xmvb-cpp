@@ -1,5 +1,7 @@
 #include "vbscf/structures/overlap/spin_metric.hpp"
 
+#include "mcscf/ci/string_table.hpp"
+
 #include <algorithm>
 #include <cstdint>
 #include <limits>
@@ -12,34 +14,18 @@
 #include "vbscf/structures/assembly/action.hpp"
 
 namespace xmvb::vb {
-namespace {
-
-std::uint64_t occupation_mask(const std::vector<int>& string) {
-  std::uint64_t mask = 0;
-  for (int orbital : string) {
-    if (orbital < 0 || orbital >= 63 || (mask & (std::uint64_t{1} << orbital)) != 0)
-      throw std::invalid_argument("structure metric has invalid spin occupations");
-    mask |= std::uint64_t{1} << orbital;
-  }
-  return mask;
-}
-
-}  // namespace
-
 std::vector<std::vector<int>> SpinMetric::occupation_groups(
     const StructureAction& action,
-    const std::vector<std::vector<int>>& alpha_strings,
-    const std::vector<std::vector<int>>& beta_strings) {
+    const xmvb::mcscf::StringTable& alpha_strings,
+    const xmvb::mcscf::StringTable& beta_strings) {
   if (alpha_strings.size() != static_cast<std::size_t>(action.n_unique_alpha_) ||
       beta_strings.size() != static_cast<std::size_t>(action.n_unique_beta_))
     throw std::invalid_argument("structure metric spin dimensions disagree");
   using Pattern = std::pair<std::uint64_t, std::uint64_t>;
-  std::vector<std::uint64_t> alpha_masks, beta_masks;
-  for (const auto& string : alpha_strings) alpha_masks.push_back(occupation_mask(string));
-  for (const auto& string : beta_strings) beta_masks.push_back(occupation_mask(string));
+  const auto alpha_masks=alpha_strings.masks(),beta_masks=beta_strings.masks();
   const auto pattern = [&](mcscf::ProductIndex spin_product) {
-    const auto alpha = alpha_masks.at(spin_product / action.n_unique_beta_);
-    const auto beta = beta_masks.at(spin_product % action.n_unique_beta_);
+    const auto alpha = alpha_masks[spin_product / action.n_unique_beta_];
+    const auto beta = beta_masks[spin_product % action.n_unique_beta_];
     return Pattern{alpha | beta, alpha & beta};
   };
   std::map<Pattern, std::vector<int>> groups;
@@ -61,8 +47,8 @@ std::vector<std::vector<int>> SpinMetric::occupation_groups(
 }
 
 bool SpinMetric::fits(const StructureAction& action,
-    const std::vector<std::vector<int>>& alpha,
-    const std::vector<std::vector<int>>& beta, std::size_t byte_limit) {
+    const mcscf::StringTable& alpha,
+    const mcscf::StringTable& beta, std::size_t byte_limit) {
   std::size_t bytes = 0;
   for (const auto& group : occupation_groups(action, alpha, beta)) {
     const std::size_t d = group.size();
@@ -74,8 +60,8 @@ bool SpinMetric::fits(const StructureAction& action,
 
 SpinMetric::SpinMetric(
     const StructureAction& action,
-    const std::vector<std::vector<int>>& alpha_strings,
-    const std::vector<std::vector<int>>& beta_strings,
+    const xmvb::mcscf::StringTable& alpha_strings,
+    const xmvb::mcscf::StringTable& beta_strings,
     std::size_t factor_byte_limit)
     : dimension_(action.n_structures_), diagonal_(Eigen::VectorXd::Zero(dimension_)) {
   auto groups = occupation_groups(action, alpha_strings, beta_strings);

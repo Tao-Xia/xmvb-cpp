@@ -1,5 +1,7 @@
 #pragma once
 
+#include "mcscf/ci/string_table.hpp"
+
 #include <cstddef>
 #include <vector>
 
@@ -40,7 +42,7 @@ struct AcceptedSpinPairTile {
 class AcceptedPairTileProvider {
  public:
   AcceptedPairTileProvider(
-      std::vector<std::vector<int>> unique_spin_strings,
+      mcscf::StringTable unique_spin_strings,
       int n_active_orbitals,
       double linear_dependence_threshold = 1.0e-12);
 
@@ -48,7 +50,7 @@ class AcceptedPairTileProvider {
     return static_cast<int>(unique_spin_strings_.size());
   }
 
-  const std::vector<std::vector<int>>& unique_spin_strings() const noexcept {
+  const mcscf::StringTable& unique_spin_strings() const noexcept {
     return unique_spin_strings_;
   }
 
@@ -63,7 +65,7 @@ class AcceptedPairTileProvider {
       AcceptedPairTileBuildOptions options = {}) const;
 
  private:
-  std::vector<std::vector<int>> unique_spin_strings_;
+  mcscf::StringTable unique_spin_strings_;
   int n_active_orbitals_ = 0;
   DeterminantOverlapResolver overlap_resolver_;
   DeterminantPairEvaluator pair_evaluator_;

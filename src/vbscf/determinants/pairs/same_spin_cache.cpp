@@ -1,6 +1,9 @@
 #include "vbscf/determinants/pairs/same_spin_cache.hpp"
 
+#include "mcscf/ci/string_table.hpp"
+
 #include <algorithm>
+#include <numeric>
 #include <cmath>
 #include <cstdint>
 #include <memory>
@@ -85,20 +88,44 @@ int same_spin_pair_cache_thread_count(int n_unique_determinants) {
 bool can_reuse_close_shell_same_spin_pair_cache(
     SpinStringRows alpha_det,
     SpinStringRows beta_det) {
-  return alpha_det.size()==beta_det.size() &&
-      std::equal(alpha_det.begin(),alpha_det.end(),beta_det.begin());
+  return alpha_det==beta_det;
 }
 
-struct SpinDeterminantHasher {
-  std::size_t operator()(const std::vector<int>& occupied_orbitals) const {
-    std::size_t hash_value = occupied_orbitals.size();
-    for (const int orbital_index : occupied_orbitals) {
-      hash_value =
-          hash_value * 1315423911u + orbital_index + 257;
-    }
-    return hash_value;
+struct SpinWordHasher {
+  std::size_t operator()(const std::vector<std::uint64_t>& words) const noexcept {
+    std::size_t hash=words.size();
+    for (const auto word:words) hash=hash*1315423911u+word;
+    return hash;
   }
 };
+std::vector<std::uint64_t> spin_key(std::span<const std::uint64_t> words) {
+  std::vector<std::uint64_t> key(words.begin(),words.end());
+  while (key.size()>1 && key.back()==0) key.pop_back();
+  return key;
+}
+std::vector<int> map_unique_strings(const mcscf::StringTable& source,
+    const SpinDeterminantReuseTable& reference) {
+  std::vector<int> remap(source.size());
+  if (source==reference.unique_determinants) {
+    std::iota(remap.begin(),remap.end(),0);return remap;
+  }
+  if (reference.basis.size()) {
+    try {
+      for (std::size_t i=0;i<source.size();++i) remap[i]=reference.basis.index(source.mask(i));
+    } catch (const std::out_of_range&) { return {}; }
+    return remap;
+  }
+  std::unordered_map<std::vector<std::uint64_t>,int,SpinWordHasher> index;
+  index.reserve(reference.unique_determinants.size());
+  for (int i=0;i<static_cast<int>(reference.unique_determinants.size());++i)
+    index.emplace(spin_key(reference.unique_determinants.words(i)),i);
+  for (std::size_t i=0;i<source.size();++i) {
+    const auto found=index.find(spin_key(source.words(i)));
+    if (found==index.end()) return {};
+    remap[i]=found->second;
+  }
+  return remap;
+}
 
 bool try_build_reuse_table_in_reference_basis(
     SpinStringRows spin_determinants,
@@ -106,19 +133,6 @@ bool try_build_reuse_table_in_reference_basis(
     SpinDeterminantReuseTable* mapped_reuse_table) {
   if (mapped_reuse_table == nullptr) {
     throw std::invalid_argument("mapped_reuse_table must not be null");
-  }
-
-  std::unordered_map<std::vector<int>, int, SpinDeterminantHasher>
-      reference_unique_id_by_determinant;
-  reference_unique_id_by_determinant.reserve(
-      reference_reuse_table.unique_determinants.size());
-  for (int unique_index = 0;
-       unique_index < static_cast<int>(
-           reference_reuse_table.unique_determinants.size());
-       ++unique_index) {
-    reference_unique_id_by_determinant.emplace(
-        reference_reuse_table.unique_determinants[unique_index],
-        unique_index);
   }
 
   mapped_reuse_table->unique_determinants =
@@ -131,17 +145,10 @@ bool try_build_reuse_table_in_reference_basis(
       0u);
 
   const auto source=build_spin_determinant_reuse_table(spin_determinants);
-  std::vector<int> remap(source.unique_determinants.size());
-  for (std::size_t unique_index=0;unique_index<remap.size();++unique_index) {
-    const auto iterator =
-        reference_unique_id_by_determinant.find(
-            source.unique_determinants[unique_index]);
-    if (iterator == reference_unique_id_by_determinant.end()) {
-      mapped_reuse_table->unique_determinants.clear();
-      mapped_reuse_table->determinant_to_unique_id.clear();
-      return false;
-    }
-    remap[unique_index]=iterator->second;
+  const auto remap=map_unique_strings(source.unique_determinants,reference_reuse_table);
+  if (remap.size()!=source.unique_determinants.size()) {
+    mapped_reuse_table->unique_determinants.clear();
+    mapped_reuse_table->determinant_to_unique_id.clear();return false;
   }
   for (std::size_t i=0;i<source.determinant_to_unique_id.size();++i) {
     const int id=remap[source.determinant_to_unique_id[i]];
@@ -458,7 +465,7 @@ void populate_same_spin_phi_cache_entry(
 }
 
 std::vector<SpinDeterminantPairEvaluation> build_same_spin_pair_cache(
-    const std::vector<std::vector<int>>& unique_spin_determinants,
+    const xmvb::mcscf::StringTable& unique_spin_determinants,
     const DeterminantPairEvaluator& pair_evaluator,
     const std::vector<double>& ovlp_act,
     const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
@@ -514,7 +521,7 @@ std::vector<SpinDeterminantPairEvaluation> build_same_spin_pair_cache(
 }
 
 std::vector<SpinDeterminantPairEvaluation> build_same_spin_pair_cache(
-    const std::vector<std::vector<int>>& unique_spin_determinants,
+    const xmvb::mcscf::StringTable& unique_spin_determinants,
     const DeterminantPairEvaluator& pair_evaluator,
     const std::vector<double>& ovlp_act,
     const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
@@ -565,7 +572,7 @@ std::vector<SpinDeterminantPairEvaluation> build_same_spin_pair_cache(
 }
 
 void populate_same_spin_phi_cache_entries(
-    const std::vector<std::vector<int>>& unique_spin_determinants,
+    const xmvb::mcscf::StringTable& unique_spin_determinants,
     const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_orbitals,
     const xmvb::integrals::ActiveSpaceTwoElectronResult& active_space_two_electron_result,
@@ -677,26 +684,24 @@ SpinDeterminantReuseTable build_spin_determinant_reuse_table(
     return reuse_table;
   }
   reuse_table.determinant_to_unique_id.resize(spin_determinants.size(), -1);
-  std::unordered_map<std::vector<int>, int, SpinDeterminantHasher>
-      determinant_to_unique_id;
-
-  // the number of unique-determinants
-  determinant_to_unique_id.reserve(spin_determinants.size());
-
-  for (std::size_t determinant_index = 0;
-       determinant_index < spin_determinants.size();
-       ++determinant_index)
-  {
-    const auto [iterator, inserted] = determinant_to_unique_id.emplace(
-        spin_determinants[determinant_index],
-        static_cast<int>(reuse_table.unique_determinants.size())
-    );
-    
-    if (inserted) {
-      reuse_table.unique_determinants.push_back(spin_determinants[determinant_index]);
+  if (spin_determinants.strings().word_width()==1) {
+    std::unordered_map<std::uint64_t,int> ids;
+    ids.reserve(spin_determinants.size());
+    for (std::size_t i=0;i<spin_determinants.size();++i) {
+      const auto mask=spin_determinants.mask(i);
+      const auto [found,inserted]=ids.emplace(mask,reuse_table.unique_determinants.size());
+      if (inserted) reuse_table.unique_determinants.push_mask(mask);
+      reuse_table.determinant_to_unique_id[i]=found->second;
     }
-
-    reuse_table.determinant_to_unique_id[determinant_index] = iterator->second;
+  } else {
+    std::unordered_map<std::vector<std::uint64_t>,int,SpinWordHasher> ids;
+    ids.reserve(spin_determinants.size());
+    for (std::size_t i=0;i<spin_determinants.size();++i) {
+      auto key=spin_key(spin_determinants.words(i));
+      const auto [found,inserted]=ids.emplace(key,reuse_table.unique_determinants.size());
+      if (inserted) reuse_table.unique_determinants.push_words(key);
+      reuse_table.determinant_to_unique_id[i]=found->second;
+    }
   }
 
   return reuse_table;
@@ -712,13 +717,11 @@ std::size_t ordered_spin_pair_storage_index(
 }
 
 std::size_t estimate_same_spin_pair_cache_bytes(
-    const std::vector<std::vector<int>>& unique_spin_determinants,
+    const xmvb::mcscf::StringTable& unique_spin_determinants,
     int n_orbitals) {
   int max_electron_count = 0;
-  for (const auto& determinant : unique_spin_determinants) {
-    max_electron_count =
-        std::max(max_electron_count, static_cast<int>(determinant.size()));
-  }
+  for (std::size_t i=0;i<unique_spin_determinants.size();++i)
+    max_electron_count=std::max(max_electron_count,unique_spin_determinants.electron_count(i));
   const std::size_t n_packed_active_pairs =
       n_orbitals == 0 ? 0 : xmvb::integrals::packed_active_pair_count(n_orbitals);
   const std::size_t max_occupied_pair_count =
@@ -759,6 +762,15 @@ namespace {
 
 SameSpinPairCacheContext finalize_spin_topology(
     SameSpinPairCacheContext context, int n_orbitals) {
+  if (n_orbitals>0 && n_orbitals<=63) {
+    auto& alpha=context.alpha_reuse_table;
+    auto& beta=context.beta_reuse_table;
+    if (!alpha.basis.size()) alpha.basis=alpha.unique_determinants.basis(n_orbitals);
+    if (!beta.basis.size()) beta.basis=beta.unique_determinants==alpha.unique_determinants ?
+        alpha.basis:beta.unique_determinants.basis(n_orbitals);
+    alpha.unique_determinants=mcscf::StringTable::from_basis(alpha.basis);
+    beta.unique_determinants=mcscf::StringTable::from_basis(beta.basis);
+  }
   context.alpha_pair_provider = std::make_shared<const AcceptedPairTileProvider>(
       context.alpha_reuse_table.unique_determinants,
       n_orbitals);
@@ -787,63 +799,39 @@ SameSpinPairCacheContext finalize_spin_topology(
   return context;
 }
 
-std::uint64_t checked_spin_mask(const std::vector<int>& occupied,
-                                int n_orbitals, int n_electrons) {
-  if (static_cast<int>(occupied.size()) != n_electrons)
-    throw std::invalid_argument("spin determinants have inconsistent electron counts");
-  std::uint64_t mask = 0;
-  int previous = -1;
-  for (const int orbital : occupied) {
-    if (orbital <= previous || orbital < 0 || orbital >= n_orbitals)
-      throw std::invalid_argument("spin determinant occupation is invalid");
-    mask |= std::uint64_t{1} << orbital;
-    previous = orbital;
-  }
-  return mask;
-}
-
 SpinDeterminantReuseTable complete_spin_reuse_table(
     SpinStringRows determinants, int n_orbitals) {
   if (determinants.empty())
     throw std::invalid_argument("orthogonal spin topology requires determinants");
-  const int n_electrons = static_cast<int>(determinants.front().size());
-  SpinDeterminantReuseTable table =
-      build_spin_determinant_reuse_table(determinants);
-  for (const auto& determinant : table.unique_determinants)
-    checked_spin_mask(determinant, n_orbitals, n_electrons);
-  if (table.unique_determinants.size() ==
-      mcscf::string_count(n_orbitals, n_electrons))
+  const int n_electrons=determinants.electron_count();
+  auto table=build_spin_determinant_reuse_table(determinants);
+  if (!n_orbitals) {
+    if (n_electrons) throw std::invalid_argument("nonempty occupation in a zero-orbital sector");
     return table;
-
-  const mcscf::SpinStrings full_strings(n_orbitals, n_electrons);
+  }
+  table.basis=table.unique_determinants.basis(n_orbitals);
+  if (table.basis.complete()) {
+    table.unique_determinants=mcscf::StringTable::from_basis(table.basis);return table;
+  }
+  const mcscf::SpinStrings complete(n_orbitals,n_electrons);
   std::vector<int> remap(table.unique_determinants.size());
-  for (std::size_t i=0;i<remap.size();++i)
-    remap[i]=full_strings.index(checked_spin_mask(
-        table.unique_determinants[i],n_orbitals,n_electrons));
+  for (std::size_t i=0;i<remap.size();++i) remap[i]=complete.index(table.unique_determinants.mask(i));
   for (auto& id:table.determinant_to_unique_id) id=remap[id];
-  table.unique_determinants = full_strings.decode();
+  table.basis=complete;
+  table.unique_determinants=mcscf::StringTable::from_basis(complete);
   return table;
 }
 
 SpinDeterminantReuseTable map_spin_reuse_table_to_complete_basis(
     SpinStringRows determinants,
     const SpinDeterminantReuseTable& reference) {
-  std::unordered_map<std::vector<int>, int, SpinDeterminantHasher> indices;
-  indices.reserve(reference.unique_determinants.size());
-  for (int i = 0; i < static_cast<int>(reference.unique_determinants.size()); ++i)
-    indices.emplace(reference.unique_determinants[i], i);
-
   SpinDeterminantReuseTable table;
-  table.unique_determinants = reference.unique_determinants;
+  table.unique_determinants=reference.unique_determinants;
+  table.basis=reference.basis;
   const auto source=build_spin_determinant_reuse_table(determinants);
-  std::vector<int> remap(source.unique_determinants.size());
-  for (std::size_t i=0;i<remap.size();++i) {
-    const auto& determinant=source.unique_determinants[i];
-    const auto found = indices.find(determinant);
-    if (found == indices.end())
-      throw std::invalid_argument("spin determinant is outside complete basis");
-    remap[i]=found->second;
-  }
+  const auto remap=map_unique_strings(source.unique_determinants,reference);
+  if (remap.size()!=source.unique_determinants.size())
+    throw std::invalid_argument("spin string is outside complete basis");
   table.determinant_to_unique_id=source.determinant_to_unique_id;
   for (auto& id:table.determinant_to_unique_id) id=remap[id];
   return table;
@@ -891,7 +879,7 @@ SameSpinPairCacheContext build_orthogonal_spin_topology(
   context.close_shell_diagonal_reuses_same_spin_pair_cache =
       can_reuse_close_shell_same_spin_pair_cache(alpha_det, beta_det);
   context.beta_reuses_alpha_pair_cache =
-      alpha_det.front().size() == beta_det.front().size();
+      alpha_det.electron_count() == beta_det.electron_count();
   context.beta_reuse_table = context.beta_reuses_alpha_pair_cache
       ? map_spin_reuse_table_to_complete_basis(beta_det, context.alpha_reuse_table)
       : complete_spin_reuse_table(beta_det, n_orbitals);

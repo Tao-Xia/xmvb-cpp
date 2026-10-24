@@ -1,5 +1,7 @@
 #pragma once
 
+#include "mcscf/ci/string_table.hpp"
+
 #include <Eigen/Core>
 
 #include <cstddef>
@@ -17,7 +19,8 @@ class AcceptedPairTileProvider;
  * @brief Maps each spin determinant in the full space onto a unique occupied string.
  */
 struct SpinDeterminantReuseTable {
-  std::vector<std::vector<int>> unique_determinants;
+  mcscf::StringTable unique_determinants;
+  mcscf::SpinStrings basis;
   std::vector<int> determinant_to_unique_id;
 };
 
@@ -167,7 +170,7 @@ std::size_t ordered_spin_pair_storage_index(
  * @brief Overestimates the memory footprint of one ordered same-spin cache table.
  */
 std::size_t estimate_same_spin_pair_cache_bytes(
-    const std::vector<std::vector<int>>& unique_spin_determinants,
+    const xmvb::mcscf::StringTable& unique_spin_determinants,
     int n_orbitals);
 
 /**

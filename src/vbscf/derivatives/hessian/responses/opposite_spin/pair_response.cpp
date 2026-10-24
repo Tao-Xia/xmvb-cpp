@@ -1,5 +1,7 @@
 #include "vbscf/derivatives/hessian/responses/opposite_spin/pair_response_internal.hpp"
 
+#include "mcscf/ci/string_table.hpp"
+
 #include <cmath>
 #include <algorithm>
 #include <stdexcept>
@@ -92,7 +94,7 @@ void fill_exact_kernel_rows(
 }
 
 std::size_t accepted_tile_byte_bound(
-    const std::vector<std::vector<int>>& unique_determinants,
+    const xmvb::mcscf::StringTable& unique_determinants,
     int n_active_orbitals,
     int work_items) {
   const std::size_t n_unique = unique_determinants.size();
@@ -179,7 +181,7 @@ DirectionalOppositeSpinPairTileView::projected_channel(
 namespace {
 
 DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile_impl(
-    const std::vector<std::vector<int>>& unique_determinants,
+    const xmvb::mcscf::StringTable& unique_determinants,
     const std::vector<SpinDeterminantPairEvaluation>* ordered_pair_cache,
     const AcceptedSpinPairTile* accepted_pair_tile,
     int n_unique_determinants,
@@ -432,7 +434,7 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile_impl(
 }  // namespace
 
 DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
-    const std::vector<std::vector<int>>& unique_determinants,
+    const xmvb::mcscf::StringTable& unique_determinants,
     const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
     int n_unique_determinants,
     int n_active_orbitals,
@@ -455,7 +457,7 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
 }
 
 DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
-    const std::vector<std::vector<int>>& unique_determinants,
+    const xmvb::mcscf::StringTable& unique_determinants,
     const AcceptedSpinPairTile& accepted_pair_tile,
     int n_active_orbitals,
     const xmvb::integrals::ActiveSpaceTwoElectronResult& active_space_two_electron_result,

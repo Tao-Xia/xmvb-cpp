@@ -67,7 +67,7 @@ int encode_spin_string(const std::vector<int>& orbitals, bool fast,
 
 class SpinInterner {
 public:
-  explicit SpinInterner(std::vector<std::vector<int>>& strings)
+  explicit SpinInterner(mcscf::StringTable& strings)
       : strings_(strings) {}
 
   int intern_fast(std::uint64_t mask) {
@@ -75,13 +75,7 @@ public:
     if (found != fast_ids_.end()) return found->second;
     const int id = next_id();
     fast_ids_.emplace(mask, id);
-    std::vector<int> decoded;
-    while (mask) {
-      const int orbital = std::countr_zero(mask);
-      decoded.push_back(orbital);
-      mask &= mask - 1;
-    }
-    strings_.push_back(std::move(decoded));
+    strings_.push_mask(mask);
     return id;
   }
 
@@ -90,15 +84,7 @@ public:
     if (found != general_ids_.end()) return found->second;
     const int id = next_id();
     general_ids_.emplace(words, id);
-    std::vector<int> decoded;
-    for (std::size_t word = 0; word < words.size(); ++word) {
-      auto bits = words[word];
-      while (bits) {
-        decoded.push_back(static_cast<int>(64 * word + std::countr_zero(bits)));
-        bits &= bits - 1;
-      }
-    }
-    strings_.push_back(std::move(decoded));
+    strings_.push_words(words);
     return id;
   }
 
@@ -115,7 +101,7 @@ private:
     return static_cast<int>(strings_.size());
   }
 
-  std::vector<std::vector<int>>& strings_;
+  mcscf::StringTable& strings_;
   std::unordered_map<std::uint64_t, int> fast_ids_;
   std::unordered_map<std::vector<std::uint64_t>, int, MaskHash> general_ids_;
 };
@@ -420,6 +406,14 @@ StructureExpansion StructureExpander::expand(const RawStructureData& raw) const 
     }
   }
 
+  // Freeze the native ordering once. Later orbital points reuse this rank
+  // metadata when their active dimension matches; a larger declared active
+  // space is indexed separately, without assuming closure of selected VB states.
+  if (max_orbital>=0 && max_orbital<63) {
+    const int orbitals=max_orbital+1;
+    result.alpha_strings=mcscf::StringTable::from_basis(result.alpha_strings.basis(orbitals));
+    result.beta_strings=mcscf::StringTable::from_basis(result.beta_strings.basis(orbitals));
+  }
   return result;
 }
 

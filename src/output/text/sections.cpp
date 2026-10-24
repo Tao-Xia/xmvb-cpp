@@ -339,10 +339,11 @@ void print_determinant_coefficients(
     const Eigen::VectorXd& structure_coefficients,
     const vb::StructureExpansion& determinants,
     int n_inactive) {
-  const int n_determinants = static_cast<int>(determinants.alpha().size());
-  if (determinants.beta().size() != determinants.alpha().size() ||
+  const auto alpha_rows=determinants.alpha(),beta_rows=determinants.beta();
+  const int n_determinants = static_cast<int>(alpha_rows.size());
+  if (beta_rows.size() != alpha_rows.size() ||
       determinants.incidence().size() !=
-          determinants.alpha().size()) {
+          alpha_rows.size()) {
     throw std::invalid_argument(
         "final determinant topology has inconsistent dimensions");
   }
@@ -355,7 +356,7 @@ void print_determinant_coefficients(
   std::stable_sort(
       display_order.begin(),
       display_order.end(),
-      [&determinants](int left, int right) {
+      [&determinants,&alpha_rows](int left, int right) {
         const auto& left_terms =
             determinants.incidence()[left];
         const auto& right_terms =
@@ -369,7 +370,7 @@ void print_determinant_coefficients(
         if (left_structure != right_structure) {
           return left_structure < right_structure;
         }
-        return determinants.alpha()[left] > determinants.alpha()[right];
+        return alpha_rows.less(right,left);
       });
   for (int display_index = 0; display_index < n_determinants; ++display_index) {
     const int determinant = display_order[display_index];
@@ -387,10 +388,10 @@ void print_determinant_coefficients(
     output << std::setw(8) << display_index + 1
            << std::fixed << std::setprecision(8) << std::setw(17)
            << coefficient << "  ******    "
-           << determinant_spin_string(determinants.alpha()[determinant], n_inactive)
+           << determinant_spin_string(alpha_rows[determinant], n_inactive)
            << '\n'
            << std::string(37, ' ')
-           << determinant_spin_string(determinants.beta()[determinant], n_inactive)
+           << determinant_spin_string(beta_rows[determinant], n_inactive)
            << '\n';
   }
 }

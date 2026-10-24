@@ -128,9 +128,9 @@ struct ExteriorOrbitalTransform::RowCache {
 };
 
 ExteriorOrbitalTransform::ExteriorOrbitalTransform(
-    const std::vector<std::vector<int>>& occupations,
+    const mcscf::StringTable& occupations,
     const Eigen::Ref<const Eigen::MatrixXd>& upper)
-    :ExteriorOrbitalTransform(mcscf::SpinStrings(upper.rows(),occupations),upper) {}
+    :ExteriorOrbitalTransform(occupations.basis(upper.rows()),upper) {}
 
 ExteriorOrbitalTransform::ExteriorOrbitalTransform(
     mcscf::SpinStrings strings,

@@ -1,4 +1,6 @@
 #include "vbscf/derivatives/hessian/responses/same_spin/backward.hpp"
+
+#include "mcscf/ci/string_table.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin/backward_kernels_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin/pair_response_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin/tile_weights_internal.hpp"
@@ -211,7 +213,7 @@ void accumulate_spin_pair_backward(
 
 template <typename HWeight, typename SWeight, typename TWeight, typename PairAt>
 void accumulate_spin_matrix_backward_tile_from_accessor(
-    const std::vector<std::vector<int>>& unique_determinants,
+    const xmvb::mcscf::StringTable& unique_determinants,
     PairAt&& pair_at,
     const HWeight& hamiltonian_weight_tile,
     const SWeight& overlap_weight_tile,
@@ -259,7 +261,7 @@ void accumulate_spin_matrix_backward_tile_from_accessor(
 
 template <typename HWeight, typename SWeight, typename TWeight>
 void accumulate_spin_matrix_backward_tile(
-    const std::vector<std::vector<int>>& unique_determinants,
+    const xmvb::mcscf::StringTable& unique_determinants,
     const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
     const HWeight& hamiltonian_weight_tile,
     const SWeight& overlap_weight_tile,
@@ -289,7 +291,7 @@ void accumulate_spin_matrix_backward_tile(
 }
 
 void accumulate_accepted_spin_backward_tile(
-    const std::vector<std::vector<int>>& unique_determinants,
+    const xmvb::mcscf::StringTable& unique_determinants,
     const AcceptedSpinPairTile& accepted_tile,
     const Eigen::Ref<const Eigen::MatrixXd>& hamiltonian_weights,
     const Eigen::Ref<const Eigen::MatrixXd>& overlap_weights,
@@ -324,7 +326,7 @@ void accumulate_accepted_spin_backward_tile(
 }
 
 void accumulate_spin_matrix_backward(
-    const std::vector<std::vector<int>>& unique_determinants,
+    const xmvb::mcscf::StringTable& unique_determinants,
     const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
     const Eigen::MatrixXd& hamiltonian_weight_matrix,
     const Eigen::MatrixXd& overlap_weight_matrix,
@@ -346,7 +348,7 @@ void accumulate_spin_matrix_backward(
           n_unique_determinants,
           unique_determinants.empty()
               ? 0
-              : static_cast<int>(unique_determinants.front().size()),
+              : unique_determinants.electron_count(),
           n_active_orbitals));
   const int n_pair_tiles =
       (n_unique_determinants + pair_tile_size - 1) / pair_tile_size;
@@ -429,7 +431,7 @@ template <
     typename DSWeight,
     typename DTWeight>
 void accumulate_spin_local_matrix_backward_tile(
-    const std::vector<std::vector<int>>& unique_determinants,
+    const xmvb::mcscf::StringTable& unique_determinants,
     const AcceptedSpinPairTile& accepted,
     const SameSpinDirectionalPairTileView& directional_tile,
     const HWeight& hamiltonian_weight_tile,
@@ -562,7 +564,7 @@ void accumulate_spin_local_matrix_backward_tile(
 }
 
 void accumulate_spin_local_matrix_backward(
-    const std::vector<std::vector<int>>& unique_determinants,
+    const xmvb::mcscf::StringTable& unique_determinants,
     const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
     const std::vector<SameSpinPolynomialDirectionalPairData>& ordered_directional_data,
     const Eigen::MatrixXd& hamiltonian_weight_matrix,
@@ -599,7 +601,7 @@ void accumulate_spin_local_matrix_backward(
           n_unique_determinants,
           unique_determinants.empty()
               ? 0
-              : static_cast<int>(unique_determinants.front().size()),
+              : unique_determinants.electron_count(),
           n_active_orbitals));
   const int n_pair_tiles =
       (n_unique_determinants + pair_tile_size - 1) / pair_tile_size;
@@ -1020,7 +1022,7 @@ build_support_sparse_directional_same_spin_backward_contribution_by_tiles(
 }
 
 void accumulate_local_primary_pair_tile(
-    const std::vector<std::vector<int>>& unique_determinants,
+    const xmvb::mcscf::StringTable& unique_determinants,
     const AcceptedSpinPairTile& accepted,
     const SameSpinDirectionalPairTileView& directional_tile,
     const SameSpinAcceptedTileWeights& accepted_weights,
@@ -1055,7 +1057,7 @@ void accumulate_local_primary_pair_tile(
 }
 
 void accumulate_accepted_pair_weight_response_tile(
-    const std::vector<std::vector<int>>& unique_determinants,
+    const xmvb::mcscf::StringTable& unique_determinants,
     const std::vector<SpinDeterminantPairEvaluation>& accepted_pairs,
     const SameSpinAcceptedTileWeights& directional_weights,
     int left_begin,

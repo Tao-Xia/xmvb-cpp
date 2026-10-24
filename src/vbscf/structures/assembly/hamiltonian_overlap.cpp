@@ -1,5 +1,7 @@
 #include "vbscf/structures/assembly/hamiltonian_overlap.hpp"
 
+#include "mcscf/ci/string_table.hpp"
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -249,7 +251,7 @@ template <typename TwoElectronInput>
 class ForwardSpinPairProvider {
 public:
   ForwardSpinPairProvider(
-      const std::vector<std::vector<int>>& unique_spin_determinants,
+      const xmvb::mcscf::StringTable& unique_spin_determinants,
       const std::vector<SpinDeterminantPairEvaluation>* ordered_spin_pair_cache,
       DeterminantPairEvaluator pair_evaluator,
       const std::vector<double>& ovlp_act,
@@ -445,7 +447,7 @@ private:
     return &cached_tiles_.back();
   }
 
-  const std::vector<std::vector<int>>& unique_spin_determinants_;
+  const xmvb::mcscf::StringTable& unique_spin_determinants_;
   const std::vector<SpinDeterminantPairEvaluation>* ordered_spin_pair_cache_ =
       nullptr;
   DeterminantPairEvaluator pair_evaluator_;
@@ -1183,7 +1185,7 @@ StructureAccumulationResult build_tiled_matrix_form_structure_matrices(
 
 template <typename TwoElectronInput>
 std::vector<ForwardSpinPairEntry> build_unique_spin_self_entries(
-    const std::vector<std::vector<int>>& unique_spin_determinants,
+    const xmvb::mcscf::StringTable& unique_spin_determinants,
     const std::vector<unsigned char>& touched,
     const std::vector<double>& ovlp_act,
     const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
@@ -1300,7 +1302,7 @@ std::uint64_t symmetric_pair_key(int left, int right) {
 }
 
 double exact_spin_overlap(
-    const std::vector<std::vector<int>>& unique_determinants,
+    const xmvb::mcscf::StringTable& unique_determinants,
     int left,
     int right,
     const std::vector<double>& active_overlap,

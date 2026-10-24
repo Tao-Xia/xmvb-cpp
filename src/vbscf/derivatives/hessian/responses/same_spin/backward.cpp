@@ -142,7 +142,7 @@ const AcceptedPairTileProvider& target_provider(
       : cache.beta_provider();
 }
 
-const std::vector<std::vector<int>>& target_strings(
+const mcscf::StringTable& target_strings(
     const SameSpinPairCacheContext& cache,
     TargetSpin target_spin) {
   return target_spin == TargetSpin::Alpha

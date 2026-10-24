@@ -8,6 +8,7 @@
 #include <Eigen/Core>
 #include <Eigen/SparseCore>
 #include "mcscf/ci/strings.hpp"
+#include "mcscf/ci/string_table.hpp"
 
 namespace xmvb::vb {
 
@@ -52,7 +53,7 @@ public:
   ExteriorOrbitalTransform(mcscf::SpinStrings strings,
       const Eigen::Ref<const Eigen::MatrixXd>& upper_orbital_transform);
   ExteriorOrbitalTransform(
-      const std::vector<std::vector<int>>& determinants,
+      const mcscf::StringTable& determinants,
       const Eigen::Ref<const Eigen::MatrixXd>& upper_orbital_transform);
 
   /** @brief Applies the exterior transform to matrix rows in place. */

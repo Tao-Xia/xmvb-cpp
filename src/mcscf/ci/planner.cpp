@@ -88,28 +88,19 @@ long double exterior_transform_flops(
 
 }  // namespace
 
-DirectCiActionPlan plan_orthogonal_direct_ci_action(
-    const std::vector<std::vector<int>>& alpha_strings,
-    const std::vector<std::vector<int>>& beta_strings,
-    int n_active_orbitals,
-    int block_width) {
-  if (n_active_orbitals <= 0 || block_width <= 0) {
-    throw std::invalid_argument(
-        "direct-CI planner requires positive orbital and block dimensions");
-  }
-  const SpinSpaceAnalysis alpha =
-      analyze_spin_space(alpha_strings, n_active_orbitals);
-  const SpinSpaceAnalysis beta =
-      analyze_spin_space(beta_strings, n_active_orbitals);
-
+namespace {
+DirectCiActionPlan make_plan(const SpinSpaceAnalysis& alpha,const SpinSpaceAnalysis& beta,
+    int n_active_orbitals,int block_width) {
+  if (n_active_orbitals<=0 || block_width<=0)
+    throw std::invalid_argument("direct-CI planner requires positive dimensions");
   DirectCiActionPlan plan;
   plan.alpha_carrier_complete = alpha.complete;
   plan.beta_carrier_complete = beta.complete;
   plan.n_active_orbitals = n_active_orbitals;
   plan.n_alpha_electrons = alpha.n_electrons;
   plan.n_beta_electrons = beta.n_electrons;
-  plan.n_alpha_strings = alpha_strings.size();
-  plan.n_beta_strings = beta_strings.size();
+  plan.n_alpha_strings = alpha.dimension;
+  plan.n_beta_strings = beta.dimension;
   if (!plan.carrier_complete()) {
     return plan;
   }
@@ -155,4 +146,25 @@ DirectCiActionPlan plan_orthogonal_direct_ci_action(
   return plan;
 }
 
-}  // namespace xmvb::mcscf
+} // namespace
+
+DirectCiActionPlan plan_orthogonal_direct_ci_action(
+    const std::vector<std::vector<int>>& alpha,const std::vector<std::vector<int>>& beta,
+    int n,int width) {
+  auto a=analyze_spin_space(alpha,n),b=analyze_spin_space(beta,n);
+  a.dimension=alpha.size();b.dimension=beta.size();
+  return make_plan(a,b,n,width);
+}
+DirectCiActionPlan plan_orthogonal_direct_ci_action(
+    const SpinStrings& alpha,const SpinStrings& beta,int n,int width) {
+  return make_plan({alpha.complete() && alpha.orbitals()==n,alpha.electrons(),static_cast<std::size_t>(alpha.size())},
+      {beta.complete() && beta.orbitals()==n,beta.electrons(),static_cast<std::size_t>(beta.size())},n,width);
+}
+DirectCiActionPlan plan_orthogonal_direct_ci_action(
+    const StringTable& alpha,const StringTable& beta,int n,int width) {
+  if (n<1 || n>63 || alpha.empty() || beta.empty())
+    return make_plan({}, {},n,width);
+  return plan_orthogonal_direct_ci_action(alpha.basis(n),beta.basis(n),n,width);
+}
+
+} // namespace xmvb::mcscf

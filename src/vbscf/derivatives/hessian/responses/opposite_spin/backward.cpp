@@ -1,5 +1,7 @@
 #include "vbscf/derivatives/hessian/responses/opposite_spin/backward.hpp"
 
+#include "mcscf/ci/string_table.hpp"
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -77,7 +79,7 @@ const AcceptedPairTileProvider& provider(
       : cache.beta_provider();
 }
 
-const std::vector<std::vector<int>>& strings(
+const xmvb::mcscf::StringTable& strings(
     const SameSpinPairCacheContext& cache,
     PrimarySpin spin) {
   return spin == PrimarySpin::Alpha
@@ -239,7 +241,7 @@ void accumulate_packed_gradient(
 
 void accumulate_overlap_gradient(
     const AcceptedSpinPairTile& primary_tile,
-    const std::vector<std::vector<int>>& primary_strings,
+    const xmvb::mcscf::StringTable& primary_strings,
     const Eigen::MatrixXd& projected_partner_images,
     int n_active,
     std::vector<double>* overlap_gradient) {

@@ -189,7 +189,7 @@ void LocalOppositeSpinTileAccumulator::accumulate_primary(
       : accepted_pair_cache_.alpha_provider();
   const int n_electrons = primary_determinants.empty()
       ? 0
-      : static_cast<int>(primary_determinants.front().size());
+      : primary_determinants.electron_count();
   const int primary_pair_count = tile.left_size() * tile.right_size();
   Eigen::MatrixXd raw_projection = Eigen::MatrixXd::Zero(
       n_packed_pairs_, primary_pair_count);
@@ -291,7 +291,7 @@ void LocalOppositeSpinTileAccumulator::accumulate_cross_response(
       : accepted_pair_cache_.beta_reuse_table.unique_determinants;
   const int n_electrons = primary_determinants.empty()
       ? 0
-      : static_cast<int>(primary_determinants.front().size());
+      : primary_determinants.electron_count();
   const int extent = std::min(
       n_primary, target_alpha ? tile_extents_.alpha : tile_extents_.beta);
   const Eigen::MatrixXd zero = Eigen::MatrixXd::Zero(

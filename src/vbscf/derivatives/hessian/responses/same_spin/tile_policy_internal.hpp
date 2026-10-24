@@ -1,5 +1,7 @@
 #pragma once
 
+#include "mcscf/ci/string_table.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -195,10 +197,10 @@ inline PairTileExtents plan_pair_tile_extents(
     const xmvb::integrals::ActiveSpaceTwoElectronResult& two_electron,
     bool include_opposite_spin = true,
     std::size_t workspace_bytes = kPairTileWorkspaceBytes) {
-  const auto extent = [&](const std::vector<std::vector<int>>& strings) {
+  const auto extent = [&](const xmvb::mcscf::StringTable& strings) {
     const int n_electrons = strings.empty()
         ? 0
-        : static_cast<int>(strings.front().size());
+        : strings.electron_count();
     return plan_pair_tile_extent(
         static_cast<int>(strings.size()),
         n_electrons,
@@ -247,12 +249,12 @@ inline LocalResponseTilePlan plan_local_response_tiles(
       parallel_scalar_action_bytes(
           cache.alpha_provider(), n_active_orbitals));
   const auto extent = [&](
-                          const std::vector<std::vector<int>>& strings,
+                          const xmvb::mcscf::StringTable& strings,
                           int partner_size,
                           std::size_t action_bytes) {
     const int n_electrons = strings.empty()
         ? 0
-        : static_cast<int>(strings.front().size());
+        : strings.electron_count();
     const std::size_t panel_bytes_per_primary =
         3 * static_cast<std::size_t>(vector_set_count) *
         static_cast<std::size_t>(state_count) *
@@ -300,13 +302,13 @@ inline OppositeSpinTilePlan plan_opposite_spin_backward_tiles(
               xmvb::integrals::packed_active_pair_count(std::max(0, n_active_orbitals))) *
           sizeof(double);
   const auto extent = [&](
-                          const std::vector<std::vector<int>>& strings,
+                          const xmvb::mcscf::StringTable& strings,
                           std::size_t bytes,
                           std::size_t reserved,
                           std::size_t extra_per_pair) {
     const int n_electrons = strings.empty()
         ? 0
-        : static_cast<int>(strings.front().size());
+        : strings.electron_count();
     return plan_pair_tile_extent(
         static_cast<int>(strings.size()),
         n_electrons,

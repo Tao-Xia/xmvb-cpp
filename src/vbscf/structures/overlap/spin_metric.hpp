@@ -6,6 +6,7 @@
 #include <Eigen/Core>
 
 #include "core/workspace.hpp"
+#include "mcscf/ci/string_table.hpp"
 
 namespace xmvb::vb {
 
@@ -21,8 +22,8 @@ public:
   enum class Part { Gram, Lower, Upper };
 
   SpinMetric(const StructureAction& action,
-      const std::vector<std::vector<int>>& alpha,
-      const std::vector<std::vector<int>>& beta, std::size_t byte_limit);
+      const mcscf::StringTable& alpha,
+      const mcscf::StringTable& beta, std::size_t byte_limit);
 
   /** @brief Exact G, L or L^T solve for G=L L^T. No orbital transform. */
   Eigen::MatrixXd solve(const Eigen::Ref<const Eigen::MatrixXd>& rhs,
@@ -52,14 +53,14 @@ public:
 
   /** @brief Factor residency only, never admission to the physical CI path. */
   static bool fits(const StructureAction& action,
-      const std::vector<std::vector<int>>& alpha,
-      const std::vector<std::vector<int>>& beta, std::size_t byte_limit);
+      const mcscf::StringTable& alpha,
+      const mcscf::StringTable& beta, std::size_t byte_limit);
 
   /** @brief Occupation topology only; performs no numerical Gram contraction. */
   static std::vector<std::vector<int>> occupation_groups(
       const StructureAction& action,
-      const std::vector<std::vector<int>>& alpha,
-      const std::vector<std::vector<int>>& beta);
+      const mcscf::StringTable& alpha,
+      const mcscf::StringTable& beta);
 
 private:
   struct Block {

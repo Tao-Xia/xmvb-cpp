@@ -1,5 +1,7 @@
 #include "vbscf/structures/orthogonal_ci/metric.hpp"
 
+#include "mcscf/ci/string_table.hpp"
+
 #include <algorithm>
 #include <limits>
 #include <stdexcept>
@@ -11,8 +13,8 @@ namespace xmvb::vb {
 
 bool StructureMetricInverse::fits(
     const StructureAction& action,
-    const std::vector<std::vector<int>>& alpha_strings,
-    const std::vector<std::vector<int>>& beta_strings,
+    const xmvb::mcscf::StringTable& alpha_strings,
+    const xmvb::mcscf::StringTable& beta_strings,
     std::size_t factor_byte_limit,
     std::size_t workspace_byte_limit) {
   if (!action.storage().orthogonal_direct_ci) return false;
@@ -25,8 +27,8 @@ bool StructureMetricInverse::fits(
 
 StructureMetricInverse::StructureMetricInverse(
     const StructureAction& action,
-    const std::vector<std::vector<int>>& alpha_strings,
-    const std::vector<std::vector<int>>& beta_strings,
+    const xmvb::mcscf::StringTable& alpha_strings,
+    const xmvb::mcscf::StringTable& beta_strings,
     bool complete_space,
     std::size_t factor_byte_limit,
     std::size_t workspace_byte_limit)

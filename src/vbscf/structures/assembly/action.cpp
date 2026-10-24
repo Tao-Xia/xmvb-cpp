@@ -1,4 +1,6 @@
 #include "vbscf/structures/assembly/action.hpp"
+
+#include "mcscf/ci/string_table.hpp"
 #include "vbscf/structures/assembly/column_tiles.hpp"
 
 #include <algorithm>
@@ -150,8 +152,8 @@ bool full_factorized_action_fits(
 void add_tiled_opposite_spin_action(
     const AcceptedPairTileProvider& alpha_provider,
     const AcceptedPairTileProvider& beta_provider,
-    const std::vector<std::vector<int>>& alpha_strings,
-    const std::vector<std::vector<int>>& beta_strings,
+    const xmvb::mcscf::StringTable& alpha_strings,
+    const xmvb::mcscf::StringTable& beta_strings,
     const std::vector<double>& active_overlap,
     const Eigen::Ref<const Eigen::MatrixXd>& h1e,
     const xmvb::integrals::ActiveSpaceTwoElectronResult& two_electron,
@@ -165,10 +167,10 @@ void add_tiled_opposite_spin_action(
   const int n_pairs = xmvb::integrals::packed_active_pair_count(n_active);
   const int alpha_electrons = alpha_strings.empty()
       ? 0
-      : static_cast<int>(alpha_strings.front().size());
+      : alpha_strings.electron_count();
   const int beta_electrons = beta_strings.empty()
       ? 0
-      : static_cast<int>(beta_strings.front().size());
+      : beta_strings.electron_count();
   const int alpha_extent = detail::plan_pair_tile_extent(
       n_unique_alpha,
       alpha_electrons,
@@ -389,8 +391,8 @@ struct StructureAction::OrthogonalDirectCiData {
   mutable std::optional<Eigen::MatrixXd> carrier_diagonal;
 
   OrthogonalDirectCiData(
-      const std::vector<std::vector<int>>& alpha_determinants,
-      const std::vector<std::vector<int>>& beta_determinants,
+      const mcscf::SpinStrings& alpha_determinants,
+      const mcscf::SpinStrings& beta_determinants,
       const std::vector<double>& active_overlap,
       const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron,
       const xmvb::integrals::ActiveSpaceTwoElectronResult& active_two_electron,
@@ -402,7 +404,7 @@ struct StructureAction::OrthogonalDirectCiData {
             n_active_orbitals)),
         alpha_transform(alpha_determinants, integrals.orbital_transform),
         distinct_beta_transform(
-            beta_determinants == alpha_determinants
+            beta_determinants.masks() == alpha_determinants.masks()
                 ? nullptr
                 : std::make_unique<ExteriorOrbitalTransform>(
                       beta_determinants,
@@ -437,8 +439,8 @@ struct StructureAction::OrthogonalDirectCiData {
 struct StructureAction::TiledPairData {
   std::shared_ptr<const AcceptedPairTileProvider> alpha_provider;
   std::shared_ptr<const AcceptedPairTileProvider> beta_provider;
-  std::vector<std::vector<int>> alpha_strings;
-  std::vector<std::vector<int>> beta_strings;
+  mcscf::StringTable alpha_strings;
+  mcscf::StringTable beta_strings;
   std::vector<double> active_overlap;
   Eigen::MatrixXd one_electron;
   xmvb::integrals::ActiveSpaceTwoElectronResult two_electron;
@@ -474,14 +476,7 @@ struct StructureAction::TiledPairData {
             sizeof(double) +
         two_electron.packed_active_two_electron_integrals.capacity() *
             sizeof(double);
-    const auto add_strings = [&bytes](const auto& spin_strings) {
-      bytes += spin_strings.capacity() * sizeof(std::vector<int>);
-      for (const auto& string : spin_strings) {
-        bytes += string.capacity() * sizeof(int);
-      }
-    };
-    add_strings(alpha_strings);
-    add_strings(beta_strings);
+    bytes+=alpha_strings.dynamic_bytes()+beta_strings.dynamic_bytes();
     return bytes;
   }
 };
@@ -527,8 +522,8 @@ StructureAction::StructureAction(
 
   const xmvb::mcscf::DirectCiActionPlan direct_ci_plan =
       xmvb::mcscf::plan_orthogonal_direct_ci_action(
-          same_spin_pair_cache.alpha_reuse_table.unique_determinants,
-          same_spin_pair_cache.beta_reuse_table.unique_determinants,
+          same_spin_pair_cache.alpha_reuse_table.basis,
+          same_spin_pair_cache.beta_reuse_table.basis,
           n_active_orbitals,
           1);
   // A complete fixed-spin carrier admits an exact change of representation
@@ -599,8 +594,8 @@ StructureAction::StructureAction(
 
   if (use_direct_ci) {
     direct_ci_ = std::make_unique<OrthogonalDirectCiData>(
-        same_spin_pair_cache.alpha_reuse_table.unique_determinants,
-        same_spin_pair_cache.beta_reuse_table.unique_determinants,
+        same_spin_pair_cache.alpha_reuse_table.basis,
+        same_spin_pair_cache.beta_reuse_table.basis,
         active_overlap,
         active_one_electron,
         active_space_two_electron_result,
@@ -977,10 +972,10 @@ StructureActionResult StructureAction::apply_streamed(
   const int n_pairs = xmvb::integrals::packed_active_pair_count(tiled_pairs_->n_active);
   const int alpha_electrons = tiled_pairs_->alpha_strings.empty()
       ? 0
-      : static_cast<int>(tiled_pairs_->alpha_strings.front().size());
+      : tiled_pairs_->alpha_strings.electron_count();
   const int beta_electrons = tiled_pairs_->beta_strings.empty()
       ? 0
-      : static_cast<int>(tiled_pairs_->beta_strings.front().size());
+      : tiled_pairs_->beta_strings.electron_count();
   const std::size_t spin_workspace = std::max<std::size_t>(1, workspace_bytes / 2);
   const int alpha_extent = detail::plan_pair_tile_extent(
       n_unique_alpha_,

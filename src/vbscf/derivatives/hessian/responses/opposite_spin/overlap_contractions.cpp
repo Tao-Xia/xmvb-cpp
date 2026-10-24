@@ -1,5 +1,7 @@
 #include "vbscf/derivatives/hessian/responses/opposite_spin/overlap_contractions_internal.hpp"
 
+#include "mcscf/ci/string_table.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -190,7 +192,7 @@ void accumulate_singular_spin_overlap_gradient_from_dense_image_local(
 
 void accumulate_overlap_gradient_by_pair_graph(
     const std::vector<SpinDeterminantPairEvaluation>& primary_pair_cache,
-    const std::vector<std::vector<int>>& unique_primary_determinants,
+    const xmvb::mcscf::StringTable& unique_primary_determinants,
     int n_unique_primary,
     const std::vector<SpinDeterminantPairEvaluation>& partner_pair_cache,
     int n_unique_partner,
@@ -370,7 +372,7 @@ void accumulate_overlap_gradient_by_pair_graph(
 void accumulate_local_overlap_gradient_by_pair_graph(
     const std::vector<SpinDeterminantPairEvaluation>& primary_pair_cache,
     const std::vector<DirectionalOppositeSpinPairData>& primary_directional_pairs,
-    const std::vector<std::vector<int>>& unique_primary_determinants,
+    const xmvb::mcscf::StringTable& unique_primary_determinants,
     int n_unique_primary,
     const std::vector<SpinDeterminantPairEvaluation>& partner_pair_cache,
     const std::vector<DirectionalOppositeSpinPairData>& partner_directional_pairs,
