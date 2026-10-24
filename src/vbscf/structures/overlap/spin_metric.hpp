@@ -5,6 +5,8 @@
 
 #include <Eigen/Core>
 
+#include "core/workspace.hpp"
+
 namespace xmvb::vb {
 
 class StructureAction;
@@ -65,6 +67,8 @@ private:
     Eigen::MatrixXd lower;
   };
   int dimension_;
+  /** Factor owners outlive CI actions and share the process memory allowance. */
+  workspace::Reservation residency_;
   Eigen::VectorXd diagonal_;
   std::vector<Block> blocks_;
   std::size_t factor_bytes_ = 0;

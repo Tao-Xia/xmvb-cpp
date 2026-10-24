@@ -85,8 +85,8 @@ public:
       Eigen::Ref<Eigen::MatrixXd> coefficients) const;
 
   /** @brief Retained rows of the exterior matrix for a contiguous row range.
-   * The immutable cache holds at most 64 MiB; borrowed rows remain valid
-   * after eviction through the returned shared ownership.
+   * Cache capacity follows the largest requested panel and shared memory
+   * headroom. Borrowed rows remain valid after eviction through shared ownership.
    */
   std::shared_ptr<const Eigen::MatrixXd> row_block(int begin, int count) const;
 

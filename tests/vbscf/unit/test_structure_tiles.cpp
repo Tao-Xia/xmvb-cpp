@@ -1665,6 +1665,15 @@ void check_sigma_columns(const Fixture& fixture, int width) {
   transform.apply_adjoint_right_block(selected);
   require((*rows - selected).norm() < 1e-14,
           "cached exterior rows differ from the shear transform");
+  if (fixture.alpha.size()>=static_cast<std::size_t>(2*row_count)) {
+    const auto resident=transform.dynamic_bytes();
+    const int next=static_cast<int>(fixture.alpha.size())-row_count;
+    const auto other=transform.row_block(next,row_count);
+    require(transform.dynamic_bytes()==resident,
+        "factor cache accumulated rows beyond its requested panel working set");
+    require((*rows-selected).norm()<1e-14 && other->rows()==row_count,
+        "factor eviction invalidated a borrowed immutable row block");
+  }
   const int n_beta = static_cast<int>(fixture.beta.size());
   Eigen::MatrixXd carrier(fixture.alpha.size(), width * n_beta);
   for (int j = 0; j < carrier.cols(); ++j)

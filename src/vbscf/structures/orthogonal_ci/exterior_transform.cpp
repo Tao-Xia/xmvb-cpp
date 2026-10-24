@@ -67,6 +67,30 @@ struct ExteriorOrbitalTransform::RowCache {
   std::list<Entry> entries;
   std::unordered_map<std::uint64_t, std::list<Entry>::iterator> index;
   std::atomic<std::size_t> cached_bytes{0};
+  std::size_t budget=0;
+
+  /** Retain at most the largest requested panel, within shared headroom.
+   * A factor cache must not silently retain the full compound matrix as a
+   * sweep visits more rows. Borrowed evicted rows retain their own charge.
+   */
+  void request(std::size_t bytes) {
+    const auto available=workspace::available();
+    std::lock_guard lock(mutex);
+    const auto resident=cached_bytes.load(std::memory_order_relaxed);
+    budget=std::min(std::max(budget,bytes),available+resident);
+    trim(0);
+  }
+
+  void trim(std::size_t incoming) {
+    auto resident=cached_bytes.load(std::memory_order_relaxed);
+    while (!entries.empty() && (incoming>budget || resident>budget-incoming)) {
+      const auto last=std::prev(entries.end());
+      resident-=last->bytes;
+      index.erase(last->key);
+      entries.erase(last);
+    }
+    cached_bytes.store(resident,std::memory_order_relaxed);
+  }
 
   static std::uint64_t key(int begin,int count) noexcept {
     return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(begin))<<32) |
@@ -79,36 +103,39 @@ struct ExteriorOrbitalTransform::RowCache {
     entries.splice(entries.begin(),entries,found->second);
     return found->second->rows;
   }
+  template<class Build>
   std::shared_ptr<const Eigen::MatrixXd> retain(std::uint64_t key,
-      std::shared_ptr<const Eigen::MatrixXd> rows) {
-    constexpr std::size_t budget=64ULL*1024*1024;
-    const std::size_t bytes=sizeof(double)*rows->size();
+      std::size_t bytes,Build&& build) {
+    {
+      std::lock_guard lock(mutex);
+      const auto found=index.find(key);
+      if (found!=index.end()) {
+        entries.splice(entries.begin(),entries,found->second);
+        return found->second->rows;
+      }
+      // Release cold owners before allocating a replacement numerical row.
+      trim(bytes);
+    }
     workspace::Reservation residency;
-    if (!residency.try_resize(bytes)) return rows;
+    const bool admitted=residency.try_resize(bytes);
+    auto rows=build();
     const auto* data=rows.get();
     auto owner=std::make_shared<TrackedRows>(std::move(rows),bytes,std::move(residency));
     std::shared_ptr<const Eigen::MatrixXd> tracked(owner,data);
-    if (bytes>budget) return tracked;
     std::lock_guard lock(mutex);
+    if (!admitted || bytes>budget) return tracked;
     const auto found=index.find(key);
     if (found!=index.end()) {
       entries.splice(entries.begin(),entries,found->second);
       return found->second->rows;
     }
-    std::size_t resident=cached_bytes.load(std::memory_order_relaxed);
-    while (resident>budget-bytes) {
-      auto last=std::prev(entries.end());
-      resident-=last->bytes;
-      index.erase(last->key);
-      entries.erase(last);
-    }
-    cached_bytes.store(resident,std::memory_order_relaxed);
+    trim(bytes);
     // A borrowed row block may outlive eviction. Keep its numerical charge
     // with the shared owner, including when the cache no longer retains it.
     entries.push_front({key,tracked,bytes});
     try { index.emplace(key,entries.begin()); }
     catch (...) { entries.pop_front(); throw; }
-    cached_bytes.store(resident+bytes,std::memory_order_relaxed);
+    cached_bytes.fetch_add(bytes,std::memory_order_relaxed);
     return tracked;
   }
 };
@@ -459,24 +486,30 @@ std::shared_ptr<const Eigen::MatrixXd> ExteriorOrbitalTransform::row_block(
   if (begin < 0 || count <= 0 || begin > dimension() - count) {
     throw std::invalid_argument("exterior row block is out of range");
   }
-  const auto key=RowCache::key(begin,count);
-  if (auto rows=row_cache_->find(key)) return rows;
-  // Generate outside the mutex; other readers may use cached rows meanwhile.
-  std::vector<int> selected(count);
-  std::iota(selected.begin(),selected.end(),begin);
   const std::size_t width = static_cast<std::size_t>(dimension());
   if (static_cast<std::size_t>(count) >
       std::numeric_limits<std::size_t>::max() / width / sizeof(double)) {
     throw std::length_error("exterior row block byte count overflows");
   }
-  return row_cache_->retain(key,std::make_shared<Eigen::MatrixXd>(
-      row_plan_->apply(orbital_transform_,masks_,selected)));
+  const auto bytes=sizeof(double)*width*count;
+  row_cache_->request(bytes);
+  return row_cache_->retain(RowCache::key(begin,count),bytes,[&] {
+    // Generate outside the mutex; cache hits construct no row schedule.
+    std::vector<int> selected(count);
+    std::iota(selected.begin(),selected.end(),begin);
+    return std::make_shared<Eigen::MatrixXd>(
+        row_plan_->apply(orbital_transform_,masks_,selected));
+  });
 }
 
 Eigen::SparseMatrix<double> ExteriorOrbitalTransform::generate_rows(std::span<const int> rows) const {
   for (const int row:rows)
     if (row<0 || row>=dimension())
       throw std::invalid_argument("exterior row index is out of range");
+  const auto row_bytes=sizeof(double)*static_cast<std::size_t>(dimension());
+  if (rows.size()>std::numeric_limits<std::size_t>::max()/row_bytes)
+    throw std::length_error("exterior row panel byte count overflows");
+  row_cache_->request(rows.size()*row_bytes);
   // A cached factor is contiguous by row. Assemble it in the same ordering;
   // converting the complete panel once avoids per-row scattered stores.
   ExteriorRowPlan::Rows result(rows.size(),dimension());
@@ -493,8 +526,9 @@ Eigen::SparseMatrix<double> ExteriorOrbitalTransform::generate_rows(std::span<co
       result.row(positions[i])=values.row(i);
       // Cache immutable orbital factors, not state-dependent CI columns.
       // Input generation and output projection share the existing row budget.
-      row_cache_->retain(RowCache::key(missing[i],1),
-          std::make_shared<Eigen::MatrixXd>(values.row(i)));
+      row_cache_->retain(RowCache::key(missing[i],1),row_bytes,[&] {
+        return std::make_shared<Eigen::MatrixXd>(values.row(i));
+      });
     }
   }
   // Convert the assembled panel once, then count/pack independent CSC

@@ -161,18 +161,9 @@ void retain_structure_action(
       precomputed_diagonal ? &*precomputed_diagonal : nullptr);
 }
 
-xmvb::linalg::DavidsonResult solve_selected_structure_roots(
-    const xmvb::linalg::GeneralizedEigenAction& action,
-    const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
-    const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
-    int n_structures,
-    int n_roots,
-    StructureSolveAccuracy structure_solve_accuracy,
-    const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors,
-    const xmvb::linalg::GeneralizedEigensolver& generalized_eigensolver,
-    std::function<double(const Eigen::VectorXd&, double)> physical_residual_norm = {},
-    std::function<Eigen::VectorXd(const Eigen::VectorXd&, double)> residual_preconditioner = {},
-    bool identity_overlap = false) {
+/** @brief Plan solver storage before admitting reusable numerical factors. */
+linalg::DavidsonOptions structure_solve_options(int n_structures,int n_roots,
+    StructureSolveAccuracy structure_solve_accuracy) {
   structure_solve_accuracy.validate();
   xmvb::linalg::DavidsonOptions options =
       xmvb::linalg::make_davidson_options(
@@ -190,6 +181,22 @@ xmvb::linalg::DavidsonResult solve_selected_structure_roots(
   if (solver_bytes>std::numeric_limits<std::size_t>::max())
     throw std::length_error("Davidson memory estimate overflow");
   memory::prepare_ci(static_cast<std::size_t>(solver_bytes));
+  return options;
+}
+
+xmvb::linalg::DavidsonResult solve_selected_structure_roots(
+    const xmvb::linalg::GeneralizedEigenAction& action,
+    const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
+    const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
+    int n_structures,
+    int n_roots,
+    StructureSolveAccuracy structure_solve_accuracy,
+    const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors,
+    const xmvb::linalg::GeneralizedEigensolver& generalized_eigensolver,
+    std::function<double(const Eigen::VectorXd&, double)> physical_residual_norm = {},
+    std::function<Eigen::VectorXd(const Eigen::VectorXd&, double)> residual_preconditioner = {},
+    bool identity_overlap = false) {
+  auto options=structure_solve_options(n_structures,n_roots,structure_solve_accuracy);
   options.physical_residual_norm = std::move(physical_residual_norm);
   options.residual_preconditioner = std::move(residual_preconditioner);
   options.identity_overlap=identity_overlap;
@@ -443,6 +450,7 @@ void solve_structure_problem(
             .count();
     const StructureAction& structure_action = *context->structure_action;
     setup_phase.stop();
+    structure_solve_options(n_structures,n_roots,structure_solve_accuracy);
     if (context->structure_overlap_diagonal.size() == 0) {
       context->structure_overlap_diagonal =
           structure_action.preconditioner_diagonal().overlap;
@@ -513,7 +521,7 @@ void solve_structure_problem(
         // W^T W is occupation-block diagonal for any VB selection, not only
         // FULL. Remove spin recoupling from the preconditioner even when the
         // physical nonorthogonal Gram must remain an exact streamed action.
-        constexpr std::size_t budget = 64ULL * 1024ULL * 1024ULL;
+        const auto budget=workspace::available();
         const auto& alpha = context->same_spin_pair_cache.alpha_reuse_table.unique_determinants;
         const auto& beta = context->same_spin_pair_cache.beta_reuse_table.unique_determinants;
         if (SpinMetric::fits(structure_action, alpha, beta, budget)) {

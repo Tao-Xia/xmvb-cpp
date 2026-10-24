@@ -87,6 +87,8 @@ SpinMetric::SpinMetric(
       throw std::length_error("spin-recoupling factors exceed their byte budget");
     factor_bytes_ += d * d * sizeof(double);
   }
+  if (!residency_.try_resize(factor_bytes_))
+    throw std::runtime_error("spin-recoupling factors exceed shared workspace headroom");
   blocks_.reserve(groups.size());
   std::vector<int> group_id(n), local_id(n);
   for (auto& group : groups) {

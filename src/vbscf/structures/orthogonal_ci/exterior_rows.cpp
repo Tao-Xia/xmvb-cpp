@@ -4,6 +4,7 @@
 #include <array>
 #include <bit>
 #include <memory>
+#include <stdexcept>
 
 #include "core/timing.hpp"
 #include "core/workspace.hpp"
@@ -43,11 +44,18 @@ ExteriorRowPlan::Rows ExteriorRowPlan::apply(const Eigen::MatrixXd& upper,
   // A worker owns contiguous rows. Writing a column-major result here would
   // make neighboring workers repeatedly invalidate the same cache lines.
   Rows result(rows.size(),dimension);
-  // This is derived scratch residency, not a change of representation.
-  constexpr std::size_t scratch_bytes=64ULL*1024*1024;
+  if (rows.empty()) return result;
+  // Scratch belongs to the caller's numerical partition, not to remaining
+  // cache-admission capacity (which may already be leased). Bound its two
+  // vectors per worker by one requested panel, or the irreducible vector pair.
+  const auto worker_bytes=2*sizeof(double)*dimension;
+  const auto scratch_bytes=std::min(workspace::limit(),
+      std::max(worker_bytes,sizeof(double)*dimension*rows.size()));
+  if (worker_bytes>scratch_bytes)
+    throw std::runtime_error("exterior row scratch exceeds the shared workspace");
   const int workers=bounded_openmp_thread_count(cooperative_openmp_thread_count(),
       std::min(rows.size(),std::max<std::size_t>(1,
-          scratch_bytes/(2*sizeof(double)*dimension))));
+          scratch_bytes/worker_bytes)));
   auto scratch=std::make_unique_for_overwrite<double[]>(2*dimension*workers);
   workspace::Temporary scratch_temporary(2*dimension*workers*sizeof(double));
   cooperative_openmp_for(workers,workers,[&](std::ptrdiff_t part) {
