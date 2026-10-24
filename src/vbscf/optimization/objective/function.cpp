@@ -106,7 +106,7 @@ VbScfObjective::evaluate_trial_energy_with_initial_eigenvectors(
     const Eigen::VectorXd& parameter_vector,
     bool canonicalize_sparse_gauge,
     const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors) const {
-  xmvb::profiling::ScopedPhase phase(xmvb::profiling::Phase::TrialForward);
+  xmvb::profiling::ScopedPhase phase(xmvb::profiling::Phase::TrialForward, true);
   const auto iteration_start_time = std::chrono::steady_clock::now();
   OrbitalPreparationInput trial_orbitals = input_.orbital_preparation_input;
   layout_.unpack(parameter_vector, &trial_orbitals);
@@ -205,7 +205,7 @@ VbScfObjective::evaluate_trial_energy_with_structure_guess(
 }
 
 void VbScfObjective::complete_trial(TrialEvaluation* evaluation) const {
-  xmvb::profiling::ScopedPhase phase(xmvb::profiling::Phase::TrialGradient);
+  xmvb::profiling::ScopedPhase phase(xmvb::profiling::Phase::TrialGradient, true);
   if (evaluation == nullptr || !evaluation->valid ||
       evaluation->gradient_ready ||
       !evaluation->forward_evaluation.has_value()) {

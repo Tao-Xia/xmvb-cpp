@@ -39,7 +39,8 @@ enum class Phase {
   RiOneIndex, RiAoH1e, RiOrbitalPairBuild, OrbitalPairPullback,
   RiInactiveBuild, RiAoDirection, RiAoAccepted, RiAoExchange, RiAoCoulomb,
   RiDensityDiagonal, ActiveFrame, ActiveFrameDirection,
-  ActiveFrameAdjoint, ActiveFrameAdjointDirection, Count
+  ActiveFrameAdjoint, ActiveFrameAdjointDirection,
+  ActivePreparation, SpinTopology, CiOperatorSetup, CiPreconditioner, Count
 };
 
 /** @brief Opt-in wall/process-CPU totals. Nested scopes are not additive.
@@ -87,7 +88,8 @@ class PhaseTotals {
         "ri_one_index", "ri_ao_h1e", "ri_orbital_pair_build", "orbital_pair_pullback",
         "ri_inactive_build", "ri_ao_direction", "ri_ao_accepted", "ri_ao_exchange", "ri_ao_coulomb",
         "ri_density_diagonal", "active_frame", "active_frame_direction",
-        "active_frame_adjoint", "active_frame_adjoint_direction"};
+        "active_frame_adjoint", "active_frame_adjoint_direction",
+        "active_preparation", "spin_topology", "ci_operator_setup", "ci_preconditioner"};
     static_assert(sizeof(names) / sizeof(names[0]) == static_cast<std::size_t>(Phase::Count));
     return names[static_cast<std::size_t>(phase)];
   }

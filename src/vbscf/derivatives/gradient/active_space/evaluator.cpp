@@ -24,6 +24,7 @@
 #include "vbscf/determinants/pairs/same_spin_cache.hpp"
 #include "core/pair_index.hpp"
 #include "core/memory.hpp"
+#include "core/timing.hpp"
 #include "vbscf/derivatives/hessian/context/accepted_point.hpp"
 #include "vbscf/derivatives/gradient/active_space/helpers.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin/backward.hpp"
@@ -412,6 +413,7 @@ void solve_structure_problem(
       retain_structure_action(input, context);
     }
   } else {
+    profiling::ScopedPhase setup_phase(profiling::Phase::CiOperatorSetup, true);
     std::optional<StructureDiagonal> jacobi_diagonal;
     if (!context->same_spin_pair_cache.enabled()) {
       jacobi_diagonal =
@@ -440,6 +442,7 @@ void solve_structure_problem(
             std::chrono::steady_clock::now() - stage_start_time)
             .count();
     const StructureAction& structure_action = *context->structure_action;
+    setup_phase.stop();
     if (context->structure_overlap_diagonal.size() == 0) {
       context->structure_overlap_diagonal =
           structure_action.preconditioner_diagonal().overlap;
@@ -450,12 +453,14 @@ void solve_structure_problem(
         context->structure_overlap_diagonal.mean();
     const xmvb::linalg::GeneralizedEigenAction action =
         [&structure_action](const Eigen::Ref<const Eigen::MatrixXd>& vectors) {
+          profiling::ScopedPhase phase(profiling::Phase::CiSigma, true);
           StructureActionResult images = structure_action.apply(vectors);
           return xmvb::linalg::GeneralizedEigenActionResult{
               std::move(images.hamiltonian),
               std::move(images.overlap)};
         };
     stage_start_time = std::chrono::steady_clock::now();
+    profiling::ScopedPhase solve_phase(profiling::Phase::StructureSolve, true);
     std::function<double(const Eigen::VectorXd&, double)> physical_residual;
     if (input.complete_active_space && structure_action.storage().orthogonal_direct_ci) {
       physical_residual = [&structure_action](const Eigen::VectorXd& coefficients, double energy) {
@@ -486,6 +491,7 @@ void solve_structure_problem(
           *context->structure_metric_inverse,n_roots,structure_solve_accuracy,
           initial_eigenvectors,generalized_eigensolver),context);
     } else {
+      profiling::ScopedPhase preconditioner_phase(profiling::Phase::CiPreconditioner, true);
       auto metric=structure_action.storage().orthogonal_direct_ci
           ? selected_ci_metric(structure_action,context->same_spin_pair_cache,
               prepared.orbital_result.active_orbital_overlap_matrix,
@@ -496,6 +502,7 @@ void solve_structure_problem(
       std::function<Eigen::VectorXd(const Eigen::VectorXd&,double)> preconditioner;
       if (metric) {
         selected_action=[&structure_action,metric](const Eigen::Ref<const Eigen::MatrixXd>& v) {
+          profiling::ScopedPhase phase(profiling::Phase::CiSigma, true);
           return linalg::GeneralizedEigenActionResult{
               structure_action.apply_hamiltonian(v),metric->overlap*v};
         };
@@ -528,6 +535,7 @@ void solve_structure_problem(
               spin->factor_bytes(), spin->block_count(), spin->max_block_size());
         }
       }
+      preconditioner_phase.stop();
       retain_davidson_result(
         solve_selected_structure_roots(
             selected_action,
@@ -563,13 +571,17 @@ ActiveSpaceGradientForwardContext build_active_space_gradient_forward_context(
     const FullDeterminantStructureHamiltonianOverlapBuilder& structure_builder,
     const xmvb::linalg::GeneralizedEigensolver& generalized_eigensolver) {
   ActiveSpaceGradientForwardContext context;
+  profiling::ScopedPhase preparation_phase(profiling::Phase::ActivePreparation, true);
   context.timed_active_space_context =
       prepare_timed_active_space_context(input);
+  preparation_phase.stop();
 
+  profiling::ScopedPhase topology_phase(profiling::Phase::SpinTopology, true);
   context.same_spin_pair_cache = build_orthogonal_spin_topology(
       input.structure_data.alpha(),
       input.structure_data.beta(),
       input.orbital_preparation_input.n_active_orbitals);
+  topology_phase.stop();
   solve_structure_problem(
       input,
       selected_state_indices,
