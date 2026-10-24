@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -16,6 +18,7 @@ namespace xmvb::mcscf {
 struct SpinLink {
   int source;
   std::uint16_t pair;
+  /** Source-to-row operator c†_created c_annihilated, not the reverse. */
   std::uint8_t created,annihilated;
   double sign;
 };
@@ -38,6 +41,13 @@ struct DensityConnections {
 struct SpinConnections {
   int strings=0,degree=0;
   std::vector<SpinLink> links;
+  /** Occupation bit strings and packed-link prefix per highest orbital.
+   * Both are single-spin metadata, shared by every action at this point.
+   * With at most 63 orbitals, a row has at most 992 singles (uint16_t).
+   */
+  std::vector<std::uint64_t> masks;
+  std::vector<std::uint16_t> orbital_offsets;
+  int orbitals=0;
   Eigen::Matrix<std::uint8_t,Eigen::Dynamic,Eigen::Dynamic,Eigen::ColMajor> occupations;
 
   int n_strings() const noexcept { return strings; }
@@ -51,8 +61,36 @@ struct SpinConnections {
     const auto count=occupations.rows();
     return {count ? occupations.data()+count*string:nullptr,count};
   }
+  /** @brief Visit only sources repairing a certified prefix deficit.
+   * Source support requires p<=first<=last<q, with p empty and q occupied
+   * in this target string. Those p are exactly the first links in q's
+   * existing packed-pair block, so no rank search or new excitation map is
+   * needed. Callback arguments are link index and local envelope channel.
+   */
+  template<class Function>
+  void visit_lower_sources(int string,int first,int last,Function&& consume) const {
+    const auto occupied=masks[string];
+    auto holes=~occupied&((std::uint64_t{1}<<(first+1))-1);
+    auto high=occupied&~((std::uint64_t{1}<<(last+1))-1);
+    if (!holes || !high) return;
+    std::array<int,63> low;
+    int count=0;
+    while (holes) {
+      low[count++]=std::countr_zero(holes);
+      holes&=holes-1;
+    }
+    const auto* offsets=orbital_offsets.data()+static_cast<std::size_t>(string)*(orbitals+1);
+    while (high) {
+      const int q=std::countr_zero(high),channel=(q-last-1)*(first+1);
+      const int begin=offsets[q];
+      for (int i=0;i<count;++i) consume(begin+i,channel+low[i]);
+      high&=high-1;
+    }
+  }
+
   std::size_t dynamic_bytes() const noexcept {
-    return links.capacity()*sizeof(SpinLink)+occupations.size()*sizeof(std::uint8_t);
+    return links.capacity()*sizeof(SpinLink)+occupations.size()*sizeof(std::uint8_t)+
+        masks.capacity()*sizeof(std::uint64_t)+orbital_offsets.capacity()*sizeof(std::uint16_t);
   }
 };
 

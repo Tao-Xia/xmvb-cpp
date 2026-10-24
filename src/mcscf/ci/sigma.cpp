@@ -215,6 +215,8 @@ DirectCiSigmaAction::build_spin_connections(
   const int n_singles=electrons*(n_orbitals_-electrons);
   result.strings=dimension;
   result.degree=n_singles;
+  result.orbitals=n_orbitals_;
+  result.orbital_offsets.resize(static_cast<std::size_t>(dimension)*(n_orbitals_+1));
   result.links.resize(static_cast<std::size_t>(n_singles)*dimension);
   result.occupations.resize(electrons,dimension);
   const int n_threads = coarse_openmp_thread_count(
@@ -252,7 +254,9 @@ DirectCiSigmaAction::build_spin_connections(
     // Increasing maximum/minimum orbital indices are packed-channel order.
     // Opposite occupations generate every single replacement exactly once;
     // no sorting copy or channel-by-string offset table is needed.
+    auto* offsets=result.orbital_offsets.data()+static_cast<std::size_t>(target)*(n_orbitals_+1);
     for (int high = 0; high < n_orbitals_; ++high) {
+      offsets[high]=link;
       const bool occupied=masks[target] & (std::uint64_t{1} << high);
       const int* opposite=occupied ? target_virtual.data():target_occupied.data();
       const int count=occupied ? n_virtual:electrons;
@@ -263,7 +267,9 @@ DirectCiSigmaAction::build_spin_connections(
         add_source(occupied ? low:high,occupied ? high:low);
       }
     }
+    offsets[n_orbitals_]=link;
   }
+  result.masks=std::move(masks);
   if (profiling::phase_totals().enabled)
     std::fprintf(stderr,"XMVB_LINKS,strings=%d,occupied=%d,singles=%d,retained_bytes=%zu\n",
         dimension,electrons,n_singles,result.dynamic_bytes());

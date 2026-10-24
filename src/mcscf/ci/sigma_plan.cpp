@@ -26,6 +26,7 @@ SigmaTilePlan::SigmaTilePlan(const SpinConnections& alpha,const SpinConnections&
   entry_bytes_=sizeof(double)*width*budget.packed_slabs;
   row_bytes_=sizeof(SigmaGatherRow)+sizeof(double)*width*
       (budget.slabs-budget.packed_slabs)*budget.pairs;
+  row_bytes_+=(2*budget.mask_orbitals+7)/8;
   if (budget.packed_slabs)
     row_bytes_+=sizeof(int)+width*(sizeof(int)+sizeof(std::size_t));
   if (support_ && support_->has_channel_envelopes()) {

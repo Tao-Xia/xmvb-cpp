@@ -4,6 +4,7 @@
 #include <span>
 #include <stdexcept>
 #include <vector>
+#include <utility>
 #include <Eigen/Core>
 #include "core/workspace.hpp"
 
@@ -16,7 +17,7 @@ using ChannelRows=Eigen::Matrix<double,Eigen::Dynamic,Eigen::Dynamic,Eigen::RowM
  * (p,q) with p<=first<=last<q.
  */
 class ChannelSelectors {
-  struct Block { std::vector<int> columns,inverse; };
+  struct Block { std::vector<int> columns,inverse; int first=-1,last=-1; };
   int pairs_;
   std::vector<Block> blocks_;
 public:
@@ -25,6 +26,7 @@ public:
     if (!restricted) return;
     for (int first=0;first<orbitals;++first) for (int last=first;last<orbitals-1;++last) {
       auto& block=blocks_[1+first*orbitals+last];
+      block.first=first;block.last=last;
       block.inverse.assign(pairs,-1);
       for (int q=last+1;q<orbitals;++q) for (int p=0;p<=first;++p) {
         const int pair=q*(q+1)/2+p;
@@ -35,6 +37,7 @@ public:
   }
 
   int groups() const noexcept { return blocks_.size(); }
+  std::pair<int,int> frontier(int group) const noexcept { return {blocks_[group].first,blocks_[group].last}; }
   int channels(int group) const noexcept { return group ? blocks_[group].columns.size():pairs_; }
   int local(int group,int pair) const noexcept { return group ? blocks_[group].inverse[pair]:pair; }
   int global(int group,int channel) const noexcept { return group ? blocks_[group].columns[channel]:channel; }
@@ -65,19 +68,19 @@ public:
   const Eigen::MatrixXd& kernel(int group) const noexcept { return group ? kernels_[group]:kernel_; }
 };
 
-/** @brief Ragged row-major sources and full-channel column-major images in group order.
+/** @brief Ragged row-major sources and column-major channel images in group order.
  * The row maps are shared by every response. Numerical panels are never
  * copied to rearrange rows. Unrestricted tiles use implicit identity maps.
  */
 class ChannelLayout {
   std::vector<int> offsets_,image_rows_,channels_;
   std::vector<std::size_t> packed_offsets_;
-  bool identity_=true;
-  int pairs_=0;
+  bool identity_=true,packed_images_=false;
+  int pairs_=0,rows_=0;
 public:
   void reset(const ChannelSelectors& basis,std::span<const int> groups,int count,int width,
-      bool store_images=true) {
-    pairs_=basis.channels(0);
+      bool store_images=true,bool packed_images=false) {
+    pairs_=basis.channels(0);rows_=count*width;packed_images_=packed_images;
     offsets_.assign(basis.groups()+1,0);
     packed_offsets_.assign(basis.groups()+1,0);
     channels_.resize(basis.groups());
@@ -101,7 +104,7 @@ public:
   struct Panel { int first,rows; std::size_t packed; };
 
   /** Largest consecutive row panel fitting its exact ragged source copies
-   * plus the requested full-channel images. Only scalar boundaries are returned; source
+   * plus the requested images. Only scalar boundaries are returned; source
    * rows remain in their existing group order, without padding or repacking.
    */
   Panel panel(int first,int source_copies,std::size_t entries,int image_copies=1) const {
@@ -113,7 +116,7 @@ public:
       const int start=std::max(first+result.rows,offsets_[g]);
       if (start>=offsets_[g+1]) continue;
       const auto row_entries=static_cast<std::size_t>(source_copies)*channels_[g]+
-          static_cast<std::size_t>(image_copies)*pairs_;
+          static_cast<std::size_t>(image_copies)*(packed_images_ ? channels_[g]:pairs_);
       const int count=static_cast<int>(std::min<std::size_t>(offsets_[g+1]-start,
           (entries-used)/row_entries));
       result.rows+=count;result.packed+=static_cast<std::size_t>(count)*channels_[g];
@@ -122,6 +125,18 @@ public:
     }
     if (!result.rows) throw std::length_error("channel panel cannot hold one row");
     return result;
+  }
+
+  /** Column-major images share packed group extents only for K[J,J]. */
+  std::size_t output_offset(int group) const noexcept {
+    return packed_images_ ? packed_offsets_[group]:static_cast<std::size_t>(offsets_[group]);
+  }
+  int output_stride(int group) const noexcept {
+    return packed_images_ ? size(group):rows_;
+  }
+  std::size_t output_index(int image,int group,int channel) const noexcept {
+    return output_offset(group)+image-offsets_[group]+
+        static_cast<std::size_t>(channel)*output_stride(group);
   }
 
   int begin(int group) const noexcept { return offsets_[group]; }
@@ -150,11 +165,11 @@ inline void multiply_channels(const ChannelProduct& basis,const ChannelLayout& l
     const int channels=basis.channels(group);
     Eigen::Map<const ChannelRows> input(source+layout.offset(group)+static_cast<std::size_t>(first)*channels,
         last-first,channels);
-    // The full image is column-major with leading dimension count*width.
-    // A fixed output channel is then contiguous across all image rows.
+    // Projected images pack each group's actual K[J,J] output. Full images
+    // keep their shared count*width stride; neither form repacks coefficients.
     Eigen::Map<Eigen::MatrixXd,0,Eigen::OuterStride<>> output(
-        destination+layout.begin(group)+first,last-first,basis.kernel(group).rows(),
-        Eigen::OuterStride<>(count*width));
+        destination+layout.output_offset(group)+first,last-first,basis.kernel(group).rows(),
+        Eigen::OuterStride<>(layout.output_stride(group)));
     if (add) output.noalias()+=scale*input*basis.kernel(group).transpose();
     else output.noalias()=scale*input*basis.kernel(group).transpose();
     // Exchange orbits have weight two except on alpha=beta. Correct only

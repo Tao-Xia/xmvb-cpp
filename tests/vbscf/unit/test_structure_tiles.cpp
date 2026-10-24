@@ -1646,13 +1646,32 @@ void check_sigma_columns(const Fixture& fixture, int width) {
     // A single fixed-stride record array, shared by all numerical consumers.
     constexpr auto link_bytes=sizeof(xmvb::mcscf::SpinLink);
     return static_cast<std::size_t>(strings)*
-        (link_bytes*electrons*(fixture.n-electrons)+electrons);
+        (link_bytes*electrons*(fixture.n-electrons)+electrons+
+         sizeof(std::uint64_t)+sizeof(std::uint16_t)*(fixture.n+1));
   };
   const std::size_t expected_links=spin_bytes(fixture.alpha.size(),fixture.alpha.front().size())+
       (fixture.alpha==fixture.beta ? 0:spin_bytes(fixture.beta.size(),fixture.beta.front().size()));
   const auto pairs=integrals.pair_kernel.rows();
   require(sigma.dynamic_bytes()==expected_links+2*sizeof(double)*pairs*pairs,
           "direct-CI links are not compact/shared as declared");
+  // The bit-string traversal must emit exactly the old certified link subset,
+  // in packed-pair order, for every frontier envelope and each spin sector.
+  for (const auto* graph:{&sigma.alpha_connections(),&sigma.beta_connections_view()})
+    for (int string=0;string<graph->n_strings();++string)
+      for (int first=0;first<fixture.n-1;++first) for (int last=first;last<fixture.n-1;++last) {
+        std::vector<std::pair<int,int>> expected,actual;
+        const auto links=graph->singles(string);
+        for (int i=0;i<links.size();++i) {
+          const auto& edge=links[i];
+          if (edge.created>edge.annihilated && edge.annihilated<=first && edge.created>last)
+            expected.emplace_back(i,(edge.created-last-1)*(first+1)+edge.annihilated);
+        }
+        graph->visit_lower_sources(string,first,last,[&](int link,int channel) {
+          actual.emplace_back(link,channel);
+        });
+        require(actual==expected,"bit-string source links changed addresses, signs or channel order");
+      }
+
   const xmvb::vb::ExteriorOrbitalTransform transform(
       fixture.alpha, integrals.orbital_transform);
   const int row_begin=fixture.alpha.size()>1 ? 1:0;
@@ -2260,7 +2279,7 @@ void check_sparse_beta_gather() {
       std::vector<SigmaGatherRow> composed;
       for (const int h:targets) {
         const int image=layout.image(index[h]);
-        composed.push_back({halo[h],image,width>1 ? layout.image(4+index[h])-image:0});
+        composed.push_back({halo[h],static_cast<std::size_t>(image),width>1 ? layout.image(4+index[h])-image:0});
       }
       for (int rhs=0;rhs<width;++rhs) for (const bool selected:{false,true})
         for (int first=0;first<=static_cast<int>(halo.size());++first)
@@ -2276,14 +2295,38 @@ void check_sparse_beta_gather() {
             }
             const int begin=first<static_cast<int>(halo.size()) ? halo[first]:11;
             const int end=last>first ? halo[last-1]+1:begin;
-            gather_beta_rows(values.data()+(column_major ? channel*image_rows:channel),
-                column_major ? 1:pairs,rhs,-1.0,
+            gather_beta_rows({values.data()+(column_major ? channel*image_rows:channel),
+                column_major ? 1:pairs},rhs,-1.0,
                 composed,begin,end,actual.data(),
                 selected ? sparse.data():nullptr,selected ? sparse.size():0);
             require((actual-expected).norm()==0,"sparse beta gather changed a halo interval or destination support");
           }
     }
   }
+}
+
+/** @brief Word boundaries preserve the exact frontier-channel predicate. */
+void check_sigma_row_masks() {
+  using namespace xmvb::mcscf::detail;
+  constexpr int n=6,count=137;
+  std::vector<SigmaGatherRow> rows(count);
+  for (int i=0;i<count;++i) {
+    const int first=i%(n-1),last=first+(i/3)%(n-1-first);
+    rows[i]={i,static_cast<std::size_t>(i),0,i%4 ? 1+first*n+last:0};
+  }
+  SigmaRowMasks masks;
+  masks.reset(n,rows,2);
+  for (int p=0;p<n;++p) for (int q=p+1;q<n;++q) for (bool raises:{false,true})
+    for (int first:{0,1,31,63,64,65,128,137}) for (int last:{0,1,63,64,65,128,136,137}) {
+      if (last<first) continue;
+      std::vector<int> actual,expected;
+      masks.visit(first,last,p,q,raises,[&](int row) {actual.push_back(row);});
+      for (int row=first;row<last;++row) {
+        const int group=rows[row].channel_group;
+        if (!group || (raises && (group-1)/n>=p && (group-1)%n<q)) expected.push_back(row);
+      }
+      require(actual==expected,"row bit masks changed channel support or alpha order");
+    }
 }
 
 /** @brief Ragged-channel capacity never drops nodes at a budget boundary. */
@@ -3922,6 +3965,7 @@ int main(int argc, char** argv) {
       check_symbolic_replay();
       check_full_channel_image_layout();
       check_sparse_beta_gather();
+      check_sigma_row_masks();
       check_packed_sigma_tile_plan();
       check_prefix_words();
       for (const int width:{1,2,3}) check_supported_sigma(4, 2, 2, width);
