@@ -16,6 +16,7 @@
 #include "cuda/ci/spin_self.hpp"
 #include "cuda/linalg/davidson.hpp"
 #include "cuda/memory/context.hpp"
+#include "cuda/memory/upload.hpp"
 #include "cuda/vb/action.hpp"
 #include "cuda/vb/product.hpp"
 #include "linalg/eigensolver.hpp"
@@ -52,6 +53,22 @@ void check_channel_panels() {
         "frontier panel still prices absent full-channel source entries");
     next+=p.rows;
   }
+}
+
+void check_pinned_sources() {
+  xmvb::cuda::Context context(16ULL*1024*1024);
+  xmvb::cuda::PinnedTransfer transfer(context);
+  xmvb::cuda::Matrix<double> first(context,4096,1),second(context,4096,1);
+  std::vector<double> source(4096,1.25);
+  transfer.assign(first.data(),std::as_bytes(std::span<const double>{source}));
+  std::fill(source.begin(),source.end(),-2.5);
+  transfer.assign(second.data(),std::as_bytes(std::span<const double>{source}));
+  std::fill(source.begin(),source.end(),0.0);
+  Eigen::MatrixXd a(4096,1),b(4096,1);
+  xmvb::cuda::copy_to_host(context,a,first.view());
+  xmvb::cuda::copy_to_host(context,b,second.view());
+  require((a.array()==1.25).all() && (b.array()==-2.5).all(),
+      "asynchronous pinned staging borrowed overwritten caller storage");
 }
 
 /** Force small block lifetimes in the production selected-coordinate action.
@@ -669,6 +686,7 @@ void check_action(int count, bool transformed,bool covalent=false,bool broad=fal
 int main() {
   try {
     check_channel_panels();
+    check_pinned_sources();
     check_action(1,false);
     check_action(1,true);
     check_action(3,false);

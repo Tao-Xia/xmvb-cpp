@@ -70,7 +70,8 @@ class ChannelLayout {
   bool identity_=true;
   int pairs_=0;
 public:
-  void reset(const ChannelSelectors& basis,std::span<const int> groups,int count,int width) {
+  void reset(const ChannelSelectors& basis,std::span<const int> groups,int count,int width,
+      bool store_images=true) {
     pairs_=basis.channels(0);
     offsets_.assign(basis.groups()+1,0);
     packed_offsets_.assign(basis.groups()+1,0);
@@ -84,7 +85,7 @@ public:
       packed_offsets_[group+1]=packed_offsets_[group]+
           static_cast<std::size_t>(offsets_[group+1]-offsets_[group])*channels_[group];
     }
-    if (identity_) { image_rows_.clear(); return; }
+    if (identity_ || !store_images) { image_rows_.clear(); return; }
     image_rows_.resize(count*width);
     auto position=offsets_;
     for (int row=0;row<count*width;++row) {

@@ -16,6 +16,7 @@
 
 #include "cuda/linalg/blas.hpp"
 #include "cuda/memory/graph.hpp"
+#include "cuda/memory/upload.hpp"
 #include "mcscf/ci/column_cache.hpp"
 #include "mcscf/ci/product_support.hpp"
 #include "cuda/vb/panel.hpp"
@@ -47,6 +48,11 @@ void sparse_check(cusparseStatus_t result,const char* operation) {
 }
 template<class T> Buffer<T> upload(Context& c,std::span<const T> values) {
   Buffer<T> result(c,values.size());c.copy_to_device(result.data(),values.data(),values.size_bytes());return result;
+}
+template<class T> Buffer<T> upload(Context& c,PinnedTransfer& staging,std::span<const T> values) {
+  Buffer<T> result(c,values.size());
+  staging.assign(result.data(),std::as_bytes(values));
+  return result;
 }
 void clear(Context& c,linalg::MatrixView panel) {
   if (!panel.rows || !panel.cols) return;
@@ -315,6 +321,7 @@ struct SupportMask {
  */
 struct ProductSymbolic {
   Context& c;
+  PinnedTransfer staging;
   int alpha,beta,groups;
   const mcscf::ProductSupport* support;
   Buffer<int> starts,raw_alpha,raw_beta;
@@ -326,7 +333,7 @@ struct ProductSymbolic {
 
   ProductSymbolic(Context& ctx,const vb::StructureAction::OrthogonalView& view,
       int alpha_dimension,int beta_dimension,const mcscf::ProductSupport* exact_support)
-      :c(ctx),alpha(alpha_dimension),beta(beta_dimension),groups(view.products.size()),
+      :c(ctx),staging(ctx),alpha(alpha_dimension),beta(beta_dimension),groups(view.products.size()),
        support(exact_support),patterns(std::max(beta,0)) {
     if (alpha<=0 || beta<=0)
       throw std::invalid_argument("product dimensions must be positive");
@@ -376,7 +383,7 @@ struct ProductSymbolic {
     if (!full) support->append_column_rows(b,result->rows);
     result->size=full ? alpha:result->rows.size();
     if (!full) pattern_cache->reserve(result->rows.size()*sizeof(int));
-    if (!full) result->device_rows=upload<int>(c,result->rows);
+    if (!full) result->device_rows=upload<int>(c,staging,result->rows);
     patterns[b]=result;
     if (!full) pattern_cache->insert(b,{result});else full_pattern=result;
     return result;
@@ -385,6 +392,7 @@ struct ProductSymbolic {
 
 struct ProductContraction::Impl {
   Context& c;
+  PinnedTransfer staging;
   const ExteriorTransform& alpha_transform;
   const ExteriorTransform& beta_transform;
   int alpha,beta,groups,factor_extent=0,mask_extent=0;
@@ -421,7 +429,7 @@ struct ProductContraction::Impl {
 
   Impl(Context& ctx,const ExteriorTransform& a,const ExteriorTransform& b,
       std::shared_ptr<ProductSymbolic> shared,std::size_t shears)
-      :c(ctx),alpha_transform(a),beta_transform(b),alpha(shared->alpha),beta(shared->beta),
+      :c(ctx),staging(ctx),alpha_transform(a),beta_transform(b),alpha(shared->alpha),beta(shared->beta),
        groups(shared->groups),beta_shears(shears),support(shared->support),symbolic(std::move(shared)) {
     if (&symbolic->c!=&c || a.dimension()!=alpha || b.dimension()!=beta)
       throw std::invalid_argument("product symbolic support does not match executor frame");
@@ -913,7 +921,7 @@ struct ProductContraction::Impl {
               column->full ? nullptr:column->device_rows.data(),column->size};
         }
       }
-      result.columns=upload<ResidentColumn>(c,columns);
+      result.columns=upload<ResidentColumn>(c,staging,columns);
       result.charged_bytes+=columns.size()*sizeof(ResidentColumn);
       return result;
     },{},[&](int id) {
@@ -1014,7 +1022,7 @@ struct ProductContraction::Impl {
         ++plan.groups.back().count;
         indices.push_back(b%extent);indices.push_back(j);
       }
-      plan.indices=upload<int>(c,indices);
+      plan.indices=upload<int>(c,staging,indices);
       ++read_plan_uploads;
       if (!retain) {temporary_plan=std::move(plan);return temporary_plan;}
       read_plan_bytes+=plan.bytes();
