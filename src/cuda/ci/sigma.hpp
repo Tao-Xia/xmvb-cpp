@@ -117,6 +117,12 @@ class DirectCiSigma {
   void apply(linalg::ConstMatrixView coefficients,
              linalg::MatrixView image, bool add = false) const;
 
+  /** Same sigma on independent, full-alpha beta tiles. Pointer tables are
+   * immutable device arrays of n_beta column addresses; the owner clears
+   * output tiles before use and keeps all storage alive through graph replay.
+   */
+  void apply_tile_columns(double* const* input,double* const* output) const;
+
   /** CPU SigmaTilePlan, exact channel envelopes and release schedule, executed
    * on device. Each distinct input and writer retains one bounded tile halo;
    * L2-sized numerical row panels reuse state channels across responses.
@@ -255,6 +261,8 @@ class DirectCiSigma {
    * All members of a clone family execute sequentially on Context's stream.
    */
   std::uint64_t workspace_generation() const noexcept { return workspace_->generation; }
+  /** Weak address-lifetime identity for graph owners; does not pin scratch. */
+  std::weak_ptr<const void> workspace_identity() const noexcept { return workspace_; }
 
  private:
   std::int64_t contraction_rows(int width) const noexcept {
@@ -274,6 +282,8 @@ class DirectCiSigma {
     }
   };
 
+  void apply_products(linalg::ConstMatrixView,linalg::MatrixView,
+      double* const* input_columns,double* const* output_columns) const;
   void prepare_adjoint(int block_width, bool with_sigma,
                        bool retain_channel_kernel) const;
   void contract_adjoint(linalg::ConstMatrixView left,

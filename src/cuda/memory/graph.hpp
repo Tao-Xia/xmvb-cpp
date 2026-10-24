@@ -32,12 +32,14 @@ class Graph {
       throw;
     }
     cudaGraphDestroy(graph);
+    context.record_graph_capture();
   }
   Graph(const Graph&)=delete;
   Graph& operator=(const Graph&)=delete;
   ~Graph() { if (execution_) cudaGraphExecDestroy(execution_); }
   void launch() const {
     check_cuda(cudaGraphLaunch(execution_,context_->stream()),"launch action graph");
+    context_->record_graph_launch();
   }
   std::size_t nodes() const noexcept { return nodes_; }
 

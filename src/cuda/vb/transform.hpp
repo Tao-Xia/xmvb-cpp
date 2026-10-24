@@ -51,6 +51,12 @@ class ExteriorTransform {
    */
   void apply_supported_left(linalg::MatrixView coefficients,const std::uint64_t* allowed,
       int columns,bool adjoint=false) const;
+  /** Fixed device column table and caller-owned stripe for graph replay.
+   * The same right-transform kernels serve ordinary temporary tile callers.
+   */
+  int right_workspace_extent(std::int64_t rows) const;
+  void apply_right_columns(double* const* columns,std::int64_t rows,
+      linalg::MatrixView stripe={},bool adjoint=false,bool inverse=false) const;
   ExteriorDirection direction(linalg::ConstMatrixView upper,
       linalg::ConstMatrixView delta_upper) const;
   /** Same ordered primal/tangent factors as CPU apply_directional_left and

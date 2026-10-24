@@ -516,7 +516,7 @@ void check_action(int count, bool transformed,bool covalent=false,bool broad=fal
         "equal-spin selected COV fixture did not certify positive exchange parity");
   if (count==1 && transformed) check_self_tile_budget(cpu);
   xmvb::cuda::Context context(256ULL*1024ULL*1024ULL);
-  const xmvb::cuda::StructureAction gpu(context,cpu);
+  xmvb::cuda::StructureAction gpu(context,cpu);
   require(gpu.carrier_sigma().exchange_parity()==cpu.orthogonal_view().exchange_parity,
       "CUDA structure action lost the common spin-exchange certificate");
   xmvb::cuda::Matrix<double> model_h(context,count,1),model_m(context,count,1);
@@ -543,6 +543,33 @@ void check_action(int count, bool transformed,bool covalent=false,bool broad=fal
       std::max(1.0,expected.overlap.norm());
   require(h_error < 2e-10 && s_error < 2e-10,
           "GPU structure H/S block differs from the CPU action");
+  const auto captures=context.counters().graph_captures;
+  const auto launches=context.counters().graph_launches;
+  require(captures>0,"fixed tile CI action did not build a CUDA graph");
+  const Eigen::MatrixXd half_vectors=0.5*vectors;
+  const auto half=gpu.apply(half_vectors);
+  require(context.counters().graph_captures==captures &&
+      context.counters().graph_launches==launches+static_cast<std::size_t>(vectors.cols()),
+      "CI action rebuilt its fixed plan for new numerical coefficients");
+  require((half.hamiltonian-0.5*expected.hamiltonian).norm()<2e-10 &&
+      (half.overlap-0.5*expected.overlap).norm()<2e-10,
+      "CI graph replay retained coefficients from its capture");
+  {
+    const Eigen::MatrixXd initial=cpu.orthogonal_view().alpha.orbital_transform();
+    const Eigen::MatrixXd scaled=0.97*initial;
+    xmvb::cuda::Matrix<double> frame(context,n,n);
+    xmvb::cuda::copy_to_device(context,frame.view(),scaled);
+    gpu.update_frame(frame.view());
+    const auto moved=gpu.apply(vectors);
+    const double scale=std::pow(0.97,2*(alpha.front().size()+beta.front().size()));
+    require((moved.hamiltonian-scale*expected.hamiltonian).norm()<2e-10 &&
+        (moved.overlap-scale*expected.overlap).norm()<2e-10,
+        "fixed tile graph retained old orbital frame values");
+    require(context.counters().graph_captures==captures,
+        "numeric frame update unnecessarily rebuilt the fixed execution plan");
+    xmvb::cuda::copy_to_device(context,frame.view(),initial);
+    gpu.update_frame(frame.view());
+  }
   if (count==3 && transformed && (!covalent || exchange_covalent))
     check_product_jet(cpu,gpu,context,alpha,beta);
   require(gpu.size() == count,"GPU action structure dimension changed");

@@ -604,7 +604,17 @@ void ExteriorTransform::apply_right_tiles(
   std::int64_t rows=0;
   const auto host_columns=tile_columns(tiles,dimension_,&rows);
   auto* const columns=upload_right_columns(host_columns);
-  if (!topology_->shears.empty() && dimension_<=shared_values_) {
+  apply_right_columns(columns,rows,{},adjoint,inverse);
+}
+
+int ExteriorTransform::right_workspace_extent(std::int64_t rows) const {
+  return dimension_<=shared_values_ || rows==1 ? 0:
+      right_stripe_rows(*context_,dimension_,rows,1);
+}
+
+void ExteriorTransform::apply_right_columns(double* const* columns,std::int64_t rows,
+    linalg::MatrixView stripe,bool adjoint,bool inverse) const {
+  if (dimension_<=shared_values_) {
     const int lanes=right_tile_lanes(dimension_,shared_values_);
     const auto row_tiles=(rows+lanes-1)/lanes;
     exterior_tile<true,false,true><<<tile_grid(row_tiles),256,
@@ -635,12 +645,18 @@ void ExteriorTransform::apply_right_tiles(
     if (adjoint!=inverse) scale();
     return;
   }
-  const int extent=right_stripe_rows(*context_,dimension_,rows,1);
-  Matrix<double> stripe(*context_,dimension_,extent);
+  Matrix<double> owned;
+  if (!stripe.data) {
+    owned=Matrix<double>(*context_,dimension_,right_stripe_rows(*context_,dimension_,rows,1));
+    stripe=owned.view();
+  }
+  const int extent=static_cast<int>(stripe.cols);
+  if (stripe.rows!=dimension_ || extent<=0)
+    throw std::invalid_argument("invalid right-transform stripe workspace");
   for (std::int64_t first=0;first<rows;first+=extent) {
     const nvtx3::scoped_range stripe_range{"exterior.right_stripe"};
     const int count=static_cast<int>(std::min<std::int64_t>(extent,rows-first));
-    auto work=stripe.view().columns(0,count);
+    auto work=stripe.columns(0,count);
     transpose_tile_stripe<<<grid_size(static_cast<std::int64_t>(dimension_)*count),
         256,0,context_->stream()>>>(columns,work,first,true);
     check_cuda(cudaGetLastError(),"gather CUDA exterior right tile stripe");

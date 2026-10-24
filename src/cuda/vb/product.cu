@@ -15,6 +15,7 @@
 #include <nvtx3/nvtx3.hpp>
 
 #include "cuda/linalg/blas.hpp"
+#include "cuda/memory/graph.hpp"
 #include "mcscf/ci/column_cache.hpp"
 #include "mcscf/ci/product_support.hpp"
 #include "cuda/vb/panel.hpp"
@@ -173,10 +174,11 @@ __global__ void contract_groups(ProductIncidence incidence,int begin,int count,
  */
 __global__ void ordered_products_tiles(ProductIncidence incidence,const int* aa,
     const int* bb,int groups,linalg::ConstMatrixView source,
-    double* const* tiles,int alpha,int extent,linalg::MatrixView target,bool adjoint) {
+    double* const* tiles,int alpha,int extent,linalg::MatrixView target,bool adjoint,
+    std::int64_t tile_rows=0) {
   for (auto g=static_cast<std::size_t>(blockIdx.x)*blockDim.x+threadIdx.x;
        g<groups;g+=static_cast<std::size_t>(gridDim.x)*blockDim.x) {
-    double* const entry=tiles[bb[g]/extent]+aa[g]+static_cast<std::size_t>(alpha)*(bb[g]%extent);
+    double* const entry=tiles[bb[g]/extent]+aa[g]+static_cast<std::size_t>(tile_rows ? tile_rows:alpha)*(bb[g]%extent);
     if (adjoint) {
       const double value=*entry;
       for (auto t=incidence.offsets[g];t<incidence.offsets[g+1];++t)
@@ -404,6 +406,9 @@ struct ProductContraction::Impl {
           groups.size()*sizeof(ReadGroup);
     }
   };
+  struct FixedAction;
+  std::unique_ptr<FixedAction> fixed_action;
+
   // Exact request indices only. No borrowed numerical panel or sigma graph is
   // retained; the LRU is capped by the current sweep's metadata allowance.
   std::list<ReadPlan> read_plans;
@@ -466,6 +471,133 @@ struct ProductContraction::Impl {
     pointers.reserve(tiles.size());
     for (auto& tile:tiles) pointers.push_back(tile.data());
     return upload<double*>(c,pointers);
+  }
+
+  /** A fixed-point execution plan over independently allocated beta panels.
+   * Two lanes share each panel: source/overlap and H image. No complete
+   * contiguous product vector or product-by-structure map is allocated.
+   */
+  struct FixedAction {
+    Impl& owner;
+    int extent;
+    std::vector<Matrix<double>> panels;
+    std::vector<linalg::MatrixView> source_views,adjoint_views;
+    Buffer<double*> pointers;
+    Matrix<double> input,h,m,stripe;
+    std::uint64_t sigma_generation=0;
+    std::weak_ptr<const void> sigma_storage;
+    const double* sigma_kernel=nullptr;
+    ProductIncidence captured{};
+    std::unique_ptr<Graph> h_graph,m_graph;
+
+    FixedAction(Impl& p,int structures,int panel_extent)
+        :owner(p),extent(panel_extent),input(p.c,structures,1),
+         h(p.c,structures,1),m(p.c,structures,1) {
+      const auto tiles=(static_cast<std::size_t>(p.beta)-1)/extent+1;
+      const auto column_tables=2*static_cast<std::size_t>(p.beta);
+      panels.reserve(tiles);source_views.reserve(tiles);adjoint_views.reserve(tiles);
+      std::vector<double*> table(2*static_cast<std::size_t>(p.beta)+2*tiles);
+      for (int first=0;first<p.beta;first+=extent) {
+        const int count=std::min(extent,p.beta-first);
+        panels.emplace_back(p.c,2LL*p.alpha,count);
+        const auto data=panels.back().data();
+        source_views.push_back({data,p.alpha,count,2LL*p.alpha});
+        adjoint_views.push_back({data,p.alpha,2LL*count,p.alpha});
+        const auto tile=first/extent;
+        table[column_tables+tile]=data;
+        table[column_tables+tiles+tile]=data+p.alpha;
+        for (int j=0;j<count;++j) {
+          table[first+j]=data+2LL*p.alpha*j;
+          table[p.beta+first+j]=data+2LL*p.alpha*j+p.alpha;
+        }
+      }
+      pointers=upload<double*>(p.c,table);
+      const int rows=p.beta_transform.right_workspace_extent(2LL*p.alpha);
+      if (rows) stripe=Matrix<double>(p.c,p.beta,rows);
+    }
+
+    void emit(ProductIncidence incidence,const DirectCiSigma& sigma,bool overlap_only) {
+      auto& p=owner;
+      for (auto& tile:panels) clear(p.c,tile.view());
+      clear(p.c,m.view());
+      if (!overlap_only) clear(p.c,h.view());
+      auto* const source_columns=pointers.data();
+      auto* const image_columns=source_columns+p.beta;
+      auto* const source_tiles=image_columns+p.beta;
+      auto* const image_tiles=source_tiles+panels.size();
+      if (p.groups) {
+        ordered_products_tiles<<<grid(p.groups),256,0,p.c.stream()>>>(incidence,
+            p.symbolic->raw_alpha.data(),p.symbolic->raw_beta.data(),p.groups,
+            input.view(),source_tiles,p.alpha,extent,{},false,2LL*p.alpha);
+        check_cuda(cudaGetLastError(),"expand fixed CI tiles");
+      }
+      for (auto view:source_views) p.alpha_transform.apply_left(view);
+      p.beta_transform.apply_right_columns(source_columns,p.alpha,stripe.view());
+      if (!overlap_only) sigma.apply_tile_columns(source_columns,image_columns);
+      p.beta_transform.apply_right_columns(source_columns,
+          overlap_only ? p.alpha:2LL*p.alpha,stripe.view(),true);
+      for (auto view:overlap_only ? source_views:adjoint_views)
+        p.alpha_transform.apply_left(view,true);
+      if (p.groups) {
+        ordered_products_tiles<<<grid(p.groups),256,0,p.c.stream()>>>(incidence,
+            p.symbolic->raw_alpha.data(),p.symbolic->raw_beta.data(),p.groups,{},
+            source_tiles,p.alpha,extent,m.view(),true,2LL*p.alpha);
+        if (!overlap_only)
+          ordered_products_tiles<<<grid(p.groups),256,0,p.c.stream()>>>(incidence,
+              p.symbolic->raw_alpha.data(),p.symbolic->raw_beta.data(),p.groups,{},
+              image_tiles,p.alpha,extent,h.view(),true,2LL*p.alpha);
+        check_cuda(cudaGetLastError(),"project fixed CI tiles");
+      }
+    }
+
+    void apply(ProductIncidence incidence,const DirectCiSigma& sigma,
+        linalg::ConstMatrixView vectors,linalg::MatrixView hout,
+        linalg::MatrixView mout,bool overlap_only) {
+      auto& p=owner;
+      if (captured.offsets!=incidence.offsets || captured.structures!=incidence.structures ||
+          captured.weights!=incidence.weights) {
+        h_graph.reset();m_graph.reset();captured=incidence;
+      }
+      if (!overlap_only) {
+        if (sigma_storage.lock()!=sigma.workspace_identity().lock() ||
+            sigma_kernel!=sigma.channel_kernel().data) h_graph.reset();
+        // Other physical consumers share the channel workspace. Its generation
+        // is the address-lifetime certificate, not an orbital-value version.
+        if (sigma_generation!=sigma.workspace_generation()) h_graph.reset();
+        sigma.prepare(1);
+        if (sigma_generation!=sigma.workspace_generation()) h_graph.reset();
+        sigma_generation=sigma.workspace_generation();
+        sigma_storage=sigma.workspace_identity();sigma_kernel=sigma.channel_kernel().data;
+      }
+      auto& graph=overlap_only ? m_graph:h_graph;
+      if (!graph) graph=std::make_unique<Graph>(p.c,[&] {emit(incidence,sigma,overlap_only);});
+      for (std::int64_t rhs=0;rhs<vectors.cols;++rhs) {
+        p.copy_panel(input.view(),vectors.column(rhs));
+        graph->launch();
+        p.copy_panel(mout.column(rhs),m.view());
+        if (!overlap_only) p.copy_panel(hout.column(rhs),h.view());
+      }
+    }
+  };
+
+  bool apply_fixed(ProductIncidence incidence,const DirectCiSigma& sigma,
+      linalg::ConstMatrixView vectors,linalg::MatrixView h,linalg::MatrixView m,
+      std::size_t bytes,bool overlap_only) {
+    if (fixed_action && fixed_action->input.rows()!=incidence.size) fixed_action.reset();
+    if (!fixed_action) {
+      const auto allowance=bytes/5;
+      const int extent=panel_extent(allowance);
+      const auto tiles=(static_cast<std::size_t>(beta)+extent-1)/extent;
+      const long double required=sizeof(double)*(2.L*alpha*beta+3.L*incidence.size)+
+          sizeof(double*)*(2.L*beta+2.L*tiles)+
+          sizeof(double)*beta*beta_transform.right_workspace_extent(2LL*alpha);
+      // This is cache admission, never selection of the variational space.
+      // Keep the same source/projection partition as the streamed jet.
+      if (required>allowance) return false;
+      fixed_action=std::make_unique<FixedAction>(*this,incidence.size,extent);
+    }
+    fixed_action->apply(incidence,sigma,vectors,h,m,overlap_only);
+    return true;
   }
 
   /** Full rows already have dense column-major layout. Borrow their owner
@@ -608,12 +740,21 @@ struct ProductContraction::Impl {
         static_cast<std::size_t>(beta)*input_width*sizeof(ResidentColumn);
     const bool resident_input=ordered_beta && source_descriptors<quarter/2 &&
         products<=(quarter/2-source_descriptors)/(sizeof(double)*source_slots);
+    // Plan both consumers before preparing factors: ordered right shears
+    // have no use for the beta-factor matrix or its sparse conversion.
+    const int targets=joint ? 4:2;
+    const auto projection_slots=static_cast<std::size_t>(targets)*
+        (delta_upper.data && !cached ? 2U:1U)+
+        (delta_upper.data && !cached ? 2U:0U);
+    const auto projection_descriptors=static_cast<std::size_t>(panels)*targets*
+        (delta_upper.data && !cached ? 2U:1U)*sizeof(double*);
+    const bool resident_projection=ordered_beta && projection_descriptors<quarter &&
+        products<=(quarter-projection_descriptors)/(sizeof(double)*projection_slots);
     symbolic->prepare_patterns(quarter/4);
     // The fixed-point beta rows and the directional beta rows follow exactly
     // the CPU ColumnPanels lifetime; no product-sized factor is introduced.
-    prepare_factors(extent,quarter/4);
+    if (!resident_input || !resident_projection) prepare_factors(extent,quarter/4);
     prepare_masks(extent,quarter/4);
-    auto& factors=*factor_cache;
     ExteriorDirection da,db;
     if (delta_upper.data && !cached) {
       da=alpha_transform.direction(upper,delta_upper);
@@ -758,7 +899,7 @@ struct ProductContraction::Impl {
       const auto values=dense_panel(block,scratch);
       if (cached) {
         auto dy=values.columns(0,count);
-        generate(response,factors.get(id),dy);transform(dy,id*extent,count,false);
+        generate(response,factor_cache->get(id),dy);transform(dy,id*extent,count,false);
         if (joint) copy_panel(values.columns(count,count),dy);
         if (delta_upper.data) {
           Matrix<double> orbital(c,alpha,count);
@@ -772,7 +913,7 @@ struct ProductContraction::Impl {
       auto y=values.columns(0,count);
       if (tangent) {
         auto dy=values.columns(count,count);
-        const auto& f=factors.get(id);
+        const auto& f=factor_cache->get(id);
         const auto* df=delta_upper.data ? &delta_factors.get(id):nullptr;
         clear(c,values);
         {
@@ -787,7 +928,7 @@ struct ProductContraction::Impl {
           alpha_transform.apply_directional_left(da,y,dy);
           if (joint) transform(values.columns(2*count,count),id*extent,count,false);
         } else transform(values,id*extent,count,false);
-      } else {generate(endpoint.coefficients.view(),factors.get(id),y);transform(y,id*extent,count,false);}
+      } else {generate(endpoint.coefficients.view(),factor_cache->get(id),y);transform(y,id*extent,count,false);}
       if (scratch.data()) block.pack(c,values,false);
       return block;
     },{},[&](int id) {return panel_bytes(selected(id),input_width);});
@@ -874,14 +1015,6 @@ struct ProductContraction::Impl {
       };
     };
     const auto y=reader(0),dy=reader(tangent ? 1:0),q=joint ? reader(2):CiTileReader{};
-    const int targets=joint ? 4:2;
-    const auto projection_slots=static_cast<std::size_t>(targets)*
-        (delta_upper.data && !cached ? 2U:1U)+
-        (delta_upper.data && !cached ? 2U:0U);
-    const auto projection_descriptors=static_cast<std::size_t>(panels)*targets*
-        (delta_upper.data && !cached ? 2U:1U)*sizeof(double*);
-    const bool resident_projection=ordered_beta && projection_descriptors<quarter &&
-        products<=(quarter-projection_descriptors)/(sizeof(double)*projection_slots);
     std::vector<OrderedTiles> projected(targets),left_projected(targets);
     const std::array<linalg::MatrixView,4> destinations{result.hamiltonian.view(),result.overlap.view(),
         joint ? ci->hamiltonian.view():linalg::MatrixView{},joint ? ci->overlap.view():linalg::MatrixView{}};
@@ -934,7 +1067,7 @@ struct ProductContraction::Impl {
         }
         return;
       }
-      const auto& f=factors.get(id);
+      const auto& f=factor_cache->get(id);
       for (std::int64_t begin=0;begin<groups;begin+=group_extent) {
         auto& tile=projections.get(begin/group_extent);
         project_groups<<<grid(tile.values.rows()),256,0,c.stream()>>>(symbolic->raw_alpha.data()+begin,symbolic->raw_beta.data()+begin,
@@ -1242,6 +1375,7 @@ void ProductContraction::release_cached_workspace(std::size_t bytes) const {
   auto& p=*impl_;
   const CapacityPlan capacity(p.c);
   while (bytes>p.c.available_device_bytes()) {
+    if (p.fixed_action) {p.fixed_action.reset();continue;}
     if (p.factor_cache && p.factor_cache->evict_one()) continue;
     if (p.mask_cache && p.mask_cache->evict_one()) continue;
     if (!p.read_plans.empty()) {
@@ -1266,6 +1400,8 @@ void ProductContraction::apply_selected(ProductIncidence incidence,linalg::Const
       m.cols!=source.cols || (!overlap_only &&
       (h.rows!=source.rows || h.cols!=source.cols || !h.data)))
     throw std::invalid_argument("invalid selected product action block");
+  const CapacityPlan capacity(impl_->c);
+  if (impl_->apply_fixed(incidence,sigma,source,h,m,bytes,overlap_only)) return;
   ProductEndpoint endpoint{Matrix<double>(impl_->c,incidence.size,1)};
   for (int rhs=0;rhs<source.cols;++rhs) {
     impl_->copy_panel(endpoint.coefficients.view(),source.column(rhs));

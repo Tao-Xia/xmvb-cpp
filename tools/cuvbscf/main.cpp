@@ -107,6 +107,8 @@ int main(int argc,char** argv) {
              <<"process_seconds="<<std::chrono::duration<double>(
                  std::chrono::steady_clock::now()-start).count()<<'\n'
              <<"gpu_peak_device_bytes="<<counters.peak_device_bytes<<'\n'
+             <<"gpu_graph_captures="<<counters.graph_captures<<'\n'
+             <<"gpu_graph_launches="<<counters.graph_launches<<'\n'
              <<"gpu_capacity_queries="<<counters.device_capacity_queries<<'\n'
              <<"gpu_host_to_device_bytes="<<counters.host_to_device_bytes<<'\n'
              <<"gpu_device_to_host_bytes="<<counters.device_to_host_bytes<<'\n';

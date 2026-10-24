@@ -43,6 +43,7 @@ struct TransferCounters {
   std::size_t host_to_device_bytes = 0;
   std::size_t device_to_host_bytes = 0;
   mutable std::size_t device_capacity_queries = 0;
+  std::size_t graph_captures = 0, graph_launches = 0;
 };
 
 struct AllocationSite {
@@ -133,6 +134,8 @@ class Context {
   [[nodiscard]] const TransferCounters& counters() const noexcept {
     return counters_;
   }
+  void record_graph_capture() noexcept {++counters_.graph_captures;}
+  void record_graph_launch() noexcept {++counters_.graph_launches;}
   void enable_memory_audit() {
     if (counters_.peak_device_bytes != 0)
       throw std::logic_error("CUDA memory audit must start before device allocations");

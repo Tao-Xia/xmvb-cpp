@@ -488,6 +488,11 @@ void DirectCiSigma::apply_tiled_responses(int width,std::span<const CiTileReques
   }
   if (requests.size()>1 && !state)
     throw std::invalid_argument("multiple device responses require a common state");
+  // The row executor and this tile sweep are mutually exclusive consumers.
+  // Return its idle slabs before pricing the tile halo and numerical panels.
+  // reset_workspace() advances the shared generation, so the next CI call
+  // prepares new storage and recaptures any graph that borrowed these slabs.
+  if (scattered_.rows()) reset_workspace();
   auto& ctx=*context_;
   const std::size_t n=n_orbitals_,pairs=n_channels_;
   const auto directions=std::count_if(requests.begin(),requests.end(),
