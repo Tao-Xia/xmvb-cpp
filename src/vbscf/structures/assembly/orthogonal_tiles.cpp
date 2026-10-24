@@ -1,5 +1,7 @@
 #include "vbscf/structures/assembly/action.hpp"
 
+#include "core/memory.hpp"
+
 #include <algorithm>
 #include <array>
 #include <numeric>
@@ -664,6 +666,15 @@ StructureAction::contract_product_tiles(const Eigen::Ref<const Eigen::MatrixXd>&
                      ordered_beta,
                      resident_rhs,
                      fused_hs_panels);
+    if (phases.enabled)
+        std::fprintf(stderr,
+                     "XMVB_PRODUCT_MEMORY,kind=hs,budget_bytes=%zu,input_peak_bytes=%zu,"
+                     "output_peak_bytes=%zu,temporary_live_bytes=%zu,rss_bytes=%zu\n",
+                     workspace_bytes,
+                     result.tiles.input_resident_bytes,
+                     result.tiles.output_resident_bytes,
+                     workspace::temporary_bytes(),
+                     memory::inspect().rss);
     if (phases.enabled)
         for (std::size_t i = 0; i < measured.size(); ++i)
             std::fprintf(stderr,

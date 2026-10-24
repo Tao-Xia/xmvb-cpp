@@ -269,7 +269,7 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
     OrbitalCouplingAction* coupling_output,
     bool horizontal_forcing,
     StructureResponseRequest* ci_response) const {
-    xmvb::profiling::ScopedPhase apply_phase(xmvb::profiling::Phase::HvpApply);
+    xmvb::profiling::ScopedPhase apply_phase(xmvb::profiling::Phase::HvpApply, true);
     const auto apply_start_time = std::chrono::steady_clock::now();
     auto record_apply_wall_time = [&]() {
         ++apply_timing_totals_.apply_count;

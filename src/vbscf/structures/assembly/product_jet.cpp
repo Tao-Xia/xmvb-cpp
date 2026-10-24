@@ -1,5 +1,7 @@
 #include "vbscf/structures/assembly/action.hpp"
 
+#include "core/memory.hpp"
+
 #include <algorithm>
 #include <array>
 #include <initializer_list>
@@ -1241,6 +1243,19 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
             state.product_images ? state.product_images->bytes : 0,
             cache_bytes,
             work_bytes);
+    if (profiling::phase_totals().enabled)
+        std::fprintf(stderr,
+                     "XMVB_PRODUCT_MEMORY,kind=jet,tangent=%d,joint=%d,budget_bytes=%zu,"
+                     "input_peak_bytes=%zu,output_peak_bytes=%zu,accepted_bytes=%zu,"
+                     "temporary_live_bytes=%zu,rss_bytes=%zu\n",
+                     tangent,
+                     joint,
+                     total_bytes,
+                     result.images.tiles.input_resident_bytes,
+                     result.images.tiles.output_resident_bytes,
+                     state.product_images ? state.product_images->bytes : 0,
+                     workspace::temporary_bytes(),
+                     memory::inspect().rss);
     return result;
 }
 
