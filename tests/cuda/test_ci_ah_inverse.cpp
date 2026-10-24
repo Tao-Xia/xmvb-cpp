@@ -68,7 +68,7 @@ DeviceMatrix upload(xmvb::cuda::Context& context,const Vector& host) {
 }
 
 struct Fixture {
-  Strings strings=xmvb::mcscf::SpinStrings(2,1).occupations();
+  Strings strings=xmvb::mcscf::SpinStrings(2,1).decode();
   std::unique_ptr<xmvb::vb::StructureAction> source;
   xmvb::vb::StructureDiagonal diagonal;
   explicit Fixture(bool complete) {

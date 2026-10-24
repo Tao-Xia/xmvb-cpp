@@ -407,7 +407,8 @@ struct StructureAction::OrthogonalDirectCiData {
                 : std::make_unique<ExteriorOrbitalTransform>(
                       beta_determinants,
                       integrals.orbital_transform)),
-        sigma(alpha_determinants, beta_determinants, integrals) {}
+        sigma(alpha_transform.strings(),
+              (distinct_beta_transform ? distinct_beta_transform->strings():alpha_transform.strings()),integrals) {}
 
   const ExteriorOrbitalTransform& beta_transform() const noexcept {
     return distinct_beta_transform
@@ -426,7 +427,8 @@ struct StructureAction::OrthogonalDirectCiData {
         (distinct_beta_transform
              ? distinct_beta_transform->dynamic_bytes()
              : 0) +
-        sigma.dynamic_bytes();
+        sigma.dynamic_bytes()-alpha_transform.strings().dynamic_bytes()-
+        (distinct_beta_transform ? distinct_beta_transform->strings().dynamic_bytes():0);
     if (carrier_diagonal) bytes+=carrier_diagonal->size()*sizeof(double);
     return bytes;
   }
@@ -712,8 +714,8 @@ StructureAction::StructureAction(
       if (spin_term_offsets_[group] != spin_term_offsets_[group+1])
         touched.push_back(spin_products_[group]);
     auto support = std::make_unique<mcscf::ProductSupport>(n_active_orbitals,
-        direct_ci_->alpha_transform.occupations(),
-        direct_ci_->beta_transform().occupations(), touched);
+        direct_ci_->alpha_transform.strings(),
+        direct_ci_->beta_transform().strings(), touched);
     if (profiling::phase_totals().enabled)
       std::fprintf(stderr, "XMVB_SUPPORT,structures=%d,alpha=%d,beta=%d,seeds=%zu,full=%d\n",
           n_structures_, n_unique_alpha_, n_unique_beta_, touched.size(), support->full());
@@ -1672,7 +1674,7 @@ StructureActionStorage StructureAction::storage() const noexcept {
   result.orthogonal_direct_ci = direct_ci_ != nullptr;
   if (direct_ci_) {
     result.direct_ci_bytes = direct_ci_->dynamic_bytes();
-    if (product_support_) result.direct_ci_bytes += product_support_->dynamic_bytes();
+    if (product_support_) result.direct_ci_bytes += product_support_->dynamic_bytes()-product_support_->basis_bytes();
   }
   if (tiled_pairs_) {
     result.factor_bytes += tiled_pairs_->dynamic_bytes();

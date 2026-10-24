@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <vector>
 
-#include <Eigen/Core>
+#include "mcscf/ci/strings.hpp"
 
 namespace xmvb::mcscf {
 
@@ -35,7 +35,7 @@ struct DensityConnections {
 
 /** @brief Fixed-stride topology for a complete one-spin sector.
  * Each string has ne*(norb-ne) links. A flat record array stores those rows;
- * the occupied-orbital Eigen array has one contiguous column per string.
+ * one immutable bit-string basis supplies occupations and index lookup.
  * Sigma directions and identical alpha/beta sectors share this immutable data.
  */
 struct SpinConnections {
@@ -45,22 +45,18 @@ struct SpinConnections {
    * Both are single-spin metadata, shared by every action at this point.
    * With at most 63 orbitals, a row has at most 992 singles (uint16_t).
    */
-  std::vector<std::uint64_t> masks;
+  SpinStrings basis;
   std::vector<std::uint16_t> orbital_offsets;
   int orbitals=0;
-  Eigen::Matrix<std::uint8_t,Eigen::Dynamic,Eigen::Dynamic,Eigen::ColMajor> occupations;
 
   int n_strings() const noexcept { return strings; }
-  int n_occupied() const noexcept { return occupations.rows(); }
+  int n_occupied() const noexcept { return basis.electrons(); }
   int n_singles() const noexcept { return degree; }
 
   DensityConnections singles(int string) const noexcept {
     return {degree ? links.data()+static_cast<std::size_t>(degree)*string:nullptr,degree};
   }
-  Eigen::Map<const Eigen::Matrix<std::uint8_t,Eigen::Dynamic,1>> occupied(int string) const noexcept {
-    const auto count=occupations.rows();
-    return {count ? occupations.data()+count*string:nullptr,count};
-  }
+  OccupiedOrbitals occupied(int string) const noexcept { return basis.occupied(string); }
   /** @brief Visit only sources repairing a certified prefix deficit.
    * Source support requires p<=first<=last<q, with p empty and q occupied
    * in this target string. Those p are exactly the first links in q's
@@ -69,7 +65,7 @@ struct SpinConnections {
    */
   template<class Function>
   void visit_lower_sources(int string,int first,int last,Function&& consume) const {
-    const auto occupied=masks[string];
+    const auto occupied=basis.masks()[string];
     auto holes=~occupied&((std::uint64_t{1}<<(first+1))-1);
     auto high=occupied&~((std::uint64_t{1}<<(last+1))-1);
     if (!holes || !high) return;
@@ -89,8 +85,8 @@ struct SpinConnections {
   }
 
   std::size_t dynamic_bytes() const noexcept {
-    return links.capacity()*sizeof(SpinLink)+occupations.size()*sizeof(std::uint8_t)+
-        masks.capacity()*sizeof(std::uint64_t)+orbital_offsets.capacity()*sizeof(std::uint16_t);
+    return links.capacity()*sizeof(SpinLink)+basis.dynamic_bytes()+
+        orbital_offsets.capacity()*sizeof(std::uint16_t);
   }
 };
 

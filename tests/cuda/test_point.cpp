@@ -172,7 +172,7 @@ struct SelectedSpace {
 };
 
 SelectedSpace selected_space(int structures) {
-  const Strings alpha=xmvb::mcscf::SpinStrings(2,1).occupations();
+  const Strings alpha=xmvb::mcscf::SpinStrings(2,1).decode();
   const Strings beta=alpha;
   const double covalent=1.0/std::sqrt(2.0);
   Terms terms(4);

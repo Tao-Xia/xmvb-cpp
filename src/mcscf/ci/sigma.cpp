@@ -6,12 +6,10 @@
 #include <cstdint>
 #include <numeric>
 #include <stdexcept>
-#include <unordered_map>
 
 #include "parallel/openmp.hpp"
 #include "core/timing.hpp"
 #include "core/pair_index.hpp"
-#include "mcscf/ci/planner.hpp"
 
 namespace xmvb::mcscf {
 namespace {
@@ -38,21 +36,6 @@ struct AdjointRows {
                           (beta - ramp) * alpha_count);
   }
 };
-
-std::uint64_t determinant_mask(
-    const std::vector<int>& occupied,
-    int n_orbitals) {
-  std::uint64_t mask = 0;
-  int previous = -1;
-  for (const int orbital : occupied) {
-    if (orbital <= previous || orbital < 0 || orbital >= n_orbitals) {
-      throw std::invalid_argument("invalid direct-CI determinant occupation");
-    }
-    mask |= std::uint64_t{1} << orbital;
-    previous = orbital;
-  }
-  return mask;
-}
 
 double replacement_sign(std::uint64_t source, int removed, int inserted) {
   const int low = std::min(removed, inserted);
@@ -82,39 +65,30 @@ void add_symmetric_entry(
 }  // namespace
 
 DirectCiSigmaAction::DirectCiSigmaAction(
-    const std::vector<std::vector<int>>& alpha_determinants,
-    const std::vector<std::vector<int>>& beta_determinants,
-    const ActiveIntegrals& integrals)
-    : n_orbitals_(static_cast<int>(integrals.one_electron.rows())),
-      n_alpha_(static_cast<int>(alpha_determinants.size())),
-      n_beta_(static_cast<int>(beta_determinants.size())),
+    const std::vector<std::vector<int>>& alpha,
+    const std::vector<std::vector<int>>& beta,const ActiveIntegrals& integrals)
+    :DirectCiSigmaAction(SpinStrings(integrals.one_electron.rows(),alpha),
+        SpinStrings(integrals.one_electron.rows(),beta),integrals) {}
+
+DirectCiSigmaAction::DirectCiSigmaAction(
+    SpinStrings alpha,SpinStrings beta,const ActiveIntegrals& integrals)
+    :n_orbitals_(integrals.one_electron.rows()),n_alpha_(alpha.size()),n_beta_(beta.size()),
       pair_kernel_(integrals.pair_kernel) {
-  if (n_orbitals_ <= 0 || n_orbitals_ > 63 ||
-      integrals.one_electron.cols() != n_orbitals_ ||
+  if (n_orbitals_<=0 || n_orbitals_>63 || alpha.orbitals()!=n_orbitals_ ||
+      beta.orbitals()!=n_orbitals_ || !alpha.complete() || !beta.complete() || integrals.one_electron.cols()!=n_orbitals_ ||
       !integrals.one_electron.allFinite() ||
-      integrals.pair_kernel.rows() != n_orbitals_ * (n_orbitals_ + 1) / 2 ||
-      integrals.pair_kernel.cols() != integrals.pair_kernel.rows() ||
-      n_alpha_ <= 0 || n_beta_ <= 0) {
+      integrals.pair_kernel.rows()!=n_orbitals_*(n_orbitals_+1)/2 ||
+      integrals.pair_kernel.cols()!=integrals.pair_kernel.rows() || n_alpha_<=0 || n_beta_<=0)
     throw std::invalid_argument("invalid orthogonal direct-CI sigma input");
-  }
-  if (!plan_orthogonal_direct_ci_action(
-           alpha_determinants,
-           beta_determinants,
-           n_orbitals_,
-           1).carrier_complete()) {
-    throw std::invalid_argument(
-        "orthogonal direct-CI sigma requires complete fixed-spin spaces");
-  }
   const int n_electrons =
-      static_cast<int>(alpha_determinants.front().size() +
-                       beta_determinants.front().size());
+      alpha.electrons()+beta.electrons();
   hamiltonian_pair_kernel_ =
       build_hamiltonian_pair_kernel(integrals, n_electrons);
   alpha_ = std::make_shared<const SpinConnections>(
-      build_spin_connections(alpha_determinants));
-  if (beta_determinants != alpha_determinants) {
+      build_spin_connections(alpha));
+  if (beta.masks()!=alpha.masks()) {
     distinct_beta_ = std::make_shared<const SpinConnections>(
-        build_spin_connections(beta_determinants));
+        build_spin_connections(beta));
   }
 }
 
@@ -196,52 +170,37 @@ Eigen::MatrixXd DirectCiSigmaAction::diagonal(
 
 SpinConnections
 DirectCiSigmaAction::build_spin_connections(
-    const std::vector<std::vector<int>>& determinants) const {
+    const SpinStrings& basis) const {
   xmvb::profiling::ScopedPhase phase(xmvb::profiling::Phase::CiConnections);
-  const int dimension = static_cast<int>(determinants.size());
-  std::vector<std::uint64_t> masks(dimension);
-  std::unordered_map<std::uint64_t, int> index_by_mask;
-  index_by_mask.reserve(determinants.size());
-  for (int determinant = 0; determinant < dimension; ++determinant) {
-    masks[determinant] = determinant_mask(
-        determinants[determinant], n_orbitals_);
-    if (!index_by_mask.emplace(masks[determinant], determinant).second) {
-      throw std::invalid_argument(
-          "direct-CI determinant space contains a duplicate");
-    }
-  }
+  const int dimension=basis.size();
+  const auto& masks=basis.masks();
   SpinConnections result;
-  const int electrons=determinants.front().size();
+  result.basis=basis;
+  const int electrons=basis.electrons();
   const int n_singles=electrons*(n_orbitals_-electrons);
   result.strings=dimension;
   result.degree=n_singles;
   result.orbitals=n_orbitals_;
   result.orbital_offsets.resize(static_cast<std::size_t>(dimension)*(n_orbitals_+1));
   result.links.resize(static_cast<std::size_t>(n_singles)*dimension);
-  result.occupations.resize(electrons,dimension);
   const int n_threads = coarse_openmp_thread_count(
       effective_openmp_thread_count(), static_cast<std::size_t>(dimension));
 
 #pragma omp parallel for schedule(static) if(n_threads > 1) num_threads(n_threads)
   for (int target = 0; target < dimension; ++target) {
-    const auto& target_occupied = determinants[target];
-    for (int i=0;i<electrons;++i) result.occupations(i,target)=target_occupied[i];
-    std::array<int,63> target_virtual;
-    int n_virtual=0,link=0;
-    for (int orbital = 0; orbital < n_orbitals_; ++orbital) {
-      if ((masks[target] & (std::uint64_t{1} << orbital)) == 0) {
-        target_virtual[n_virtual++]=orbital;
-      }
+    const auto target_occupied=basis.occupied(target);
+    std::array<int,63> occupied_indices{},virtual_indices{};
+    int n_virtual=0,n_occupied=0,link=0;
+    for (const int p:target_occupied) occupied_indices[n_occupied++]=p;
+    auto holes=~masks[target]&((std::uint64_t{1}<<n_orbitals_)-1);
+    while (holes) {
+      virtual_indices[n_virtual++]=std::countr_zero(holes);
+      holes&=holes-1;
     }
     const auto add_source = [&](int removed,int inserted) {
       const auto source_mask=masks[target] ^ (std::uint64_t{1} << removed) ^
           (std::uint64_t{1} << inserted);
-      const auto source_entry = index_by_mask.find(source_mask);
-      if (source_entry == index_by_mask.end()) {
-        throw std::logic_error(
-            "direct-CI excitation left the fixed-spin determinant space");
-      }
-      const int source = source_entry->second;
+      const int source=basis.index(source_mask);
       auto& entry=result.links[static_cast<std::size_t>(target)*n_singles+link];
       entry.source=source;
       entry.pair=core::PairIndex::packed_pair_index(removed,inserted);
@@ -258,7 +217,7 @@ DirectCiSigmaAction::build_spin_connections(
     for (int high = 0; high < n_orbitals_; ++high) {
       offsets[high]=link;
       const bool occupied=masks[target] & (std::uint64_t{1} << high);
-      const int* opposite=occupied ? target_virtual.data():target_occupied.data();
+      const int* opposite=occupied ? virtual_indices.data():occupied_indices.data();
       const int count=occupied ? n_virtual:electrons;
       for (int i=0;i<count;++i) {
         const int low=opposite[i];
@@ -269,7 +228,6 @@ DirectCiSigmaAction::build_spin_connections(
     }
     offsets[n_orbitals_]=link;
   }
-  result.masks=std::move(masks);
   if (profiling::phase_totals().enabled)
     std::fprintf(stderr,"XMVB_LINKS,strings=%d,occupied=%d,singles=%d,retained_bytes=%zu\n",
         dimension,electrons,n_singles,result.dynamic_bytes());

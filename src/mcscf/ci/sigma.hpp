@@ -161,6 +161,8 @@ public:
   DirectCiIntegralAdjoint pullback_channel_kernel(
       const Eigen::Ref<const Eigen::MatrixXd>& channel_adjoint) const;
 
+  DirectCiSigmaAction(SpinStrings alpha,SpinStrings beta,const ActiveIntegrals& integrals);
+
   DirectCiSigmaAction(
       const std::vector<std::vector<int>>& alpha_determinants,
       const std::vector<std::vector<int>>& beta_determinants,
@@ -387,7 +389,7 @@ public:
 
 private:
   SpinConnections build_spin_connections(
-      const std::vector<std::vector<int>>& determinants) const;
+      const SpinStrings& basis) const;
   Eigen::MatrixXd build_hamiltonian_pair_kernel(
       const ActiveIntegrals& integrals,
       int n_electrons) const;

@@ -57,8 +57,8 @@ Terms selected_terms(int alpha,int beta) {
 xmvb::vb::StructureAction source_action(int alpha_electrons,
     int beta_electrons,bool changed) {
   constexpr int orbitals=4;
-  const Strings alpha=xmvb::mcscf::SpinStrings(orbitals,alpha_electrons).occupations();
-  const Strings beta=xmvb::mcscf::SpinStrings(orbitals,beta_electrons).occupations();
+  const Strings alpha=xmvb::mcscf::SpinStrings(orbitals,alpha_electrons).decode();
+  const Strings beta=xmvb::mcscf::SpinStrings(orbitals,beta_electrons).decode();
   Strings product_alpha,product_beta;
   for (const auto& a:alpha)
     for (const auto& b:beta) {

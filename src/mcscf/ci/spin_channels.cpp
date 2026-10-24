@@ -10,16 +10,6 @@
 namespace xmvb::mcscf {
 namespace {
 
-/** @brief Half-open range in immutable sorted link/occupation metadata. */
-template<class Indices>
-std::pair<int,int> channel_range(const Indices& indices, int first, int last) {
-  if (indices.size()==0) return {0,0};
-  const auto begin = first <= indices[0] ? indices.begin() :
-      std::lower_bound(indices.begin(),indices.end(),first);
-  const auto end = last > indices[indices.size()-1] ? indices.end() : std::lower_bound(begin,indices.end(),last);
-  return {static_cast<int>(begin-indices.begin()),static_cast<int>(end-indices.begin())};
-}
-
 /** @brief A packed-channel interval in the fixed-stride record row. */
 std::pair<int,int> link_range(const DensityConnections& links,int first,int last) {
   if (links.size()==0) return {0,0};
@@ -120,10 +110,9 @@ void DirectCiSigmaAction::scatter_spin(bool beta,
     const auto add = [&](int source, int pair, double sign) {
       result(target, (pair - first) * width + column) += sign * factors(source, column);
     };
-    const auto& occupied = graph.occupied(target);
-    const auto occ = channel_range(occupied,diagonal.first,diagonal.second);
-    for (int o = occ.first; o < occ.second; ++o) {
-      const int orbital = graph.occupied(target)[o];
+    const auto range_mask=((std::uint64_t{1}<<diagonal.second)-1)^
+        ((std::uint64_t{1}<<diagonal.first)-1);
+    for (const int orbital:OccupiedOrbitals(graph.basis.masks()[target]&range_mask)) {
       add(target, core::PairIndex::packed_pair_index(orbital, orbital), 1.0);
     }
     const auto& links = graph.singles(target);
@@ -151,10 +140,9 @@ void DirectCiSigmaAction::gather_spin(bool beta,
     const auto add = [&](int source, int pair, double sign) {
       images(target, column) += sign * channels(source, (pair - first) * width + column);
     };
-    const auto& occupied = graph.occupied(target);
-    const auto occ = channel_range(occupied,diagonal.first,diagonal.second);
-    for (int o = occ.first; o < occ.second; ++o) {
-      const int orbital = graph.occupied(target)[o];
+    const auto range_mask=((std::uint64_t{1}<<diagonal.second)-1)^
+        ((std::uint64_t{1}<<diagonal.first)-1);
+    for (const int orbital:OccupiedOrbitals(graph.basis.masks()[target]&range_mask)) {
       add(target, core::PairIndex::packed_pair_index(orbital, orbital), 1.0);
     }
     const auto& links = graph.singles(target);

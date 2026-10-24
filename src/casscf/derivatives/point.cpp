@@ -61,7 +61,7 @@ FixedCiPoint::FixedCiPoint(const integrals::AoIntegralInput& ao,
       spin_space_(nactive,alpha_count(nactive,electrons,spin),
           electrons-alpha_count(nactive,electrons,spin)),
       prepared_(prepare_active_integrals(ao,orbitals_,ncore,nactive,nuclear)),
-      sigma_(spin_space_.alpha().occupations(),spin_space_.beta().occupations(),
+      sigma_(spin_space_.alpha(),spin_space_.beta(),
           prepared_.integrals.active) {
   set_coefficients(coefficients);
 }

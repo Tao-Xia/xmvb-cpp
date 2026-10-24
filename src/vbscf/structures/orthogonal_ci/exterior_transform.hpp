@@ -7,6 +7,7 @@
 
 #include <Eigen/Core>
 #include <Eigen/SparseCore>
+#include "mcscf/ci/strings.hpp"
 
 namespace xmvb::vb {
 
@@ -48,6 +49,8 @@ public:
     int target = 0;
     double sign = 1.0;
   };
+  ExteriorOrbitalTransform(mcscf::SpinStrings strings,
+      const Eigen::Ref<const Eigen::MatrixXd>& upper_orbital_transform);
   ExteriorOrbitalTransform(
       const std::vector<std::vector<int>>& determinants,
       const Eigen::Ref<const Eigen::MatrixXd>& upper_orbital_transform);
@@ -129,7 +132,7 @@ public:
       Eigen::MatrixXd* coefficients,
       Eigen::MatrixXd* directional_coefficients) const;
 
-  int dimension() const noexcept { return static_cast<int>(masks_.size()); }
+  int dimension() const noexcept { return strings_.size(); }
   const ExteriorRowPlan& row_plan() const noexcept { return *row_plan_; }
   /** Borrowed factors in the exact order used by the CPU exterior action. */
   const Eigen::VectorXd& determinant_scales() const noexcept { return determinant_scales_; }
@@ -163,7 +166,8 @@ public:
   const Eigen::MatrixXd& orbital_transform() const noexcept { return orbital_transform_; }
   int n_electrons() const noexcept { return n_electrons_; }
   /** @brief Spin-string occupations in the transform's immutable ordering. */
-  const std::vector<std::uint64_t>& occupations() const noexcept { return masks_; }
+  const std::vector<std::uint64_t>& occupations() const noexcept { return strings_.masks(); }
+  const mcscf::SpinStrings& strings() const noexcept { return strings_; }
   std::size_t shear_pair_count() const noexcept;
   std::size_t dynamic_bytes() const noexcept;
 
@@ -192,7 +196,7 @@ private:
   int n_orbitals_ = 0;
   int n_electrons_ = 0;
   Eigen::MatrixXd orbital_transform_;
-  std::vector<std::uint64_t> masks_;
+  mcscf::SpinStrings strings_;
   Eigen::VectorXd determinant_scales_;
   std::vector<Shear> shears_;
   std::shared_ptr<RowCache> row_cache_;

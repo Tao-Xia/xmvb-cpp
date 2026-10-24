@@ -17,7 +17,7 @@ double raising_sign(std::uint64_t alpha, std::uint64_t beta, int orbital, int na
 }  // namespace
 
 SpinSpace::SpinSpace(int n, int na, int nb)
-    : n_(n), na_(na), nb_(nb), alpha_(n,na), beta_(n,nb) {
+    : n_(n), na_(na), nb_(nb), alpha_(n,na), beta_(na==nb ? alpha_:SpinStrings(n,nb)) {
   if (na < n && nb > 0) {
     raised_alpha_ = std::make_unique<SpinStrings>(n,na+1);
     raised_beta_ = std::make_unique<SpinStrings>(n,nb-1);

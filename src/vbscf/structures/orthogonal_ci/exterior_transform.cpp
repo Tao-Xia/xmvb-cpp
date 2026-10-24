@@ -21,19 +21,6 @@
 namespace xmvb::vb {
 namespace {
 
-std::size_t binomial(int n, int k) {
-  if (k < 0 || k > n) {
-    return 0;
-  }
-  k = std::min(k, n - k);
-  std::size_t value = 1;
-  for (int index = 1; index <= k; ++index) {
-    value = value * static_cast<std::size_t>(n - k + index) /
-        static_cast<std::size_t>(index);
-  }
-  return value;
-}
-
 double replacement_sign(std::uint64_t source, int removed, int inserted) {
   const int low = std::min(removed, inserted);
   const int high = std::max(removed, inserted);
@@ -141,15 +128,20 @@ struct ExteriorOrbitalTransform::RowCache {
 };
 
 ExteriorOrbitalTransform::ExteriorOrbitalTransform(
-    const std::vector<std::vector<int>>& determinants,
+    const std::vector<std::vector<int>>& occupations,
+    const Eigen::Ref<const Eigen::MatrixXd>& upper)
+    :ExteriorOrbitalTransform(mcscf::SpinStrings(upper.rows(),occupations),upper) {}
+
+ExteriorOrbitalTransform::ExteriorOrbitalTransform(
+    mcscf::SpinStrings strings,
     const Eigen::Ref<const Eigen::MatrixXd>& upper_orbital_transform)
-    : n_orbitals_(static_cast<int>(upper_orbital_transform.rows())),
-      orbital_transform_(upper_orbital_transform),
-      row_cache_(std::make_shared<RowCache>()) {
+    :n_orbitals_(upper_orbital_transform.rows()),
+     n_electrons_(strings.electrons()),orbital_transform_(upper_orbital_transform),
+     strings_(std::move(strings)),row_cache_(std::make_shared<RowCache>()) {
   profiling::ScopedPhase phase(profiling::Phase::CiTransformBuild);
   if (n_orbitals_ <= 0 || n_orbitals_ > 63 ||
       upper_orbital_transform.cols() != n_orbitals_ ||
-      determinants.empty() || !upper_orbital_transform.allFinite()) {
+      !strings_.complete() || strings_.orbitals()!=n_orbitals_ || !upper_orbital_transform.allFinite()) {
     throw std::invalid_argument("invalid exterior orbital transform inputs");
   }
   const double lower_error =
@@ -166,47 +158,14 @@ ExteriorOrbitalTransform::ExteriorOrbitalTransform(
         "exterior orbital transform must be nonsingular upper triangular");
   }
 
-  n_electrons_ = static_cast<int>(determinants.front().size());
-  if (determinants.size() != binomial(n_orbitals_, n_electrons_)) {
-    throw std::invalid_argument(
-        "exterior transform requires a complete fixed-spin space");
-  }
-  masks_.reserve(determinants.size());
-  std::unordered_map<std::uint64_t, int> index_by_mask;
-  index_by_mask.reserve(determinants.size());
-  for (int index = 0; index < static_cast<int>(determinants.size()); ++index) {
-    const auto& occupied = determinants[index];
-    if (static_cast<int>(occupied.size()) != n_electrons_) {
-      throw std::invalid_argument(
-          "fixed-spin determinants have inconsistent electron counts");
-    }
-    std::uint64_t mask = 0;
-    int previous = -1;
-    for (const int orbital : occupied) {
-      if (orbital <= previous || orbital < 0 || orbital >= n_orbitals_) {
-        throw std::invalid_argument(
-            "fixed-spin determinant occupation is invalid");
-      }
-      mask |= std::uint64_t{1} << orbital;
-      previous = orbital;
-    }
-    if (!index_by_mask.emplace(mask, index).second) {
-      throw std::invalid_argument("fixed-spin determinant is duplicated");
-    }
-    masks_.push_back(mask);
-  }
-
-  row_plan_=std::make_shared<ExteriorRowPlan>(n_orbitals_,n_electrons_,masks_);
-  determinant_scales_.resize(static_cast<int>(masks_.size()));
+  row_plan_=std::make_shared<ExteriorRowPlan>(n_orbitals_,n_electrons_,strings_.masks());
+  determinant_scales_.resize(static_cast<int>(strings_.masks().size()));
   for (int determinant = 0;
-       determinant < static_cast<int>(masks_.size());
+       determinant < static_cast<int>(strings_.masks().size());
        ++determinant) {
     double scale_factor = 1.0;
-    for (int orbital = 0; orbital < n_orbitals_; ++orbital) {
-      if ((masks_[determinant] & (std::uint64_t{1} << orbital)) != 0) {
-        scale_factor *= upper_orbital_transform(orbital, orbital);
-      }
-    }
+    for (const int orbital:strings_.occupied(determinant))
+      scale_factor*=upper_orbital_transform(orbital,orbital);
     determinant_scales_[determinant] = scale_factor;
   }
 
@@ -242,28 +201,23 @@ ExteriorOrbitalTransform::ExteriorOrbitalTransform(
         std::uint64_t{1} << operation.removed;
     const std::uint64_t inserted_bit =
         std::uint64_t{1} << operation.inserted;
-    for (int source = 0; source < static_cast<int>(masks_.size()); ++source) {
-      const std::uint64_t source_mask = masks_[source];
+    for (int source = 0; source < static_cast<int>(strings_.masks().size()); ++source) {
+      const std::uint64_t source_mask = strings_.masks()[source];
       if ((source_mask & removed_bit) == 0 ||
           (source_mask & inserted_bit) != 0) {
         continue;
       }
       const std::uint64_t target_mask =
           (source_mask ^ removed_bit) | inserted_bit;
-      const auto target = index_by_mask.find(target_mask);
-      if (target == index_by_mask.end()) {
-        throw std::invalid_argument(
-            "exterior transform requires a complete fixed-spin space");
-      }
       shear.pairs.push_back(ShearEdge{
           source,
-          target->second,
+          strings_.index(target_mask),
           replacement_sign(
               source_mask,
               operation.removed,
               operation.inserted)});
     }
-    const std::size_t words=(masks_.size()+63)/64;
+    const std::size_t words=(strings_.masks().size()+63)/64;
     shear.source_words.assign(words,0);
     for (const auto& pair:shear.pairs)
       shear.source_words[pair.source/64]|=std::uint64_t{1}<<(pair.source%64);
@@ -498,7 +452,7 @@ std::shared_ptr<const Eigen::MatrixXd> ExteriorOrbitalTransform::row_block(
     std::vector<int> selected(count);
     std::iota(selected.begin(),selected.end(),begin);
     return std::make_shared<Eigen::MatrixXd>(
-        row_plan_->apply(orbital_transform_,masks_,selected));
+        row_plan_->apply(orbital_transform_,strings_.masks(),selected));
   });
 }
 
@@ -520,7 +474,7 @@ Eigen::SparseMatrix<double> ExteriorOrbitalTransform::generate_rows(std::span<co
     else { missing.push_back(rows[i]); positions.push_back(i); }
   }
   if (!missing.empty()) {
-    const auto values=row_plan_->apply(orbital_transform_,masks_,missing);
+    const auto values=row_plan_->apply(orbital_transform_,strings_.masks(),missing);
     workspace::Temporary values_temporary(sizeof(double)*values.size());
     for (int i=0;i<static_cast<int>(missing.size());++i) {
       result.row(positions[i])=values.row(i);
@@ -691,13 +645,9 @@ ExteriorTransformDirection ExteriorOrbitalTransform::direction(
   result.determinant_scales.resize(dimension());
   for (int determinant = 0; determinant < dimension(); ++determinant) {
     double logarithmic_direction = 0.0;
-    for (int orbital = 0; orbital < n_orbitals_; ++orbital) {
-      if ((masks_[determinant] & (std::uint64_t{1} << orbital)) != 0) {
-        logarithmic_direction +=
-            delta_orbital_transform(orbital, orbital) /
-            orbital_transform_(orbital, orbital);
-      }
-    }
+    for (const int orbital:strings_.occupied(determinant))
+      logarithmic_direction+=delta_orbital_transform(orbital,orbital)/
+          orbital_transform_(orbital,orbital);
     result.determinant_scales[determinant] =
         determinant_scales_[determinant] * logarithmic_direction;
   }
@@ -918,11 +868,10 @@ Eigen::MatrixXd ExteriorOrbitalTransform::generator_pullback(
     for (int string=dimension()*part/workers;string<dimension()*(part+1)/workers;++string) {
       const double value=contract(string,string,false);
       const double derivative=directional ? contract(string,string,true):0.0;
-      for (int orbital=0;orbital<n_orbitals_;++orbital)
-        if ((masks_[string]>>orbital)&1) {
-          diagonal(orbital,0)+=value;
-          if (directional) diagonal(orbital,1)+=derivative;
-        }
+      for (const int orbital:strings_.occupied(string)) {
+        diagonal(orbital,0)+=value;
+        if (directional) diagonal(orbital,1)+=derivative;
+      }
     }
     // Every upper generator owns one shear list and one output entry. Unlike
     // carrier rows, these outputs need neither atomics nor n_orbital^2 copies.
@@ -968,7 +917,7 @@ Eigen::MatrixXd ExteriorOrbitalTransform::moment_pullback(
 std::size_t ExteriorOrbitalTransform::dynamic_bytes() const noexcept {
   std::size_t bytes =
       static_cast<std::size_t>(orbital_transform_.size()) * sizeof(double) +
-      masks_.capacity() * sizeof(std::uint64_t) +
+      strings_.dynamic_bytes() +
       static_cast<std::size_t>(determinant_scales_.size()) * sizeof(double) +
       shears_.capacity() * sizeof(Shear);
   for (const Shear& shear : shears_) {

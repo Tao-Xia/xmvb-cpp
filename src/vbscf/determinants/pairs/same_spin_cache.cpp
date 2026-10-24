@@ -821,7 +821,7 @@ SpinDeterminantReuseTable complete_spin_reuse_table(
     remap[i]=full_strings.index(checked_spin_mask(
         table.unique_determinants[i],n_orbitals,n_electrons));
   for (auto& id:table.determinant_to_unique_id) id=remap[id];
-  table.unique_determinants = full_strings.occupations();
+  table.unique_determinants = full_strings.decode();
   return table;
 }
 

@@ -38,8 +38,8 @@ Matrix download(xmvb::cuda::Context& context,const xmvb::cuda::Matrix<double>& d
 
 void check_unequal() {
   const int n=4;
-  const auto alpha=xmvb::mcscf::SpinStrings(n,1).occupations();
-  const auto beta=xmvb::mcscf::SpinStrings(n,2).occupations();
+  const auto alpha=xmvb::mcscf::SpinStrings(n,1).decode();
+  const auto beta=xmvb::mcscf::SpinStrings(n,2).decode();
   const int na=alpha.size(),nb=beta.size(),pairs=n*(n+1)/2;
   const xmvb::mcscf::ActiveIntegrals integrals{
       Matrix::Zero(n,n),Matrix::Zero(pairs,pairs)};
@@ -143,7 +143,7 @@ void check_unequal() {
 
 void check_exchange() {
   constexpr int n=4;
-  const auto strings=xmvb::mcscf::SpinStrings(n,2).occupations();
+  const auto strings=xmvb::mcscf::SpinStrings(n,2).decode();
   const int u=strings.size(),pairs=n*(n+1)/2;
   const xmvb::mcscf::ActiveIntegrals integrals{
       Matrix::Zero(n,n),Matrix::Zero(pairs,pairs)};

@@ -1637,20 +1637,59 @@ void check_exterior_team() {
       "direct lane packing changed a full column block");
 }
 
+/** @brief Bit strings preserve canonical and arbitrary caller orderings. */
+void check_spin_strings() {
+  using xmvb::mcscf::SpinStrings;
+  const auto check=[](int n,int electrons) {
+    const SpinStrings canonical(n,electrons);
+    const auto rows=canonical.decode();
+    const SpinStrings encoded(n,rows);
+    require(encoded.masks()==canonical.masks(),"occupation encoding changed string order");
+    auto permuted=rows;
+    std::reverse(permuted.begin(),permuted.end());
+    const SpinStrings reordered(n,permuted);
+    const auto shared=reordered;
+    require(shared.shares_storage(reordered),"copy duplicated immutable spin topology");
+    for (int i=0;i<canonical.size();++i) {
+      require(canonical.index(canonical.masks()[i])==i,"canonical combinatorial index is wrong");
+      require(reordered.index(reordered.masks()[i])==i,"permuted combinatorial index is wrong");
+      std::vector<int> decoded;
+      for (const int p:reordered.occupied(i)) decoded.push_back(p);
+      require(decoded==permuted[i],"lazy occupation iteration changed orbital order");
+    }
+  };
+  for (int n=1;n<=8;++n) for (int e=0;e<=n;++e) check(n,e);
+  for (int e:{0,1,62,63}) check(63,e);
+  const auto rejected=[](const std::vector<std::uint64_t>& masks) {
+    try { SpinStrings invalid(4,masks); } catch (const std::invalid_argument&) { return true; }
+    return false;
+  };
+  require(rejected({1,1,4,8}),"duplicate masks were accepted");
+  require(rejected({1,2,4,16}),"out-of-sector mask was accepted");
+  const auto low=(std::uint64_t{1}<<31)-1;
+  const SpinStrings large_sparse(63,std::vector<std::uint64_t>{low,low<<32});
+  require(large_sparse.index(low)==0 && large_sparse.index(low<<32)==1 &&
+      large_sparse.dynamic_bytes()<128*1024,"sparse indexing allocated the full universe");
+  const SpinStrings sparse(4,std::vector<std::uint64_t>{8,1,4});
+  require(!sparse.complete() && sparse.index(1)==1 && sparse.index(8)==0,
+      "sparse spin-string ordering changed");
+  try {
+    sparse.index(2);
+    require(false,"absent sparse spin string was accepted");
+  } catch (const std::out_of_range&) {}
+  try {
+    SpinStrings(4,2).index(1);
+    require(false,"wrong-electron-count lookup was accepted");
+  } catch (const std::out_of_range&) {}
+}
+
 void check_sigma_columns(const Fixture& fixture, int width) {
   const auto integrals = xmvb::vb::orthogonalize_active_integrals(
       fixture.overlap, fixture.one_electron, fixture.two_electron, fixture.n);
   const xmvb::mcscf::DirectCiSigmaAction sigma(
       fixture.alpha, fixture.beta, integrals);
-  const auto spin_bytes=[&](int strings,int electrons)->std::size_t {
-    // A single fixed-stride record array, shared by all numerical consumers.
-    constexpr auto link_bytes=sizeof(xmvb::mcscf::SpinLink);
-    return static_cast<std::size_t>(strings)*
-        (link_bytes*electrons*(fixture.n-electrons)+electrons+
-         sizeof(std::uint64_t)+sizeof(std::uint16_t)*(fixture.n+1));
-  };
-  const std::size_t expected_links=spin_bytes(fixture.alpha.size(),fixture.alpha.front().size())+
-      (fixture.alpha==fixture.beta ? 0:spin_bytes(fixture.beta.size(),fixture.beta.front().size()));
+  const std::size_t expected_links=sigma.alpha_connections().dynamic_bytes()+
+      (sigma.shared_spin_connections() ? 0:sigma.beta_connections_view().dynamic_bytes());
   const auto pairs=integrals.pair_kernel.rows();
   require(sigma.dynamic_bytes()==expected_links+2*sizeof(double)*pairs*pairs,
           "direct-CI links are not compact/shared as declared");
@@ -2167,9 +2206,8 @@ void check_sigma_tile_plan() {
   using namespace xmvb::mcscf;
   SpinConnections graph;
   graph.strings=4; graph.degree=3;
-  graph.occupations.resize(1,4);
+  graph.basis=SpinStrings(4,1);
   for (int b=0;b<4;++b) {
-    graph.occupations(0,b)=b;
     for (int a=0;a<4;++a) if (a!=b)
       graph.links.push_back({a,0,0,0,1.0});
   }
@@ -2312,10 +2350,8 @@ void check_packed_sigma_tile_plan() {
   const std::vector<std::uint64_t> masks{3,5,6,9,10,12};
   SpinConnections graph;
   graph.strings=6; graph.degree=4;
-  graph.occupations.resize(2,6);
+  graph.basis=SpinStrings(4,2);
   for (int a=0;a<6;++a) {
-    int entry=0;
-    for (int p=0;p<4;++p) if ((masks[a]>>p)&1) graph.occupations(entry++,a)=p;
     for (int b=0;b<6;++b) if (__builtin_popcountll(masks[a]^masks[b])==2)
       graph.links.push_back({b,0,0,0,1.0});
   }
@@ -2351,12 +2387,12 @@ void check_symbolic_replay() {
   std::vector<std::uint64_t> masks;
   SpinConnections graph;
   graph.strings=strings; graph.degree=9;
-  graph.occupations.resize(3,strings);
+
   const auto occupations=complete_strings(n,3);
+  graph.basis=SpinStrings(n,occupations);
   require(occupations.size()==strings,"symbolic replay fixture has wrong string count");
   for (int a=0;a<strings;++a) {
     masks.push_back(occupation_mask(occupations[a]));
-    for (int i=0;i<3;++i) graph.occupations(i,a)=occupations[a][i];
   }
   for (int a=0;a<strings;++a) for (int b=0;b<strings;++b)
     if (__builtin_popcountll(masks[a]^masks[b])==2)
@@ -2475,10 +2511,9 @@ void check_symbolic_replay() {
     std::vector<std::uint64_t> masks;
     SpinConnections result;
     result.strings=strings.size();result.degree=electrons*(12-electrons);
-    result.occupations.resize(electrons,result.strings);
+    result.basis=SpinStrings(12,strings);
     for (int a=0;a<result.strings;++a) {
       masks.push_back(occupation_mask(strings[a]));
-      for (int i=0;i<electrons;++i) result.occupations(i,a)=strings[a][i];
     }
     for (int a=0;a<result.strings;++a) for (int b=0;b<result.strings;++b)
       if (std::popcount(masks[a]^masks[b])==2)
@@ -3815,6 +3850,7 @@ int main(int argc, char** argv) {
   }
   try {
     if (argc == 2 && std::string(argv[1]) == "--channel-layout") {
+      check_spin_strings();
       check_full_channel_image_layout();
       std::cout << "channel layout: PASS\n";
     } else if (argc == 2 && std::string(argv[1]) == "--cache-order") {
@@ -3940,6 +3976,7 @@ int main(int argc, char** argv) {
       check_sigma_columns(make_fixture(10, 5, 4), 2);
       check_sigma_tile_plan();
       check_symbolic_replay();
+      check_spin_strings();
       check_full_channel_image_layout();
       check_sparse_beta_gather();
       check_packed_sigma_tile_plan();

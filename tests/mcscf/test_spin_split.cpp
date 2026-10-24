@@ -157,7 +157,7 @@ void check_split(int na,int nb) {
   active.one_electron=0.5*(h+h.transpose());
   active.pair_kernel=0.07*(g+g.transpose());
   const xmvb::mcscf::DirectCiSigmaAction action(
-      alpha.occupations(),beta.occupations(),active);
+      alpha,beta,active);
   const Eigen::MatrixXd k=action.channel_kernel();
   near(k,k.transpose(),"physical packed kernel is not symmetric");
   const auto check=[&](const Eigen::MatrixXd& x) {

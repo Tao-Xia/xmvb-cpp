@@ -232,7 +232,7 @@ void check_product_tiles(int parity,bool covalent,std::size_t budget,int n=4,boo
   constexpr int width=2;
   const xmvb::mcscf::SpinStrings as(n,n/2),bs(n,parity || covalent ? n/2:n/2-1);
   const auto base=active_integrals(n,false),delta=active_integrals(n,true);
-  const xmvb::mcscf::DirectCiSigmaAction cpu(as.occupations(),bs.occupations(),base);
+  const xmvb::mcscf::DirectCiSigmaAction cpu(as,bs,base);
   const xmvb::mcscf::DirectCiSigmaAction change(cpu,delta);
   std::unique_ptr<xmvb::mcscf::ProductSupport> support;
   if (full) support=std::make_unique<xmvb::mcscf::ProductSupport>(n,as.masks(),bs.masks(),
@@ -417,7 +417,7 @@ void check_fragmented_full_tile() {
   const xmvb::mcscf::SpinStrings strings(n,n/2);
   const int dim=strings.size(),pairs=n*(n+1)/2;
   const auto base=active_integrals(n,false),delta=active_integrals(n,true);
-  const xmvb::mcscf::DirectCiSigmaAction cpu(strings.occupations(),strings.occupations(),base);
+  const xmvb::mcscf::DirectCiSigmaAction cpu(strings,strings,base);
   const xmvb::mcscf::DirectCiSigmaAction change(cpu,delta);
   const xmvb::mcscf::ProductSupport support(n,strings.masks(),strings.masks(),
       std::vector<xmvb::mcscf::ProductIndex>{
@@ -486,7 +486,7 @@ void check_fragmented_full_tile() {
 void check_sigma(int rhs_count,bool rotated,int maximum_tile=3,bool one_product=false,int n=4) {
   const xmvb::mcscf::SpinStrings alpha_space(n,one_product ? n:2),
       beta_space(n,one_product ? 0:1);
-  const Strings alpha = alpha_space.occupations(), beta = beta_space.occupations();
+  const Strings alpha = alpha_space.decode(), beta = beta_space.decode();
   const auto integrals = active_integrals(n, rotated);
   const xmvb::mcscf::DirectCiSigmaAction cpu(alpha, beta, integrals);
   const Matrix left = values(alpha.size(), beta.size() * rhs_count, 0.26);
@@ -714,7 +714,7 @@ void check_sigma(int rhs_count,bool rotated,int maximum_tile=3,bool one_product=
 }
 
 void check_exchange_parity(int n,int rhs,int parity,int capacity) {
-  const auto strings=xmvb::mcscf::SpinStrings(n,n/2).occupations();
+  const auto strings=xmvb::mcscf::SpinStrings(n,n/2).decode();
   const auto base=active_integrals(n,false);
   const xmvb::mcscf::DirectCiSigmaAction cpu(strings,strings,base);
   const int dim=strings.size(),pairs=n*(n+1)/2;
@@ -806,8 +806,8 @@ void check_exchange_parity(int n,int rhs,int parity,int capacity) {
 
 void check_distinct_spin_graphs() {
   constexpr int n=5;
-  const auto a=xmvb::mcscf::SpinStrings(n,2).occupations();
-  const auto b=xmvb::mcscf::SpinStrings(n,3).occupations();
+  const auto a=xmvb::mcscf::SpinStrings(n,2).decode();
+  const auto b=xmvb::mcscf::SpinStrings(n,3).decode();
   const xmvb::mcscf::DirectCiSigmaAction cpu(a,b,active_integrals(n,false));
   require(a.size()==b.size() && !cpu.shared_spin_connections(),
       "CUDA unequal-spin fixture lost its equal dimension coincidence");
@@ -829,8 +829,8 @@ void check_distinct_spin_graphs() {
 
 void check_row_budget() {
   constexpr int n=8,pairs=n*(n+1)/2,tile_rows=17;
-  const auto alpha=xmvb::mcscf::SpinStrings(n,4).occupations();
-  const auto beta=xmvb::mcscf::SpinStrings(n,3).occupations();
+  const auto alpha=xmvb::mcscf::SpinStrings(n,4).decode();
+  const auto beta=xmvb::mcscf::SpinStrings(n,3).decode();
   const auto base=active_integrals(n,false);
   const xmvb::mcscf::ActiveIntegrals delta{
       symmetric_values(n,1.74),0.11*symmetric_values(pairs,2.36)};
@@ -882,9 +882,9 @@ void check_row_budget() {
 void check_partitioned_moments() {
   constexpr int n=8,rhs=3;
   const xmvb::mcscf::SpinStrings a(n,4),b(n,3);
-  const xmvb::mcscf::DirectCiSigmaAction cpu(a.occupations(),b.occupations(),
+  const xmvb::mcscf::DirectCiSigmaAction cpu(a,b,
       active_integrals(n,false));
-  const int rows=a.occupations().size(),cols=b.occupations().size()*rhs;
+  const int rows=a.size(),cols=b.size()*rhs;
   const Matrix left=values(rows,cols,0.29),right=values(rows,cols,0.83);
   Matrix padded_left=Matrix::Constant(rows+3,cols,19.0);
   Matrix padded_right=Matrix::Constant(rows+1,cols,23.0);
@@ -916,8 +916,8 @@ void check_partitioned_moments() {
 
 void check_spin_metric(int rhs_count) {
   constexpr int n = 4;
-  const Strings alpha = xmvb::mcscf::SpinStrings(n, 2).occupations();
-  const Strings beta = xmvb::mcscf::SpinStrings(n, 2).occupations();
+  const Strings alpha = xmvb::mcscf::SpinStrings(n, 2).decode();
+  const Strings beta = xmvb::mcscf::SpinStrings(n, 2).decode();
   std::vector<std::vector<xmvb::vb::StructureExpansionTerm>> terms(
       alpha.size() * beta.size());
   std::vector<std::vector<int>> product_alpha, product_beta;
@@ -995,8 +995,8 @@ void check_spin_metric(int rhs_count) {
 }
 
 void check_exterior(int rhs_count,int n=4,int nalpha=2,int nbeta=1) {
-  const Strings alpha = xmvb::mcscf::SpinStrings(n, nalpha).occupations();
-  const Strings beta = xmvb::mcscf::SpinStrings(n, nbeta).occupations();
+  const Strings alpha = xmvb::mcscf::SpinStrings(n, nalpha).decode();
+  const Strings beta = xmvb::mcscf::SpinStrings(n, nbeta).decode();
   Matrix upper = Matrix::Identity(n, n);
   for (int p = 0; p < n; ++p) {
     upper(p, p) = 0.86 + 0.11 * p;
@@ -1359,7 +1359,7 @@ void check_cholesky(int rhs_count) {
 
 void check_full_metric(int rhs_count) {
   constexpr int n = 2;
-  const Strings alpha = xmvb::mcscf::SpinStrings(n, 1).occupations();
+  const Strings alpha = xmvb::mcscf::SpinStrings(n, 1).decode();
   const Strings beta = alpha;
   const double singlet_weight = 1.0 / std::sqrt(2.0);
   // Three independent complete singlet-sector columns: ionic 00, covalent

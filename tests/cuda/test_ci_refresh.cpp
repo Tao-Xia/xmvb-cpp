@@ -107,7 +107,7 @@ Terms terms(int count) {
 
 xmvb::vb::StructureAction source(int count,bool changed_frame,
                                   bool changed_integrals) {
-  const Strings strings=xmvb::mcscf::SpinStrings(2,1).occupations();
+  const Strings strings=xmvb::mcscf::SpinStrings(2,1).decode();
   const Strings product_alpha{strings[0],strings[0],strings[1],strings[1]};
   const Strings product_beta{strings[0],strings[1],strings[0],strings[1]};
   const auto topology=xmvb::vb::build_same_spin_pair_topology(
@@ -128,7 +128,7 @@ xmvb::vb::StructureAction source(int count,bool changed_frame,
 
 void check_case(bool full_space) {
   const int count=full_space ? 3:2;
-  const Strings strings=xmvb::mcscf::SpinStrings(2,1).occupations();
+  const Strings strings=xmvb::mcscf::SpinStrings(2,1).decode();
   auto initial=source(count,false,false);
   require(initial.storage().orthogonal_direct_ci,
       "CI refresh fixture has no exact carrier");

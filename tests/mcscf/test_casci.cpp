@@ -82,8 +82,8 @@ void check_casci() {
 void check_operator_casci_warm_start() {
   const auto input = hubbard();
   xmvb::mcscf::SpinSpace space(2,1,1);
-  xmvb::mcscf::DirectCiSigmaAction sigma(space.alpha().occupations(),
-      space.beta().occupations(),input.active);
+  xmvb::mcscf::DirectCiSigmaAction sigma(space.alpha(),
+      space.beta(),input.active);
   const auto cold = xmvb::casscf::solve_casci(input,2,0);
   const Eigen::Map<const Eigen::MatrixXd> guess(
       cold.active_ci.eigenpairs.eigenvector_matrix.data(),
@@ -117,8 +117,8 @@ void check_operator_casci_warm_start() {
   disconnected.one_electron.diagonal()<<-2.0,0.0,1.0;
   disconnected.pair_kernel=Eigen::MatrixXd::Zero(6,6);
   xmvb::mcscf::SpinSpace one_electron(3,1,0);
-  xmvb::mcscf::DirectCiSigmaAction diagonal_action(one_electron.alpha().occupations(),
-      one_electron.beta().occupations(),disconnected);
+  xmvb::mcscf::DirectCiSigmaAction diagonal_action(one_electron.alpha(),
+      one_electron.beta(),disconnected);
   Eigen::MatrixXd excited=Eigen::MatrixXd::Zero(3,1);
   excited(1,0)=1.0;
   const auto lowest=xmvb::casscf::solve_casci(diagonal_action,one_electron,

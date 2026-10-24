@@ -44,7 +44,7 @@ xmvb::mcscf::ActiveIntegrals integrals(int n, double phase) {
 void check_case(int n, int ea, int eb) {
   const xmvb::mcscf::SpinStrings alpha(n, ea), beta(n, eb);
   const auto active = integrals(n, 0.4);
-  const xmvb::mcscf::DirectCiSigmaAction sigma(alpha.occupations(), beta.occupations(), active);
+  const xmvb::mcscf::DirectCiSigmaAction sigma(alpha,beta,active);
   const int d = sigma.channel_kernel().rows(), rows = alpha.size() + beta.size();
   for (bool spin : {false,true}) {
     const int count = spin ? beta.size() : alpha.size();

@@ -54,8 +54,8 @@ CasciResult solve_casci(const CasIntegrals& integrals, int electrons,
   const int dimension = static_cast<int>(a*b);
   (void)casci_budget(dimension,options);
   mcscf::SpinSpace space(n,na,nb);
-  mcscf::DirectCiSigmaAction sigma(space.alpha().occupations(),
-      space.beta().occupations(),integrals.active);
+  mcscf::DirectCiSigmaAction sigma(space.alpha(),
+      space.beta(),integrals.active);
   return solve_casci(sigma,space,integrals.active.one_electron,
       spin,integrals.core_energy,options);
 }

@@ -17,7 +17,7 @@ namespace {
 
 void check_full_constructor_residency() {
   constexpr int orbitals=2;
-  const auto strings=xmvb::mcscf::SpinStrings(orbitals,1).occupations();
+  const auto strings=xmvb::mcscf::SpinStrings(orbitals,1).decode();
   const double mixed=1.0/std::sqrt(2.0);
   std::vector<std::vector<xmvb::vb::StructureExpansionTerm>> terms(4);
   terms[0].push_back({0,1.0});

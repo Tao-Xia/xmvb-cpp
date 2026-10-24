@@ -8,13 +8,13 @@
 #include <optional>
 #include <numeric>
 #include <stdexcept>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include "mcscf/ci/covalent_support.hpp"
 #include "mcscf/ci/product_paths.hpp"
 #include "mcscf/ci/product_index.hpp"
+#include "mcscf/ci/strings.hpp"
 
 namespace xmvb::mcscf {
 
@@ -31,21 +31,27 @@ public:
   using Seed = ProductPaths::Seed;
 
   /** @brief Complete singly occupied family, without materialized seeds. */
-  ProductSupport(int n_orbitals, const std::vector<Mask>& alpha,
-                 const std::vector<Mask>& beta)
-      : n_(n_orbitals), alpha_(alpha), beta_(beta), complete_covalent_(true) {
+  ProductSupport(int n,const std::vector<Mask>& alpha,const std::vector<Mask>& beta)
+      :ProductSupport(n,SpinStrings(n,alpha),SpinStrings(n,beta)) {}
+
+  ProductSupport(int n_orbitals,SpinStrings alpha,SpinStrings beta)
+      : n_(n_orbitals), alpha_(std::move(alpha)), beta_(std::move(beta)), complete_covalent_(true) {
     initialize_strings();
     if (na_ + nb_ != n_)
       throw std::invalid_argument("covalent product support requires half filling");
-    covalent_.emplace(n_, alpha_, beta_);
+    covalent_.emplace(n_, alpha_.masks(), beta_.masks());
     paths_.emplace(n_, na_, nb_, std::vector<Seed>{}, true);
     prepare_columns();
   }
 
   /** @brief Seeds are flattened alpha*n_beta+beta indices, not CI amplitudes. */
-  ProductSupport(int n_orbitals, const std::vector<Mask>& alpha,
-                 const std::vector<Mask>& beta, const std::vector<ProductIndex>& products)
-      : n_(n_orbitals), alpha_(alpha), beta_(beta) {
+  ProductSupport(int n,const std::vector<Mask>& alpha,const std::vector<Mask>& beta,
+      const std::vector<ProductIndex>& products)
+      :ProductSupport(n,SpinStrings(n,alpha),SpinStrings(n,beta),products) {}
+
+  ProductSupport(int n_orbitals,SpinStrings alpha,SpinStrings beta,
+      const std::vector<ProductIndex>& products)
+      : n_(n_orbitals), alpha_(std::move(alpha)), beta_(std::move(beta)) {
     initialize_strings();
     const Mask full = (Mask{1} << n_) - 1;
     complete_covalent_ = products.size() == alpha_.size() &&
@@ -56,8 +62,8 @@ public:
       if (product < 0 || static_cast<std::size_t>(product) >=
                              alpha_.size() * beta_.size())
         throw std::invalid_argument("product support seed is outside the spin spaces");
-      const auto a = alpha_[product / beta_.size()];
-      const auto b = beta_[product % beta_.size()];
+      const auto a = alpha_.masks()[product / beta_.size()];
+      const auto b = beta_.masks()[product % beta_.size()];
       seeds.emplace_back(a, b);
       full_ |= a == highest(na_) && b == highest(nb_);
       complete_covalent_ &= (a & b) == 0 && (a | b) == full;
@@ -65,7 +71,7 @@ public:
     std::sort(seeds.begin(), seeds.end());
     seeds.erase(std::unique(seeds.begin(), seeds.end()), seeds.end());
     complete_covalent_ &= na_ + nb_ == n_ && seeds.size() == alpha_.size();
-    if (complete_covalent_) covalent_.emplace(n_, alpha_, beta_);
+    if (complete_covalent_) covalent_.emplace(n_, alpha_.masks(), beta_.masks());
     if (!full_ && !complete_covalent_) seeds_ = seeds;
     paths_.emplace(n_, na_, nb_, std::move(seeds), complete_covalent_);
     prepare_columns();
@@ -80,10 +86,7 @@ public:
     bool next(int& alpha, int& beta, bool& in_support) {
       Mask a, b;
       if (!paths_.next(a, b, in_support)) return false;
-      const auto ai = support_->alpha_index_.find(a);
-      if (ai == support_->alpha_index_.end())
-        throw std::logic_error("generated product is absent from the spin strings");
-      alpha = ai->second;
+      alpha=support_->alpha_.index(a);
       beta = beta_index(b);
       return true;
     }
@@ -103,11 +106,8 @@ public:
   private:
     int beta_index(Mask mask) {
       if (!cached_beta_ || *cached_beta_ != mask) {
-        const auto found = support_->beta_index_.find(mask);
-        if (found == support_->beta_index_.end())
-          throw std::logic_error("generated product is absent from the spin strings");
-        cached_beta_ = mask;
-        cached_beta_index_ = found->second;
+        cached_beta_=mask;
+        cached_beta_index_=support_->beta_.index(mask);
       }
       return cached_beta_index_;
     }
@@ -123,7 +123,7 @@ public:
   Cursor column(int beta_index, int depth) const {
     if (beta_index < 0 || static_cast<std::size_t>(beta_index) >= beta_.size())
       throw std::invalid_argument("product support beta index is outside the spin space");
-    return Cursor(*this, paths_->column(beta_[beta_index], depth));
+    return Cursor(*this, paths_->column(beta_.masks()[beta_index], depth));
   }
 
   bool full() const noexcept { return full_; }
@@ -174,7 +174,7 @@ public:
       return false;
     if (full_) return true;
     if (complete_covalent_) return covalent_->contains(alpha, beta, depth);
-    const Mask a = alpha_[alpha], b = beta_[beta];
+    const Mask a = alpha_.masks()[alpha], b = beta_.masks()[beta];
     for (const auto& [sa, sb] : seeds_) {
       const int da = prefix_deficit(a, sa, depth);
       if (da <= depth && prefix_deficit(b, sb, depth - da) <= depth - da)
@@ -183,12 +183,13 @@ public:
     return false;
   }
 
+  std::size_t basis_bytes() const noexcept {
+    return alpha_.dynamic_bytes()+(alpha_.shares_storage(beta_) ? 0:beta_.dynamic_bytes());
+  }
   std::size_t dynamic_bytes() const noexcept {
-    return columns_.capacity()*sizeof(int)+(alpha_.capacity() + beta_.capacity()) * sizeof(Mask) +
-        seeds_.capacity() * sizeof(Seed) +
-        (alpha_index_.bucket_count() + beta_index_.bucket_count()) * sizeof(void*) +
-        (alpha_index_.size() + beta_index_.size()) *
-            sizeof(std::pair<const Mask, int>) +
+    return columns_.capacity()*sizeof(int)+alpha_.dynamic_bytes()+
+        (alpha_.shares_storage(beta_) ? 0:beta_.dynamic_bytes())+
+        seeds_.capacity()*sizeof(Seed)+
         (paths_ ? paths_->metadata_bytes() : 0) +
         (covalent_ ? covalent_->dynamic_bytes() : 0);
   }
@@ -223,28 +224,15 @@ private:
   }
 
   void initialize_strings() {
-    if (n_ < 1 || n_ > 63 || alpha_.empty() || beta_.empty())
+    if (n_<1 || n_>63 || alpha_.orbitals()!=n_ || beta_.orbitals()!=n_)
       throw std::invalid_argument("invalid product support spin sector");
-    const Mask full = (Mask{1} << n_) - 1;
-    na_ = __builtin_popcountll(alpha_.front());
-    nb_ = __builtin_popcountll(beta_.front());
-    alpha_index_.reserve(alpha_.size());
-    beta_index_.reserve(beta_.size());
-    for (std::size_t i = 0; i < alpha_.size(); ++i)
-      if ((alpha_[i] & ~full) || __builtin_popcountll(alpha_[i]) != na_ ||
-          !alpha_index_.emplace(alpha_[i], static_cast<int>(i)).second)
-        throw std::invalid_argument("invalid product support alpha strings");
-    for (std::size_t i = 0; i < beta_.size(); ++i)
-      if ((beta_[i] & ~full) || __builtin_popcountll(beta_[i]) != nb_ ||
-          !beta_index_.emplace(beta_[i], static_cast<int>(i)).second)
-        throw std::invalid_argument("invalid product support beta strings");
+    na_=alpha_.electrons();nb_=beta_.electrons();
   }
 
   int n_, na_ = 0, nb_ = 0;
   bool complete_covalent_ = false, full_ = false;
-  std::vector<Mask> alpha_, beta_;
+  SpinStrings alpha_,beta_;
   std::vector<int> columns_;
-  std::unordered_map<Mask, int> alpha_index_, beta_index_;
   std::vector<Seed> seeds_;
   std::optional<CovalentSupport> covalent_;
   std::optional<ProductPaths> paths_;
