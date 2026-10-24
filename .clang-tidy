@@ -10,6 +10,7 @@ Checks: >-
   bugprone-implicit-widening-of-multiplication-result
 WarningsAsErrors: '*'
 HeaderFilterRegex: '(^|/)(src|tests|tools)/'
+ExcludeHeaderFilterRegex: '(^|/)(Eigen|eigen3)/'
 SystemHeaders: false
 FormatStyle: file
 CheckOptions:

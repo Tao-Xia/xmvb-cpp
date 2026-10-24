@@ -130,7 +130,6 @@ struct ChartSvd {
     Matrix<double> right;
     int rank;
 };
-void chart_solver(cusolverStatus_t, const char*);
 void chart_zero(Context&, Mut);
 void chart_copy(Context&, Mut, Const);
 Matrix<double>
@@ -1035,12 +1034,6 @@ void OrbitalChartMap::retract(linalg::ConstMatrixView accepted,
 } // namespace xmvb::cuda
 namespace xmvb::cuda {
 namespace {
-
-void chart_solver(cusolverStatus_t status, const char* name) {
-    if (status != CUSOLVER_STATUS_SUCCESS)
-        throw std::runtime_error(std::string(name) + " failed (cuSOLVER status " +
-                                 std::to_string(static_cast<int>(status)) + ")");
-}
 
 void chart_zero(Context& ctx, Mut output) {
     if (!output.rows || !output.cols)

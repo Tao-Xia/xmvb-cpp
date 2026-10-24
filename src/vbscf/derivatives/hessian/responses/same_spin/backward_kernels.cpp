@@ -392,7 +392,6 @@ void accumulate_spin_local_matrix_backward_tile(
             const auto& pair_evaluation = accepted.pair(left_local, right_local);
             const auto& occ_L = unique_determinants[left_id];
             const auto& occ_R = unique_determinants[right_id];
-            const auto& overlap_result = pair_evaluation.overlap_result;
 
             directional_tile.with_pair(
                 left_local,
@@ -559,7 +558,6 @@ void accumulate_spin_local_matrix_backward(
                     left_id, right_id, n_unique_determinants)];
                 const auto& occ_L = unique_determinants[left_id];
                 const auto& occ_R = unique_determinants[right_id];
-                const auto& overlap_result = pair_evaluation.overlap_result;
 
                 const SameSpinPolynomialDirectionalPairData& directional_data =
                     ordered_directional_data[ordered_spin_pair_storage_index(

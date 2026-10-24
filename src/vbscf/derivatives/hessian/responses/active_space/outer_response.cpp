@@ -358,10 +358,6 @@ std::vector<double> build_orbital_value_gradient_from_active_space_gradient_dire
     const int n_active_orbitals = input.orbital_preparation_input.n_active_orbitals;
     const auto& prepared_active_space = accepted_point_context.prepared_active_space;
     const auto& orbital_result = prepared_active_space.orbital_result;
-    const auto& ao_effective_one_electron_result =
-        prepared_active_space.ao_effective_one_electron_result;
-    const auto& active_space_two_electron_result =
-        prepared_active_space.active_space_two_electron_result;
     // The outer-response adjoint is assembled in canonical pairwise storage, so
     // the orbital pullback must consume the symmetric active-space gradients
     // through the same vector-storage overload used by the fixed-adjoint path.

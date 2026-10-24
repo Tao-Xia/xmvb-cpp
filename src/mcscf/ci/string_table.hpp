@@ -32,11 +32,6 @@ class StringTable {
         for (const auto& row : rows)
             push_back(row);
     }
-    static StringTable from_masks(std::span<const std::uint64_t> masks) {
-        StringTable result;
-        result.data_->words.assign(masks.begin(), masks.end());
-        return result;
-    }
     static StringTable from_basis(const SpinStrings& basis) {
         StringTable result;
         result.data_->basis = basis;

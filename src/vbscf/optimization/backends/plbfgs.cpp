@@ -132,7 +132,7 @@ BackendRunResult run_plbfgs_backend(VbScfObjective* objective,
 
         OrbitalChart next_space = build_orbital_chart(*objective, parameter_view);
         auto next_projection = next_space.project_gradient(current_gradient);
-        double next_reduced_gradient_inf_norm =
+        const double next_reduced_gradient_inf_norm =
             gradient_infinity_norm(next_projection.reduced_gradient);
 
         Eigen::VectorXd parameter_step = current_parameters - previous_parameters;
@@ -176,8 +176,6 @@ BackendRunResult run_plbfgs_backend(VbScfObjective* objective,
             }
             next_space = build_orbital_chart(*objective, parameter_view);
             next_projection = next_space.project_gradient(current_gradient);
-            next_reduced_gradient_inf_norm =
-                gradient_infinity_norm(next_projection.reduced_gradient);
             parameter_step = current_parameters - previous_parameters;
             packed_secant_history.clear();
         }

@@ -6,6 +6,7 @@
 #include <Eigen/Core>
 #include <Eigen/SparseCore>
 
+#include "mcscf/ci/string_table.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin/backward.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin/pair_response_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin/packed_contractions_internal.hpp"
@@ -218,7 +219,7 @@ void fill_regular_overlap_data(int n_unique,
 
 std::vector<double>
 direct_overlap_gradient(const std::vector<xmvb::vb::SpinDeterminantPairEvaluation>& primary_cache,
-                        const std::vector<std::vector<int>>& primary_determinants,
+                        const xmvb::mcscf::StringTable& primary_determinants,
                         const std::vector<xmvb::vb::SpinDeterminantPairEvaluation>& partner_cache,
                         const Eigen::MatrixXd& accepted_primary_partner,
                         const Eigen::MatrixXd& directional_primary_partner,

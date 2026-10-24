@@ -163,14 +163,7 @@ struct DeviceBackend {
                                    static_cast<std::size_t>(destination.rows) * sizeof(double));
         }
     }
-    void upload_into(linalg::MatrixView destination,
-                     const Eigen::Ref<const Eigen::VectorXd>& host) const {
-        if (destination.cols != 1 || destination.rows != host.size()) {
-            throw std::invalid_argument("CUDA Davidson vector upload dimensions");
-        }
-        context.copy_to_device(
-            destination.data, host.data(), static_cast<std::size_t>(host.size()) * sizeof(double));
-    }
+
     Eigen::MatrixXd download(linalg::ConstMatrixView source) const {
         Eigen::MatrixXd host(source.rows, source.cols);
         for (std::int64_t column = 0; column < source.cols; ++column) {

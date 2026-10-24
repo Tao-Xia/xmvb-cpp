@@ -9,9 +9,6 @@
 
 namespace {
 
-using xmvb::mcscf::globalize_neo_trial;
-using xmvb::mcscf::NeoGlobalizationResult;
-
 void require(bool condition, const std::string& message) {
     if (!condition)
         throw std::runtime_error(message);

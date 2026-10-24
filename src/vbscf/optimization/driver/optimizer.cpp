@@ -62,7 +62,6 @@ Eigen::MatrixXd build_one_particle_density_matrix(const OrbitalGradientResult& g
 
 } // namespace
 
-using optimizer_detail::build_orbital_chart;
 using optimizer_detail::record_accepted_iteration_snapshot;
 using optimizer_detail::sync_result_from_objective;
 
@@ -118,7 +117,6 @@ VbScfOptimizerResult VbScfOptimizer::optimize(VbScfInput input,
         options_.structure_eigensolver,
         StructureSolveAccuracy{options_.energy_tolerance, options_.gradient_tolerance},
         &orbital_gradient_evaluator_);
-    const int n = static_cast<int>(parameter_vector.size());
     int n_iterations = 0;
     double final_gradient_l2_norm = 0.0;
     bool final_projected_gradient_ready = false;
@@ -134,7 +132,6 @@ VbScfOptimizerResult VbScfOptimizer::optimize(VbScfInput input,
         result.initial_total_energy = energy;
         result.initial_one_electron_reference_energy =
             objective.gradient_result().scf_result.one_electron_reference_energy;
-        double previous_energy = energy;
         final_gradient_l2_norm = gradient.norm();
         switch (options_.backend) {
 

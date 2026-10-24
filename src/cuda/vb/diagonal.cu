@@ -28,17 +28,6 @@ __device__ int pair(int a, int b) {
     return high * (high + 1) / 2 + low;
 }
 
-__device__ void decode_pair(std::int64_t index, int& a, int& b) {
-    std::int64_t high =
-        static_cast<std::int64_t>((sqrt(8.0 * static_cast<double>(index) + 1.0) - 1.0) * 0.5);
-    while (high * (high + 1) / 2 > index)
-        --high;
-    while ((high + 1) * (high + 2) / 2 <= index)
-        ++high;
-    a = static_cast<int>(high);
-    b = static_cast<int>(index - high * (high + 1) / 2);
-}
-
 __device__ double dm2(linalg::ConstMatrixView pair_adjoint, int a, int b, int c, int d) {
     const int p = pair(a, b), q = pair(c, d);
     const int multiplicity = (a == b ? 1 : 2) * (c == d ? 1 : 2);

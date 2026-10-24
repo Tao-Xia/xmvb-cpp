@@ -487,8 +487,6 @@ void build_rhf_block_guess(const xmvb::integrals::LibcintInput& libcint_input,
                            std::vector<double>* orbital_value_table) {
     const auto rhf_result = solve_rhf_guess(
         libcint_input, ao_integral_input, ri_factorization, orbital_preparation_input);
-    const std::size_t matrix_size =
-        orbital_preparation_input.n_basis_functions * orbital_preparation_input.n_basis_functions;
     const bool have_explicit_hf_overlap = orbital_preparation_input.hf_overlap_matrix.size() != 0;
     if (have_explicit_hf_overlap && (orbital_preparation_input.hf_overlap_matrix.rows() !=
                                          orbital_preparation_input.n_basis_functions ||

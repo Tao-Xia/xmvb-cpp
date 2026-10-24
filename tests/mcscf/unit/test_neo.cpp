@@ -17,11 +17,6 @@
 
 namespace {
 
-using xmvb::mcscf::NeoOptions;
-using xmvb::mcscf::NeoResult;
-using xmvb::mcscf::NeoStopReason;
-using xmvb::mcscf::QuadraticProblem;
-
 void require(bool condition, const std::string& message) {
     if (!condition)
         throw std::runtime_error(message);

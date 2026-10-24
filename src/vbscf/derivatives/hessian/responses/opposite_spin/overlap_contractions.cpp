@@ -19,7 +19,6 @@
 namespace xmvb::vb {
 
 using detail::DirectionalOppositeSpinPairData;
-using detail::PrimarySpin;
 using detail::SelectedStatePairGraph;
 
 namespace {

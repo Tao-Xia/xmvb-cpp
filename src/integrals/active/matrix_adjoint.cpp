@@ -231,7 +231,6 @@ ActiveSpaceMatrixBackpropagationResult ActiveSpaceMatrixBackpropagator::backprop
         throw std::invalid_argument("active-space backprop dimensions must be positive");
     }
 
-    const std::size_t n_basis = n_basis_functions;
     const std::size_t n_active = n_active_orbitals;
     const std::size_t active_matrix_size = n_active * n_active;
     if (ao_overlap_matrix.rows() != n_basis_functions ||

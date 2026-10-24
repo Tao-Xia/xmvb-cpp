@@ -114,10 +114,8 @@ void transpose_product(const Eigen::Ref<const Eigen::MatrixXd>& channels,
 } // namespace detail
 
 using detail::add_channel_gram;
-using detail::add_product;
 using detail::Clock;
 using detail::mix_channels;
-using detail::transpose_product;
 using detail::validate_source;
 
 SpinFactorSource sum_factors(std::vector<SpinFactorSource> sources) {

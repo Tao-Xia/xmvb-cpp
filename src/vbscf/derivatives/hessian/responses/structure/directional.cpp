@@ -114,12 +114,9 @@ build_selected_structure_direction(const AcceptedOuterResponseContext& accepted,
     }
     const auto& input = *accepted.input;
     const auto& accepted_point = *accepted.accepted_point_context;
-    const auto& same_spin = accepted_point.same_spin_pair_cache;
 
     const int n_active_orbitals = input.orbital_preparation_input.n_active_orbitals;
     const int n_pairs = xmvb::integrals::packed_active_pair_count(n_active_orbitals);
-    const int n_alpha = static_cast<int>(same_spin.alpha_reuse_table.unique_determinants.size());
-    const int n_beta = static_cast<int>(same_spin.beta_reuse_table.unique_determinants.size());
     if ((accepted_ri_active_pair_factors == nullptr) !=
         (directional_ri_active_pair_factors == nullptr)) {
         throw std::invalid_argument(

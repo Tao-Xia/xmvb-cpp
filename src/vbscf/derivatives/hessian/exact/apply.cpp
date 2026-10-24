@@ -691,7 +691,6 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
                 true,
                 consume_local_active_tile,
                 static_cast<int>(accepted_point_context_->selected_state_matrices.states.size()));
-            directional_pair_tiles_consumed = true;
         }
 
         selected_direction_phase.stop();

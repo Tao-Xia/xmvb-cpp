@@ -22,7 +22,6 @@
 namespace {
 
 using Matrix = Eigen::MatrixXd;
-using xmvb::integrals::RiAoFactorization;
 
 void require(bool condition, const std::string& message) {
     if (!condition)

@@ -166,16 +166,15 @@ class Reservation {
         }
         const auto increment = bytes - bytes_;
         // Allocation admission remains noexcept, including first-use discovery.
-        std::size_t cap;
         try {
-            cap = limit();
+            limit();
         } catch (...) {
             return false;
         }
         auto used = retained();
         bool reclaimed = false;
         for (;;) {
-            cap = detail::limit.load();
+            const auto cap = detail::limit.load();
             if (used > cap || increment > cap - used) {
                 const auto release = detail::reclaim.load();
                 if (!reclaimed && release && detail::reusable.load()) {

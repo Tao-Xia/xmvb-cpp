@@ -17,11 +17,9 @@
 namespace {
 
 using xmvb::mcscf::CiahOptions;
-using xmvb::mcscf::CiahOriginRay;
 using xmvb::mcscf::CiahResult;
 using xmvb::mcscf::CiahStepPath;
 using xmvb::mcscf::CiahWorkspace;
-using xmvb::mcscf::QuadraticProblem;
 
 void require(bool condition, const std::string& message) {
     if (!condition)

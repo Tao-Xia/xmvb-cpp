@@ -202,7 +202,6 @@ std::vector<int> parse_structure_classes(const InputDeckMetadata& metadata) {
     const int n_active_orbitals = metadata.declared_active_orbitals;
     const int n_active_electrons = metadata.declared_active_electrons;
     const int spin_multiplicity = metadata.declared_spin_multiplicity;
-    const int n_skipped_orbitals = std::max(0, n_active_orbitals - n_active_electrons);
     const int n_active_doubly_occupied_orbitals =
         std::max(0, n_active_electrons - n_active_orbitals);
     const int reduced_beta_electrons =
