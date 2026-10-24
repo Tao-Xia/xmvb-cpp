@@ -1,0 +1,26 @@
+# Keep the same LLVM release in developer environments (20.1.0).
+BasedOnStyle: LLVM
+Language: Cpp
+# clang-format 20 uses Latest for syntax newer than C++20.
+Standard: Latest
+IndentWidth: 4
+ContinuationIndentWidth: 4
+ColumnLimit: 100
+UseTab: Never
+BreakBeforeBraces: Attach
+NamespaceIndentation: None
+IndentCaseLabels: true
+AccessModifierOffset: -2
+PointerAlignment: Left
+ReferenceAlignment: Left
+DerivePointerAlignment: false
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortBlocksOnASingleLine: Never
+BinPackArguments: false
+BinPackParameters: false
+SortIncludes: Never
+IncludeBlocks: Preserve
+ReflowComments: false
+MaxEmptyLinesToKeep: 1

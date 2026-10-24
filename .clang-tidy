@@ -1,0 +1,16 @@
+# Start with correctness checks; do not apply automatic fixes to scientific code.
+Checks: >-
+  -*,
+  clang-analyzer-core.*,
+  clang-analyzer-cplusplus.*,
+  clang-analyzer-unix.*,
+  bugprone-use-after-move,
+  bugprone-sizeof-expression,
+  bugprone-suspicious-memory-comparison,
+  bugprone-implicit-widening-of-multiplication-result
+WarningsAsErrors: '*'
+HeaderFilterRegex: '(^|/)(src|tests|tools)/'
+SystemHeaders: false
+FormatStyle: file
+CheckOptions:
+  bugprone-implicit-widening-of-multiplication-result.IgnoreConstantIntExpr: true
