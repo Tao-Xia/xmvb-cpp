@@ -112,12 +112,14 @@ before/after contraction. Mutable tensors, MPOs and environments are not
 shared between processes. Serial ENERGY and FULL gradients retain their
 existing H/S path. No input keyword or optimizer setting is added.
 
-The SU(2) pair-construction cutoff defaults to zero while `TNBOND` continues
-to cap the bond dimension. This avoids the small-subspace loss found in the
-C10 ionic validation. The warm-cache manifest records the new default, so
-old positive-cutoff caches do not silently count as compatible hits. An
-explicit existing `XMVB_BLOCK2_SU2_CUTOFF` override remains a numerical
-development control, not a new production input option.
+The SU(2) pair-construction cutoff defaults to `1e-14` while `TNBOND`
+continues to cap the bond dimension. This trims negligible subspaces before
+structure summation and high-rank RDM environment construction. The warm-cache
+manifest and ENERGY-to-GRADIENT handoff signature use the same default, so
+zero-cutoff states are not reused under the default setting. The existing
+`XMVB_BLOCK2_SU2_CUTOFF=0` override remains available for diagnosing pair-fit
+stagnation or small-subspace loss; it can substantially increase stored bond
+dimensions and RDM memory. No production input option is added.
 
 The verified C10 256/512 ENERGY prototype evidence is under
 `cpptest/tnvb_c10_ionic_hs_scaling_validation_20261017/development_20261018`.

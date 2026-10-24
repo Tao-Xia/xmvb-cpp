@@ -25,7 +25,7 @@ def signature(request_path):
     struct.pack_into('<i',data,36,0)
     settings = {name:os.environ.get(name,default) for name,default in (
         ('XMVB_BLOCK2_SU2_SWEEPS','4'),('XMVB_BLOCK2_SU2_TOL','1e-10'),
-        ('XMVB_BLOCK2_SU2_CUTOFF','0'),('XMVB_BLOCK2_SU2_SEED','20260813'),
+        ('XMVB_BLOCK2_SU2_CUTOFF','1e-14'),('XMVB_BLOCK2_SU2_SEED','20260813'),
         ('XMVB_BLOCK2_H_MPO','no-trans-conventional'))}
     h = hashlib.sha256(data)
     h.update(json.dumps(settings,sort_keys=True).encode())

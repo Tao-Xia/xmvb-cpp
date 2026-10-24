@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Pure shared-bank safety/routing tests; no Block2 import or computation."""
 from pathlib import Path
+import ast
 import importlib.util
+import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location("hs_shared", ROOT / "src/tnvb/worker/hs_shared.py")
@@ -49,8 +52,26 @@ class SharedPolicyTest(unittest.TestCase):
 
     def test_cutoff_default_and_cache_are_consistent(self):
         source = (ROOT / "src/tnvb/worker/pair_core.py").read_text()
-        self.assertIn('os.environ.get("XMVB_BLOCK2_SU2_CUTOFF", "0")', source)
-        self.assertIn("('XMVB_BLOCK2_SU2_CUTOFF', '0')", source)
+        tree = ast.parse(source)
+        builder = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                       and node.name == 'build_su2_states')
+        cutoff = next(node.value for node in builder.body if isinstance(node, ast.Assign)
+                      and any(isinstance(target, ast.Name) and target.id == 'cutoff'
+                              for target in node.targets))
+        manifest = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                        and node.name == 'warm_cache_manifest')
+        result = next(node.value for node in manifest.body if isinstance(node, ast.Return))
+        settings = next(value for key, value in zip(result.keys, result.values)
+                        if isinstance(key, ast.Constant) and key.value == 'pair_fit')
+        cutoff_code = compile(ast.Expression(cutoff), 'pair-cutoff', 'eval')
+        settings_code = compile(ast.Expression(settings), 'cache-cutoff', 'eval')
+        for override, expected in ((None, '1e-14'), ('0', '0'), ('1e-12', '1e-12')):
+            with self.subTest(override=override), patch.dict(os.environ, {}, clear=True):
+                if override is not None:
+                    os.environ['XMVB_BLOCK2_SU2_CUTOFF'] = override
+                self.assertEqual(eval(cutoff_code, {'os': os}), float(expected))
+                self.assertEqual(eval(settings_code, {'os': os})['XMVB_BLOCK2_SU2_CUTOFF'],
+                                 expected)
 
 
 if __name__ == "__main__":

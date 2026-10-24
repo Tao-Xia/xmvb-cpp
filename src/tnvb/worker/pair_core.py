@@ -3821,9 +3821,9 @@ def build_su2_states(
     """Build all physical VB structures by variational SU(2) pair products."""
     sweeps = int(os.environ.get("XMVB_BLOCK2_SU2_SWEEPS", "4"))
     tolerance = float(os.environ.get("XMVB_BLOCK2_SU2_TOL", "1e-10"))
-    # Retain the D cap but do not discard zero/small singular subspaces by
-    # default: positive cutoffs can strand an otherwise exact pair fit.
-    cutoff = float(os.environ.get("XMVB_BLOCK2_SU2_CUTOFF", "0"))
+    # Trim negligible pair-fit subspaces before summing structures and building
+    # high-rank RDM environments. Keep zero cutoff as an explicit override.
+    cutoff = float(os.environ.get("XMVB_BLOCK2_SU2_CUTOFF", "1e-14"))
     seed = int(os.environ.get("XMVB_BLOCK2_SU2_SEED", "20260813"))
     iprint = int(os.environ.get("XMVB_BLOCK2_SU2_IPRINT", "0"))
     pair_log = os.environ.get("XMVB_BLOCK2_SU2_PAIR_LOG", "0") == "1"
@@ -4314,7 +4314,7 @@ def warm_cache_manifest(nstr, nao, nae, nel, tnbond, sum_bond, ntstr, rmat=None)
             np.asarray(rmat != 0.0, dtype=np.uint8).tobytes()).hexdigest(),
         "pair_fit": {name: os.environ.get(name, default) for name, default in (
             ('XMVB_BLOCK2_SU2_SWEEPS', '4'), ('XMVB_BLOCK2_SU2_TOL', '1e-10'),
-            ('XMVB_BLOCK2_SU2_CUTOFF', '0'), ('XMVB_BLOCK2_SU2_SEED', '20260813'))},
+            ('XMVB_BLOCK2_SU2_CUTOFF', '1e-14'), ('XMVB_BLOCK2_SU2_SEED', '20260813'))},
         "nstr": int(nstr),
         "nao": int(nao),
         "nae": int(nae),

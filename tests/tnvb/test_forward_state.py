@@ -40,6 +40,15 @@ class HandoffTests(unittest.TestCase):
             with patch.dict(os.environ,{'XMVB_BLOCK2_FORBID_3PDM':'1'}):
                 self.assertEqual(before,cache.signature(path))
 
+    def test_cutoff_default_and_zero_override_have_distinct_signatures(self):
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {}, clear=True):
+            path=Path(folder)/'request';self.request(path)
+            default=cache.signature(path)
+            with patch.dict(os.environ,{'XMVB_BLOCK2_SU2_CUTOFF':'1e-14'}):
+                self.assertEqual(default,cache.signature(path))
+            with patch.dict(os.environ,{'XMVB_BLOCK2_SU2_CUTOFF':'0'}):
+                self.assertNotEqual(default,cache.signature(path))
+
     def fixture(self,folder):
         root=Path(folder)/'forward';root.mkdir();(root/'mps').mkdir()
         (root/'mps/S1-mps_info.bin').write_bytes(b'info')
