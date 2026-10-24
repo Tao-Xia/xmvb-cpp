@@ -96,18 +96,19 @@ public:
   struct Panel { int first,rows; std::size_t packed; };
 
   /** Largest consecutive row panel fitting its exact ragged source copies
-   * plus one full-channel image. Only scalar boundaries are returned; source
+   * plus the requested full-channel images. Only scalar boundaries are returned; source
    * rows remain in their existing group order, without padding or repacking.
    */
-  Panel panel(int first,int source_copies,std::size_t entries) const {
-    if (first<0 || first>=offsets_.back() || source_copies<0)
+  Panel panel(int first,int source_copies,std::size_t entries,int image_copies=1) const {
+    if (first<0 || first>=offsets_.back() || source_copies<0 || image_copies<1)
       throw std::invalid_argument("invalid channel row panel");
     Panel result{first,0,0};
     std::size_t used=0;
     for (int g=0;g<static_cast<int>(channels_.size());++g) {
       const int start=std::max(first+result.rows,offsets_[g]);
       if (start>=offsets_[g+1]) continue;
-      const auto row_entries=static_cast<std::size_t>(source_copies)*channels_[g]+pairs_;
+      const auto row_entries=static_cast<std::size_t>(source_copies)*channels_[g]+
+          static_cast<std::size_t>(image_copies)*pairs_;
       const int count=static_cast<int>(std::min<std::size_t>(offsets_[g+1]-start,
           (entries-used)/row_entries));
       result.rows+=count;result.packed+=static_cast<std::size_t>(count)*channels_[g];

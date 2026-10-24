@@ -44,6 +44,9 @@ void check_channel_panels() {
   xmvb::mcscf::detail::ChannelLayout layout;
   const std::array groups{0,3,1,3};
   layout.reset(basis,groups,4,2);
+  const auto batch=layout.panel(0,2,80,2);
+  require(2*batch.packed+20*batch.rows<=80,
+      "batched channel panel omitted an image from its byte bound");
   int next=0;
   while (next<8) {
     const auto p=layout.panel(next,2,40);

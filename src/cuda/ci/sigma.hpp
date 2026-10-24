@@ -133,8 +133,10 @@ class DirectCiSigma {
   std::uint64_t tile_execution_generation() const noexcept;
 
   /** CPU SigmaTilePlan, exact channel envelopes and release schedule, executed
-   * on device. Channel-reduced derivative responses reuse one raw halo and
-   * retain compact channels; full-channel responses stream row panels.
+   * on device. Channel-reduced responses share an input halo and retain compact
+   * channels; distinct output halos are charged to the same tile budget.
+   * Full-channel responses stream row panels. Response lanes share GEMM groups
+   * and signed-link backprojection rather than repeating the full sweep.
    * The immutable state is shared across responses in either schedule.
    * Source slabs follow ragged channel groups and images have full channels;
    * no product-sized carrier is allocated here.
