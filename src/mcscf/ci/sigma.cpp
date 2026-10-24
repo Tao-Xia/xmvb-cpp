@@ -889,7 +889,7 @@ std::vector<Eigen::MatrixXd> DirectCiSigmaAction::generator_adjoint_streamed(int
     std::iota(betas.begin(),betas.end(),first+offset);
     for (int r=0;r<n_requests;++r) {
       values[r].resize(n_alpha_,width);
-      requests.begin()[r].read(betas,rows,values[r]);
+      requests.begin()[r].read(betas,rows,values[r],DirectCiRead::Dense);
     }
     // One metadata traversal serves every generated right argument. Tasks
     // only read the completed tiles and own their small orbital reductions.

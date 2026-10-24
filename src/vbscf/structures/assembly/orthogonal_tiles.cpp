@@ -391,7 +391,7 @@ StructureResponseSweep StructureAction::contract_product_tiles(
     });
     const mcscf::DirectCiTileReader read =
         [&](const std::vector<int>& betas, const std::vector<int>& alpha_rows,
-            Eigen::Ref<Eigen::MatrixXd> columns) {
+            Eigen::Ref<Eigen::MatrixXd> columns,mcscf::DirectCiRead mode) {
           int team = 1;
 #ifdef _OPENMP
           team = omp_get_num_threads();
@@ -405,7 +405,7 @@ StructureResponseSweep StructureAction::contract_product_tiles(
             }
             return;
           }
-          input.read(betas,alpha_rows,columns);
+          input.read(betas,alpha_rows,columns,mode==mcscf::DirectCiRead::Dense);
         };
     const mcscf::DirectCiTileWriter add =
         [&](const std::vector<int>& betas, const std::vector<int>& alpha_rows,

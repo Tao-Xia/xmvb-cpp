@@ -1948,7 +1948,7 @@ void check_streamed_generator_adjoint_requests() {
     xmvb::mcscf::DirectCiTileReader read =
         [&, carrier](const std::vector<int>& betas,
                      const std::vector<int>& rows,
-                     Eigen::Ref<Eigen::MatrixXd> values) {
+                     Eigen::Ref<Eigen::MatrixXd> values,xmvb::mcscf::DirectCiRead mode) {
           borrowed_values.assign(n_alpha, -97.0);
           borrowed_rows.clear();
           for (int b = 0; b < static_cast<int>(betas.size()); ++b)
@@ -2025,7 +2025,7 @@ void check_streamed_generator_adjoint_requests() {
     xmvb::mcscf::DirectCiTileReader read =
         [carrier](const std::vector<int>& betas,
                   const std::vector<int>& rows,
-                  Eigen::Ref<Eigen::MatrixXd> values) {
+                  Eigen::Ref<Eigen::MatrixXd> values,xmvb::mcscf::DirectCiRead mode) {
           for (int b = 0; b < static_cast<int>(betas.size()); ++b)
             for (int a = 0; a < static_cast<int>(rows.size()); ++a)
               values(a, b) = (*carrier)(rows[a], betas[b]);
@@ -2168,7 +2168,7 @@ void check_exchange_reduced_generator() {
     const auto request=[&](const Eigen::MatrixXd& right,double scale,bool transpose) {
       const auto* carrier=&right;
       xmvb::mcscf::DirectCiTileReader read=[carrier](const std::vector<int>& betas,
-          const std::vector<int>& rows,Eigen::Ref<Eigen::MatrixXd> values) {
+          const std::vector<int>& rows,Eigen::Ref<Eigen::MatrixXd> values,xmvb::mcscf::DirectCiRead mode) {
         for (int b=0;b<static_cast<int>(betas.size());++b)
           for (int a=0;a<static_cast<int>(rows.size());++a)
             values(a,b)=(*carrier)(rows[a],betas[b]);
@@ -2623,7 +2623,7 @@ void check_tiled_integral_direction_case(
       -> xmvb::mcscf::DirectCiTileReader {
     const Eigen::MatrixXd* source = &carrier;
     return [source, width, n_beta](const std::vector<int>& betas,
-        const std::vector<int>& rows, Eigen::Ref<Eigen::MatrixXd> tile) {
+        const std::vector<int>& rows, Eigen::Ref<Eigen::MatrixXd> tile,xmvb::mcscf::DirectCiRead mode) {
       for (int b = 0; b < static_cast<int>(betas.size()); ++b)
         for (int vector = 0; vector < width; ++vector)
           for (int a = 0; a < static_cast<int>(rows.size()); ++a)
@@ -2696,9 +2696,9 @@ void check_tiled_integral_direction_case(
     const auto base = reader(carrier);
     return [base, &count](const std::vector<int>& betas,
                           const std::vector<int>& rows,
-                          Eigen::Ref<Eigen::MatrixXd> tile) {
+                          Eigen::Ref<Eigen::MatrixXd> tile,xmvb::mcscf::DirectCiRead mode) {
       ++count;
-      base(betas, rows, tile);
+      base(betas, rows, tile,mode);
     };
   };
   const std::array<xmvb::mcscf::DirectCiTileRequest, 3> requests{{
@@ -2861,7 +2861,7 @@ void check_full_square_tiled_gram() {
     const Eigen::MatrixXd* source = &carrier;
     return [source, u, width](const std::vector<int>& betas,
                        const std::vector<int>& rows,
-                       Eigen::Ref<Eigen::MatrixXd> tile) {
+                       Eigen::Ref<Eigen::MatrixXd> tile,xmvb::mcscf::DirectCiRead mode) {
       for (int b = 0; b < static_cast<int>(betas.size()); ++b)
         for (int v = 0; v < width; ++v)
           for (int a = 0; a < static_cast<int>(rows.size()); ++a)
@@ -2922,7 +2922,7 @@ void check_full_square_tiled_gram() {
       bool entered=false;
       const auto base_reader=reader(responses[0]);
       const xmvb::mcscf::DirectCiTileReader first_reader=[&](const auto& betas,
-          const auto& rows,Eigen::Ref<Eigen::MatrixXd> tile) {
+          const auto& rows,Eigen::Ref<Eigen::MatrixXd> tile,xmvb::mcscf::DirectCiRead mode) {
         if (!entered) {
           entered=true;
           // Both calls already own live scratch when they meet here.
@@ -2933,7 +2933,7 @@ void check_full_square_tiled_gram() {
             require(close(nested,expected_images[1]),"recursive sigma corrupted its scratch");
           }
         }
-        base_reader(betas,rows,tile);
+        base_reader(betas,rows,tile,mode);
       };
       const std::array<xmvb::mcscf::DirectCiTileRequest, 2> requests{{
           {first_reader, writer(images[0]), nullptr, {}},

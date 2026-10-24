@@ -40,8 +40,11 @@ public:
     produce(missing,{});
   }
 
+  /** @brief With zero_fill=false, only structural source entries are written.
+   * The consumer must certify that all other halo slots are never read.
+   */
   void read(const std::vector<int>& betas,const std::vector<int>& rows,
-      Eigen::Ref<Eigen::MatrixXd> values) {
+      Eigen::Ref<Eigen::MatrixXd> values,bool zero_fill) {
     std::vector<int> missing,ready;
     std::vector<const ColumnTile*> hits;
     profiling::ScopedPhase schedule(profiling::Phase::CiCacheSchedule);
@@ -49,7 +52,7 @@ public:
     for (int i=0;i<static_cast<int>(betas.size());++i) {
       const int beta=betas[i];
       columns_[beta]=i;
-      if (!support_[beta]) values.middleCols(i*width_,width_).setZero();
+      if (!support_[beta]) { if (zero_fill) values.middleCols(i*width_,width_).setZero(); }
       else if (cache_.contains(beta)) {
         ready.push_back(beta);
         hits.push_back(&cache_.get(beta));
@@ -76,10 +79,11 @@ public:
           // entire cached support even when most rows were outside the halo.
           for (int row=0;row<static_cast<int>(rows.size());++row) {
             const int source=tile.pattern->indexed_row(rows[row]);
-            target[row]=source<0 ? 0.0:tile.values(source,v);
+            if (source>=0) target[row]=tile.values(source,v);
+            else if (zero_fill) target[row]=0.0;
           }
         } else {
-          target.setZero();
+          if (zero_fill) target.setZero();
           for (int i=0;i<tile.values.rows();++i) {
             const int row=positions_[tile.pattern->rows[i]];
             if (row>=0) target[row]=tile.values(i,v);

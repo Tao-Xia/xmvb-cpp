@@ -188,17 +188,19 @@ inline void multiply_channels(const ChannelProduct& basis,const ChannelLayout& l
     Eigen::Map<Eigen::MatrixXd,0,Eigen::OuterStride<>> output(
         destination+layout.output_offset(group)+first,last-first,basis.kernel(group).rows(),
         Eigen::OuterStride<>(layout.output_stride(group)));
+    const auto scale_diagonals=[&](double factor) {
+      for (int v=0;v<width;++v) {
+        const int shift=v*layout.rhs_stride(group);
+        for (const int image:layout.diagonals(diagonal_images,group,first-shift,last-shift))
+          output.row(image-layout.begin(group)+shift-first)*=factor;
+      }
+    };
+    // Preserve an existing diagonal image across accumulation: halving
+    // 2*old+2*increment gives old+increment. No row GEMM is repeated.
+    if (exchange && add) scale_diagonals(2.0);
     if (add) output.noalias()+=scale*input*basis.kernel(group).transpose();
     else output.noalias()=scale*input*basis.kernel(group).transpose();
-    // Exchange orbits have weight two except on alpha=beta. Correct only
-    // those rows; a separate read/write pass over every full image is avoided.
-    if (exchange) for (int v=0;v<width;++v) {
-      const int shift=v*layout.rhs_stride(group);
-      for (const int image:layout.diagonals(diagonal_images,group,first-shift,last-shift)) {
-        const int local=image-layout.begin(group)+shift-first;
-        output.row(local).noalias()-=input.row(local)*basis.kernel(group).transpose();
-      }
-    }
+    if (exchange) scale_diagonals(0.5);
   }
 }
 

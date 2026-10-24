@@ -127,6 +127,7 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
   ChannelWorkspace::limit_action(workspace_bytes);
   const bool projected_image=source_projected_image && restricted_channels;
   const bool covalent_sources=support && support->has_channel_envelopes();
+  const auto source_read=covalent_sources ? DirectCiRead::Supported:DirectCiRead::Dense;
   const detail::ChannelProduct channel_product(hamiltonian_pair_kernel_,n_orbitals_,restricted_channels,
       projected_image);
   std::vector<detail::ChannelProduct> directional_products;
@@ -216,7 +217,7 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
   std::size_t gram_scratch_bytes=0;
   int gram_partitions=0,gram_extent=0;
   std::size_t batches = 0, source_columns = 0, source_elements = 0, peak_payload = 0;
-  std::size_t bulk_targets=0,unindexed_exchange_checks=0,exchange_row_products=0;
+  std::size_t bulk_targets=0,unindexed_exchange_checks=0,avoided_exchange_row_products=0;
   std::size_t targets = 0, unsupported_targets = 0, identity_halo_targets=0,beta_map_bytes=0;
   std::size_t source_channels=0;
   long double projected_products=0,full_products=0;
@@ -258,7 +259,7 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
                 // Exact scan count of the former all-diagonals-per-owner loop;
                 // indexed ownership leaves only these physical row products.
                 unindexed_exchange_checks+=diagonal_products*owners;
-                exchange_row_products+=diagonal_products;
+                avoided_exchange_row_products+=diagonal_products;
               }
               packed_size=channel_layout.entries();
               source_channels+=packed_size/width;
@@ -288,7 +289,7 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
               if (timing && batches==0)
                 std::fprintf(stderr,"XMVB_TILE_PROGRESS,event=first_read,rows=%d,columns=%d,halo=%d\n",
                     count,n_columns,n_halo);
-              requests.front().response(columns, halo, input);
+              requests.front().response(columns, halo, input,source_read);
               const double batch_read_time = seconds(read_start, tick());
               read_time += batch_read_time;
               ++batches;
@@ -403,10 +404,23 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
           const auto [first,last]=channel_product.frontier(channel_group);
           alpha_->visit_lower_sources(a,first,last,add_alpha);
           beta_graph.visit_lower_sources(beta,first,last,add_beta);
-        } else if (covalent_sources && active_support[local]) {
-          const auto zero=support->zero_prefixes(a,beta);
-          alpha_->visit_supported_sources(a,zero,add_alpha);
-          beta_graph.visit_supported_sources(beta,zero,add_beta);
+        } else if (covalent_sources) {
+          if (active_support[local]) {
+            const auto zero=support->zero_prefixes(a,beta);
+            alpha_->visit_supported_sources(a,zero,add_alpha);
+            beta_graph.visit_supported_sources(beta,zero,add_beta);
+          } else {
+            // A source-only read is valid independently of channel packing.
+            // Without packed J addresses, use the same repair links and their
+            // existing global channels instead of reading outside support.
+            const auto [first,last]=support->channel_envelope(a,beta);
+            alpha_->visit_lower_sources(a,first,last,[&](int link,int) {
+              add_alpha(link,alpha_links[link].pair);
+            });
+            beta_graph.visit_lower_sources(beta,first,last,[&](int link,int) {
+              add_beta(link,beta_links[link].pair);
+            });
+          }
         } else {
           for (int link=0;link<alpha_links.size();++link) add_alpha(link,alpha_links[link].pair);
           for (int link=0;link<beta_links.size();++link) add_beta(link,beta_links[link].pair);
@@ -438,7 +452,7 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
             try {
               const auto begin=tick();
               Eigen::Map<Eigen::MatrixXd> values(workspace.get(),n_halo,n_columns*width);
-              request.response(columns,halo,values);
+              request.response(columns,halo,values,source_read);
               read_time+=seconds(begin,tick());
               source_columns+=n_columns;
               source_elements+=panel_size;
@@ -458,7 +472,7 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
               try {
                 const auto begin = tick();
                 Eigen::Map<Eigen::MatrixXd> values(workspace.get(),n_halo,n_columns*width);
-                state(columns,halo,values);
+                state(columns,halo,values,source_read);
                 const double elapsed=seconds(begin,tick());
                 read_time += elapsed;
                 compute_time -= elapsed;
@@ -650,7 +664,7 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
         "gram_extent=%d,gram_scratch_bytes=%zu,workspace_reused=%d,"
         "workspace_allocations=%zu,workspace_bytes=%zu,"
         "restricted_channels=%d,source_channels=%zu,channel_kernel_bytes=%zu,"
-        "boundary_builds=%zu,boundary_replays=%zu,boundary_bytes=%zu,unindexed_exchange_checks=%zu,exchange_row_products=%zu,bulk_targets=%zu,rhs_width=%d,responses=%zu,projected_image=%d,channel_products=%.0Lf,unrestricted_channel_products=%.0Lf\n",
+        "boundary_builds=%zu,boundary_replays=%zu,boundary_bytes=%zu,unindexed_exchange_checks=%zu,avoided_exchange_row_products=%zu,bulk_targets=%zu,rhs_width=%d,responses=%zu,projected_image=%d,channel_products=%.0Lf,unrestricted_channel_products=%.0Lf\n",
         batches, source_columns, source_elements, peak_payload,
         prepare_time, read_time, compute_time, write_time, scatter_time, targets, exchange_parity,
         unsupported_targets * static_cast<std::size_t>(width) *
@@ -660,7 +674,7 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
         static_cast<int>(workspace.reused()),workspace.allocations(),workspace.bytes(),
         static_cast<int>(restricted_channels),source_channels,restricted_channels ? kernel_bytes:0,
         boundary_builds,boundary_replays,schedule_->bytes(),
-        unindexed_exchange_checks,exchange_row_products,bulk_targets,width,requests.size(),
+        unindexed_exchange_checks,avoided_exchange_row_products,bulk_targets,width,requests.size(),
         static_cast<int>(projected_image),projected_products,full_products);
   std::vector<DirectCiIntegralAdjoint> results(requests.size());
   if (collect_integrals) for (std::size_t r=0;r<requests.size();++r)

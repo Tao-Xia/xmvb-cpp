@@ -257,7 +257,7 @@ void check_product_tiles(int parity,bool covalent,std::size_t budget,int n=4,boo
       if (!support->contains(a,b)) (*values)(a,v*bs.size()+b)=0.0;
   }
   const auto host_reader=[&](const Matrix& values) -> xmvb::mcscf::DirectCiTileReader {
-    return [&,source=&values](auto betas,auto rows,Eigen::Ref<Matrix> target) {
+    return [&,source=&values](auto betas,auto rows,Eigen::Ref<Matrix> target,xmvb::mcscf::DirectCiRead) {
       for (int b=0;b<betas.size();++b) for (int v=0;v<width;++v) for (int a=0;a<rows.size();++a)
         target(a,b*width+v)=(*source)(rows[a],v*bs.size()+betas[b]);
     };

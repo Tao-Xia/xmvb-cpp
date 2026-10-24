@@ -24,14 +24,14 @@ namespace {
 mcscf::DirectCiTileReader interleaved_reader(
     const mcscf::DirectCiTileReader& reader,int width,int lane) {
   return [&reader,width,lane](const std::vector<int>& betas,
-      const std::vector<int>& rows,Eigen::Ref<Eigen::MatrixXd> values) {
+      const std::vector<int>& rows,Eigen::Ref<Eigen::MatrixXd> values,mcscf::DirectCiRead mode) {
     using View=Eigen::Map<Eigen::MatrixXd,0,Eigen::OuterStride<>>;
     const Eigen::OuterStride<> stride(values.outerStride()*width);
     for (int v=0;v<width;++v)
       if (v!=lane)
         View(values.data()+v*values.outerStride(),rows.size(),betas.size(),stride).setZero();
     View selected(values.data()+lane*values.outerStride(),rows.size(),betas.size(),stride);
-    reader(betas,rows,selected);
+    reader(betas,rows,selected,mode);
   };
 }
 
@@ -313,7 +313,7 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
       return [&,family,position=std::vector<int>(n_unique_alpha_,-1),
           tiles=std::vector<const detail::ColumnTile*>(panels,nullptr)](
           const std::vector<int>& betas,const std::vector<int>& rows,
-          Eigen::Ref<Eigen::MatrixXd> values) mutable {
+          Eigen::Ref<Eigen::MatrixXd> values,mcscf::DirectCiRead mode) mutable {
         const bool input_family=family==1 || family==3;
         if (resident_input && (!cached || input_family)) {
           const auto& image=family==3 ? ci_image:(family==1 ? direction_image:primal_image);
@@ -338,7 +338,7 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
             else for (int a=0;a<static_cast<int>(rows.size());++a)
                 values(a,col)=tile.values(first+rows[a],component);
           } else {
-            values.col(col).setZero();
+            if (mode==mcscf::DirectCiRead::Dense) values.col(col).setZero();
             for (int k=first;k<last;++k) {
               const int a=full_rows ? tile.pattern->rows[k]:position[tile.pattern->rows[k]];
               if (a>=0) values(a,col)=tile.values(k,component);
@@ -361,7 +361,7 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
               rows.size()*betas.size());
           cooperative_openmp_for(betas.size(),workers,[&](std::ptrdiff_t col) {
             const int panel=betas[col]/extent;
-            if (!reachable_mask[panel]) values.col(col).setZero();
+            if (!reachable_mask[panel]) { if (mode==mcscf::DirectCiRead::Dense) values.col(col).setZero(); }
             else copy_column(col,input_family ? *tiles[panel]:
                 state.product_images->states[state_id][panel]);
           });
@@ -372,7 +372,7 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
           const int panel=betas[j]/extent;
           int end=j+1;
           while (end<static_cast<int>(betas.size()) && betas[end]/extent==panel) ++end;
-          if (!reachable_mask[panel]) { values.middleCols(j,end-j).setZero(); j=end; continue; }
+          if (!reachable_mask[panel]) { if (mode==mcscf::DirectCiRead::Dense) values.middleCols(j,end-j).setZero(); j=end; continue; }
           const auto& tile=input.get(panel);
           const int workers=bounded_openmp_thread_count(cooperative_openmp_thread_count(),end-j);
           cooperative_openmp_for(end-j,workers,[&](std::ptrdiff_t index) {
@@ -405,15 +405,15 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
     const auto q_reader=joint ? reader(3):mcscf::DirectCiTileReader{};
     const auto q_column=joint ? column(3):mcscf::DirectCiColumnReader{};
     const mcscf::DirectCiTileReader read=[&](const std::vector<int>& betas,
-        const std::vector<int>& rows,Eigen::Ref<Eigen::MatrixXd> values) {
-      if (cached) { dy(betas,rows,values); return; }
+        const std::vector<int>& rows,Eigen::Ref<Eigen::MatrixXd> values,mcscf::DirectCiRead mode) {
+      if (cached) { dy(betas,rows,values,mode); return; }
       using View=Eigen::Map<Eigen::MatrixXd,0,Eigen::OuterStride<>>;
       View primal(values.data(),rows.size(),betas.size(),Eigen::OuterStride<>(values.outerStride()*width));
-      y(betas,rows,primal);
+      y(betas,rows,primal,mode);
       if (tangent) {
         View direction(values.data()+values.outerStride(),rows.size(),betas.size(),
             Eigen::OuterStride<>(values.outerStride()*width));
-        dy(betas,rows,direction);
+        dy(betas,rows,direction,mode);
       }
     };
     const auto right=interleaved_reader(y,sigma_width,tangent && !cached ? 1:0);
@@ -786,15 +786,15 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
       Eigen::MatrixXd values,directions;
       if (!tangent || (!cached && delta_upper) || capture) {
         values.resize(n_unique_alpha_,count);
-        y(betas,all_rows,values);
+        y(betas,all_rows,values,mcscf::DirectCiRead::Dense);
       }
       if (tangent) directions.resize(n_unique_alpha_,(joint ? 2:1)*count);
       workspace::Temporary values_temporary(sizeof(double)*values.size());
       workspace::Temporary directions_temporary(sizeof(double)*directions.size());
       auto dv=directions.leftCols(tangent ? count:0);
       auto dq=directions.rightCols(joint ? count:0);
-      if (tangent) dy(betas,all_rows,dv);
-      if (joint) q_reader(betas,all_rows,dq);
+      if (tangent) dy(betas,all_rows,dv,mcscf::DirectCiRead::Dense);
+      if (joint) q_reader(betas,all_rows,dq,mcscf::DirectCiRead::Dense);
       if (weight!=0 && tangent) {
           // D(R,Z)=D(Z,R)^T: both accepted cotangents share the generated
           // Z panel and one spin-link traversal, without unpacking R first.

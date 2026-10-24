@@ -31,9 +31,14 @@ class DirectCiSigmaAction;
  */
 using DirectCiColumnAccumulator = std::function<void(int,int,int,int,double*,const int*,int)>;
 
-/** @brief Generated coefficient slab and immediately consumed sigma-column callbacks. */
+/** @brief Dense consumers require explicit zeros; Supported consumers promise
+ * not to read outside the producer's exact structural source support.
+ * Supported reads may leave those unused slots untouched, without changing
+ * the rectangular workspace or introducing compact-index lookups.
+ */
+enum class DirectCiRead { Dense, Supported };
 using DirectCiTileReader = std::function<void(const std::vector<int>&,
-    const std::vector<int>&, Eigen::Ref<Eigen::MatrixXd>)>;
+    const std::vector<int>&, Eigen::Ref<Eigen::MatrixXd>,DirectCiRead)>;
 using DirectCiTileWriter = std::function<void(const std::vector<int>&,
     const std::vector<int>&, const DirectCiColumnAccumulator&)>;
 

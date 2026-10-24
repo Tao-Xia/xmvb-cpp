@@ -5,6 +5,7 @@
 #include <cmath>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <span>
 #include <stdexcept>
@@ -1463,7 +1464,7 @@ void check_input_columns() {
   },[&](int) {return 2*width*sizeof(double)+4*sizeof(int);});
   const std::vector<int> betas{0,3,6,9},rows{0,1,3,5,6};
   Eigen::MatrixXd actual(rows.size(),betas.size()*width);
-  const auto read=[&] { input.read(betas,rows,actual); };
+  const auto read=[&] { input.read(betas,rows,actual,true); };
   read();
   require(generated==std::vector<int>({0,3,9}),"reader generated an unrequested or strictly zero beta column");
   const auto check=[&] {
@@ -1489,6 +1490,14 @@ void check_input_columns() {
       "completed input column was not released");
   input.release(3);
   require(input.cache().releases==1,"an absent column was released twice");
+  actual.setConstant(-999.0);
+  input.read(betas,rows,actual,false);
+  for (int b=0;b<static_cast<int>(betas.size());++b)
+    for (int v=0;v<width;++v) for (int a=0;a<static_cast<int>(rows.size());++a) {
+      const bool present=support[betas[b]] && (rows[a]==betas[b]%n_alpha || rows[a]==(betas[b]+2)%n_alpha);
+      require(actual(a,b*width+v)==(present ? value(betas[b],rows[a],v):-999.0),
+          "supported halo read wrote an unused zero slot or missed a source");
+    }
 }
 
 void check_indexed_halo() {
@@ -1521,12 +1530,18 @@ void check_indexed_halo() {
   },[&](int) {return bytes;});
   const std::vector<int> betas{0,2,1},rows{0,1,63,64,65,127,128,136};
   Eigen::MatrixXd actual(rows.size(),betas.size()*width);
-  input.read(betas,rows,actual);
+  input.read(betas,rows,actual,true);
   for (int b=0;b<static_cast<int>(betas.size());++b)
     for (int v=0;v<width;++v) for (int a=0;a<static_cast<int>(rows.size());++a)
       require(actual(a,b*width+v)==(rows[a]%3==1 ? 0.0:1000*betas[b]+100*v+rows[a]+1),
           "indexed halo changed a coefficient across eviction or RHS packing");
   require(input.cache().evictions==2,"indexed halo did not preserve bounded eviction");
+  actual.setConstant(-999.0);
+  input.read(betas,rows,actual,false);
+  for (int b=0;b<static_cast<int>(betas.size());++b)
+    for (int v=0;v<width;++v) for (int a=0;a<static_cast<int>(rows.size());++a)
+      require(actual(a,b*width+v)==(rows[a]%3==1 ? -999.0:1000*betas[b]+100*v+rows[a]+1),
+          "supported indexed halo overwrote an absent coordinate");
 }
 
 void check_exterior_team() {
@@ -1857,7 +1872,7 @@ void check_sigma_columns(const Fixture& fixture, int width) {
       carrier(i, j) = std::sin(0.14 * (i + 2) * (j + 1));
   Eigen::MatrixXd tiled = Eigen::MatrixXd::Zero(carrier.rows(), carrier.cols());
   const auto read = [&](const std::vector<int>& betas, const std::vector<int>& alpha_rows,
-                        Eigen::Ref<Eigen::MatrixXd> block) {
+                        Eigen::Ref<Eigen::MatrixXd> block,xmvb::mcscf::DirectCiRead mode) {
         for (int beta_local = 0; beta_local < static_cast<int>(betas.size()); ++beta_local)
           for (int vector = 0; vector < width; ++vector)
             for (int row = 0; row < static_cast<int>(alpha_rows.size()); ++row)
@@ -1882,10 +1897,10 @@ void check_sigma_columns(const Fixture& fixture, int width) {
   std::vector<bool> released(n_beta,false);
   int release_calls=0;
   sigma.apply_tiled(width,
-      [&](const auto& betas,const auto& rows,Eigen::Ref<Eigen::MatrixXd> block) {
+      [&](const auto& betas,const auto& rows,Eigen::Ref<Eigen::MatrixXd> block,xmvb::mcscf::DirectCiRead mode) {
         for (const int beta:betas)
           require(!released[beta],"sigma read a released input column");
-        read(betas,rows,block);
+        read(betas,rows,block,mode);
       },[&](const auto& betas,const auto& rows,const auto& accumulate) {
         for (const int beta:betas)
           require(!released[beta],"sigma wrote a released output column");
@@ -1910,7 +1925,7 @@ void check_sigma_columns(const Fixture& fixture, int width) {
           "collecting the generated integral adjoint changed sigma");
   Eigen::MatrixXd right=carrier.array().cos().matrix();
   const xmvb::mcscf::DirectCiTileReader read_right = [&](const std::vector<int>& betas,
-      const std::vector<int>& rows,Eigen::Ref<Eigen::MatrixXd> values) {
+      const std::vector<int>& rows,Eigen::Ref<Eigen::MatrixXd> values,xmvb::mcscf::DirectCiRead mode) {
     for (int j=0;j<static_cast<int>(betas.size());++j)
       for (int v=0;v<width;++v)
         for (int a=0;a<static_cast<int>(rows.size());++a)
@@ -1933,9 +1948,9 @@ void check_sigma_columns(const Fixture& fixture, int width) {
     ++completed_writes;
   };
   const xmvb::mcscf::DirectCiTileReader next_read=[&](const auto& betas,
-      const auto& rows,Eigen::Ref<Eigen::MatrixXd> values) {
+      const auto& rows,Eigen::Ref<Eigen::MatrixXd> values,xmvb::mcscf::DirectCiRead mode) {
     require(completed_writes>0,"next response read before its preceding writer");
-    read_right(betas,rows,values);
+    read_right(betas,rows,values,mode);
   };
   const xmvb::mcscf::DirectCiTileRequest sequence[]={
       {read,ordered_add},{next_read,{}},{read,ordered_add}};
@@ -1951,9 +1966,9 @@ void check_sigma_columns(const Fixture& fixture, int width) {
     tiled.setZero();
     std::fill(released.begin(),released.end(),false);
     const auto guarded_read=[&](const auto& betas,const auto& rows,
-        Eigen::Ref<Eigen::MatrixXd> values) {
+        Eigen::Ref<Eigen::MatrixXd> values,xmvb::mcscf::DirectCiRead mode) {
       for (const int b:betas) require(!released[b],"response read after final release");
-      read(betas,rows,values);
+      read(betas,rows,values,mode);
     };
     const auto guarded_write=[&](const auto& betas,const auto& rows,const auto& accumulate) {
       for (const int b:betas) require(!released[b],"temporal writer after final release");
@@ -2069,7 +2084,7 @@ void check_sigma_columns(const Fixture& fixture, int width) {
     bool adjoint_read_failed = false;
     try {
       sigma.apply_tiled(width,
-          [](const std::vector<int>&, const std::vector<int>&, Eigen::Ref<Eigen::MatrixXd>) {
+          [](const std::vector<int>&, const std::vector<int>&, Eigen::Ref<Eigen::MatrixXd>,xmvb::mcscf::DirectCiRead) {
             throw std::runtime_error("reader failure");
           }, add);
     } catch (const std::runtime_error& error) {
@@ -2086,7 +2101,7 @@ void check_sigma_columns(const Fixture& fixture, int width) {
     }
     try {
       sigma.apply_tiled_with_adjoint(width,read,{},
-          [](const std::vector<int>&,const std::vector<int>&,Eigen::Ref<Eigen::MatrixXd>) {
+          [](const std::vector<int>&,const std::vector<int>&,Eigen::Ref<Eigen::MatrixXd>,xmvb::mcscf::DirectCiRead) {
             throw std::runtime_error("state reader failure");
           });
     } catch (const std::runtime_error& error) {
@@ -2097,7 +2112,7 @@ void check_sigma_columns(const Fixture& fixture, int width) {
     bool next_read_failed=false;
     const xmvb::mcscf::DirectCiTileRequest failing_sequence[]={
       {read,add},
-      {[](const auto&,const auto&,Eigen::Ref<Eigen::MatrixXd>) {
+      {[](const auto&,const auto&,Eigen::Ref<Eigen::MatrixXd>,xmvb::mcscf::DirectCiRead) {
         throw std::runtime_error("next response reader failure");
       },add}};
     try {
@@ -2781,10 +2796,13 @@ void check_supported_sigma(int n, int n_alpha, int n_beta_electrons, int width,
   Eigen::MatrixXd actual = Eigen::MatrixXd::Zero(na, width * nb);
   const xmvb::mcscf::DirectCiTileReader read =
       [&](const std::vector<int>& betas, const std::vector<int>& rows,
-          Eigen::Ref<Eigen::MatrixXd> values) {
+          Eigen::Ref<Eigen::MatrixXd> values,xmvb::mcscf::DirectCiRead mode) {
+        if (mode==xmvb::mcscf::DirectCiRead::Supported)
+          values.setConstant(std::numeric_limits<double>::quiet_NaN());
         for (int beta_local = 0; beta_local < static_cast<int>(betas.size()); ++beta_local)
           for (int v = 0; v < width; ++v)
             for (int i = 0; i < static_cast<int>(rows.size()); ++i)
+              if (mode==xmvb::mcscf::DirectCiRead::Dense || support.contains(rows[i],betas[beta_local]))
               values(i, beta_local * width + v) =
                   carrier(rows[i], v * nb + betas[beta_local]);
       };
@@ -2850,10 +2868,13 @@ void check_supported_sigma(int n, int n_alpha, int n_beta_electrons, int width,
           state_carrier(a, v * nb + b) = std::cos(0.23 * (a + 2) * (b + v + 1));
   const xmvb::mcscf::DirectCiTileReader read_state =
       [&](const std::vector<int>& betas, const std::vector<int>& rows,
-          Eigen::Ref<Eigen::MatrixXd> values) {
+          Eigen::Ref<Eigen::MatrixXd> values,xmvb::mcscf::DirectCiRead mode) {
+        if (mode==xmvb::mcscf::DirectCiRead::Supported)
+          values.setConstant(std::numeric_limits<double>::quiet_NaN());
         for (int beta_local = 0; beta_local < static_cast<int>(betas.size()); ++beta_local)
           for (int v = 0; v < width; ++v)
             for (int i = 0; i < static_cast<int>(rows.size()); ++i)
+              if (mode==xmvb::mcscf::DirectCiRead::Dense || support.contains(rows[i],betas[beta_local]))
               values(i, beta_local * width + v) =
                   state_carrier(rows[i], v * nb + betas[beta_local]);
       };
@@ -2892,7 +2913,7 @@ void check_supported_sigma(int n, int n_alpha, int n_beta_electrons, int width,
       Eigen::MatrixXd quotient = Eigen::MatrixXd::Zero(na, width * nb);
       const xmvb::mcscf::DirectCiTileReader parity_read =
           [&](const std::vector<int>& betas, const std::vector<int>& rows,
-              Eigen::Ref<Eigen::MatrixXd> values) {
+              Eigen::Ref<Eigen::MatrixXd> values,xmvb::mcscf::DirectCiRead mode) {
             for (int j = 0; j < static_cast<int>(betas.size()); ++j)
               for (int v = 0; v < width; ++v)
                 for (int i = 0; i < static_cast<int>(rows.size()); ++i)
@@ -3613,7 +3634,7 @@ void benchmark_tile_adjoint(bool oracle) {
     return support.contains(a,b) ? scale*std::sin(0.013*(a+1)*(b+2)) : 0.0;
   };
   const auto read=[&](const std::vector<int>& betas,const std::vector<int>& rows,
-      Eigen::Ref<Eigen::MatrixXd> values) {
+      Eigen::Ref<Eigen::MatrixXd> values,xmvb::mcscf::DirectCiRead mode) {
     for (int j=0;j<static_cast<int>(betas.size());++j)
       for (int a=0;a<static_cast<int>(rows.size());++a)
         values(a,j)=coefficient(rows[a],betas[j]);
@@ -3951,7 +3972,7 @@ void benchmark_temporal12() {
       -> xmvb::mcscf::DirectCiTileReader {
     return [&, source_ptr = &source, calls_ptr = &calls](
         const std::vector<int>& betas, const std::vector<int>& rows,
-        Eigen::Ref<Eigen::MatrixXd> values) {
+        Eigen::Ref<Eigen::MatrixXd> values,xmvb::mcscf::DirectCiRead mode) {
       ++*calls_ptr;
       const int workers = xmvb::coarse_openmp_thread_count(
           xmvb::cooperative_openmp_thread_count(), rows.size() * betas.size());
