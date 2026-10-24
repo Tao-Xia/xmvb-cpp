@@ -56,6 +56,9 @@ public:
       } else missing.push_back(beta);
     }
     schedule.stop();
+    bool identity_rows=rows.size()==positions_.size();
+    if (identity_rows) for (int row=0;row<static_cast<int>(rows.size());++row)
+      if (rows[row]!=row) { identity_rows=false;break; }
     const auto copy=[&](std::span<const int> keys,const auto& tile_at) {
       profiling::ScopedPhase phase(profiling::Phase::CiCacheCopy);
       const int workers=cooperative_openmp_thread_count();
@@ -63,9 +66,18 @@ public:
         const int j=packed/width_,v=packed%width_;
         const auto& tile=tile_at(j);
         auto target=values.col(columns_[keys[j]]*width_+v);
-        if (tile.pattern->full) {
+        if ((tile.pattern->full || tile.values.rows()==static_cast<Eigen::Index>(positions_.size())) && identity_rows) {
+          target=tile.values.col(v);
+        } else if (tile.pattern->full) {
           for (int row=0;row<static_cast<int>(rows.size());++row)
             target[row]=tile.values(rows[row],v);
+        } else if (!tile.pattern->row_words.empty() && rows.size()<static_cast<std::size_t>(tile.values.rows())) {
+          // Gather only requested halo rows. The old zero/scatter read the
+          // entire cached support even when most rows were outside the halo.
+          for (int row=0;row<static_cast<int>(rows.size());++row) {
+            const int source=tile.pattern->indexed_row(rows[row]);
+            target[row]=source<0 ? 0.0:tile.values(source,v);
+          }
         } else {
           target.setZero();
           for (int i=0;i<tile.values.rows();++i) {

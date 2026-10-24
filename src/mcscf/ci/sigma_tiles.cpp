@@ -517,9 +517,10 @@ std::vector<DirectCiIntegralAdjoint> DirectCiSigmaAction::contract_tiled(
             if (request_id+1==requests.size() && release && !released_columns.empty())
               release(released_columns);
             write_time += seconds(write_start, tick());
-            if (timing && (batches==1 || batches%256==0))
-              std::fprintf(stderr,"XMVB_TILE_PROGRESS,batches=%zu,targets=%zu,prepare=%.9f,read=%.9f,compute=%.9f,write=%.9f\n",
-                  batches,targets,prepare_time,read_time,compute_time,write_time);
+            if (timing && ((batches&(batches-1))==0 || batches%256==0))
+              std::fprintf(stderr,"XMVB_TILE_PROGRESS,batches=%zu,targets=%zu,prepare=%.9f,read=%.9f,compute=%.9f,write=%.9f,slab_bytes=%zu,temporary_bytes=%zu\n",
+                  batches,targets,prepare_time,read_time,compute_time,write_time,
+                  workspace.bytes(),workspace::temporary_bytes());
           } catch (...) { failure = std::current_exception(); }
         }
         if (failure) break;

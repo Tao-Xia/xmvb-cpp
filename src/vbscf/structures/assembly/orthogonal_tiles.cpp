@@ -137,6 +137,7 @@ StructureResponseSweep StructureAction::contract_product_tiles(
       support->append_column_rows(beta,rows);
       pattern->offsets[1]=rows.size();
       pattern->rows=Eigen::Map<const Eigen::VectorXi>(rows.data(),rows.size());
+      pattern->index_rows(n_unique_alpha_);
     }
     patterns[beta]=pattern;
     return pattern;
@@ -289,18 +290,6 @@ StructureResponseSweep StructureAction::contract_product_tiles(
       else alpha_transform.apply_supported_left(&values,
           {pattern.offsets.data(),static_cast<std::size_t>(pattern.offsets.size())},
           {pattern.rows.data(),static_cast<std::size_t>(pattern.rows.size())});
-      const bool need_overlap=std::any_of(betas.begin(),betas.end(),
-          [&](int beta) { return !overlap_consumed[beta]; });
-      if (need_overlap) {
-        ++result.tiles.overlap_projections;
-        Eigen::MatrixXd overlap=values;
-        workspace::Temporary overlap_temporary(sizeof(double)*overlap.size());
-        for (int b=0;b<cols;++b)
-          if (overlap_consumed[betas[b]])
-            for (int v=0;v<width;++v) overlap.col(v*cols+b).setZero();
-        project_pattern(pattern,rows,overlap,m_products);
-        for (const int beta:betas) overlap_consumed[beta]=true;
-      }
       std::vector<ColumnTile> tiles(cols);
       cooperative_openmp_for(cols,workers,[&](std::ptrdiff_t b) {
         const int size=column_patterns[b]->offsets[1];
@@ -309,6 +298,18 @@ StructureResponseSweep StructureAction::contract_product_tiles(
           for (int a=0;a<size;++a)
             tiles[b].values(a,v)=values(tiles[b].pattern->full ? a:tiles[b].pattern->rows[a],v*cols+b);
       });
+      // Packed Y is now owned by the input tiles. Its dense preparation
+      // panel can become T_alpha^T Y in place; no overlap clone is needed.
+      const bool need_overlap=std::any_of(betas.begin(),betas.end(),
+          [&](int beta) { return !overlap_consumed[beta]; });
+      if (need_overlap) {
+        ++result.tiles.overlap_projections;
+        for (int b=0;b<cols;++b)
+          if (overlap_consumed[betas[b]])
+            for (int v=0;v<width;++v) values.col(v*cols+b).setZero();
+        project_pattern(pattern,rows,values,m_products);
+        for (const int beta:betas) overlap_consumed[beta]=true;
+      }
       return tiles;
     },[&](int beta) {
       const auto pattern=pattern_at(beta);
@@ -346,6 +347,9 @@ StructureResponseSweep StructureAction::contract_product_tiles(
         else for (int a=0;a<tile.values.rows();++a)
           image(tile.pattern->rows[a],packed)=tile.values(a,v);
       });
+      // All compact values have been consumed. Keep only their shared
+      // patterns while generating factors and applying the reverse map.
+      completed_images.clear();completed_bytes=0;
       const auto rows=sample_factors(completed_betas);
       project_pattern(pattern,rows,image,h_products);
       completed_images.clear(); completed_betas.clear();completed_bytes=0;

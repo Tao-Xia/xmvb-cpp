@@ -1490,6 +1490,44 @@ void check_input_columns() {
   require(input.cache().releases==1,"an absent column was released twice");
 }
 
+void check_indexed_halo() {
+  constexpr int n_alpha=137,width=3;
+  using xmvb::vb::detail::ColumnPattern;
+  using xmvb::vb::detail::ColumnTile;
+  auto pattern=std::make_shared<ColumnPattern>();
+  std::vector<int> supported;
+  for (int a=0;a<n_alpha;++a) if (a%3!=1) supported.push_back(a);
+  pattern->rows=Eigen::Map<const Eigen::VectorXi>(supported.data(),supported.size());
+  pattern->offsets.resize(2);pattern->offsets<<0,supported.size();
+  pattern->index_rows(n_alpha);
+  for (int a=0;a<n_alpha;++a) {
+    const auto it=std::lower_bound(supported.begin(),supported.end(),a);
+    const int expected=it!=supported.end() && *it==a ? it-supported.begin():-1;
+    require(pattern->indexed_row(a)==expected,"halo support rank crossed a word boundary");
+  }
+  const auto bytes=pattern->bytes()+supported.size()*width*sizeof(double);
+  const std::vector<std::uint8_t> support(3,1);
+  xmvb::vb::detail::InputColumns input(n_alpha,width,1,bytes,support,
+      [&](std::span<const int> betas) {
+    std::vector<ColumnTile> tiles;
+    for (const int beta:betas) {
+      Eigen::MatrixXd values(supported.size(),width);
+      for (int v=0;v<width;++v) for (int a=0;a<values.rows();++a)
+        values(a,v)=1000*beta+100*v+supported[a]+1;
+      tiles.emplace_back(pattern,std::move(values));
+    }
+    return tiles;
+  },[&](int) {return bytes;});
+  const std::vector<int> betas{0,2,1},rows{0,1,63,64,65,127,128,136};
+  Eigen::MatrixXd actual(rows.size(),betas.size()*width);
+  input.read(betas,rows,actual);
+  for (int b=0;b<static_cast<int>(betas.size());++b)
+    for (int v=0;v<width;++v) for (int a=0;a<static_cast<int>(rows.size());++a)
+      require(actual(a,b*width+v)==(rows[a]%3==1 ? 0.0:1000*betas[b]+100*v+rows[a]+1),
+          "indexed halo changed a coefficient across eviction or RHS packing");
+  require(input.cache().evictions==2,"indexed halo did not preserve bounded eviction");
+}
+
 void check_exterior_team() {
   const auto strings=complete_strings(8,4);
   Eigen::MatrixXd upper=Eigen::MatrixXd::Identity(8,8),delta=Eigen::MatrixXd::Zero(8,8);
@@ -3833,6 +3871,7 @@ int main(int argc, char** argv) {
       check_mixed_exchange_space();
       check_column_cache_allocation_order();
       check_input_columns();
+      check_indexed_halo();
       check_exterior_team();
       check_sigma_columns(make_fixture(5, 2, 1), 3);
       check_sigma_columns(make_fixture(4, 2, 2), 3);

@@ -1,6 +1,8 @@
 #pragma once
 
 #include <algorithm>
+#include <bit>
+#include <cstdint>
 #include <initializer_list>
 #include <memory>
 #include <utility>
@@ -35,8 +37,39 @@ struct ColumnPattern {
   bool full=false;
   Eigen::VectorXi offsets;
   Eigen::VectorXi rows;
+  /** Single-column rank index, charged to the same bounded panel cache. */
+  std::vector<std::uint64_t> row_words;
+  std::vector<int> row_ranks;
   int columns() const noexcept { return offsets.size()-1; }
-  std::size_t bytes() const noexcept { return sizeof(int)*(offsets.size()+rows.size()); }
+  std::size_t bytes() const noexcept {
+    return sizeof(int)*(offsets.size()+rows.size()+row_ranks.capacity())+
+        sizeof(std::uint64_t)*row_words.capacity();
+  }
+
+  /** @brief Index exact support once; never store a product-sized dense map. */
+  void index_rows(int n_alpha) {
+    if (full || rows.size()==0 || rows.size()==n_alpha) return;
+    const auto words=(static_cast<std::size_t>(n_alpha)+63)/64;
+    // A tiny arbitrary selection keeps its existing sorted-row index. Never
+    // spend more on acceleration metadata than on those exact row indices.
+    if (words*(sizeof(std::uint64_t)+sizeof(int))>
+        static_cast<std::size_t>(rows.size())*sizeof(int)) return;
+    row_words.assign(words,0);
+    for (const int row:rows) row_words[row/64]|=std::uint64_t{1}<<(row%64);
+    row_ranks.resize(row_words.size());
+    int rank=0;
+    for (std::size_t word=0;word<row_words.size();++word) {
+      row_ranks[word]=rank;
+      rank+=std::popcount(row_words[word]);
+    }
+  }
+
+  /** @brief Exact compact row address; a missing support entry is zero. */
+  int indexed_row(int row) const noexcept {
+    const auto word=row_words[row/64];
+    const auto bit=std::uint64_t{1}<<(row%64);
+    return word&bit ? row_ranks[row/64]+std::popcount(word&(bit-1)):-1;
+  }
 };
 
 /** @brief Values only on the symbolic support; RHSs share the row indices. */
