@@ -10,9 +10,9 @@
 namespace xmvb::vb {
 
 enum class OrbitalSupportBlockType {
-  None,
-  Orb,
-  ActOrb,
+    None,
+    Orb,
+    ActOrb,
 };
 
 /**
@@ -23,8 +23,8 @@ enum class OrbitalSupportBlockType {
  * block-specific formatting when needed.
  */
 struct InputDeckTokenLine {
-  std::string raw_line;
-  std::vector<std::string> tokens;
+    std::string raw_line;
+    std::vector<std::string> tokens;
 };
 
 /**
@@ -36,8 +36,8 @@ struct InputDeckTokenLine {
  * points are always length-3 objects rather than dense matrices.
  */
 struct InputDeckGeometryAtom {
-  std::string element_symbol;
-  std::array<double, 3> coordinates{0.0, 0.0, 0.0};
+    std::string element_symbol;
+    std::array<double, 3> coordinates{0.0, 0.0, 0.0};
 };
 
 /**
@@ -48,9 +48,9 @@ struct InputDeckGeometryAtom {
  * and `FRGTYP=SAO` interpret the body differently.
  */
 struct InputDeckFragmentBlock {
-  bool present = false;
-  std::vector<int> declared_fragment_sizes;
-  std::vector<InputDeckTokenLine> entries;
+    bool present = false;
+    std::vector<int> declared_fragment_sizes;
+    std::vector<InputDeckTokenLine> entries;
 };
 
 /**
@@ -63,9 +63,9 @@ struct InputDeckFragmentBlock {
  * therefore branch on `block_type` instead of assuming a single format.
  */
 struct InputDeckOrbitalSupportBlock {
-  OrbitalSupportBlockType block_type = OrbitalSupportBlockType::None;
-  std::vector<int> declared_support_sizes;
-  std::vector<InputDeckTokenLine> entries;
+    OrbitalSupportBlockType block_type = OrbitalSupportBlockType::None;
+    std::vector<int> declared_support_sizes;
+    std::vector<InputDeckTokenLine> entries;
 };
 
 /**
@@ -76,8 +76,8 @@ struct InputDeckOrbitalSupportBlock {
  * coefficient representation.
  */
 struct InputDeckGuessBlock {
-  bool present = false;
-  std::vector<std::string> raw_lines;
+    bool present = false;
+    std::vector<std::string> raw_lines;
 };
 
 /**
@@ -88,16 +88,15 @@ struct InputDeckGuessBlock {
  * `$ORB/$ACTORB`, and `$GUS`.
  */
 struct InputDeck {
-  InputDeckMetadata metadata;
-  std::vector<InputDeckGeometryAtom> geometry_atoms;
-  InputDeckFragmentBlock fragment_block;
-  InputDeckOrbitalSupportBlock orbital_support_block;
-  InputDeckGuessBlock guess_block;
-  bool has_explicit_raw_structures = false;
-  RawStructureData explicit_raw_structures;
+    InputDeckMetadata metadata;
+    std::vector<InputDeckGeometryAtom> geometry_atoms;
+    InputDeckFragmentBlock fragment_block;
+    InputDeckOrbitalSupportBlock orbital_support_block;
+    InputDeckGuessBlock guess_block;
+    bool has_explicit_raw_structures = false;
+    RawStructureData explicit_raw_structures;
 };
 
-InputDeck parse_input_deck_model(
-    const std::string& input_file_path);
+InputDeck parse_input_deck_model(const std::string& input_file_path);
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

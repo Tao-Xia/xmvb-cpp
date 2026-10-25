@@ -11,8 +11,8 @@
 namespace xmvb::vb {
 
 struct ActiveSpaceOrbitalBackpropagationDiagnostics {
-  Eigen::MatrixXd original_orbital_gradient;
-  std::vector<double> orbital_value_gradient;
+    Eigen::MatrixXd original_orbital_gradient;
+    std::vector<double> orbital_value_gradient;
 };
 
 /**
@@ -35,8 +35,8 @@ struct ActiveSpaceOrbitalBackpropagationDiagnostics {
  * a gradient on normalized coefficients is not interchangeable with this one.
  */
 class ActiveSpaceOrbitalBackpropagator {
-public:
-  /**
+  public:
+    /**
    * @brief Backpropagates orbital-preparation adjoints from matrix views.
    *
    * The `active_auxiliary_gradient` input is the adjoint of the active
@@ -49,13 +49,13 @@ public:
    * @param orbital_preparation_result Cached preparer result for the same orbital point.
    * @return ActiveSpaceOrbitalBackpropagationResult Gradient with respect to `orbital_value_table`.
    */
-  ActiveSpaceOrbitalBackpropagationResult backpropagate(
-      const Eigen::Ref<const Eigen::MatrixXd>& active_auxiliary_gradient,
-      const Eigen::Ref<const Eigen::MatrixXd>& inactive_density_gradient,
-      const OrbitalPreparationInput& input,
-      const OrbitalPreparationResult& orbital_preparation_result) const;
+    ActiveSpaceOrbitalBackpropagationResult
+    backpropagate(const Eigen::Ref<const Eigen::MatrixXd>& active_auxiliary_gradient,
+                  const Eigen::Ref<const Eigen::MatrixXd>& inactive_density_gradient,
+                  const OrbitalPreparationInput& input,
+                  const OrbitalPreparationResult& orbital_preparation_result) const;
 
-  /**
+    /**
    * @brief Returns the cached dense pullback stage and the final raw-slot gradient.
    *
    * This is a diagnostics hook for exact-context HVP validation. It exposes
@@ -63,13 +63,13 @@ public:
    * normalization pullback so callers can compare stage A/B of the orbital
    * backpropagation chain separately.
    */
-  ActiveSpaceOrbitalBackpropagationDiagnostics compute_diagnostics(
-      const Eigen::Ref<const Eigen::MatrixXd>& active_auxiliary_gradient,
-      const Eigen::Ref<const Eigen::MatrixXd>& inactive_density_gradient,
-      const OrbitalPreparationInput& input,
-      const OrbitalPreparationResult& orbital_preparation_result) const;
+    ActiveSpaceOrbitalBackpropagationDiagnostics
+    compute_diagnostics(const Eigen::Ref<const Eigen::MatrixXd>& active_auxiliary_gradient,
+                        const Eigen::Ref<const Eigen::MatrixXd>& inactive_density_gradient,
+                        const OrbitalPreparationInput& input,
+                        const OrbitalPreparationResult& orbital_preparation_result) const;
 
-  /**
+    /**
    * @brief Backpropagates orbital-preparation adjoints from flat column-major buffers.
    *
    * @param active_auxiliary_gradient Column-major `n_basis x n_active` gradient with respect to `T_active`.
@@ -77,11 +77,11 @@ public:
    * @param input Orbital preparation input.
    * @param orbital_preparation_result Cached preparer result for the same orbital point.
    */
-  ActiveSpaceOrbitalBackpropagationResult backpropagate(
-      const std::vector<double>& active_auxiliary_gradient,
-      const std::vector<double>& inactive_density_gradient,
-      const OrbitalPreparationInput& input,
-      const OrbitalPreparationResult& orbital_preparation_result) const;
+    ActiveSpaceOrbitalBackpropagationResult
+    backpropagate(const std::vector<double>& active_auxiliary_gradient,
+                  const std::vector<double>& inactive_density_gradient,
+                  const OrbitalPreparationInput& input,
+                  const OrbitalPreparationResult& orbital_preparation_result) const;
 };
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

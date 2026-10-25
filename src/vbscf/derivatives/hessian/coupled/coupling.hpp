@@ -21,10 +21,10 @@ namespace xmvb::vb {
  * multiplier already has the adjoint sign convention, namely @f$-M_g@f$.
  */
 struct ScaledStructureCoupling {
-  StructureTangent horizontal_forcing;
-  /** Known internal frame A_g in Q_g=C A_g; never inferred from Q_g. */
-  Eigen::MatrixXd gauge_frame;
-  Eigen::MatrixXd gauge_adjoint_multipliers;
+    StructureTangent horizontal_forcing;
+    /** Known internal frame A_g in Q_g=C A_g; never inferred from Q_g. */
+    Eigen::MatrixXd gauge_frame;
+    Eigen::MatrixXd gauge_adjoint_multipliers;
 };
 
 /**
@@ -35,8 +35,8 @@ struct ScaledStructureCoupling {
  * modified.
  * Gauge-only input has an empty horizontal forcing; it remains empty.
  */
-ScaledStructureCoupling scale_equal_weight_structure_coupling(
-    const xmvb::linalg::EqualWeightEigenCoupling& coupling,
-    const std::vector<double>& normalized_state_weights);
+ScaledStructureCoupling
+scale_equal_weight_structure_coupling(const xmvb::linalg::EqualWeightEigenCoupling& coupling,
+                                      const std::vector<double>& normalized_state_weights);
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

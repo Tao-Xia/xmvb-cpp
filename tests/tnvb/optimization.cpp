@@ -83,7 +83,7 @@ struct CrossCheck {
 };
 
 CrossCheck compare_endpoint(xmvb::vb::VbScfInput input,
-    const xmvb::vb::FullDeterminantStructureData& expanded,
+    const xmvb::vb::StructureExpansion& expanded,
     const xmvb::vb::TnVbConfiguration& config,
     const xmvb::vb::ElectronicStateRequest& request,
     const xmvb::tnvb::ElectronicEvaluator& backend) {
@@ -150,10 +150,10 @@ int main(int argc,char** argv) {
     const int k=input.orbital_preparation_input.n_active_orbitals;
     if (k==14 && iterations>200) throw std::invalid_argument("C14 acceptance optimization is limited to 200 steps");
     if (!input.tnvb.enabled || (k!=6 && k!=14) || input.complete_active_space ||
-        loaded.structure_expansion_seconds!=0 || !input.structure_data.alpha_det.empty()) {
+        loaded.structure_expansion_seconds!=0 || !input.structure_data.pair_alpha.empty()) {
       throw std::runtime_error("acceptance optimization requires unexpanded TNVB benzene or C14 input");
     }
-    const auto expanded=xmvb::vb::FullDeterminantStructureExpander{}.expand(loaded.raw_structure_data);
+    const auto expanded=xmvb::vb::StructureExpander{}.expand(loaded.raw_structure_data);
     auto reference_input=input;
     reference_input.tnvb.enabled=false;
     reference_input.structure_data=expanded;

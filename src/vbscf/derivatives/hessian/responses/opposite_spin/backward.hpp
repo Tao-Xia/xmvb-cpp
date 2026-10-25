@@ -11,9 +11,9 @@ namespace xmvb::vb {
 
 /** @brief Wall-clock breakdown of directional opposite-spin channels. */
 struct OppositeSpinBackwardTiming {
-  double packed_gradient_seconds = 0.0;
-  double alpha_overlap_seconds = 0.0;
-  double beta_overlap_seconds = 0.0;
+    double packed_gradient_seconds = 0.0;
+    double alpha_overlap_seconds = 0.0;
+    double beta_overlap_seconds = 0.0;
 };
 
 /**
@@ -24,9 +24,9 @@ struct OppositeSpinBackwardTiming {
  * one-electron contributions accumulated elsewhere.
  */
 struct OppositeSpinBackwardContribution {
-  std::vector<double> active_orbital_overlap_gradient;
-  std::vector<double> packed_active_two_electron_gradient;
-  OppositeSpinBackwardTiming timing;
+    std::vector<double> active_orbital_overlap_gradient;
+    std::vector<double> packed_active_two_electron_gradient;
+    OppositeSpinBackwardTiming timing;
 };
 
 /**
@@ -60,8 +60,7 @@ OppositeSpinBackwardContribution build_opposite_spin_backward_contribution(
  *
  * while the accepted-point same-spin cache payloads stay fixed.
  */
-OppositeSpinBackwardContribution
-build_directional_opposite_spin_backward_contribution(
+OppositeSpinBackwardContribution build_directional_opposite_spin_backward_contribution(
     const SameSpinPairCacheContext& same_spin_pair_cache,
     const SelectedStateDeterminantMatrices& selected_states,
     const SelectedStateDeterminantMatrices& directional_selected_states,
@@ -85,4 +84,4 @@ build_directional_opposite_spin_backward_contribution(
  * only materializes the direction-dependent per-pair payloads needed for one
  * HVP application.
  */
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

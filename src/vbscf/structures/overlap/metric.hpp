@@ -13,14 +13,14 @@ namespace xmvb::vb {
  * fixed orbital chart; a trial chart requires its own instance.
  */
 struct SelectedMetric {
-  explicit SelectedMetric(Eigen::MatrixXd matrix) : overlap(std::move(matrix)) {
-    factor.compute(overlap);
-    if (factor.info() != Eigen::Success)
-      throw std::runtime_error("selected CI metric is not positive definite");
-  }
+    explicit SelectedMetric(Eigen::MatrixXd matrix) : overlap(std::move(matrix)) {
+        factor.compute(overlap);
+        if (factor.info() != Eigen::Success)
+            throw std::runtime_error("selected CI metric is not positive definite");
+    }
 
-  Eigen::MatrixXd overlap;
-  Eigen::LLT<Eigen::MatrixXd> factor;
+    Eigen::MatrixXd overlap;
+    Eigen::LLT<Eigen::MatrixXd> factor;
 };
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

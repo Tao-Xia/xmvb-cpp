@@ -13,7 +13,7 @@ namespace xmvb::vb {
  * inferred from the explicit sparse support table. The returned orbital
  * indices are zero based.
  */
-std::vector<std::vector<int>> detect_orbital_blocks(
-    const OrbitalPreparationInput& orbital_preparation_input);
+std::vector<std::vector<int>>
+detect_orbital_blocks(const OrbitalPreparationInput& orbital_preparation_input);
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

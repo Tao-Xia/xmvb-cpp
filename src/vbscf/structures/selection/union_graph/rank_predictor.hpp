@@ -5,32 +5,30 @@
 namespace xmvb::vb {
 
 enum class UnionGraphRankPredictionReason {
-  SingleComponentExact,
-  ZeroOffblockNoGeneral,
-  ConservativeMultiGeneralRankOne,
-  LowSecondSingular,
-  LowThirdSingular,
-  ConservativeMaxRank,
+    SingleComponentExact,
+    ZeroOffblockNoGeneral,
+    ConservativeMultiGeneralRankOne,
+    LowSecondSingular,
+    LowThirdSingular,
+    ConservativeMaxRank,
 };
 
-const char* union_graph_rank_prediction_reason_name(
-    UnionGraphRankPredictionReason reason);
+const char* union_graph_rank_prediction_reason_name(UnionGraphRankPredictionReason reason);
 
 struct UnionGraphRankPredictorOptions {
-  double zero_rank_offblock_threshold = 0.0;
-  double rank_one_second_singular_threshold = 0.0;
-  double rank_two_third_singular_threshold = 0.0;
-  int max_predicted_rank = -1;
+    double zero_rank_offblock_threshold = 0.0;
+    double rank_one_second_singular_threshold = 0.0;
+    double rank_two_third_singular_threshold = 0.0;
+    int max_predicted_rank = -1;
 };
 
 struct UnionGraphRankPrediction {
-  int predicted_rank_cap = 0;
-  UnionGraphRankPredictionReason reason =
-      UnionGraphRankPredictionReason::SingleComponentExact;
+    int predicted_rank_cap = 0;
+    UnionGraphRankPredictionReason reason = UnionGraphRankPredictionReason::SingleComponentExact;
 };
 
-UnionGraphRankPrediction predict_union_graph_rank_cap(
-    const UnionGraphScreeningSummary& screening_summary,
-    UnionGraphRankPredictorOptions options = {});
+UnionGraphRankPrediction
+predict_union_graph_rank_cap(const UnionGraphScreeningSummary& screening_summary,
+                             UnionGraphRankPredictorOptions options = {});
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

@@ -66,4 +66,4 @@ void accumulate_packed_orbital_pair_map_adjoint_rows(
     const Eigen::Ref<const Eigen::MatrixXd>& dense_active_coefficients,
     Eigen::MatrixXd* dense_active_gradient);
 
-}  // namespace xmvb::integrals
+} // namespace xmvb::integrals

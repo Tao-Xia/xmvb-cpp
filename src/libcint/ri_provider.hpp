@@ -5,11 +5,11 @@
 namespace xmvb::libcint {
 
 struct LibcintRiIntegralProviderOptions {
-  /** Absolute eigenvalue cutoff in unit-radial Cartesian auxiliary AOs.
+    /** Absolute eigenvalue cutoff in unit-radial Cartesian auxiliary AOs.
    * Applied only when the Coulomb metric is not Cholesky positive definite,
    * as in PySCF DF. This is not an orbital/SCF convergence threshold.
    */
-  double metric_eigenvalue_cutoff = 1.0e-7;
+    double metric_eigenvalue_cutoff = 1.0e-7;
 };
 
 /**
@@ -20,15 +20,15 @@ struct LibcintRiIntegralProviderOptions {
  * and returns metric-whitened AO-pair factors.
  */
 class LibcintRiIntegralProvider final : public xmvb::integrals::RiAoFactorizationProvider {
-public:
-  xmvb::integrals::RiAoFactorization build(
-      const xmvb::integrals::LibcintInput& primary_input,
-      const xmvb::integrals::LibcintInput& auxiliary_input,
-      const LibcintRiIntegralProviderOptions& options = {}) const;
+  public:
+    xmvb::integrals::RiAoFactorization
+    build(const xmvb::integrals::LibcintInput& primary_input,
+          const xmvb::integrals::LibcintInput& auxiliary_input,
+          const LibcintRiIntegralProviderOptions& options = {}) const;
 
-  xmvb::integrals::RiAoFactorization build(
-      const xmvb::integrals::LibcintInput& primary_input,
-      const xmvb::integrals::LibcintInput& auxiliary_input) const override;
+    xmvb::integrals::RiAoFactorization
+    build(const xmvb::integrals::LibcintInput& primary_input,
+          const xmvb::integrals::LibcintInput& auxiliary_input) const override;
 };
 
-}  // namespace xmvb::libcint
+} // namespace xmvb::libcint

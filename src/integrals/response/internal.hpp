@@ -10,42 +10,38 @@
 namespace xmvb::integrals::detail {
 
 struct ActivePair {
-  int first = 0;
-  int second = 0;
+    int first = 0;
+    int second = 0;
 };
 
 inline std::size_t ao_pair_index(int first, int second) {
-  if (first >= second) {
-    const std::size_t first_index = first;
-    return first_index * (first_index + 1) / 2 + second;
-  }
-  const std::size_t second_index = second;
-  return second_index * (second_index + 1) / 2 + first;
+    if (first >= second) {
+        const std::size_t first_index = first;
+        return first_index * (first_index + 1) / 2 + second;
+    }
+    const std::size_t second_index = second;
+    return second_index * (second_index + 1) / 2 + first;
 }
 
-void resize_for_overwrite(
-    std::vector<double>* values,
-    std::size_t size);
+void resize_for_overwrite(std::vector<double>* values, std::size_t size);
 
-void build_ao_pair_component_tables(
-    int n_bf,
-    std::vector<int>* first_indices,
-    std::vector<int>* second_indices);
+void build_ao_pair_component_tables(int n_bf,
+                                    std::vector<int>* first_indices,
+                                    std::vector<int>* second_indices);
 
 std::vector<ActivePair> build_active_pair_list(int n_ao);
 
-ExactCtxPairMatrix build_active_pair_gradient_matrix(
-    const std::vector<double>& packed_active_two_electron_gradient,
-    const std::vector<ActivePair>& active_pairs);
+ExactCtxPairMatrix
+build_active_pair_gradient_matrix(const std::vector<double>& packed_active_two_electron_gradient,
+                                  const std::vector<ActivePair>& active_pairs);
 
 /** @brief Builds the pair-map directional derivative for an AO-pair row range. */
-void build_mixed_pair_rows(
-    const Eigen::Ref<const Eigen::MatrixXd>& dense_active_coefficients,
-    const Eigen::Ref<const Eigen::MatrixXd>& dense_active_direction,
-    const ExactPackedActiveTwoElectronAdjointCache& cache,
-    Eigen::Index row_begin,
-    Eigen::Index row_count,
-    ExactCtxPairMatrix* mixed_pair_coefficients);
+void build_mixed_pair_rows(const Eigen::Ref<const Eigen::MatrixXd>& dense_active_coefficients,
+                           const Eigen::Ref<const Eigen::MatrixXd>& dense_active_direction,
+                           const ExactPackedActiveTwoElectronAdjointCache& cache,
+                           Eigen::Index row_begin,
+                           Eigen::Index row_count,
+                           ExactCtxPairMatrix* mixed_pair_coefficients);
 
 void build_mixed_ao_pair_to_active_pair_coefficients_from_cache(
     const Eigen::Ref<const Eigen::MatrixXd>& dense_active_coefficients,
@@ -88,17 +84,15 @@ void accumulate_pair_product_adjoint(
     Eigen::MatrixXd* dense_active_gradients);
 
 /** @brief Contracts a direction with the accepted one-orbital integral image. */
-void contract_orbital_pair_direction(
-    const ExactPackedActiveTwoElectronAdjointCache& cache,
-    const Eigen::Ref<const Eigen::MatrixXd>& direction,
-    Eigen::MatrixXd* contraction);
+void contract_orbital_pair_direction(const ExactPackedActiveTwoElectronAdjointCache& cache,
+                                     const Eigen::Ref<const Eigen::MatrixXd>& direction,
+                                     Eigen::MatrixXd* contraction);
 
 /** @brief Builds a bounded, shared two-active-index exact integral transform. */
 void build_exchange_integrals(ExactPackedActiveTwoElectronAdjointCache* cache);
 
 /** @brief Contracts the mixed-pair adjoint without generating an AO-pair image. */
-Eigen::MatrixXd contract_exchange_direction(
-    const ExactPackedActiveTwoElectronAdjointCache& cache,
-    const Eigen::Ref<const Eigen::MatrixXd>& direction);
+Eigen::MatrixXd contract_exchange_direction(const ExactPackedActiveTwoElectronAdjointCache& cache,
+                                            const Eigen::Ref<const Eigen::MatrixXd>& direction);
 
-}  // namespace xmvb::integrals::detail
+} // namespace xmvb::integrals::detail

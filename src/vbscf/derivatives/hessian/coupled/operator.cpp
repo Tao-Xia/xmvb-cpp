@@ -6,63 +6,54 @@
 
 namespace xmvb::vb {
 
-CoupledHessianOperator::CoupledHessianOperator(
-    const ExactHvpOperator& orbital,
-    const StructureTangentOperator& structure)
+CoupledHessianOperator::CoupledHessianOperator(const ExactHvpOperator& orbital,
+                                               const StructureTangentOperator& structure)
     : orbital_(&orbital), structure_(&structure) {}
 
-CoupledDirection CoupledHessianOperator::apply(
-    const CoupledDirection& direction) const {
-  const OrbitalCouplingAction orbital_action =
-      orbital_->apply_orbital_coupling(direction.orbital);
-  const StructureCouplingAction structure_action =
-      structure_->apply_coupling(direction.structure);
-  if (orbital_action.scaled_structure_forcing.rows() !=
-          structure_action.hessian.scaled_coefficients.rows() ||
-      orbital_action.scaled_structure_forcing.cols() !=
-          structure_action.hessian.scaled_coefficients.cols()) {
-    throw std::logic_error(
-        "coupled orbital and structure actions have incompatible dimensions");
-  }
+CoupledDirection CoupledHessianOperator::apply(const CoupledDirection& direction) const {
+    const OrbitalCouplingAction orbital_action =
+        orbital_->apply_orbital_coupling(direction.orbital);
+    const StructureCouplingAction structure_action =
+        structure_->apply_coupling(direction.structure);
+    if (orbital_action.scaled_structure_forcing.rows() !=
+            structure_action.hessian.scaled_coefficients.rows() ||
+        orbital_action.scaled_structure_forcing.cols() !=
+            structure_action.hessian.scaled_coefficients.cols()) {
+        throw std::logic_error(
+            "coupled orbital and structure actions have incompatible dimensions");
+    }
 
-  CoupledDirection result;
-  result.orbital = orbital_action.orbital_hessian +
-      orbital_->apply_structure_coupling_adjoint(
-          structure_action.coefficient_response,
-          structure_action.adjoint_multipliers);
-  result.structure.scaled_coefficients =
-      orbital_action.scaled_structure_forcing +
-      structure_action.hessian.scaled_coefficients;
-  if (!result.orbital.allFinite() ||
-      !result.structure.scaled_coefficients.allFinite()) {
-    throw std::runtime_error("coupled Hessian action is not finite");
-  }
-  return result;
+    CoupledDirection result;
+    result.orbital = orbital_action.orbital_hessian + orbital_->apply_structure_coupling_adjoint(
+                                                          structure_action.coefficient_response,
+                                                          structure_action.adjoint_multipliers);
+    result.structure.scaled_coefficients =
+        orbital_action.scaled_structure_forcing + structure_action.hessian.scaled_coefficients;
+    if (!result.orbital.allFinite() || !result.structure.scaled_coefficients.allFinite()) {
+        throw std::runtime_error("coupled Hessian action is not finite");
+    }
+    return result;
 }
 
-CoupledCoordinateDirection CoupledHessianOperator::apply_coordinates(
-    const Eigen::VectorXd& orbital,
-    const Eigen::VectorXd& structure) const {
-  const OrbitalCouplingAction orbital_action =
-      orbital_->apply_orbital_coupling(orbital);
-  const StructureCoordinateCouplingAction structure_action =
-      structure_->apply_coupling_coordinates(structure);
+CoupledCoordinateDirection
+CoupledHessianOperator::apply_coordinates(const Eigen::VectorXd& orbital,
+                                          const Eigen::VectorXd& structure) const {
+    const OrbitalCouplingAction orbital_action = orbital_->apply_orbital_coupling(orbital);
+    const StructureCoordinateCouplingAction structure_action =
+        structure_->apply_coupling_coordinates(structure);
 
-  CoupledCoordinateDirection result;
-  result.orbital = orbital_action.orbital_hessian +
-      orbital_->apply_structure_coupling_adjoint(
-          structure_action.coefficient_response,
-          structure_action.adjoint_multipliers);
-  result.structure = structure_->project_coordinates(
-      orbital_action.scaled_structure_forcing);
-  result.structure += structure_action.hessian_coordinates;
-  result.structure_metric = structure_action.metric_coordinates;
-  if (!result.orbital.allFinite() || !result.structure.allFinite() ||
-      !result.structure_metric.allFinite()) {
-    throw std::runtime_error(
-        "coupled coordinate Hessian action is not finite");
-  }
-  return result;
+    CoupledCoordinateDirection result;
+    result.orbital = orbital_action.orbital_hessian + orbital_->apply_structure_coupling_adjoint(
+                                                          structure_action.coefficient_response,
+                                                          structure_action.adjoint_multipliers);
+    result.structure = structure_->project_coordinates(orbital_action.scaled_structure_forcing);
+    result.structure += structure_action.hessian_coordinates;
+    result.structure_metric = structure_action.metric_coordinates;
+    if (!result.orbital.allFinite() || !result.structure.allFinite() ||
+        !result.structure_metric.allFinite()) {
+        throw std::runtime_error("coupled coordinate Hessian action is not finite");
+    }
+    return result;
 }
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

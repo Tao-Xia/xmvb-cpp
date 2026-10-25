@@ -50,8 +50,10 @@ int main(int argc,char** argv) {
     require(loaded.input.tnvb.total_bond==0,"ENERGY must not invent TNSUMBOND");
     require(loaded.requested_scf_max_iterations==0,"TNVB ITMAX=0 was overridden");
     require(loaded.structure_eigensolver==xmvb::vb::StructureEigensolver::Dense,"TNVB did not default to dense solving");
-    require(loaded.structure_expansion_seconds==0 && loaded.input.structure_data.alpha_det.empty() &&
-        loaded.input.structure_data.beta_det.empty() && loaded.input.structure_data.determinant_to_structure_terms.empty(),"TNVB expanded determinants");
+    require(loaded.structure_expansion_seconds==0 && loaded.input.structure_data.pair_alpha.empty() &&
+        loaded.input.structure_data.pair_beta.empty() && loaded.input.structure_data.terms.empty() &&
+        loaded.input.structure_data.alpha_strings.empty() && loaded.input.structure_data.beta_strings.empty() &&
+        loaded.input.structure_data.offsets.empty(),"TNVB expanded spin-string topology");
     require(!loaded.input.complete_active_space && loaded.input.raw_structure_data.n_structures==5,"raw selected structures lost or mislabeled CAS");
     write("TNVB TNBOND=128 TNSUMBOND=256\n","itmax=200");
     loaded=xmvb::vb::load_vbscf_input_with_timings(path.string());
@@ -63,7 +65,7 @@ int main(int argc,char** argv) {
     loaded=xmvb::vb::load_vbscf_input_with_timings(path.string());
     require(!loaded.input.tnvb.enabled && loaded.requested_scf_max_iterations==2000 &&
         loaded.structure_eigensolver==xmvb::vb::StructureEigensolver::Davidson &&
-        !loaded.input.structure_data.alpha_det.empty(),"ordinary defaults or determinant loading changed");
+        !loaded.input.structure_data.pair_alpha.empty(),"ordinary defaults or determinant loading changed");
     for (const auto* invalid : {"TNVB TNBOND=0\n","TNVB TNBOND=-1\n","TNVB TNBOND=1.5\n",
          "TNVB TNBOND=12foo\n","TNVB TNBOND=2147483648\n","TNVB TNBOND=128 TNSUMBOND=0\n","TNVB\n"}) {
       write(invalid);

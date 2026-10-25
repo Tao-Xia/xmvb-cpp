@@ -1,5 +1,7 @@
 #pragma once
 
+#include "mcscf/ci/string_table.hpp"
+
 #include <Eigen/Core>
 
 #include <cstddef>
@@ -7,6 +9,7 @@
 #include <vector>
 
 #include "vbscf/determinants/pairs/evaluator.hpp"
+#include "vbscf/structures/expansion/types.hpp"
 
 namespace xmvb::vb {
 
@@ -16,13 +19,14 @@ class AcceptedPairTileProvider;
  * @brief Maps each spin determinant in the full space onto a unique occupied string.
  */
 struct SpinDeterminantReuseTable {
-  std::vector<std::vector<int>> unique_determinants;
-  std::vector<int> determinant_to_unique_id;
+    mcscf::StringTable unique_determinants;
+    mcscf::SpinStrings basis;
+    std::vector<int> determinant_to_unique_id;
 };
 
 enum class PairProjectionCache {
-  Both,
-  SmallerSpin,
+    Both,
+    SmallerSpin,
 };
 
 /**
@@ -34,9 +38,9 @@ enum class PairProjectionCache {
  * contractions.
  */
 struct SameSpinPairCacheBuildOptions {
-  PairProjectionCache pair_projection_cache = PairProjectionCache::Both;
-  /** Build cofactor derivatives immediately instead of deferring until acceptance. */
-  bool retain_derivative_payload = true;
+    PairProjectionCache pair_projection_cache = PairProjectionCache::Both;
+    /** Build cofactor derivatives immediately instead of deferring until acceptance. */
+    bool retain_derivative_payload = true;
 };
 
 /**
@@ -61,78 +65,78 @@ void complete_same_spin_pair_evaluation(
  * @brief Reusable ordered same-spin determinant kernels for one active-space evaluation.
  */
 struct SameSpinPairCacheContext {
-  SpinDeterminantReuseTable alpha_reuse_table;
-  SpinDeterminantReuseTable beta_reuse_table;
-  std::shared_ptr<const AcceptedPairTileProvider> alpha_pair_provider;
-  std::shared_ptr<const AcceptedPairTileProvider> beta_pair_provider;
-  std::vector<SpinDeterminantPairEvaluation> alpha_pair_cache;
-  // When alpha/beta unique determinant spaces are identical, the ordered
-  // beta-beta kernel is identical to the alpha-alpha kernel after the beta
-  // determinant ids are expressed in the shared basis. In that case
-  // `beta_pair_cache_ref()` aliases `alpha_pair_cache` and this storage
-  // remains empty.
-  std::vector<SpinDeterminantPairEvaluation> beta_pair_cache;
-  bool beta_reuses_alpha_pair_cache = false;
-  bool close_shell_diagonal_reuses_same_spin_pair_cache = false;
+    SpinDeterminantReuseTable alpha_reuse_table;
+    SpinDeterminantReuseTable beta_reuse_table;
+    std::shared_ptr<const AcceptedPairTileProvider> alpha_pair_provider;
+    std::shared_ptr<const AcceptedPairTileProvider> beta_pair_provider;
+    std::vector<SpinDeterminantPairEvaluation> alpha_pair_cache;
+    // When alpha/beta unique determinant spaces are identical, the ordered
+    // beta-beta kernel is identical to the alpha-alpha kernel after the beta
+    // determinant ids are expressed in the shared basis. In that case
+    // `beta_pair_cache_ref()` aliases `alpha_pair_cache` and this storage
+    // remains empty.
+    std::vector<SpinDeterminantPairEvaluation> beta_pair_cache;
+    bool beta_reuses_alpha_pair_cache = false;
+    bool close_shell_diagonal_reuses_same_spin_pair_cache = false;
 
-  // Optional scalar opposite-spin cache for pair-by-pair callers.
-  // The matrix-form forward/backward paths consume the per-spin projected
-  // payloads inside `alpha_pair_cache` / `beta_pair_cache` directly and do not
-  // require this `N_alpha^2 N_beta^2` table to be materialized.
-  std::vector<double> opposite_spin_cache;
-  std::vector<bool> opposite_spin_cache_computed;
-  int n_unique_alpha = 0;
-  int n_unique_beta = 0;
+    // Optional scalar opposite-spin cache for pair-by-pair callers.
+    // The matrix-form forward/backward paths consume the per-spin projected
+    // payloads inside `alpha_pair_cache` / `beta_pair_cache` directly and do not
+    // require this `N_alpha^2 N_beta^2` table to be materialized.
+    std::vector<double> opposite_spin_cache;
+    std::vector<bool> opposite_spin_cache_computed;
+    int n_unique_alpha = 0;
+    int n_unique_beta = 0;
 
-  std::size_t cached_same_spin_evaluation_count = 0;
-  std::size_t estimated_cache_bytes = 0;
-  bool use_same_spin_pair_cache = false;
+    std::size_t cached_same_spin_evaluation_count = 0;
+    std::size_t estimated_cache_bytes = 0;
+    bool use_same_spin_pair_cache = false;
 
-  bool enabled() const {
-    return use_same_spin_pair_cache;
-  }
+    bool enabled() const {
+        return use_same_spin_pair_cache;
+    }
 
-  /** @brief Whether bounded accepted-pair tiles can be generated on demand. */
-  bool has_pair_providers() const noexcept {
-    return alpha_pair_provider != nullptr && beta_pair_provider != nullptr;
-  }
+    /** @brief Whether bounded accepted-pair tiles can be generated on demand. */
+    bool has_pair_providers() const noexcept {
+        return alpha_pair_provider != nullptr && beta_pair_provider != nullptr;
+    }
 
-  bool close_shell_reuses_same_spin_pair_cache() const {
-    return close_shell_diagonal_reuses_same_spin_pair_cache;
-  }
+    bool close_shell_reuses_same_spin_pair_cache() const {
+        return close_shell_diagonal_reuses_same_spin_pair_cache;
+    }
 
-  bool shares_same_spin_pair_cache_between_spins() const {
-    return beta_reuses_alpha_pair_cache;
-  }
+    bool shares_same_spin_pair_cache_between_spins() const {
+        return beta_reuses_alpha_pair_cache;
+    }
 
-  const AcceptedPairTileProvider& alpha_provider() const;
-  const AcceptedPairTileProvider& beta_provider() const;
+    const AcceptedPairTileProvider& alpha_provider() const;
+    const AcceptedPairTileProvider& beta_provider() const;
 
-  const std::vector<SpinDeterminantPairEvaluation>& alpha_pair_cache_ref() const {
-    return alpha_pair_cache;
-  }
+    const std::vector<SpinDeterminantPairEvaluation>& alpha_pair_cache_ref() const {
+        return alpha_pair_cache;
+    }
 
-  const std::vector<SpinDeterminantPairEvaluation>& beta_pair_cache_ref() const {
-    return beta_reuses_alpha_pair_cache ? alpha_pair_cache : beta_pair_cache;
-  }
+    const std::vector<SpinDeterminantPairEvaluation>& beta_pair_cache_ref() const {
+        return beta_reuses_alpha_pair_cache ? alpha_pair_cache : beta_pair_cache;
+    }
 
-  std::vector<SpinDeterminantPairEvaluation>* mutable_alpha_pair_cache_ref() {
-    return &alpha_pair_cache;
-  }
+    std::vector<SpinDeterminantPairEvaluation>* mutable_alpha_pair_cache_ref() {
+        return &alpha_pair_cache;
+    }
 
-  std::vector<SpinDeterminantPairEvaluation>* mutable_beta_pair_cache_ref() {
-    return beta_reuses_alpha_pair_cache ? &alpha_pair_cache : &beta_pair_cache;
-  }
+    std::vector<SpinDeterminantPairEvaluation>* mutable_beta_pair_cache_ref() {
+        return beta_reuses_alpha_pair_cache ? &alpha_pair_cache : &beta_pair_cache;
+    }
 
-  // Compute the flattened `(alpha_L, alpha_R, beta_L, beta_R)` storage slot.
-  std::size_t opposite_spin_cache_index(
-      int unique_alpha_L, int unique_alpha_R,
-      int unique_beta_L, int unique_beta_R) const {
-    return unique_alpha_L * n_unique_alpha * n_unique_alpha * n_unique_beta +
-           unique_alpha_R * n_unique_alpha * n_unique_beta +
-           unique_beta_L * n_unique_beta +
-           unique_beta_R;
-  }
+    // Compute the flattened `(alpha_L, alpha_R, beta_L, beta_R)` storage slot.
+    std::size_t opposite_spin_cache_index(int unique_alpha_L,
+                                          int unique_alpha_R,
+                                          int unique_beta_L,
+                                          int unique_beta_R) const {
+        return unique_alpha_L * n_unique_alpha * n_unique_alpha * n_unique_beta +
+               unique_alpha_R * n_unique_alpha * n_unique_beta + unique_beta_L * n_unique_beta +
+               unique_beta_R;
+    }
 };
 
 /**
@@ -141,33 +145,28 @@ struct SameSpinPairCacheContext {
  * Unique-string reuse tables and determinant-to-string maps remain intact for
  * selected-state coefficient reconstruction.
  */
-void release_same_spin_pair_evaluations(
-    SameSpinPairCacheContext* cache_context);
+void release_same_spin_pair_evaluations(SameSpinPairCacheContext* cache_context);
 
 /** @brief Whether any ordered spin pair requires inverse-free polynomial response data. */
-bool has_polynomial_same_spin_response_pairs(
-    const SameSpinPairCacheContext& cache_context);
+bool has_polynomial_same_spin_response_pairs(const SameSpinPairCacheContext& cache_context);
 
 /**
  * @brief Compresses repeated same-spin occupied strings into a unique table.
  */
-SpinDeterminantReuseTable build_spin_determinant_reuse_table(
-    const std::vector<std::vector<int>>& spin_determinants);
+SpinDeterminantReuseTable build_spin_determinant_reuse_table(SpinStringRows spin_determinants);
 
 /**
  * @brief Returns the dense row-major storage slot for one ordered unique pair.
  */
-std::size_t ordered_spin_pair_storage_index(
-    int left_index,
-    int right_index,
-    int n_unique_determinants);
+std::size_t
+ordered_spin_pair_storage_index(int left_index, int right_index, int n_unique_determinants);
 
 /**
  * @brief Overestimates the memory footprint of one ordered same-spin cache table.
  */
-std::size_t estimate_same_spin_pair_cache_bytes(
-    const std::vector<std::vector<int>>& unique_spin_determinants,
-    int n_orbitals);
+std::size_t
+estimate_same_spin_pair_cache_bytes(const xmvb::mcscf::StringTable& unique_spin_determinants,
+                                    int n_orbitals);
 
 /**
  * @brief Builds determinant-to-unique-string maps without pair evaluations.
@@ -177,10 +176,8 @@ std::size_t estimate_same_spin_pair_cache_bytes(
  * same-spin pair arrays empty, avoiding quadratic storage in the number of
  * fixed-spin strings.
  */
-SameSpinPairCacheContext build_same_spin_pair_topology(
-    const std::vector<std::vector<int>>& alpha_det,
-    const std::vector<std::vector<int>>& beta_det,
-    int n_orbitals);
+SameSpinPairCacheContext
+build_same_spin_pair_topology(SpinStringRows alpha_det, SpinStringRows beta_det, int n_orbitals);
 
 /**
  * @brief Completes each fixed-spin string space for orthogonal direct CI.
@@ -190,39 +187,37 @@ SameSpinPairCacheContext build_same_spin_pair_topology(
  * same-spin pair arrays remain empty. An already complete alpha table keeps
  * its original ordering; equal-electron beta strings use that shared basis.
  */
-SameSpinPairCacheContext build_orthogonal_spin_topology(
-    const std::vector<std::vector<int>>& alpha_det,
-    const std::vector<std::vector<int>>& beta_det,
-    int n_orbitals);
+SameSpinPairCacheContext
+build_orthogonal_spin_topology(SpinStringRows alpha_det, SpinStringRows beta_det, int n_orbitals);
 
 /**
  * @brief Builds ordered alpha/beta same-spin caches for one determinant expansion.
  */
-SameSpinPairCacheContext build_same_spin_pair_cache_context(
-    const std::vector<std::vector<int>>& alpha_det,
-    const std::vector<std::vector<int>>& beta_det,
-    const DeterminantPairEvaluator& pair_evaluator,
-    const std::vector<double>& ovlp_act,
-    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
-    int n_orbitals,
-    const std::vector<double>& eri_act);
+SameSpinPairCacheContext
+build_same_spin_pair_cache_context(SpinStringRows alpha_det,
+                                   SpinStringRows beta_det,
+                                   const DeterminantPairEvaluator& pair_evaluator,
+                                   const std::vector<double>& ovlp_act,
+                                   const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
+                                   int n_orbitals,
+                                   const std::vector<double>& eri_act);
 
-SameSpinPairCacheContext build_same_spin_pair_cache_context(
-    const std::vector<std::vector<int>>& alpha_det,
-    const std::vector<std::vector<int>>& beta_det,
-    const DeterminantPairEvaluator& pair_evaluator,
-    const std::vector<double>& ovlp_act,
-    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
-    int n_orbitals,
-    const std::vector<double>& eri_act,
-    SameSpinPairCacheBuildOptions build_options);
+SameSpinPairCacheContext
+build_same_spin_pair_cache_context(SpinStringRows alpha_det,
+                                   SpinStringRows beta_det,
+                                   const DeterminantPairEvaluator& pair_evaluator,
+                                   const std::vector<double>& ovlp_act,
+                                   const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
+                                   int n_orbitals,
+                                   const std::vector<double>& eri_act,
+                                   SameSpinPairCacheBuildOptions build_options);
 
 /**
  * @brief Builds ordered alpha/beta same-spin caches from packed or RI active ERIs.
  */
 SameSpinPairCacheContext build_same_spin_pair_cache_context(
-    const std::vector<std::vector<int>>& alpha_det,
-    const std::vector<std::vector<int>>& beta_det,
+    SpinStringRows alpha_det,
+    SpinStringRows beta_det,
     const DeterminantPairEvaluator& pair_evaluator,
     const std::vector<double>& ovlp_act,
     const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
@@ -230,8 +225,8 @@ SameSpinPairCacheContext build_same_spin_pair_cache_context(
     const xmvb::integrals::ActiveSpaceTwoElectronResult& active_space_two_electron_result);
 
 SameSpinPairCacheContext build_same_spin_pair_cache_context(
-    const std::vector<std::vector<int>>& alpha_det,
-    const std::vector<std::vector<int>>& beta_det,
+    SpinStringRows alpha_det,
+    SpinStringRows beta_det,
     const DeterminantPairEvaluator& pair_evaluator,
     const std::vector<double>& ovlp_act,
     const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
@@ -265,8 +260,8 @@ void populate_same_spin_phi_cache(
 DeterminantPairEvaluation evaluate_full_determinant_pair_with_optional_same_spin_cache(
     const SameSpinPairCacheContext* same_spin_pair_cache,
     const DeterminantPairEvaluator& pair_evaluator,
-    const std::vector<std::vector<int>>& alpha_det,
-    const std::vector<std::vector<int>>& beta_det,
+    SpinStringRows alpha_det,
+    SpinStringRows beta_det,
     int determinant_index_left,
     int determinant_index_right,
     const std::vector<double>& ovlp_act,
@@ -281,8 +276,8 @@ DeterminantPairEvaluation evaluate_full_determinant_pair_with_optional_same_spin
 DeterminantPairEvaluation evaluate_full_determinant_pair_with_optional_same_spin_cache(
     const SameSpinPairCacheContext* same_spin_pair_cache,
     const DeterminantPairEvaluator& pair_evaluator,
-    const std::vector<std::vector<int>>& alpha_det,
-    const std::vector<std::vector<int>>& beta_det,
+    SpinStringRows alpha_det,
+    SpinStringRows beta_det,
     int determinant_index_left,
     int determinant_index_right,
     const std::vector<double>& ovlp_act,
@@ -291,4 +286,4 @@ DeterminantPairEvaluation evaluate_full_determinant_pair_with_optional_same_spin
     const xmvb::integrals::ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     bool retain_spin_pair_evaluations = true);
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

@@ -17,7 +17,7 @@ int main(int argc,char** argv) {
     else throw std::invalid_argument("invalid integral model");
     const auto loaded=xmvb::vb::load_vbscf_input_with_timings(argv[1],options);
     const auto& input=loaded.input;
-    if (!input.tnvb.enabled || loaded.structure_expansion_seconds!=0 || !input.structure_data.alpha_det.empty()) {
+    if (!input.tnvb.enabled || loaded.structure_expansion_seconds!=0 || !input.structure_data.pair_alpha.empty()) {
       throw std::invalid_argument("requires unexpanded TNVB input");
     }
     const auto timed=xmvb::vb::prepare_timed_active_space_context(input);

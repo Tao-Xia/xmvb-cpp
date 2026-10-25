@@ -21,16 +21,16 @@ double neo_trial_residual_target(double coordinate_gradient,
 
 /** @brief Outcome of comparing a NEO trial step with its quadratic model. */
 struct NeoGlobalizationResult {
-  /** Quadratic-model decrease, `-g^T p - 0.5 p^T H p`. */
-  double predicted_reduction = 0.0;
-  /** Evaluated energy decrease, `E_current - E_trial`. */
-  double actual_reduction = 0.0;
-  /** Actual-to-predicted reduction ratio; `-infinity` for an invalid model. */
-  double rho = 0.0;
-  /** Whether the trial replaces the current accepted point. */
-  bool accepted = false;
-  /** Radius for the next solve of the current or next quadratic model. */
-  double next_radius = 0.0;
+    /** Quadratic-model decrease, `-g^T p - 0.5 p^T H p`. */
+    double predicted_reduction = 0.0;
+    /** Evaluated energy decrease, `E_current - E_trial`. */
+    double actual_reduction = 0.0;
+    /** Actual-to-predicted reduction ratio; `-infinity` for an invalid model. */
+    double rho = 0.0;
+    /** Whether the trial replaces the current accepted point. */
+    bool accepted = false;
+    /** Radius for the next solve of the current or next quadratic model. */
+    double next_radius = 0.0;
 };
 
 /**
@@ -58,13 +58,12 @@ struct NeoGlobalizationResult {
  * @param minimum_radius Smallest radius permitted by the outer optimizer.
  * @throws std::invalid_argument for nonfinite scalars or invalid radii.
  */
-NeoGlobalizationResult globalize_neo_trial(
-    double current_energy,
-    double trial_energy,
-    double gradient_dot_step,
-    double step_dot_hessian_step,
-    bool boundary,
-    double current_radius,
-    double minimum_radius);
+NeoGlobalizationResult globalize_neo_trial(double current_energy,
+                                           double trial_energy,
+                                           double gradient_dot_step,
+                                           double step_dot_hessian_step,
+                                           bool boundary,
+                                           double current_radius,
+                                           double minimum_radius);
 
-}  // namespace xmvb::mcscf
+} // namespace xmvb::mcscf

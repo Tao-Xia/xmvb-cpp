@@ -68,8 +68,18 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-add_compile_options(-fdiagnostics-color=always)
-add_compile_options(-ffunction-sections -pipe)
+option(XMVB_ENABLE_CUDA "Build CUDA structure-space CI kernels and Davidson." OFF)
+if (XMVB_ENABLE_CUDA)
+  enable_language(CUDA)
+  # Heterogeneous grouped cuBLAS GEMM is part of the numerical tile path.
+  find_package(CUDAToolkit 12.5 REQUIRED)
+  set(CMAKE_CUDA_STANDARD 20)
+  set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+  set(CMAKE_CUDA_EXTENSIONS OFF)
+endif()
+
+add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX,Fortran>:-fdiagnostics-color=always>")
+add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX,Fortran>:-ffunction-sections;-pipe>")
 add_link_options(-Wl,--gc-sections -Wl,--allow-shlib-undefined)
 
 if (NOT DEFINED XMVB_BUILD_DEV_TARGETS)

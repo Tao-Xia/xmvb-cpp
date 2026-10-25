@@ -8,8 +8,8 @@ namespace xmvb::output {
 
 /** @brief Exact norms shared by all states in one structure report. */
 struct StructureNorms {
-  Eigen::VectorXd values;
-  double mean_overlap = 0.0;
+    Eigen::VectorXd values;
+    double mean_overlap = 0.0;
 };
 
 /** @brief Prepares norms only for normalized coefficients/renormalized weights.
@@ -19,4 +19,4 @@ struct StructureNorms {
  */
 StructureNorms structure_norms(const vb::VbScfOptimizerResult& result);
 
-}  // namespace xmvb::output
+} // namespace xmvb::output

@@ -12,40 +12,40 @@ namespace xmvb::integrals {
  * method-independent contract without requiring a VB or CASSCF input object.
  */
 struct LibcintInput {
-  /**
+    /**
    * @brief Number of atoms represented by `atm`.
    */
-  int n_atoms = 0;
+    int n_atoms = 0;
 
-  /**
+    /**
    * @brief Number of shells represented by `bas`.
    */
-  int n_shells = 0;
+    int n_shells = 0;
 
-  /**
+    /**
    * @brief Number of Gaussian primitives used to size `env`.
    */
-  int n_gaussian_primitives = 0;
+    int n_gaussian_primitives = 0;
 
-  /**
+    /**
    * @brief Raw libcint atom table.
    */
-  std::vector<int> atm;
+    std::vector<int> atm;
 
-  /**
+    /**
    * @brief Raw libcint basis table.
    */
-  std::vector<int> bas;
+    std::vector<int> bas;
 
-  /**
+    /**
    * @brief AO start/count table per shell.
    */
-  std::vector<int> basidx;
+    std::vector<int> basidx;
 
-  /**
+    /**
    * @brief Raw libcint environment array storing coordinates, exponents, and coefficients.
    */
-  std::vector<double> env;
+    std::vector<double> env;
 };
 
-}  // namespace xmvb::integrals
+} // namespace xmvb::integrals

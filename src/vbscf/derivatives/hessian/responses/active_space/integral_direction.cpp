@@ -14,102 +14,87 @@
 namespace xmvb::vb {
 namespace {
 
-void resize_for_overwrite(
-    std::vector<double>* values,
-    std::size_t size) {
-  if (values->size() != size) {
-    values->resize(size);
-  }
+void resize_for_overwrite(std::vector<double>* values, std::size_t size) {
+    if (values->size() != size) {
+        values->resize(size);
+    }
 }
 
-}  // namespace
+} // namespace
 
-ActiveSpaceIntegralDirectionView build_active_space_integral_direction(
-    const ActiveSpaceIntegralDirectionContext& context,
-    const ActiveSpaceIntegralTangent& tangent,
-    ActiveSpaceIntegralDirectionWorkspace* workspace) {
-  const int n_basis_functions =
-      context.input.orbital_preparation_input.n_basis_functions;
-  const int n_active_orbitals =
-      context.input.orbital_preparation_input.n_active_orbitals;
-  const std::size_t active_matrix_size =
-      n_active_orbitals * n_active_orbitals;
-  if (n_basis_functions <= 0 || n_active_orbitals <= 0) {
-    throw std::invalid_argument(
-        "active-space directional integrals require positive dimensions");
-  }
-  resize_for_overwrite(&workspace->overlap, active_matrix_size);
-  resize_for_overwrite(&workspace->one_electron, active_matrix_size);
-  Eigen::Map<Eigen::MatrixXd> delta_overlap(
-      workspace->overlap.data(),
-      n_active_orbitals,
-      n_active_orbitals);
-  Eigen::Map<Eigen::MatrixXd> delta_one_electron(
-      workspace->one_electron.data(),
-      n_active_orbitals,
-      n_active_orbitals);
-
-  const Eigen::MatrixXd delta_overlap_left =
-      tangent.active_auxiliary_orbitals.transpose() *
-      context.overlap_times_active_auxiliary_orbitals;
-  delta_overlap.noalias() = delta_overlap_left;
-  delta_overlap.noalias() += delta_overlap_left.transpose();
-
-  const Eigen::MatrixXd delta_one_electron_left =
-      tangent.dense_active_coefficients.transpose() * context.effective_h1e_image;
-  delta_one_electron.noalias() = delta_one_electron_left;
-  delta_one_electron.noalias() +=
-      context.dense_active_coefficients.transpose() *
-      tangent.delta_effective_h1e_times_active_auxiliary_orbitals;
-  delta_one_electron.noalias() += delta_one_electron_left.transpose();
-
-  if (context.dense_active_coefficients.rows() != n_basis_functions ||
-      context.dense_active_coefficients.cols() != n_active_orbitals ||
-      tangent.dense_active_coefficients.rows() != n_basis_functions ||
-      tangent.dense_active_coefficients.cols() != n_active_orbitals) {
-    throw std::invalid_argument(
-        "dense active coefficient shapes are inconsistent in active-space "
-        "directional integrals");
-  }
-
-  if (!tangent.packed_two_electron_required) {
-    if (tangent.precomputed_packed_two_electron != nullptr) {
-      throw std::invalid_argument(
-          "packed active-space 2e direction was supplied but marked unnecessary");
+ActiveSpaceIntegralDirectionView
+build_active_space_integral_direction(const ActiveSpaceIntegralDirectionContext& context,
+                                      const ActiveSpaceIntegralTangent& tangent,
+                                      ActiveSpaceIntegralDirectionWorkspace* workspace) {
+    const int n_basis_functions = context.input.orbital_preparation_input.n_basis_functions;
+    const int n_active_orbitals = context.input.orbital_preparation_input.n_active_orbitals;
+    const std::size_t active_matrix_size = n_active_orbitals * n_active_orbitals;
+    if (n_basis_functions <= 0 || n_active_orbitals <= 0) {
+        throw std::invalid_argument(
+            "active-space directional integrals require positive dimensions");
     }
-    workspace->packed_two_electron.clear();
-    workspace->two_electron.dense_fixed_adjoint_direction.resize(0, 0);
-  } else if (tangent.precomputed_packed_two_electron != nullptr) {
-    const std::size_t packed_size =
-        xmvb::integrals::packed_active_two_electron_integral_count(n_active_orbitals);
-    if (tangent.precomputed_packed_two_electron->size() !=
-        static_cast<Eigen::Index>(packed_size)) {
-      throw std::invalid_argument(
-          "precomputed block delta GGO has inconsistent dimensions");
-    }
-    workspace->packed_two_electron.assign(
-        tangent.precomputed_packed_two_electron->data(),
-        tangent.precomputed_packed_two_electron->data() + packed_size);
-    workspace->two_electron.dense_fixed_adjoint_direction.resize(0, 0);
-  } else {
-    if (context.exact_two_electron_cache == nullptr) {
-      throw std::invalid_argument(
-          "active-space 2e direction requires either a precomputed direction "
-          "or an exact AO-pair cache");
-    }
-    xmvb::integrals::compute_exact_packed_active_two_electron_integral_directional_derivative(
-        *context.exact_two_electron_cache,
-        tangent.dense_active_coefficients,
-        context.input.ao_integral_input,
-        &workspace->two_electron,
-        &workspace->packed_two_electron,
-        false);
-  }
+    resize_for_overwrite(&workspace->overlap, active_matrix_size);
+    resize_for_overwrite(&workspace->one_electron, active_matrix_size);
+    Eigen::Map<Eigen::MatrixXd> delta_overlap(
+        workspace->overlap.data(), n_active_orbitals, n_active_orbitals);
+    Eigen::Map<Eigen::MatrixXd> delta_one_electron(
+        workspace->one_electron.data(), n_active_orbitals, n_active_orbitals);
 
-  return {
-      workspace->overlap,
-      workspace->one_electron,
-      workspace->packed_two_electron};
+    const Eigen::MatrixXd delta_overlap_left = tangent.active_auxiliary_orbitals.transpose() *
+                                               context.overlap_times_active_auxiliary_orbitals;
+    delta_overlap.noalias() = delta_overlap_left;
+    delta_overlap.noalias() += delta_overlap_left.transpose();
+
+    const Eigen::MatrixXd delta_one_electron_left =
+        tangent.dense_active_coefficients.transpose() * context.effective_h1e_image;
+    delta_one_electron.noalias() = delta_one_electron_left;
+    delta_one_electron.noalias() += context.dense_active_coefficients.transpose() *
+                                    tangent.delta_effective_h1e_times_active_auxiliary_orbitals;
+    delta_one_electron.noalias() += delta_one_electron_left.transpose();
+
+    if (context.dense_active_coefficients.rows() != n_basis_functions ||
+        context.dense_active_coefficients.cols() != n_active_orbitals ||
+        tangent.dense_active_coefficients.rows() != n_basis_functions ||
+        tangent.dense_active_coefficients.cols() != n_active_orbitals) {
+        throw std::invalid_argument(
+            "dense active coefficient shapes are inconsistent in active-space "
+            "directional integrals");
+    }
+
+    if (!tangent.packed_two_electron_required) {
+        if (tangent.precomputed_packed_two_electron != nullptr) {
+            throw std::invalid_argument(
+                "packed active-space 2e direction was supplied but marked unnecessary");
+        }
+        workspace->packed_two_electron.clear();
+        workspace->two_electron.dense_fixed_adjoint_direction.resize(0, 0);
+    } else if (tangent.precomputed_packed_two_electron != nullptr) {
+        const std::size_t packed_size =
+            xmvb::integrals::packed_active_two_electron_integral_count(n_active_orbitals);
+        if (tangent.precomputed_packed_two_electron->size() !=
+            static_cast<Eigen::Index>(packed_size)) {
+            throw std::invalid_argument("precomputed block delta GGO has inconsistent dimensions");
+        }
+        workspace->packed_two_electron.assign(tangent.precomputed_packed_two_electron->data(),
+                                              tangent.precomputed_packed_two_electron->data() +
+                                                  packed_size);
+        workspace->two_electron.dense_fixed_adjoint_direction.resize(0, 0);
+    } else {
+        if (context.exact_two_electron_cache == nullptr) {
+            throw std::invalid_argument(
+                "active-space 2e direction requires either a precomputed direction "
+                "or an exact AO-pair cache");
+        }
+        xmvb::integrals::compute_exact_packed_active_two_electron_integral_directional_derivative(
+            *context.exact_two_electron_cache,
+            tangent.dense_active_coefficients,
+            context.input.ao_integral_input,
+            &workspace->two_electron,
+            &workspace->packed_two_electron,
+            false);
+    }
+
+    return {workspace->overlap, workspace->one_electron, workspace->packed_two_electron};
 }
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

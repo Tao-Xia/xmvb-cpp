@@ -12,12 +12,11 @@ namespace xmvb::integrals {
  * libcint setup is injected by the input loader.
  */
 class RiAoFactorizationProvider {
-public:
-  virtual ~RiAoFactorizationProvider() = default;
+  public:
+    virtual ~RiAoFactorizationProvider() = default;
 
-  virtual RiAoFactorization build(
-      const LibcintInput& primary_input,
-      const LibcintInput& auxiliary_input) const = 0;
+    virtual RiAoFactorization build(const LibcintInput& primary_input,
+                                    const LibcintInput& auxiliary_input) const = 0;
 };
 
-}  // namespace xmvb::integrals
+} // namespace xmvb::integrals

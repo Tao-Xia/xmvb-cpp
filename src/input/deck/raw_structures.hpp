@@ -15,8 +15,7 @@ namespace xmvb::vb {
  * raw structures directly from the input deck or generate them from the
  * structure-class specification.
  */
-bool input_deck_contains_raw_structure_block(
-    const std::string& input_file_path);
+bool input_deck_contains_raw_structure_block(const std::string& input_file_path);
 
 /**
  * @brief Parses the `$STR` block directly into the raw structure layout.
@@ -25,12 +24,11 @@ bool input_deck_contains_raw_structure_block(
  * labels expected by the determinant expander. The parser applies the compact
  * integer-range syntax defined by the input format.
  */
-RawStructureData parse_input_deck_raw_structures(
-    const std::string& input_file_path,
-    int n_total_electrons,
-    int n_active_electrons,
-    int spin_multiplicity,
-    int wavefunction_type,
-    int vb_function_type);
+RawStructureData parse_input_deck_raw_structures(const std::string& input_file_path,
+                                                 int n_total_electrons,
+                                                 int n_active_electrons,
+                                                 int spin_multiplicity,
+                                                 int wavefunction_type,
+                                                 int vb_function_type);
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

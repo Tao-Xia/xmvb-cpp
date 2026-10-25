@@ -61,6 +61,8 @@ set(XMVB_INTEGRAL_SOURCES
   integrals/response/generated_rows.cpp)
 
 set(XMVB_LINALG_SOURCES
+  core/memory.cpp
+  core/pair_index.cpp
   linalg/exponential.cpp
   linalg/eigensolver.cpp
   linalg/eigen_response.cpp
@@ -69,6 +71,7 @@ set(XMVB_LINALG_SOURCES
 set(XMVB_MCSCF_SOURCES
   mcscf/ci/sigma.cpp
   mcscf/ci/sigma_tiles.cpp
+  mcscf/ci/workspace.cpp
   mcscf/ci/sigma_plan.cpp
   mcscf/ci/generator_tiles.cpp
   mcscf/ci/spin_channels.cpp
@@ -163,6 +166,7 @@ file(
   GLOB_RECURSE _xmvb_discovered_component_sources
   CONFIGURE_DEPENDS
   RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/core/*.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/guess/*.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/scf/*.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/dft/*.cpp"
@@ -259,7 +263,6 @@ endif()
 target_link_libraries(xmvb_linalg PUBLIC ${LAPACKE_LIB} ${LAPACK_LIB} xmvb_openmp m)
 
 xmvb_add_component(xmvb_integrals
-  core/pair_index.cpp
   ${XMVB_INTEGRAL_SOURCES})
 target_link_libraries(xmvb_integrals PUBLIC xmvb_linalg ${CINT_LIB})
 
@@ -351,7 +354,11 @@ if (XMVB_BUILD_DEV_TARGETS)
   include(${CMAKE_SOURCE_DIR}/tests/mcscf/targets.cmake)
   add_executable(test_workspace ${CMAKE_SOURCE_DIR}/tests/core/test_workspace.cpp)
   target_include_directories(test_workspace PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${EIGEN3_INCLUDE_DIR})
+  target_link_libraries(test_workspace PRIVATE xmvb_linalg)
+  add_executable(test_memory ${CMAKE_SOURCE_DIR}/tests/core/test_memory.cpp)
+  target_link_libraries(test_memory PRIVATE xmvb_linalg)
   if (BUILD_TESTING)
+    add_test(NAME memory COMMAND test_memory)
     add_test(NAME workspace COMMAND test_workspace)
   endif()
   add_executable(test_openmp ${CMAKE_SOURCE_DIR}/tests/parallel/test_openmp.cpp)
@@ -677,4 +684,11 @@ endif()
 
 if (XMVB_BUILD_DEV_TARGETS)
   include(tools/targets.cmake)
+endif()
+
+if (XMVB_ENABLE_CUDA)
+  add_subdirectory(cuda)
+  if (XMVB_BUILD_DEV_TARGETS)
+    include(${CMAKE_SOURCE_DIR}/tests/cuda/targets.cmake)
+  endif()
 endif()

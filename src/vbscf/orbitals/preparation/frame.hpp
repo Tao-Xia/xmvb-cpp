@@ -20,23 +20,23 @@ namespace xmvb::vb {
  * linear algebra ad hoc inside the optimizer.
  */
 struct LocalizedRepresentativeSelector {
-  /**
+    /**
    * @brief Column-major inactive representative matrix `U_i`.
    *
    * Dimensions:
    * `n_inactive_doubly_occupied_orbitals x n_inactive_doubly_occupied_orbitals`.
    */
-  Eigen::MatrixXd inactive_right_transform;
+    Eigen::MatrixXd inactive_right_transform;
 
-  /**
+    /**
    * @brief Column-major inverse-transpose inactive representative matrix `U_i^{-T}`.
    *
    * Dimensions:
    * `n_inactive_doubly_occupied_orbitals x n_inactive_doubly_occupied_orbitals`.
    */
-  Eigen::MatrixXd inactive_inverse_transpose_right_transform;
+    Eigen::MatrixXd inactive_inverse_transpose_right_transform;
 
-  /**
+    /**
    * @brief Column-major inactive-null active coefficients `K_a`.
    *
    * This stores the inactive-frame coefficients of the localized physical
@@ -46,7 +46,7 @@ struct LocalizedRepresentativeSelector {
    * Dimensions:
    * `n_inactive_doubly_occupied_orbitals x n_active_orbitals`.
    */
-  Eigen::MatrixXd active_inactive_coefficients;
+    Eigen::MatrixXd active_inactive_coefficients;
 };
 
 /**
@@ -58,21 +58,21 @@ struct LocalizedRepresentativeSelector {
  * and diagnostics can reuse the dense physical frame explicitly.
  */
 struct PhysicalOrbitalFrame {
-  /**
+    /**
    * @brief Column-major normalized physical orbital matrix `C`.
    *
    * Dimensions: `n_basis_functions x n_orbitals`.
    */
-  Eigen::MatrixXd normalized_orbital_matrix;
+    Eigen::MatrixXd normalized_orbital_matrix;
 
-  /**
+    /**
    * @brief Column-major inactive physical orbital block `C_inactive`.
    *
    * Dimensions: `n_basis_functions x n_inactive_doubly_occupied_orbitals`.
    */
-  Eigen::MatrixXd inactive_physical_orbital_matrix;
+    Eigen::MatrixXd inactive_physical_orbital_matrix;
 
-  /**
+    /**
    * @brief Column-major inactive orthonormal frame `Q_inactive`.
    *
    * This stores the accepted-point inactive block after the gauge transform
@@ -83,16 +83,16 @@ struct PhysicalOrbitalFrame {
    *
    * Dimensions: `n_basis_functions x n_inactive_doubly_occupied_orbitals`.
    */
-  Eigen::MatrixXd inactive_orthonormal_orbital_matrix;
+    Eigen::MatrixXd inactive_orthonormal_orbital_matrix;
 
-  /**
+    /**
    * @brief Column-major active physical orbital block `C_active`.
    *
    * Dimensions: `n_basis_functions x n_active_orbitals`.
    */
-  Eigen::MatrixXd active_physical_orbital_matrix;
+    Eigen::MatrixXd active_physical_orbital_matrix;
 
-  /**
+    /**
    * @brief Column-major gauge transform `R_i = (C_i^T S C_i)^{-1/2}`.
    *
    * This is the small inactive-space matrix used to transform the physical
@@ -101,12 +101,12 @@ struct PhysicalOrbitalFrame {
    * Dimensions:
    * `n_inactive_doubly_occupied_orbitals x n_inactive_doubly_occupied_orbitals`.
    */
-  Eigen::MatrixXd inactive_orthonormal_gauge_transform;
+    Eigen::MatrixXd inactive_orthonormal_gauge_transform;
 
-  /**
+    /**
    * @brief Accepted-point selector mapping the internal frame to the localized representative.
    */
-  LocalizedRepresentativeSelector localized_representative_selector;
+    LocalizedRepresentativeSelector localized_representative_selector;
 };
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

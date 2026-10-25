@@ -14,14 +14,14 @@ namespace xmvb::vb {
  * AO overlap matrix.
  */
 class ActiveSpaceOrbitalPreparer {
-public:
-  /**
+  public:
+    /**
    * @brief Builds auxiliary orbitals and the active-space overlap matrix.
    *
    * @param input Orbital parameterization and AO overlap data.
    * @return OrbitalPreparationResult Prepared auxiliary orbitals and overlap matrices.
    */
-  OrbitalPreparationResult prepare(const OrbitalPreparationInput& input) const;
+    OrbitalPreparationResult prepare(const OrbitalPreparationInput& input) const;
 };
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

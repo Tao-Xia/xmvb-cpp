@@ -6,4 +6,4 @@ namespace xmvb::cli {
 
 int run(Options options);
 
-}  // namespace xmvb::cli
+} // namespace xmvb::cli

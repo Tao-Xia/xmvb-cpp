@@ -1,5 +1,7 @@
 #pragma once
 
+#include "mcscf/ci/string_table.hpp"
+
 #include <vector>
 #include <utility>
 
@@ -21,95 +23,89 @@ class SameSpinDirectionalPairTileView;
  * `n_unique x n_unique` directional object is required by this representation.
  */
 struct SameSpinDirectionalPairTile {
-  int left_begin = 0;
-  int right_begin = 0;
-  Eigen::MatrixXd delta_overlap;
-  Eigen::MatrixXd delta_regular_hamiltonian;
-  Eigen::MatrixXd delta_singular_hamiltonian;
-  std::vector<SameSpinPolynomialDirectionalPairData> pairs;
+    int left_begin = 0;
+    int right_begin = 0;
+    Eigen::MatrixXd delta_overlap;
+    Eigen::MatrixXd delta_regular_hamiltonian;
+    Eigen::MatrixXd delta_singular_hamiltonian;
+    std::vector<SameSpinPolynomialDirectionalPairData> pairs;
 
-  int left_size() const noexcept {
-    return static_cast<int>(delta_overlap.rows());
-  }
+    int left_size() const noexcept {
+        return static_cast<int>(delta_overlap.rows());
+    }
 
-  int right_size() const noexcept {
-    return static_cast<int>(delta_overlap.cols());
-  }
+    int right_size() const noexcept {
+        return static_cast<int>(delta_overlap.cols());
+    }
 
-  const SameSpinPolynomialDirectionalPairData& pair(
-      int left_local,
-      int right_local) const;
+    const SameSpinPolynomialDirectionalPairData& pair(int left_local, int right_local) const;
 
-  SameSpinDirectionalPairTileView view(bool transposed = false) const;
+    SameSpinDirectionalPairTileView view(bool transposed = false) const;
 };
 
 /** Zero-copy orientation view of one canonical same-spin tile. */
 class SameSpinDirectionalPairTileView {
-public:
-  using Stride = Eigen::Stride<Eigen::Dynamic, Eigen::Dynamic>;
-  using ConstMatrixMap = Eigen::Map<
-      const Eigen::MatrixXd, Eigen::Unaligned, Stride>;
+  public:
+    using Stride = Eigen::Stride<Eigen::Dynamic, Eigen::Dynamic>;
+    using ConstMatrixMap = Eigen::Map<const Eigen::MatrixXd, Eigen::Unaligned, Stride>;
 
-  SameSpinDirectionalPairTileView(
-      const SameSpinDirectionalPairTile& storage,
-      bool transposed) noexcept
-      : storage_(&storage), transposed_(transposed) {}
+    SameSpinDirectionalPairTileView(const SameSpinDirectionalPairTile& storage,
+                                    bool transposed) noexcept
+        : storage_(&storage), transposed_(transposed) {}
 
-  int left_begin() const noexcept;
-  int right_begin() const noexcept;
-  int left_size() const noexcept;
-  int right_size() const noexcept;
-  bool transposed() const noexcept { return transposed_; }
-
-  ConstMatrixMap delta_overlap() const;
-  ConstMatrixMap delta_regular_hamiltonian() const;
-  ConstMatrixMap delta_singular_hamiltonian() const;
-
-  template <typename Consumer>
-  void with_pair(
-      int left_local,
-      int right_local,
-      Consumer&& consume) const {
-    if (!transposed_) {
-      consume(storage_->pair(left_local, right_local));
-      return;
+    int left_begin() const noexcept;
+    int right_begin() const noexcept;
+    int left_size() const noexcept;
+    int right_size() const noexcept;
+    bool transposed() const noexcept {
+        return transposed_;
     }
-    SameSpinPolynomialDirectionalPairData pair =
-        storage_->pair(right_local, left_local);
-    pair.delta_cofactor_1st.transposeInPlace();
-    pair.delta_same_spin_overlap_hamiltonian_gradient.transposeInPlace();
-    consume(pair);
-  }
 
-private:
-  ConstMatrixMap matrix_view(const Eigen::MatrixXd& matrix) const;
+    ConstMatrixMap delta_overlap() const;
+    ConstMatrixMap delta_regular_hamiltonian() const;
+    ConstMatrixMap delta_singular_hamiltonian() const;
 
-  const SameSpinDirectionalPairTile* storage_ = nullptr;
-  bool transposed_ = false;
+    template <typename Consumer>
+    void with_pair(int left_local, int right_local, Consumer&& consume) const {
+        if (!transposed_) {
+            consume(storage_->pair(left_local, right_local));
+            return;
+        }
+        SameSpinPolynomialDirectionalPairData pair = storage_->pair(right_local, left_local);
+        pair.delta_cofactor_1st.transposeInPlace();
+        pair.delta_same_spin_overlap_hamiltonian_gradient.transposeInPlace();
+        consume(pair);
+    }
+
+  private:
+    ConstMatrixMap matrix_view(const Eigen::MatrixXd& matrix) const;
+
+    const SameSpinDirectionalPairTile* storage_ = nullptr;
+    bool transposed_ = false;
 };
 
-SameSpinDirectionalPairTile build_directional_pair_tile(
-    const std::vector<std::vector<int>>& unique_determinants,
-    const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
-    int n_unique_determinants,
-    int n_active_orbitals,
-    const ActiveSpaceIntegralDirectionView& direction,
-    int left_begin,
-    int left_end,
-    int right_begin,
-    int right_end,
-    const Eigen::MatrixXd* accepted_active_one_electron,
-    const Eigen::MatrixXd* accepted_ri_active_pair_factors,
-    const Eigen::MatrixXd* directional_ri_active_pair_factors);
+SameSpinDirectionalPairTile
+build_directional_pair_tile(const xmvb::mcscf::StringTable& unique_determinants,
+                            const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
+                            int n_unique_determinants,
+                            int n_active_orbitals,
+                            const ActiveSpaceIntegralDirectionView& direction,
+                            int left_begin,
+                            int left_end,
+                            int right_begin,
+                            int right_end,
+                            const Eigen::MatrixXd* accepted_active_one_electron,
+                            const Eigen::MatrixXd* accepted_ri_active_pair_factors,
+                            const Eigen::MatrixXd* directional_ri_active_pair_factors);
 
-SameSpinDirectionalPairTile build_directional_pair_tile(
-    const std::vector<std::vector<int>>& unique_determinants,
-    const AcceptedSpinPairTile& accepted_pair_tile,
-    int n_active_orbitals,
-    const ActiveSpaceIntegralDirectionView& direction,
-    const Eigen::MatrixXd* accepted_active_one_electron,
-    const Eigen::MatrixXd* accepted_ri_active_pair_factors,
-    const Eigen::MatrixXd* directional_ri_active_pair_factors);
+SameSpinDirectionalPairTile
+build_directional_pair_tile(const xmvb::mcscf::StringTable& unique_determinants,
+                            const AcceptedSpinPairTile& accepted_pair_tile,
+                            int n_active_orbitals,
+                            const ActiveSpaceIntegralDirectionView& direction,
+                            const Eigen::MatrixXd* accepted_active_one_electron,
+                            const Eigen::MatrixXd* accepted_ri_active_pair_factors,
+                            const Eigen::MatrixXd* directional_ri_active_pair_factors);
 
 void accumulate_one_electron_gradient_contribution_local(
     const std::vector<int>& occ_L,
@@ -133,13 +129,13 @@ void accumulate_deleted_minor_same_spin_two_electron_gradient_contribution_local
     double weight,
     std::vector<double>* packed_active_two_electron_gradient);
 
-SameSpinPolynomialDirectionalPairData build_polynomial_spin_directional_data(
-    const std::vector<int>& occ_L,
-    const std::vector<int>& occ_R,
-    const SpinDeterminantPairEvaluation& pair_evaluation,
-    int n_active_orbitals,
-    const ActiveSpaceIntegralDirectionView& direction,
-    bool need_overlap_gradient = true);
+SameSpinPolynomialDirectionalPairData
+build_polynomial_spin_directional_data(const std::vector<int>& occ_L,
+                                       const std::vector<int>& occ_R,
+                                       const SpinDeterminantPairEvaluation& pair_evaluation,
+                                       int n_active_orbitals,
+                                       const ActiveSpaceIntegralDirectionView& direction,
+                                       bool need_overlap_gradient = true);
 
 void accumulate_directional_one_electron_gradient_contribution_local(
     const std::vector<int>& occ_L,
@@ -160,4 +156,4 @@ void accumulate_directional_deleted_minor_same_spin_two_electron_gradient_contri
     double delta_weight,
     std::vector<double>* packed_active_two_electron_gradient);
 
-}  // namespace xmvb::vb::detail
+} // namespace xmvb::vb::detail

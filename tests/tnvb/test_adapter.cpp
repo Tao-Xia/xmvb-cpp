@@ -1,10 +1,31 @@
 #include "tnvb/gradient/adapter.hpp"
+#include "tnvb/electronic/input_signature.hpp"
 #include <cmath>
 #include <stdexcept>
 #include <limits>
 #include "acceptance.hpp"
 
 int main() {
+  // Producer-chunk AO integrals are part of the scientific input identity.
+  // A changed value or address must invalidate ENERGY-to-GRADIENT reuse.
+  xmvb::vb::VbScfInput chunked;
+  auto& graph=chunked.ao_integral_input.pair_graph;
+  graph.pair_first={0,0,1}; graph.pair_second={0,1,1};
+  graph.chunks={{{0},{0},{0.3}}}; graph.chunk_offsets={0,1};
+  const auto original_signature=xmvb::tnvb::input_signature(chunked);
+  if (xmvb::tnvb::input_signature(chunked)!=original_signature) {
+    throw std::runtime_error("unchanged chunked AO input changed its signature");
+  }
+  for (int field=0;field<3;++field) {
+    auto changed=chunked;
+    auto& chunk=changed.ao_integral_input.pair_graph.chunks.front();
+    if (field==0) chunk.rows[0]=1;
+    if (field==1) chunk.columns[0]=1;
+    if (field==2) chunk.values[0]+=1e-4;
+    if (xmvb::tnvb::input_signature(changed)==original_signature) {
+      throw std::runtime_error("changed chunked AO input retained its signature");
+    }
+  }
   // Preserve benzene's strict matrix gate while applying the separately
   // confirmed C14 policy; nonfinite diagnostics can never pass either profile.
   const tnvb_test::ComparisonErrors measured{3.23e-11,3.18e-9,1.524e-10,7.05e-10,9.11e-10,1.75e-9};

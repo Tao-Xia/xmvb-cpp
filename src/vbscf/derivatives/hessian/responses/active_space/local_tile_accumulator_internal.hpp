@@ -8,24 +8,22 @@ namespace xmvb::vb::detail {
 
 /** Fuses same-spin and opposite-spin local adjoints in one pair-tile sweep. */
 class LocalActiveSpaceTileAccumulator {
- public:
-  LocalActiveSpaceTileAccumulator(
-      const VbScfInput& input,
-      const AcceptedPointContext& accepted_point,
-      const ActiveSpaceIntegralDirectionView& direction);
+  public:
+    LocalActiveSpaceTileAccumulator(const VbScfInput& input,
+                                    const AcceptedPointContext& accepted_point,
+                                    const ActiveSpaceIntegralDirectionView& direction);
 
-  void consume(
-      bool alpha_channel,
-      bool beta_channel,
-      const AcceptedSpinPairTile& accepted,
-      const SameSpinDirectionalPairTileView& same_spin,
-      const DirectionalOppositeSpinPairTileView* opposite_spin);
+    void consume(bool alpha_channel,
+                 bool beta_channel,
+                 const AcceptedSpinPairTile& accepted,
+                 const SameSpinDirectionalPairTileView& same_spin,
+                 const DirectionalOppositeSpinPairTileView* opposite_spin);
 
-  ActiveSpaceGradientDirection finish();
+    ActiveSpaceGradientDirection finish();
 
- private:
-  LocalSameSpinTileAccumulator same_spin_;
-  LocalOppositeSpinTileAccumulator opposite_spin_;
+  private:
+    LocalSameSpinTileAccumulator same_spin_;
+    LocalOppositeSpinTileAccumulator opposite_spin_;
 };
 
-}  // namespace xmvb::vb::detail
+} // namespace xmvb::vb::detail

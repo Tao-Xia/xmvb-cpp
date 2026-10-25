@@ -9,23 +9,20 @@
 
 namespace xmvb::output {
 
-void print_program_preamble(
-    std::ostream& output,
-    const std::string& input_path,
-    const std::chrono::system_clock::time_point& start_time,
-    int n_threads);
+void print_program_preamble(std::ostream& output,
+                            const std::string& input_path,
+                            const std::chrono::system_clock::time_point& start_time,
+                            int n_threads);
 
-void print_input_sections(
-    std::ostream& output,
-    const std::string& input_path,
-    const vb::VbScfInputLoadResult& load_result,
-    const char* optimizer_name,
-    int max_iterations);
+void print_input_sections(std::ostream& output,
+                          const std::string& input_path,
+                          const vb::VbScfInputLoadResult& load_result,
+                          const char* optimizer_name,
+                          int max_iterations);
 
 /** @brief Prints requested final analyses; returns the exact mean structure overlap. */
-double print_final_state_sections(
-    std::ostream& output,
-    const vb::VbScfInputLoadResult& load_result,
-    const vb::VbScfOptimizerResult& result);
+double print_final_state_sections(std::ostream& output,
+                                  const vb::VbScfInputLoadResult& load_result,
+                                  const vb::VbScfOptimizerResult& result);
 
-}  // namespace xmvb::output
+} // namespace xmvb::output

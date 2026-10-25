@@ -23,17 +23,17 @@ namespace xmvb::vb {
  * determinant Hamiltonian of a single spin sector.
  */
 struct SameSpinMatrixBackwardContribution {
-  std::vector<double> active_orbital_overlap_gradient;
-  std::vector<double> active_one_electron_gradient;
-  std::vector<double> packed_active_two_electron_gradient;
+    std::vector<double> active_orbital_overlap_gradient;
+    std::vector<double> active_one_electron_gradient;
+    std::vector<double> packed_active_two_electron_gradient;
 };
 
 /** Directional polynomial data for one ordered unique-spin determinant pair. */
 struct SameSpinPolynomialDirectionalPairData {
-  double delta_overlap_determinant = 0.0;
-  double delta_total_hamiltonian = 0.0;
-  Eigen::MatrixXd delta_cofactor_1st;
-  Eigen::MatrixXd delta_same_spin_overlap_hamiltonian_gradient;
+    double delta_overlap_determinant = 0.0;
+    double delta_total_hamiltonian = 0.0;
+    Eigen::MatrixXd delta_cofactor_1st;
+    Eigen::MatrixXd delta_same_spin_overlap_hamiltonian_gradient;
 };
 
 /**
@@ -78,8 +78,7 @@ SameSpinMatrixBackwardContribution build_same_spin_matrix_backward_contribution(
  * accepted-point orbital Hessian-vector product after the generalized
  * eigensystem has been differentiated.
  */
-SameSpinMatrixBackwardContribution
-build_directional_same_spin_matrix_backward_contribution(
+SameSpinMatrixBackwardContribution build_directional_same_spin_matrix_backward_contribution(
     const SameSpinPairCacheContext& same_spin_pair_cache,
     const SelectedStateDeterminantMatrices& selected_states,
     const SelectedStateDeterminantMatrices& directional_selected_states,
@@ -90,4 +89,4 @@ build_directional_same_spin_matrix_backward_contribution(
     const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron,
     const xmvb::integrals::ActiveSpaceTwoElectronResult& active_two_electron);
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

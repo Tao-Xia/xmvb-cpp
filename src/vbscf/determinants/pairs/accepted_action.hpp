@@ -10,8 +10,8 @@ namespace xmvb::vb {
 
 /** Same-spin overlap and Hamiltonian images of a dense vector block. */
 struct AcceptedSpinPairActionResult {
-  Eigen::MatrixXd overlap;
-  Eigen::MatrixXd hamiltonian;
+    Eigen::MatrixXd overlap;
+    Eigen::MatrixXd hamiltonian;
 };
 
 /**
@@ -30,4 +30,4 @@ AcceptedSpinPairActionResult apply_accepted_spin_pair_action(
     const Eigen::Ref<const Eigen::MatrixXd>& vectors,
     std::size_t workspace_bytes = 256ULL * 1024ULL * 1024ULL);
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

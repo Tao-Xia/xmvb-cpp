@@ -10,12 +10,12 @@
 namespace xmvb::vb::detail {
 
 /** One callback invocation consumes all directional data for a pair tile. */
-using DirectionalPairTileConsumer = std::function<void(
-    bool alpha_channel,
-    bool beta_channel,
-    const AcceptedSpinPairTile& accepted,
-    const SameSpinDirectionalPairTileView& same_spin,
-    const DirectionalOppositeSpinPairTileView* opposite_spin)>;
+using DirectionalPairTileConsumer =
+    std::function<void(bool alpha_channel,
+                       bool beta_channel,
+                       const AcceptedSpinPairTile& accepted,
+                       const SameSpinDirectionalPairTileView& same_spin,
+                       const DirectionalOppositeSpinPairTileView* opposite_spin)>;
 
 /**
  * @brief Streams bounded directional unique-spin pair tiles.
@@ -38,4 +38,4 @@ void stream_directional_pair_tiles(
     int n_response_states = 0,
     std::size_t workspace_bytes = kPairTileWorkspaceBytes);
 
-}  // namespace xmvb::vb::detail
+} // namespace xmvb::vb::detail

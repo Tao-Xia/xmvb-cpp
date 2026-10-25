@@ -1,388 +1,278 @@
 #include "linalg/eigensolver.hpp"
 
 #include <algorithm>
-#include <cstdint>
 #include <cmath>
+#include <cstdint>
 #include <limits>
-#include <sstream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include <Eigen/Core>
-#include "lapacke.h"
+#include <lapacke.h>
+
+#include "linalg/davidson_core.hpp"
 
 namespace xmvb::linalg {
-
 namespace {
 
-void validate_generalized_eigenproblem_inputs(
-    std::span<const double> hamiltonian_matrix,
-    std::span<const double> overlap_matrix,
-    int dimension) {
-  if (dimension <= 0) {
-    throw std::invalid_argument("dimension must be positive");
-  }
-  const std::size_t expected_size =
-      static_cast<std::size_t>(dimension) * dimension;
-  if (hamiltonian_matrix.size() != expected_size ||
-      overlap_matrix.size() != expected_size) {
-    throw std::invalid_argument(
-        "hamiltonian_matrix and overlap_matrix must be square matrices");
-  }
+void validate_generalized_eigenproblem_inputs(std::span<const double> hamiltonian_matrix,
+                                              std::span<const double> overlap_matrix,
+                                              int dimension) {
+    if (dimension <= 0) {
+        throw std::invalid_argument("dimension must be positive");
+    }
+    const std::size_t expected_size = static_cast<std::size_t>(dimension) * dimension;
+    if (hamiltonian_matrix.size() != expected_size || overlap_matrix.size() != expected_size) {
+        throw std::invalid_argument(
+            "hamiltonian_matrix and overlap_matrix must be square matrices");
+    }
 }
 
 void check_generalized_eigensolver_info(lapack_int info) {
-  if (info < 0) {
-    throw std::runtime_error(
-        "LAPACKE_dsygvd failed: illegal argument " + std::to_string(-info));
-  }
-  if (info > 0) {
-    throw std::runtime_error(
-        "LAPACKE_dsygvd failed: overlap_matrix is not positive definite"
-        " (info=" + std::to_string(info) + ")");
-  }
+    if (info < 0) {
+        throw std::runtime_error("LAPACKE_dsygvd failed: illegal argument " +
+                                 std::to_string(-info));
+    }
+    if (info > 0) {
+        throw std::runtime_error("LAPACKE_dsygvd failed: overlap_matrix is not positive definite"
+                                 " (info=" +
+                                 std::to_string(info) + ")");
+    }
 }
 
-struct ProjectedEigenpairs {
-  Eigen::VectorXd eigenvalues;
-  Eigen::MatrixXd eigenvectors;
+struct CpuBackend {
+    using Matrix = Eigen::MatrixXd;
+    static constexpr bool supports_host_callbacks = true;
+    const GeneralizedEigenAction& action;
+    bool identity_overlap;
+
+    Matrix make(std::int64_t rows, std::int64_t cols) const {
+        return Matrix(rows, cols);
+    }
+    Matrix upload(const Eigen::Ref<const Eigen::MatrixXd>& host) const {
+        return Matrix(host);
+    }
+    MatrixView view(Matrix& matrix) const {
+        return {matrix.data(), matrix.rows(), matrix.cols(), matrix.outerStride()};
+    }
+    ConstMatrixView cview(const Matrix& matrix) const {
+        return {matrix.data(), matrix.rows(), matrix.cols(), matrix.outerStride()};
+    }
+    Matrix download(ConstMatrixView source) const {
+        Matrix result(source.rows, source.cols);
+        for (std::int64_t column = 0; column < source.cols; ++column) {
+            std::copy_n(source.column(column).data, source.rows, result.col(column).data());
+        }
+        return result;
+    }
+    void upload_into(MatrixView destination, const Eigen::Ref<const Eigen::VectorXd>& host) const {
+        if (destination.cols != 1 || destination.rows != host.size()) {
+            throw std::invalid_argument("CPU Davidson upload dimensions");
+        }
+        std::copy_n(host.data(), host.size(), destination.data);
+    }
+    void copy(MatrixView destination, ConstMatrixView source) const {
+        if (destination.rows != source.rows || destination.cols != source.cols) {
+            throw std::invalid_argument("CPU Davidson copy dimensions");
+        }
+        for (std::int64_t column = 0; column < source.cols; ++column) {
+            std::copy_n(source.column(column).data, source.rows, destination.column(column).data);
+        }
+    }
+    void axpy(MatrixView destination, double factor, ConstMatrixView source) const {
+        for (std::int64_t column = 0; column < source.cols; ++column) {
+            const auto src = source.column(column);
+            const auto dst = destination.column(column);
+            Eigen::Map<Eigen::VectorXd>(dst.data, dst.rows).noalias() +=
+                factor * Eigen::Map<const Eigen::VectorXd>(src.data, src.rows);
+        }
+    }
+    void scal(MatrixView destination, double factor) const {
+        for (std::int64_t column = 0; column < destination.cols; ++column) {
+            const auto dst = destination.column(column);
+            Eigen::Map<Eigen::VectorXd>(dst.data, dst.rows) *= factor;
+        }
+    }
+    double dot(ConstMatrixView left, ConstMatrixView right) const {
+        return Eigen::Map<const Eigen::VectorXd>(left.data, left.rows)
+            .dot(Eigen::Map<const Eigen::VectorXd>(right.data, right.rows));
+    }
+    double norm(ConstMatrixView vector) const {
+        return Eigen::Map<const Eigen::VectorXd>(vector.data, vector.rows).norm();
+    }
+    void combine(MatrixView destination,
+                 ConstMatrixView basis,
+                 const Eigen::Ref<const Eigen::MatrixXd>& coefficients) const {
+        using Stride = Eigen::OuterStride<>;
+        Eigen::Map<Eigen::MatrixXd, 0, Stride> output(
+            destination.data, destination.rows, destination.cols, Stride(destination.ld));
+        Eigen::Map<const Eigen::MatrixXd, 0, Stride> input(
+            basis.data, basis.rows, basis.cols, Stride(basis.ld));
+        output.noalias() = input * coefficients;
+    }
+    Matrix project(ConstMatrixView basis, ConstMatrixView images) const {
+        using Stride = Eigen::OuterStride<>;
+        Eigen::Map<const Eigen::MatrixXd, 0, Stride> input_basis(
+            basis.data, basis.rows, basis.cols, Stride(basis.ld));
+        Eigen::Map<const Eigen::MatrixXd, 0, Stride> input_images(
+            images.data, images.rows, images.cols, Stride(images.ld));
+        return input_basis.transpose() * input_images;
+    }
+    void subtract_projection(MatrixView destination,
+                             ConstMatrixView basis,
+                             const Eigen::Ref<const Eigen::MatrixXd>& coefficients) const {
+        using Stride = Eigen::OuterStride<>;
+        Eigen::Map<Eigen::MatrixXd, 0, Stride> output(
+            destination.data, destination.rows, destination.cols, Stride(destination.ld));
+        Eigen::Map<const Eigen::MatrixXd, 0, Stride> input(
+            basis.data, basis.rows, basis.cols, Stride(basis.ld));
+        output.noalias() -= input * coefficients;
+    }
+    void precondition(MatrixView correction,
+                      ConstMatrixView residual,
+                      const Eigen::Ref<const Eigen::VectorXd>& diagonal_h,
+                      const Eigen::Ref<const Eigen::VectorXd>& diagonal_s,
+                      double lambda) const {
+        for (Eigen::Index i = 0; i < diagonal_h.size(); ++i) {
+            double denominator = diagonal_h[i] - lambda * diagonal_s[i];
+            const double floor =
+                std::sqrt(std::numeric_limits<double>::epsilon()) *
+                std::max({1.0, std::abs(diagonal_h[i]), std::abs(lambda * diagonal_s[i])});
+            if (std::abs(denominator) < floor) {
+                denominator = std::copysign(floor, denominator == 0.0 ? 1.0 : denominator);
+            }
+            correction.data[i] = -residual.data[i] / denominator;
+        }
+    }
+    void apply(ConstMatrixView vectors, MatrixView h, MatrixView s) const {
+        if (!action) {
+            throw std::invalid_argument("generalized eigenvalue action is empty");
+        }
+        Matrix input = download(vectors);
+        GeneralizedEigenActionResult images = action(input);
+        if (images.hamiltonian.rows() != h.rows || images.hamiltonian.cols() != h.cols ||
+            !images.hamiltonian.allFinite() ||
+            (identity_overlap
+                 ? images.overlap.size() != 0
+                 : images.overlap.rows() != s.rows || images.overlap.cols() != s.cols ||
+                       !images.overlap.allFinite())) {
+            throw std::runtime_error("generalized eigenvalue action returned invalid block images");
+        }
+        copy(h, cview(images.hamiltonian));
+        if (!identity_overlap)
+            copy(s, cview(images.overlap));
+    }
 };
 
-ProjectedEigenpairs solve_lowest_projected_eigenpairs(
-    const Eigen::Ref<const Eigen::MatrixXd>& hamiltonian,
-    int n_roots) {
-  const int dimension = static_cast<int>(hamiltonian.rows());
-  Eigen::MatrixXd matrix = hamiltonian;
-  ProjectedEigenpairs result{
-      Eigen::VectorXd(n_roots),
-      Eigen::MatrixXd(dimension, n_roots)};
-  std::vector<lapack_int> support(2 * n_roots);
-  lapack_int n_converged = 0;
-  const lapack_int info = LAPACKE_dsyevr(
-      LAPACK_COL_MAJOR,
-      'V',
-      'I',
-      'U',
-      dimension,
-      matrix.data(),
-      dimension,
-      0.0,
-      0.0,
-      1,
-      n_roots,
-      0.0,
-      &n_converged,
-      result.eigenvalues.data(),
-      result.eigenvectors.data(),
-      dimension,
-      support.data());
-  if (info != 0 || n_converged != n_roots) {
-    throw std::runtime_error(
-        "Davidson projected eigensolve failed (info=" +
-        std::to_string(info) + ")");
-  }
-  return result;
-}
+} // namespace
 
-Eigen::VectorXd precondition_residual(
-    const Eigen::Ref<const Eigen::VectorXd>& diag_H,
-    const Eigen::Ref<const Eigen::VectorXd>& diag_S,
-    double lambda,
-    const Eigen::Ref<const Eigen::VectorXd>& vector) {
-  Eigen::VectorXd result(vector.size());
-  for (Eigen::Index i = 0; i < vector.size(); ++i) {
-    double denom = diag_H[i] - lambda * diag_S[i];
-    const double denominator_floor =
-        std::sqrt(std::numeric_limits<double>::epsilon()) *
-        std::max({1.0, std::abs(diag_H[i]), std::abs(lambda * diag_S[i])});
-    if (std::abs(denom) < denominator_floor) {
-      denom = std::copysign(denominator_floor, denom == 0.0 ? 1.0 : denom);
+Eigen::MatrixXd
+make_davidson_initial_vectors(const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
+                              const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
+                              int n_vectors) {
+    const int dimension = static_cast<int>(hamiltonian_diagonal.size());
+    std::vector<int> diagonal_order(dimension);
+    for (int index = 0; index < dimension; ++index)
+        diagonal_order[index] = index;
+    std::partial_sort(diagonal_order.begin(),
+                      diagonal_order.begin() + n_vectors / 2,
+                      diagonal_order.end(),
+                      [&](int left, int right) {
+                          return hamiltonian_diagonal[left] / overlap_diagonal[left] <
+                                 hamiltonian_diagonal[right] / overlap_diagonal[right];
+                      });
+    Eigen::MatrixXd vectors = Eigen::MatrixXd::Zero(dimension, n_vectors);
+    const int n_diagonal_vectors = n_vectors / 2;
+    for (int vector = 0; vector < n_diagonal_vectors; ++vector) {
+        vectors(diagonal_order[vector], vector) = 1.0;
     }
-    result[i] = vector[i] / denom;
-  }
-  return -result;
-}
-
-void validate_davidson_options(
-    int dimension,
-    const DavidsonOptions& options) {
-  if (dimension <= 0 || options.n_roots <= 0 ||
-      options.n_roots > dimension) {
-    throw std::invalid_argument("invalid Davidson eigenproblem dimensions");
-  }
-  if (options.max_iterations <= 0 ||
-      options.max_subspace_dimension <
-          std::min(dimension, 2 * options.n_roots) ||
-      options.max_subspace_dimension > dimension) {
-    throw std::invalid_argument("invalid Davidson iteration or subspace budget");
-  }
-  if (!std::isfinite(options.residual_tolerance) ||
-      options.residual_tolerance <= 0.0) {
-    throw std::invalid_argument("Davidson residual tolerance must be positive");
-  }
-  if (!std::isfinite(options.energy_tolerance) ||
-      options.energy_tolerance <= 0.0) {
-    throw std::invalid_argument("Davidson energy tolerance must be positive");
-  }
-  if (!std::isfinite(options.stationarity_tolerance) ||
-      options.stationarity_tolerance <= 0.0) {
-    throw std::invalid_argument("Davidson stationarity tolerance must be positive");
-  }
-}
-
-void validate_davidson_diagonals(
-    const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
-    const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal) {
-  if (overlap_diagonal.size() != hamiltonian_diagonal.size() ||
-      !hamiltonian_diagonal.allFinite() ||
-      !overlap_diagonal.allFinite() ||
-      (overlap_diagonal.array() <= 0.0).any()) {
-    throw std::invalid_argument("invalid generalized eigenproblem diagonals");
-  }
-}
-
-void validate_action_result(
-    const GeneralizedEigenActionResult& result,
-    int dimension,
-    int block_width, bool identity_overlap) {
-  if (result.hamiltonian.rows() != dimension ||
-      result.hamiltonian.cols() != block_width ||
-      !result.hamiltonian.allFinite() ||
-      (identity_overlap ? result.overlap.size()!=0 :
-          result.overlap.rows()!=dimension || result.overlap.cols()!=block_width ||
-          !result.overlap.allFinite())) {
-    throw std::runtime_error(
-        "generalized eigenvalue action returned invalid block images");
-  }
-}
-
-GeneralizedEigenActionResult apply_checked(
-    const GeneralizedEigenAction& action,
-    const Eigen::Ref<const Eigen::MatrixXd>& vectors,
-    int dimension,
-    int* block_actions, bool identity_overlap) {
-  if (!action) {
-    throw std::invalid_argument("generalized eigenvalue action is empty");
-  }
-  GeneralizedEigenActionResult result = action(vectors);
-  validate_action_result(result, dimension, static_cast<int>(vectors.cols()),identity_overlap);
-  ++(*block_actions);
-  return result;
-}
-
-int append_s_orthonormal_block(
-    Eigen::MatrixXd candidates,
-    Eigen::MatrixXd hamiltonian_candidates,
-    Eigen::MatrixXd overlap_candidates,
-    Eigen::MatrixXd* basis,
-    Eigen::MatrixXd* hamiltonian_basis,
-    Eigen::MatrixXd* overlap_basis,
-    int active_dimension, bool identity_overlap) {
-  const double dependence_floor =
-      64.0 * std::numeric_limits<double>::epsilon();
-  for (int candidate = 0;
-       candidate < candidates.cols() && active_dimension < basis->cols();
-       ++candidate) {
-    Eigen::VectorXd vector = candidates.col(candidate);
-    Eigen::VectorXd hamiltonian_image =
-        hamiltonian_candidates.col(candidate);
-    Eigen::VectorXd overlap_storage;
-    if (!identity_overlap) overlap_storage=overlap_candidates.col(candidate);
-    Eigen::VectorXd& overlap_image=identity_overlap ? vector:overlap_storage;
-    const double initial_metric_scale = std::max(
-        std::abs(vector.dot(overlap_image)),
-        vector.norm() * overlap_image.norm());
-
-    for (int pass = 0; pass < 2; ++pass) {
-      if (active_dimension == 0) {
-        break;
-      }
-      const Eigen::VectorXd coefficients =
-          basis->leftCols(active_dimension).transpose() * overlap_image;
-      vector.noalias() -=
-          basis->leftCols(active_dimension) * coefficients;
-      hamiltonian_image.noalias() -=
-          hamiltonian_basis->leftCols(active_dimension) * coefficients;
-      if (!identity_overlap) overlap_image.noalias() -=
-          overlap_basis->leftCols(active_dimension) * coefficients;
+    std::uint64_t state = 0x9e3779b97f4a7c15ULL;
+    for (int vector = n_diagonal_vectors; vector < n_vectors; ++vector) {
+        for (int row = 0; row < dimension; ++row) {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            vectors(row, vector) = (state & 1ULL) == 0ULL ? -1.0 : 1.0;
+        }
     }
+    return vectors;
+}
 
-    const double metric_norm_squared = vector.dot(overlap_image);
-    const double scale = vector.norm() * overlap_image.norm();
-    if (!std::isfinite(metric_norm_squared) ||
-        metric_norm_squared <=
-            dependence_floor *
-                std::max(
-                    initial_metric_scale,
-                    std::numeric_limits<double>::min()) ||
-        metric_norm_squared <= 0.0 || !std::isfinite(scale)) {
-      continue;
+DavidsonOptions make_davidson_options(int dimension,
+                                      int n_roots,
+                                      double energy_tolerance,
+                                      double relative_residual_tolerance,
+                                      double stationarity_tolerance) {
+    if (dimension <= 0 || n_roots <= 0 || n_roots > dimension) {
+        throw std::invalid_argument("invalid Davidson eigenproblem dimensions");
     }
-    const double inverse_metric_norm = 1.0 / std::sqrt(metric_norm_squared);
-    basis->col(active_dimension) = vector * inverse_metric_norm;
-    hamiltonian_basis->col(active_dimension) =
-        hamiltonian_image * inverse_metric_norm;
-    if (!identity_overlap) overlap_basis->col(active_dimension) =
-        overlap_image * inverse_metric_norm;
-    ++active_dimension;
-  }
-  return active_dimension;
-}
-
-}  // namespace
-
-Eigen::MatrixXd make_davidson_initial_vectors(
-    const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
-    const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
-    int n_vectors) {
-  const int dimension = static_cast<int>(hamiltonian_diagonal.size());
-  std::vector<int> diagonal_order(dimension);
-  for (int index = 0; index < dimension; ++index) {
-    diagonal_order[index] = index;
-  }
-  std::partial_sort(
-      diagonal_order.begin(),
-      diagonal_order.begin() + n_vectors / 2,
-      diagonal_order.end(),
-      [&](int left, int right) {
-        return hamiltonian_diagonal[left] / overlap_diagonal[left] <
-            hamiltonian_diagonal[right] / overlap_diagonal[right];
-      });
-
-  Eigen::MatrixXd vectors = Eigen::MatrixXd::Zero(dimension, n_vectors);
-  const int n_diagonal_vectors = n_vectors / 2;
-  for (int vector = 0; vector < n_diagonal_vectors; ++vector) {
-    vectors(diagonal_order[vector], vector) = 1.0;
-  }
-
-  std::uint64_t state = 0x9e3779b97f4a7c15ULL;
-  for (int vector = n_diagonal_vectors; vector < n_vectors; ++vector) {
-    for (int row = 0; row < dimension; ++row) {
-      state ^= state << 13;
-      state ^= state >> 7;
-      state ^= state << 17;
-      vectors(row, vector) = (state & 1ULL) == 0ULL ? -1.0 : 1.0;
+    if (!std::isfinite(energy_tolerance) || energy_tolerance <= 0.0 ||
+        !std::isfinite(relative_residual_tolerance) || relative_residual_tolerance <= 0.0 ||
+        !std::isfinite(stationarity_tolerance) || stationarity_tolerance <= 0.0) {
+        throw std::invalid_argument("Davidson accuracy tolerances must be positive");
     }
-  }
-  return vectors;
+    constexpr long double kBasisBudgetDoubles =
+        static_cast<long double>(512ULL * 1024ULL * 1024ULL) / sizeof(double);
+    const long double n = static_cast<long double>(dimension);
+    const long double capacity = 2.0L * kBasisBudgetDoubles /
+                                 (std::sqrt(9.0L * n * n + 4.0L * kBasisBudgetDoubles) + 3.0L * n);
+    const int max_subspace = std::min(dimension, static_cast<int>(std::floor(capacity)));
+    if (max_subspace < std::min(dimension, 2 * n_roots)) {
+        throw std::runtime_error("Davidson selected-root block exceeds the basis workspace budget");
+    }
+    return DavidsonOptions{n_roots,
+                           2 * dimension,
+                           max_subspace,
+                           energy_tolerance,
+                           relative_residual_tolerance,
+                           stationarity_tolerance};
 }
 
-namespace {
-
-void update_projected_hamiltonian(
-    const Eigen::Ref<const Eigen::MatrixXd>& basis,
-    const Eigen::Ref<const Eigen::MatrixXd>& hamiltonian_basis,
-    int first_new_column,
-    int active_dimension,
-    Eigen::MatrixXd* projected_hamiltonian) {
-  const int n_new_columns = active_dimension - first_new_column;
-  if (n_new_columns <= 0) {
-    return;
-  }
-  const Eigen::MatrixXd new_columns =
-      basis.leftCols(active_dimension).transpose() *
-      hamiltonian_basis.middleCols(first_new_column, n_new_columns);
-  projected_hamiltonian->block(
-      0,
-      first_new_column,
-      active_dimension,
-      n_new_columns) = new_columns;
-  if (first_new_column > 0) {
-    projected_hamiltonian->block(
-        first_new_column,
-        0,
-        n_new_columns,
-        first_new_column) =
-        new_columns.topRows(first_new_column).transpose();
-  }
-  auto diagonal_block = projected_hamiltonian->block(
-      first_new_column,
-      first_new_column,
-      n_new_columns,
-      n_new_columns);
-  diagonal_block =
-      (0.5 * (diagonal_block + diagonal_block.transpose())).eval();
+GeneralizedEigenResult
+GeneralizedEigensolver::solve_dense(std::span<const double> hamiltonian_matrix,
+                                    std::span<const double> overlap_matrix,
+                                    int dimension) const {
+    validate_generalized_eigenproblem_inputs(hamiltonian_matrix, overlap_matrix, dimension);
+    GeneralizedEigenResult result;
+    std::vector<double> h_copy(hamiltonian_matrix.begin(), hamiltonian_matrix.end());
+    std::vector<double> s_copy(overlap_matrix.begin(), overlap_matrix.end());
+    result.eigenvalues.resize(static_cast<std::size_t>(dimension));
+    const lapack_int info = LAPACKE_dsygvd(LAPACK_COL_MAJOR,
+                                           1,
+                                           'V',
+                                           'U',
+                                           dimension,
+                                           h_copy.data(),
+                                           dimension,
+                                           s_copy.data(),
+                                           dimension,
+                                           result.eigenvalues.data());
+    check_generalized_eigensolver_info(info);
+    result.eigenvector_matrix = std::move(h_copy);
+    return result;
 }
 
-}  // namespace
-
-DavidsonOptions make_davidson_options(
-    int dimension,
-    int n_roots,
-    double energy_tolerance,
-    double relative_residual_tolerance,
-    double stationarity_tolerance) {
-  if (dimension <= 0 || n_roots <= 0 || n_roots > dimension) {
-    throw std::invalid_argument("invalid Davidson eigenproblem dimensions");
-  }
-  if (!std::isfinite(energy_tolerance) || energy_tolerance <= 0.0 ||
-      !std::isfinite(relative_residual_tolerance) ||
-      relative_residual_tolerance <= 0.0 ||
-      !std::isfinite(stationarity_tolerance) || stationarity_tolerance <= 0.0) {
-    throw std::invalid_argument(
-        "Davidson accuracy tolerances must be positive");
-  }
-  // The stored basis and its H/S images use three dimension-by-subspace
-  // matrices; the projected Hamiltonian uses one subspace square. Cap this
-  // workspace by bytes, not by a molecular or structure-count heuristic.
-  constexpr long double kBasisBudgetDoubles =
-      static_cast<long double>(512ULL * 1024ULL * 1024ULL) / sizeof(double);
-  const long double n = static_cast<long double>(dimension);
-  const long double capacity =
-      2.0L * kBasisBudgetDoubles /
-      (std::sqrt(9.0L * n * n + 4.0L * kBasisBudgetDoubles) + 3.0L * n);
-  const int max_subspace = std::min(
-      dimension,
-      static_cast<int>(std::floor(capacity)));
-  if (max_subspace < std::min(dimension, 2 * n_roots)) {
-    throw std::runtime_error(
-        "Davidson selected-root block exceeds the basis workspace budget");
-  }
-  return DavidsonOptions{
-      n_roots,
-      2 * dimension,
-      max_subspace,
-      energy_tolerance,
-      relative_residual_tolerance,
-      stationarity_tolerance};
-}
-
-GeneralizedEigenResult GeneralizedEigensolver::solve_dense(
-    std::span<const double> hamiltonian_matrix,
-    std::span<const double> overlap_matrix,
-    int dimension) const {
-  validate_generalized_eigenproblem_inputs(
-      hamiltonian_matrix, overlap_matrix, dimension);
-
-  GeneralizedEigenResult result;
-  std::vector<double> H_copy(hamiltonian_matrix.begin(), hamiltonian_matrix.end());
-  std::vector<double> S_copy(overlap_matrix.begin(), overlap_matrix.end());
-  result.eigenvalues.resize(static_cast<std::size_t>(dimension));
-  const lapack_int info = LAPACKE_dsygvd(
-      LAPACK_COL_MAJOR, 1, 'V', 'U', dimension,
-      H_copy.data(), dimension, S_copy.data(), dimension,
-      result.eigenvalues.data());
-  check_generalized_eigensolver_info(info);
-  result.eigenvector_matrix = std::move(H_copy);
-  return result;
-}
-
-std::vector<double> GeneralizedEigensolver::solve_dense_eigenvalues(
-    std::span<const double> hamiltonian_matrix,
-    std::span<const double> overlap_matrix,
-    int dimension) const {
-  validate_generalized_eigenproblem_inputs(
-      hamiltonian_matrix, overlap_matrix, dimension);
-
-  std::vector<double> H_copy(hamiltonian_matrix.begin(), hamiltonian_matrix.end());
-  std::vector<double> S_copy(overlap_matrix.begin(), overlap_matrix.end());
-  std::vector<double> eigenvalues(static_cast<std::size_t>(dimension));
-  const lapack_int info = LAPACKE_dsygvd(
-      LAPACK_COL_MAJOR, 1, 'N', 'U', dimension,
-      H_copy.data(), dimension, S_copy.data(), dimension,
-      eigenvalues.data());
-  check_generalized_eigensolver_info(info);
-  return eigenvalues;
+std::vector<double>
+GeneralizedEigensolver::solve_dense_eigenvalues(std::span<const double> hamiltonian_matrix,
+                                                std::span<const double> overlap_matrix,
+                                                int dimension) const {
+    validate_generalized_eigenproblem_inputs(hamiltonian_matrix, overlap_matrix, dimension);
+    std::vector<double> h_copy(hamiltonian_matrix.begin(), hamiltonian_matrix.end());
+    std::vector<double> s_copy(overlap_matrix.begin(), overlap_matrix.end());
+    std::vector<double> eigenvalues(static_cast<std::size_t>(dimension));
+    const lapack_int info = LAPACKE_dsygvd(LAPACK_COL_MAJOR,
+                                           1,
+                                           'N',
+                                           'U',
+                                           dimension,
+                                           h_copy.data(),
+                                           dimension,
+                                           s_copy.data(),
+                                           dimension,
+                                           eigenvalues.data());
+    check_generalized_eigensolver_info(info);
+    return eigenvalues;
 }
 
 DavidsonResult GeneralizedEigensolver::solve_davidson(
@@ -390,24 +280,13 @@ DavidsonResult GeneralizedEigensolver::solve_davidson(
     const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
     const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
     const DavidsonOptions& options) const {
-  const int dimension = static_cast<int>(hamiltonian_diagonal.size());
-  validate_davidson_diagonals(
-      hamiltonian_diagonal,
-      overlap_diagonal);
-  validate_davidson_options(dimension, options);
-  const int n_initial = std::min(
-      options.max_subspace_dimension,
-      2 * options.n_roots);
-  const Eigen::MatrixXd initial_vectors = make_davidson_initial_vectors(
-      hamiltonian_diagonal,
-      overlap_diagonal,
-      n_initial);
-  return solve_davidson(
-      action,
-      hamiltonian_diagonal,
-      overlap_diagonal,
-      initial_vectors,
-      options);
+    const int dimension = static_cast<int>(hamiltonian_diagonal.size());
+    detail::validate_davidson_diagonals(hamiltonian_diagonal, overlap_diagonal);
+    detail::validate_davidson_options(dimension, options);
+    const int n_initial = std::min(options.max_subspace_dimension, 2 * options.n_roots);
+    const Eigen::MatrixXd initial =
+        make_davidson_initial_vectors(hamiltonian_diagonal, overlap_diagonal, n_initial);
+    return solve_davidson(action, hamiltonian_diagonal, overlap_diagonal, initial, options);
 }
 
 DavidsonResult GeneralizedEigensolver::solve_davidson(
@@ -416,284 +295,9 @@ DavidsonResult GeneralizedEigensolver::solve_davidson(
     const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
     const Eigen::Ref<const Eigen::MatrixXd>& initial_vectors,
     const DavidsonOptions& options) const {
-  const int dimension = static_cast<int>(hamiltonian_diagonal.size());
-  validate_davidson_diagonals(
-      hamiltonian_diagonal,
-      overlap_diagonal);
-  validate_davidson_options(dimension, options);
-  if (initial_vectors.rows() != dimension ||
-      initial_vectors.cols() < options.n_roots ||
-      initial_vectors.cols() > options.max_subspace_dimension ||
-      !initial_vectors.allFinite()) {
-    throw std::invalid_argument("invalid Davidson initial vector block");
-  }
-
-  const int max_subspace = options.max_subspace_dimension;
-  Eigen::MatrixXd basis(dimension, max_subspace);
-  Eigen::MatrixXd hamiltonian_basis(dimension, max_subspace);
-  Eigen::MatrixXd overlap_basis(dimension,options.identity_overlap ? 0:max_subspace);
-  DavidsonResult result;
-
-  auto initial_images = apply_checked(
-      action,
-      initial_vectors,
-      dimension,
-      &result.block_actions,options.identity_overlap);
-  int active_dimension = append_s_orthonormal_block(
-      initial_vectors,
-      std::move(initial_images.hamiltonian),
-      std::move(initial_images.overlap),
-      &basis,
-      &hamiltonian_basis,
-      &overlap_basis,
-      0,options.identity_overlap);
-  if (active_dimension < options.n_roots) {
-    throw std::runtime_error(
-        "Davidson initial vectors are linearly dependent in the overlap metric");
-  }
-  Eigen::MatrixXd projected_hamiltonian =
-      Eigen::MatrixXd::Zero(max_subspace, max_subspace);
-  update_projected_hamiltonian(
-      basis,
-      hamiltonian_basis,
-      0,
-      active_dimension,
-      &projected_hamiltonian);
-  Eigen::VectorXd previous_eigenvalues;
-
-  for (int iteration = 1;
-       iteration <= options.max_iterations;
-       ++iteration) {
-    result.iterations = iteration;
-    result.peak_subspace_dimension =
-        std::max(result.peak_subspace_dimension, active_dimension);
-    const auto active_basis = basis.leftCols(active_dimension);
-    const auto active_hamiltonian_basis =
-        hamiltonian_basis.leftCols(active_dimension);
-    const auto active_overlap_basis = options.identity_overlap ?
-        basis.leftCols(active_dimension):overlap_basis.leftCols(active_dimension);
-    const Eigen::MatrixXd active_projected_hamiltonian =
-        projected_hamiltonian.topLeftCorner(
-            active_dimension,
-            active_dimension);
-    const int n_projected_roots =
-        active_dimension + options.n_roots > max_subspace
-            ? active_dimension
-            : std::min(active_dimension, options.n_roots + 1);
-    const ProjectedEigenpairs projected =
-        solve_lowest_projected_eigenpairs(
-            active_projected_hamiltonian,
-            n_projected_roots);
-    const Eigen::VectorXd& projected_eigenvalues = projected.eigenvalues;
-    const Eigen::MatrixXd& projected_eigenvectors = projected.eigenvectors;
-    const Eigen::MatrixXd root_coefficients =
-        projected_eigenvectors.leftCols(options.n_roots);
-    const Eigen::MatrixXd root_vectors = active_basis * root_coefficients;
-    const Eigen::MatrixXd hamiltonian_root_vectors =
-        active_hamiltonian_basis * root_coefficients;
-    Eigen::MatrixXd overlap_root_vectors;
-    if (options.identity_overlap) overlap_root_vectors=root_vectors;
-    else overlap_root_vectors.noalias()=active_overlap_basis*root_coefficients;
-    const double selected_subspace_gap =
-        projected_eigenvalues.size() > options.n_roots
-        ? std::max(
-              projected_eigenvalues[options.n_roots] -
-                  projected_eigenvalues[options.n_roots - 1],
-              std::numeric_limits<double>::epsilon())
-        : std::numeric_limits<double>::epsilon();
-
-    result.relative_residual_norms.assign(options.n_roots, 0.0);
-    result.stationarity_residual_norms.assign(options.n_roots, 0.0);
-    bool converged = true;
-    Eigen::MatrixXd corrections(dimension, options.n_roots);
-    int n_corrections = 0;
-    for (int root = 0; root < options.n_roots; ++root) {
-      const double eigenvalue = projected_eigenvalues[root];
-      const Eigen::VectorXd residual =
-          hamiltonian_root_vectors.col(root) -
-          eigenvalue * overlap_root_vectors.col(root);
-      const double residual_scale = std::max(
-          1.0,
-          hamiltonian_root_vectors.col(root).norm() +
-              std::abs(eigenvalue) *
-                  overlap_root_vectors.col(root).norm());
-      const double relative_residual = residual.norm() / residual_scale;
-      result.relative_residual_norms[root] = relative_residual;
-      const double stationarity_residual =
-          residual.norm() / root_vectors.col(root).norm();
-      result.stationarity_residual_norms[root] = stationarity_residual;
-      const double energy_scale = std::max(1.0, std::abs(eigenvalue));
-      const double first_iteration_residual_tolerance =
-          options.energy_tolerance / energy_scale;
-      const double spectral_energy_residual_tolerance = std::sqrt(
-          (options.energy_tolerance / energy_scale) *
-          (selected_subspace_gap / energy_scale));
-      const bool ritz_energy_stable =
-          previous_eigenvalues.size() == options.n_roots &&
-          std::abs(eigenvalue - previous_eigenvalues[root]) <=
-              options.energy_tolerance;
-      const bool independently_certified =
-          relative_residual <= first_iteration_residual_tolerance;
-      const double required_residual = std::min(
-          options.residual_tolerance,
-          spectral_energy_residual_tolerance);
-      if (relative_residual <= required_residual &&
-          stationarity_residual <= options.stationarity_tolerance &&
-          (ritz_energy_stable || independently_certified)) {
-        if (!options.physical_residual_norm) continue;
-        const double physical_residual = options.physical_residual_norm(
-            root_vectors.col(root), eigenvalue);
-        if (!std::isfinite(physical_residual) || physical_residual < 0.0)
-          throw std::runtime_error("Davidson physical residual norm is invalid");
-        result.stationarity_residual_norms[root] = physical_residual;
-        if (physical_residual <= options.stationarity_tolerance) continue;
-      }
-      converged = false;
-      if (options.residual_preconditioner) {
-        Eigen::VectorXd correction =
-            options.residual_preconditioner(residual, eigenvalue);
-        if (correction.size() != dimension || !correction.allFinite()) {
-          throw std::runtime_error(
-              "Davidson residual preconditioner returned an invalid vector");
-        }
-        corrections.col(n_corrections) = -correction;
-      } else {
-        corrections.col(n_corrections) = precondition_residual(
-            hamiltonian_diagonal,
-            overlap_diagonal,
-            eigenvalue,
-            residual);
-      }
-      ++n_corrections;
-    }
-
-    if (options.observe_iteration) {
-      options.observe_iteration(
-          iteration,
-          active_dimension,
-          projected_eigenvalues[0],
-          *std::max_element(
-              result.relative_residual_norms.begin(),
-              result.relative_residual_norms.end()),
-          *std::max_element(result.stationarity_residual_norms.begin(),
-              result.stationarity_residual_norms.end()));
-    }
-
-    if (converged) {
-      result.eigenpairs.eigenvalues.assign(
-          projected_eigenvalues.data(),
-          projected_eigenvalues.data() + options.n_roots);
-      result.eigenpairs.eigenvector_matrix.assign(
-          root_vectors.data(),
-          root_vectors.data() + root_vectors.size());
-      result.overlap_eigenvectors = overlap_root_vectors;
-      result.hamiltonian_eigenvectors = hamiltonian_root_vectors;
-      return result;
-    }
-    previous_eigenvalues =
-        projected_eigenvalues.head(options.n_roots);
-
-    // A complete S-orthonormal basis leaves no independent correction
-    // direction. Returning an inaccurate root here would violate the outer
-    // derivative contract, so report the finite-precision limit explicitly.
-    if (active_dimension == dimension) {
-      // A failed algebraic Ritz gate must not hide the physical root error
-      // behind ||r||/||c|| in an ill-conditioned structure representation.
-      if (options.physical_residual_norm) {
-        for (int root = 0; root < options.n_roots; ++root) {
-          const double physical = options.physical_residual_norm(
-              root_vectors.col(root), projected_eigenvalues[root]);
-          if (!std::isfinite(physical) || physical < 0.0)
-            throw std::runtime_error("Davidson physical residual norm is invalid");
-          result.stationarity_residual_norms[root] = physical;
-        }
-      }
-      std::ostringstream message;
-      message << "complete Davidson basis cannot meet the requested Ritz residual: "
-              << *std::max_element(
-                     result.relative_residual_norms.begin(),
-                     result.relative_residual_norms.end())
-              << (options.physical_residual_norm
-                      ? "; physical CI stationarity residual = "
-                      : "; CI stationarity residual = ")
-              << *std::max_element(
-                     result.stationarity_residual_norms.begin(),
-                     result.stationarity_residual_norms.end())
-              << " (requested " << options.stationarity_tolerance << ')'
-              << "; coefficient norm = " << root_vectors.colwise().norm().maxCoeff()
-              << "; overlap-image norm = " << overlap_root_vectors.colwise().norm().maxCoeff();
-      throw std::runtime_error(message.str());
-    }
-
-    corrections.conservativeResize(Eigen::NoChange, n_corrections);
-    auto correction_images = apply_checked(
-        action,
-        corrections,
-        dimension,
-        &result.block_actions,options.identity_overlap);
-
-    if (active_dimension + n_corrections > max_subspace) {
-      // Thick restart retains the requested low Ritz space and releases half
-      // of the bounded workspace for subsequent residual expansions.  Keeping
-      // every vector except the current correction block makes a block solve
-      // restart after every iteration and can permanently stagnate on a poor
-      // Jacobi preconditioner.  The same spectral restart is valid for one or
-      // several roots: discarded high Ritz vectors are variationally inferior
-      // to the retained low subspace and can be regenerated by new residuals.
-      const int n_keep = std::min(
-          active_dimension,
-          std::max(options.n_roots, max_subspace / 2));
-      const Eigen::MatrixXd keep_coefficients =
-          projected_eigenvectors.leftCols(n_keep);
-      const Eigen::MatrixXd restarted_basis =
-          active_basis * keep_coefficients;
-      const Eigen::MatrixXd restarted_hamiltonian_basis =
-          active_hamiltonian_basis * keep_coefficients;
-      Eigen::MatrixXd restarted_overlap_basis;
-      if (!options.identity_overlap)
-        restarted_overlap_basis.noalias()=active_overlap_basis*keep_coefficients;
-      basis.leftCols(n_keep) = restarted_basis;
-      hamiltonian_basis.leftCols(n_keep) =
-          restarted_hamiltonian_basis;
-      if (!options.identity_overlap) overlap_basis.leftCols(n_keep)=restarted_overlap_basis;
-      projected_hamiltonian.topLeftCorner(n_keep, n_keep) =
-          projected_eigenvalues.head(n_keep).asDiagonal();
-      active_dimension = n_keep;
-    }
-
-    const int previous_dimension = active_dimension;
-    active_dimension = append_s_orthonormal_block(
-        std::move(corrections),
-        std::move(correction_images.hamiltonian),
-        std::move(correction_images.overlap),
-        &basis,
-        &hamiltonian_basis,
-        &overlap_basis,
-        active_dimension,options.identity_overlap);
-    update_projected_hamiltonian(
-        basis,
-        hamiltonian_basis,
-        previous_dimension,
-        active_dimension,
-        &projected_hamiltonian);
-    if (active_dimension == previous_dimension) {
-      throw std::runtime_error(
-          "Davidson correction space became linearly dependent before convergence");
-    }
-  }
-
-  std::ostringstream message;
-  message << "Davidson did not converge in " << options.max_iterations
-          << " iterations; largest relative residual = "
-          << *std::max_element(
-                 result.relative_residual_norms.begin(),
-                 result.relative_residual_norms.end())
-          << "; largest CI stationarity residual = "
-          << *std::max_element(
-                 result.stationarity_residual_norms.begin(),
-                 result.stationarity_residual_norms.end())
-          << " (requested " << options.stationarity_tolerance << ')';
-  throw std::runtime_error(message.str());
+    CpuBackend backend{action, options.identity_overlap};
+    return detail::solve_davidson(
+        backend, hamiltonian_diagonal, overlap_diagonal, initial_vectors, options);
 }
 
-}  // namespace xmvb::linalg
+} // namespace xmvb::linalg

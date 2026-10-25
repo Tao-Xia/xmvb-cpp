@@ -11,14 +11,14 @@ namespace xmvb::output {
 
 /** Write accepted CIAH iteration diagnostics as tab-separated rows. */
 class CiahTraceWriter {
- public:
-  explicit CiahTraceWriter(const std::filesystem::path& output_path);
+  public:
+    explicit CiahTraceWriter(const std::filesystem::path& output_path);
 
-  void write(const vb::CiahIterationRecord& record);
+    void write(const vb::CiahIterationRecord& record);
 
- private:
-  std::ofstream stream_;
-  std::filesystem::path output_path_;
+  private:
+    std::ofstream stream_;
+    std::filesystem::path output_path_;
 };
 
-}  // namespace xmvb::output
+} // namespace xmvb::output

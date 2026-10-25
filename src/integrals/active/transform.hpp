@@ -16,16 +16,15 @@ namespace xmvb::integrals {
  * Four successive orbital-index products cost O(n^5) time and O(n^4) space.
  * @throws std::invalid_argument for non-square Q or an incompatible kernel.
  */
-Eigen::MatrixXd transform_pair_kernel(
-    const Eigen::Ref<const Eigen::MatrixXd>& kernel,
-    const Eigen::Ref<const Eigen::MatrixXd>& orbital_transform);
+Eigen::MatrixXd transform_pair_kernel(const Eigen::Ref<const Eigen::MatrixXd>& kernel,
+                                      const Eigen::Ref<const Eigen::MatrixXd>& orbital_transform);
 
 /** @brief Directional derivative of transform_pair_kernel in both inputs. */
-Eigen::MatrixXd transform_pair_kernel_direction(
-    const Eigen::Ref<const Eigen::MatrixXd>& kernel,
-    const Eigen::Ref<const Eigen::MatrixXd>& kernel_direction,
-    const Eigen::Ref<const Eigen::MatrixXd>& orbital_transform,
-    const Eigen::Ref<const Eigen::MatrixXd>& orbital_direction);
+Eigen::MatrixXd
+transform_pair_kernel_direction(const Eigen::Ref<const Eigen::MatrixXd>& kernel,
+                                const Eigen::Ref<const Eigen::MatrixXd>& kernel_direction,
+                                const Eigen::Ref<const Eigen::MatrixXd>& orbital_transform,
+                                const Eigen::Ref<const Eigen::MatrixXd>& orbital_direction);
 
 /**
  * @brief Frobenius adjoint of transform_pair_kernel with respect to its kernel.
@@ -33,16 +32,15 @@ Eigen::MatrixXd transform_pair_kernel_direction(
  * Returns T(Q) G T(Q)^T. Off-diagonal packed-pair multiplicities are handled
  * explicitly; replacing Q by Q^T in transform_pair_kernel is not equivalent.
  */
-Eigen::MatrixXd pullback_pair_kernel(
-    const Eigen::Ref<const Eigen::MatrixXd>& gradient,
-    const Eigen::Ref<const Eigen::MatrixXd>& orbital_transform);
+Eigen::MatrixXd pullback_pair_kernel(const Eigen::Ref<const Eigen::MatrixXd>& gradient,
+                                     const Eigen::Ref<const Eigen::MatrixXd>& orbital_transform);
 
 /** @brief Directional derivative of pullback_pair_kernel in both inputs. */
-Eigen::MatrixXd pullback_pair_kernel_direction(
-    const Eigen::Ref<const Eigen::MatrixXd>& gradient,
-    const Eigen::Ref<const Eigen::MatrixXd>& gradient_direction,
-    const Eigen::Ref<const Eigen::MatrixXd>& orbital_transform,
-    const Eigen::Ref<const Eigen::MatrixXd>& orbital_direction);
+Eigen::MatrixXd
+pullback_pair_kernel_direction(const Eigen::Ref<const Eigen::MatrixXd>& gradient,
+                               const Eigen::Ref<const Eigen::MatrixXd>& gradient_direction,
+                               const Eigen::Ref<const Eigen::MatrixXd>& orbital_transform,
+                               const Eigen::Ref<const Eigen::MatrixXd>& orbital_direction);
 
 /**
  * @brief Apply the orbital generator to a packed kernel at Q=I.
@@ -51,9 +49,8 @@ Eigen::MatrixXd pullback_pair_kernel_direction(
  * pair-exchange symmetry. Costs O(n^5) time and O(n^4) output storage,
  * with no four-index tensor workspace.
  */
-Eigen::MatrixXd apply_pair_generator(
-    const Eigen::Ref<const Eigen::MatrixXd>& kernel,
-    const Eigen::Ref<const Eigen::MatrixXd>& orbital_direction);
+Eigen::MatrixXd apply_pair_generator(const Eigen::Ref<const Eigen::MatrixXd>& kernel,
+                                     const Eigen::Ref<const Eigen::MatrixXd>& orbital_direction);
 
 /**
  * @brief Frobenius adjoint of the pair generator with respect to its kernel.
@@ -63,9 +60,8 @@ Eigen::MatrixXd apply_pair_generator(
  * Costs O(n^5) time and O(n^4) output storage, without a four-index tensor
  * workspace or an identity-matrix product.
  */
-Eigen::MatrixXd pullback_pair_generator(
-    const Eigen::Ref<const Eigen::MatrixXd>& gradient,
-    const Eigen::Ref<const Eigen::MatrixXd>& orbital_direction);
+Eigen::MatrixXd pullback_pair_generator(const Eigen::Ref<const Eigen::MatrixXd>& gradient,
+                                        const Eigen::Ref<const Eigen::MatrixXd>& orbital_direction);
 
 /**
  * @brief Gradient in Q of <G, transform_pair_kernel(K,Q)> at Q=I.
@@ -74,8 +70,7 @@ Eigen::MatrixXd pullback_pair_generator(
  * pair-exchange symmetry. Two shared n-by-n^3 workspaces feed two matrix
  * products, for O(n^5) time and O(n^4) auxiliary space.
  */
-Eigen::MatrixXd orbital_generator_adjoint(
-    const Eigen::Ref<const Eigen::MatrixXd>& kernel,
-    const Eigen::Ref<const Eigen::MatrixXd>& gradient);
+Eigen::MatrixXd orbital_generator_adjoint(const Eigen::Ref<const Eigen::MatrixXd>& kernel,
+                                          const Eigen::Ref<const Eigen::MatrixXd>& gradient);
 
-}  // namespace xmvb::integrals
+} // namespace xmvb::integrals

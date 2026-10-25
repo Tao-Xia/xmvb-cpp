@@ -17,14 +17,14 @@ namespace xmvb::vb {
  * onto the historical default inactive-orbital support.
  */
 struct InputDeckOrbitalSupportBuildInput {
-  int n_atoms = 0;
-  int n_basis_functions = 0;
-  int n_orbitals = 0;
-  int n_active_orbitals = 0;
-  int orbital_type = 0;
-  int fragment_type = 0;
-  std::vector<int> ao_to_atom;
-  std::vector<int> ao_cartesian_exponents;
+    int n_atoms = 0;
+    int n_basis_functions = 0;
+    int n_orbitals = 0;
+    int n_active_orbitals = 0;
+    int orbital_type = 0;
+    int fragment_type = 0;
+    std::vector<int> ao_to_atom;
+    std::vector<int> ao_cartesian_exponents;
 };
 
 /**
@@ -35,17 +35,16 @@ struct InputDeckOrbitalSupportBuildInput {
  * record how many explicit coefficients are meaningful in each orbital row.
  */
 struct InputDeckOrbitalSupportChart {
-  std::vector<int> orbital_basis_index_table;
-  std::vector<int> orbital_basis_counts;
-  std::vector<int> original_orbital_basis_counts;
+    std::vector<int> orbital_basis_index_table;
+    std::vector<int> orbital_basis_counts;
+    std::vector<int> original_orbital_basis_counts;
 };
 
 bool can_build_input_deck_orbital_support_chart(
-    const InputDeck& input_deck,
-    const InputDeckOrbitalSupportBuildInput& build_input) noexcept;
+    const InputDeck& input_deck, const InputDeckOrbitalSupportBuildInput& build_input) noexcept;
 
-InputDeckOrbitalSupportChart build_input_deck_orbital_support_chart(
-    const InputDeck& input_deck,
-    const InputDeckOrbitalSupportBuildInput& build_input);
+InputDeckOrbitalSupportChart
+build_input_deck_orbital_support_chart(const InputDeck& input_deck,
+                                       const InputDeckOrbitalSupportBuildInput& build_input);
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

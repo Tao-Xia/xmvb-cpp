@@ -88,16 +88,19 @@ int main(int argc,char** argv) {
       double extra=0;
       if (orbitals>>extra || !orbitals.eof()) throw std::invalid_argument("trailing or malformed endpoint orbital table");
     }
-    if (!tensor_input.tnvb.enabled || !tensor_input.structure_data.alpha_det.empty() ||
-        !tensor_input.structure_data.beta_det.empty() ||
-        !tensor_input.structure_data.determinant_to_structure_terms.empty() ||
+    if (!tensor_input.tnvb.enabled || !tensor_input.structure_data.pair_alpha.empty() ||
+        !tensor_input.structure_data.pair_beta.empty() ||
+        !tensor_input.structure_data.terms.empty() ||
+        !tensor_input.structure_data.alpha_strings.empty() ||
+        !tensor_input.structure_data.beta_strings.empty() ||
+        !tensor_input.structure_data.offsets.empty() ||
         loaded.structure_expansion_seconds!=0.0 || tensor_input.complete_active_space) {
       throw std::runtime_error("TNVB load expanded determinants or incorrectly marked a complete CAS");
     }
     // Only the explicit small-system reference branch expands structures.
     xmvb::vb::VbScfInput determinant_input=tensor_input;
     determinant_input.tnvb.enabled=false;
-    determinant_input.structure_data=xmvb::vb::FullDeterminantStructureExpander{}.expand(loaded.raw_structure_data);
+    determinant_input.structure_data=xmvb::vb::StructureExpander{}.expand(loaded.raw_structure_data);
     xmvb::vb::ElectronicStateRequest request;
     request.nuclear_repulsion_energy=loaded.nuclear_repulsion_energy;
     request.eigensolver=loaded.structure_eigensolver;
@@ -159,7 +162,7 @@ int main(int argc,char** argv) {
     }
     report << ",\n\"determinant_coefficients\":"; write_vector(report,d.c);
     report << ",\n\"tnvb_determinants\":0,\n\"determinant_reference_count\":"
-           << determinant_input.structure_data.alpha_det.size() << "\n}\n";
+           << determinant_input.structure_data.pair_alpha.size() << "\n}\n";
     std::cout << std::setprecision(17) << "comparison: dE=" << de << " dH=" << dh
               << " dS=" << ds << " dc=" << dc << " dw=" << dw
               << " dg=" << gradient_error << " passed=" << passed << '\n';

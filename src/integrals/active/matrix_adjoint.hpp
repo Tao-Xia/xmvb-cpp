@@ -17,15 +17,15 @@ namespace xmvb::integrals {
  * No F C or F^T C is regenerated. RI consumers can omit the unused dense AO
  * adjoint; exact consumers receive C W^T C^T for their AO integral pullback.
  */
-ActiveSpaceMatrixBackpropagationResult pullback_active_matrices(
-    const std::vector<double>& overlap_gradient,
-    const std::vector<double>& one_electron_gradient,
-    const Eigen::Ref<const Eigen::MatrixXd>& ao_overlap,
-    const Eigen::Ref<const Eigen::MatrixXd>& raw_active_coefficients,
-    const Eigen::Ref<const Eigen::MatrixXd>& integral_coefficients,
-    const ActiveSpaceOneElectronResult& one_electron,
-    const Eigen::MatrixXd& frame,
-    bool ao_adjoint_required);
+ActiveSpaceMatrixBackpropagationResult
+pullback_active_matrices(const std::vector<double>& overlap_gradient,
+                         const std::vector<double>& one_electron_gradient,
+                         const Eigen::Ref<const Eigen::MatrixXd>& ao_overlap,
+                         const Eigen::Ref<const Eigen::MatrixXd>& raw_active_coefficients,
+                         const Eigen::Ref<const Eigen::MatrixXd>& integral_coefficients,
+                         const ActiveSpaceOneElectronResult& one_electron,
+                         const Eigen::MatrixXd& frame,
+                         bool ao_adjoint_required);
 
 /**
  * @brief Reverse-mode backpropagator for `SSO = T^T S T` and `HHO = T^T F11 T`.
@@ -37,8 +37,8 @@ ActiveSpaceMatrixBackpropagationResult pullback_active_matrices(
  * - the AO effective one-electron matrix `F11`
  */
 class ActiveSpaceMatrixBackpropagator {
-public:
-  /**
+  public:
+    /**
    * @brief Backpropagates active-space matrix adjoints.
    *
    * @param active_orbital_overlap_gradient Column-major gradient with respect to `SSO`.
@@ -51,35 +51,35 @@ public:
    * @param n_active_orbitals Number of active orbitals.
    * @return ActiveSpaceMatrixBackpropagationResult Reverse-mode derivatives.
    */
-  ActiveSpaceMatrixBackpropagationResult backpropagate(
-      const std::vector<double>& active_orbital_overlap_gradient,
-      const std::vector<double>& active_one_electron_gradient,
-      const Eigen::Ref<const Eigen::MatrixXd>& ao_overlap_matrix,
-      const Eigen::Ref<const Eigen::MatrixXd>& ao_effective_h1e,
-      const std::vector<double>& auxiliary_orbital_matrix,
-      int n_basis_functions,
-      int n_inactive_doubly_occupied_orbitals,
-      int n_active_orbitals) const;
+    ActiveSpaceMatrixBackpropagationResult
+    backpropagate(const std::vector<double>& active_orbital_overlap_gradient,
+                  const std::vector<double>& active_one_electron_gradient,
+                  const Eigen::Ref<const Eigen::MatrixXd>& ao_overlap_matrix,
+                  const Eigen::Ref<const Eigen::MatrixXd>& ao_effective_h1e,
+                  const std::vector<double>& auxiliary_orbital_matrix,
+                  int n_basis_functions,
+                  int n_inactive_doubly_occupied_orbitals,
+                  int n_active_orbitals) const;
 
-  ActiveSpaceMatrixBackpropagationResult backpropagate(
-      const Eigen::Ref<const Eigen::MatrixXd>& active_orbital_overlap_gradient,
-      const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron_gradient,
-      const Eigen::Ref<const Eigen::MatrixXd>& ao_overlap_matrix,
-      const Eigen::Ref<const Eigen::MatrixXd>& ao_effective_h1e,
-      const Eigen::Ref<const Eigen::MatrixXd>& auxiliary_orbital_matrix,
-      int n_basis_functions,
-      int n_inactive_doubly_occupied_orbitals,
-      int n_active_orbitals) const;
+    ActiveSpaceMatrixBackpropagationResult
+    backpropagate(const Eigen::Ref<const Eigen::MatrixXd>& active_orbital_overlap_gradient,
+                  const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron_gradient,
+                  const Eigen::Ref<const Eigen::MatrixXd>& ao_overlap_matrix,
+                  const Eigen::Ref<const Eigen::MatrixXd>& ao_effective_h1e,
+                  const Eigen::Ref<const Eigen::MatrixXd>& auxiliary_orbital_matrix,
+                  int n_basis_functions,
+                  int n_inactive_doubly_occupied_orbitals,
+                  int n_active_orbitals) const;
 
-  ActiveSpaceMatrixBackpropagationResult backpropagate(
-      const std::vector<double>& active_orbital_overlap_gradient,
-      const std::vector<double>& active_one_electron_gradient,
-      const Eigen::Ref<const Eigen::MatrixXd>& ao_overlap_matrix,
-      const Eigen::Ref<const Eigen::MatrixXd>& ao_effective_h1e,
-      const Eigen::Ref<const Eigen::MatrixXd>& auxiliary_orbital_matrix,
-      int n_basis_functions,
-      int n_inactive_doubly_occupied_orbitals,
-      int n_active_orbitals) const;
+    ActiveSpaceMatrixBackpropagationResult
+    backpropagate(const std::vector<double>& active_orbital_overlap_gradient,
+                  const std::vector<double>& active_one_electron_gradient,
+                  const Eigen::Ref<const Eigen::MatrixXd>& ao_overlap_matrix,
+                  const Eigen::Ref<const Eigen::MatrixXd>& ao_effective_h1e,
+                  const Eigen::Ref<const Eigen::MatrixXd>& auxiliary_orbital_matrix,
+                  int n_basis_functions,
+                  int n_inactive_doubly_occupied_orbitals,
+                  int n_active_orbitals) const;
 };
 
-}  // namespace xmvb::integrals
+} // namespace xmvb::integrals

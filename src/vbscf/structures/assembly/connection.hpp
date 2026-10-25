@@ -10,10 +10,10 @@ namespace xmvb::vb {
  * F^T delta(F) C. No assumption that the carrier Ritz residual vanishes is made.
  */
 struct StructureConnectionDirection {
-  Eigen::MatrixXd representation_forcing;
-  Eigen::MatrixXd integral_forcing;
-  Eigen::MatrixXd overlap;
-  Eigen::VectorXd squared_norm;
+    Eigen::MatrixXd representation_forcing;
+    Eigen::MatrixXd integral_forcing;
+    Eigen::MatrixXd overlap;
+    Eigen::VectorXd squared_norm;
 };
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

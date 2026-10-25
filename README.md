@@ -68,6 +68,26 @@ cmake -B build -G Ninja -DXMVB_BUILD_DEV_TARGETS=ON
 cmake --build build
 ```
 
+## C++ and CUDA code style
+
+Use clang-format and clang-tidy 20.1.0 with the repository's `.clang-format`
+and `.clang-tidy`. The formatter uses four-space indentation, a 100-column
+limit, and the formatter's `Latest` syntax mode for C++23 sources; it preserves
+include order and comment wrapping.
+Format the files you change rather than reformatting unrelated code:
+
+```bash
+clang-format --dry-run --Werror path/to/file.cpp path/to/kernel.cu
+clang-format -i path/to/file.cpp path/to/kernel.cu
+clang-tidy -p build path/to/file.cpp
+```
+
+Configure the matching build first so clang-tidy can use its exported
+`compile_commands.json`. The enabled tidy checks target correctness; review
+findings individually and do not apply automatic fixes to numerical code.
+CUDA formatting uses the same rules; CUDA compilation remains C++20 as set
+in CMake. Run builds and numerical validation through Slurm on compute nodes.
+
 ## Usage
 
 ```bash

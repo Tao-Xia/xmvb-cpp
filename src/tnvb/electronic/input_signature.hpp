@@ -53,6 +53,12 @@ inline std::array<std::uint64_t,2> input_signature(const vb::VbScfInput& input) 
   const auto& g=ao.pair_graph;
   vector(g.row_offsets);vector(g.columns);vector(g.values);vector(g.integral_rows);
   vector(g.integral_edges);vector(g.integral_columns);vector(g.integral_values);
+  // Upstream may retain the exact AO payload as producer-owned chunks.
+  // Hash that representation without materializing a second integral array.
+  scalar(g.chunks.size());vector(g.chunk_offsets);
+  for (const auto& chunk:g.chunks) {
+    vector(chunk.rows);vector(chunk.columns);vector(chunk.values);
+  }
   vector(g.pair_first);vector(g.pair_second);
   basis(input.libcint_input);basis(input.auxiliary_libcint_input);
   scalar(reinterpret_cast<std::uintptr_t>(input.ri_factorization_provider.get()));

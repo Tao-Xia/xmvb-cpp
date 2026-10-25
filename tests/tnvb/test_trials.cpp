@@ -38,8 +38,8 @@ int main(int argc,char** argv) {
     const auto verify_accepted=[&]() {
       require(objective.input().orbital_preparation_input.orbital_value_table==accepted_orbitals,"trial overwrote accepted orbitals");
       require(objective.gradient_result().scf_result.structure_matrices.hamiltonian_matrix==accepted_matrices,"trial overwrote accepted H/S result");
-      require(objective.gradient_result().scf_result.total_energy==accepted_energy && objective.call_count()==1,"trial overwrote accepted energy/history");
-      require(!objective.second_order_context() && objective.input().structure_data.alpha_det.empty(),"trial created determinant objects/context");
+      require(objective.gradient_result().scf_result.total_energy==accepted_energy && objective.energy_history().size()==1,"trial overwrote accepted energy/history");
+      require(!objective.second_order_context() && objective.input().structure_data.pair_alpha.empty(),"trial created determinant objects/context");
     };
     // Pair-member reversal leaves the C++ singlet CSF unchanged. It must not
     // silently change a structure's H/S row phase or its reported coefficient.
@@ -122,7 +122,7 @@ int main(int argc,char** argv) {
     require(rejected,"nonfinite trial was accepted");
     verify_accepted();
     objective.commit(std::move(value));
-    require(objective.call_count()==2 && objective.input().orbital_preparation_input.orbital_value_table!=accepted_orbitals,"explicit trial commit failed");
+    require(objective.energy_history().size()==2 && objective.input().orbital_preparation_input.orbital_value_table!=accepted_orbitals,"explicit trial commit failed");
     // A successful CLI exit at an iteration cap is not proof of a usable
     // optimizer: require an actual accepted P-LBFGS orbital step here.
     auto block_input=xmvb::vb::load_vbscf_input_with_timings(argv[1]);
@@ -144,7 +144,7 @@ int main(int argc,char** argv) {
         block.accepted_iteration_trace.back().has_projected_gradient &&
         std::isfinite(block.final_projected_gradient_inf_norm),
         "TNVB block-LBFGS did not report its projected gradient");
-    require(block.optimized_input.structure_data.alpha_det.empty() &&
+    require(block.optimized_input.structure_data.pair_alpha.empty() &&
         !block.optimized_input.complete_active_space && block.scf_result.n_structures==5,
         "TNVB block-LBFGS changed selected VB structures to determinants/CAS");
     require(block.scf_result.tnvb_diagnostics.has_value() &&

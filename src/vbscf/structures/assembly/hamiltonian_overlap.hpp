@@ -13,13 +13,12 @@
 namespace xmvb::vb {
 
 struct FullDeterminantStructureBuildResult {
-  int n_determinants = 0;
-  StructureAccumulationResult structure_matrices;
-  std::vector<DeterminantPairEvaluation> pair_evaluations;
+    int n_determinants = 0;
+    StructureAccumulationResult structure_matrices;
+    std::vector<DeterminantPairEvaluation> pair_evaluations;
 
-  const DeterminantPairEvaluation& pair_evaluation(
-      int determinant_index_left,
-      int determinant_index_right) const;
+    const DeterminantPairEvaluation& pair_evaluation(int determinant_index_left,
+                                                     int determinant_index_right) const;
 };
 /**
  * @brief Builds full structure Hamiltonian and overlap matrices from full determinants.
@@ -39,23 +38,23 @@ struct FullDeterminantStructureBuildResult {
  * structure-level matrices through the determinant-to-structure expansion map.
  */
 class FullDeterminantStructureHamiltonianOverlapBuilder {
-public:
-  /**
+  public:
+    /**
    * @brief Creates a builder with default helper components.
    */
-  FullDeterminantStructureHamiltonianOverlapBuilder();
+    FullDeterminantStructureHamiltonianOverlapBuilder();
 
-  /**
+    /**
    * @brief Creates a builder with explicit helper components.
    *
    * @param determinant_overlap_resolver Overlap/cofactor resolver.
    * @param determinant_hamiltonian_resolver Determinant scalar Hamiltonian kernel.
    */
-  FullDeterminantStructureHamiltonianOverlapBuilder(
-      DeterminantOverlapResolver determinant_overlap_resolver,
-      DeterminantHamiltonianResolver determinant_hamiltonian_resolver);
+    FullDeterminantStructureHamiltonianOverlapBuilder(
+        DeterminantOverlapResolver determinant_overlap_resolver,
+        DeterminantHamiltonianResolver determinant_hamiltonian_resolver);
 
-  /**
+    /**
    * @brief Builds structure-level matrices from explicit full-determinant data.
    *
    * @param alpha_det Zero-based alpha occupations for each determinant.
@@ -68,48 +67,46 @@ public:
    * @param n_structures Number of VB structures.
    * @return StructureAccumulationResult Structure Hamiltonian and overlap matrices.
    */
-  StructureAccumulationResult build(
-      const std::vector<std::vector<int>>& alpha_det,
-      const std::vector<std::vector<int>>& beta_det,
-      const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
-      const std::vector<double>& ovlp_act,
-      const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
-      int n_orbitals,
-      const std::vector<double>& eri_act,
-      int n_structures) const;
+    StructureAccumulationResult build(SpinStringRows alpha_det,
+                                      SpinStringRows beta_det,
+                                      StructureIncidence determinant_to_structure_terms,
+                                      const std::vector<double>& ovlp_act,
+                                      const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
+                                      int n_orbitals,
+                                      const std::vector<double>& eri_act,
+                                      int n_structures) const;
 
-  /**
+    /**
    * @brief Builds structure matrices from packed or RI active-space ERIs.
    */
-  StructureAccumulationResult build(
-      const std::vector<std::vector<int>>& alpha_det,
-      const std::vector<std::vector<int>>& beta_det,
-      const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
-      const std::vector<double>& ovlp_act,
-      const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
-      int n_orbitals,
-      const xmvb::integrals::ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-      int n_structures) const;
+    StructureAccumulationResult
+    build(SpinStringRows alpha_det,
+          SpinStringRows beta_det,
+          StructureIncidence determinant_to_structure_terms,
+          const std::vector<double>& ovlp_act,
+          const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
+          int n_orbitals,
+          const xmvb::integrals::ActiveSpaceTwoElectronResult& active_space_two_electron_result,
+          int n_structures) const;
 
-  /**
+    /**
    * @brief Builds structure-level matrices while reusing a prebuilt same-spin cache.
    *
    * This is used by the active-space objective/gradient path to build the
    * structure matrices once, then hand the same ordered alpha/beta cache to the
    * backward pass without rebuilding it.
    */
-  StructureAccumulationResult build(
-      const std::vector<std::vector<int>>& alpha_det,
-      const std::vector<std::vector<int>>& beta_det,
-      const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
-      const std::vector<double>& ovlp_act,
-      const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
-      int n_orbitals,
-      const std::vector<double>& eri_act,
-      int n_structures,
-      const SameSpinPairCacheContext& same_spin_pair_cache) const;
+    StructureAccumulationResult build(SpinStringRows alpha_det,
+                                      SpinStringRows beta_det,
+                                      StructureIncidence determinant_to_structure_terms,
+                                      const std::vector<double>& ovlp_act,
+                                      const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
+                                      int n_orbitals,
+                                      const std::vector<double>& eri_act,
+                                      int n_structures,
+                                      const SameSpinPairCacheContext& same_spin_pair_cache) const;
 
-  /**
+    /**
    * @brief Builds only the exact structure H/S diagonals by demanded pairs.
    *
    * This is the setup path for a matrix-free Davidson solve. Its work scales
@@ -118,18 +115,18 @@ public:
    * support and retained in a bounded entry cache; this path never allocates
    * full structure matrices or ordered spin-pair arrays.
    */
-  StructureDiagonal build_diagonal(
-      const std::vector<std::vector<int>>& alpha_det,
-      const std::vector<std::vector<int>>& beta_det,
-      const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
-      const std::vector<double>& ovlp_act,
-      const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
-      int n_orbitals,
-      const xmvb::integrals::ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-      int n_structures,
-      const SameSpinPairCacheContext& same_spin_pair_cache) const;
+    StructureDiagonal build_diagonal(
+        SpinStringRows alpha_det,
+        SpinStringRows beta_det,
+        StructureIncidence determinant_to_structure_terms,
+        const std::vector<double>& ovlp_act,
+        const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
+        int n_orbitals,
+        const xmvb::integrals::ActiveSpaceTwoElectronResult& active_space_two_electron_result,
+        int n_structures,
+        const SameSpinPairCacheContext& same_spin_pair_cache) const;
 
-  /**
+    /**
    * @brief Builds a determinant-diagonal Jacobi model for Davidson.
    *
    * Each full determinant self element is evaluated exactly, including its
@@ -139,49 +136,48 @@ public:
    * not the exact diagonal of the projected structure matrices; the Davidson
    * H/S action remains exact.
    */
-  StructureDiagonal build_davidson_jacobi_preconditioner(
-      const std::vector<std::vector<int>>& alpha_det,
-      const std::vector<std::vector<int>>& beta_det,
-      const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
-      const std::vector<double>& ovlp_act,
-      const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
-      int n_orbitals,
-      const xmvb::integrals::ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-      int n_structures,
-      const SameSpinPairCacheContext& same_spin_pair_cache) const;
+    StructureDiagonal build_davidson_jacobi_preconditioner(
+        SpinStringRows alpha_det,
+        SpinStringRows beta_det,
+        StructureIncidence determinant_to_structure_terms,
+        const std::vector<double>& ovlp_act,
+        const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
+        int n_orbitals,
+        const xmvb::integrals::ActiveSpaceTwoElectronResult& active_space_two_electron_result,
+        int n_structures,
+        const SameSpinPairCacheContext& same_spin_pair_cache) const;
 
-  /**
+    /**
    * @brief Builds exact structure norms without Hamiltonian contractions.
    *
    * This overlap-only path is intended for structure normalization and output.
    * It contracts each selected structure support exactly while avoiding all
    * one- and two-electron Hamiltonian work.
    */
-  Eigen::VectorXd build_exact_overlap_diagonal(
-      const std::vector<std::vector<int>>& alpha_det,
-      const std::vector<std::vector<int>>& beta_det,
-      const std::vector<std::vector<StructureExpansionTerm>>&
-          determinant_to_structure_terms,
-      const std::vector<double>& active_overlap,
-      int n_orbitals,
-      int n_structures,
-      const SameSpinPairCacheContext& same_spin_pair_cache) const;
+    Eigen::VectorXd
+    build_exact_overlap_diagonal(SpinStringRows alpha_det,
+                                 SpinStringRows beta_det,
+                                 StructureIncidence determinant_to_structure_terms,
+                                 const std::vector<double>& active_overlap,
+                                 int n_orbitals,
+                                 int n_structures,
+                                 const SameSpinPairCacheContext& same_spin_pair_cache) const;
 
-  /**
+    /**
    * @brief Builds structure matrices while reusing a same-spin cache and RI data.
    */
-  StructureAccumulationResult build(
-      const std::vector<std::vector<int>>& alpha_det,
-      const std::vector<std::vector<int>>& beta_det,
-      const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
-      const std::vector<double>& ovlp_act,
-      const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
-      int n_orbitals,
-      const xmvb::integrals::ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-      int n_structures,
-      const SameSpinPairCacheContext& same_spin_pair_cache) const;
+    StructureAccumulationResult
+    build(SpinStringRows alpha_det,
+          SpinStringRows beta_det,
+          StructureIncidence determinant_to_structure_terms,
+          const std::vector<double>& ovlp_act,
+          const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
+          int n_orbitals,
+          const xmvb::integrals::ActiveSpaceTwoElectronResult& active_space_two_electron_result,
+          int n_structures,
+          const SameSpinPairCacheContext& same_spin_pair_cache) const;
 
-  /**
+    /**
    * @brief Creates a configured determinant-pair evaluator for on-demand reuse.
    *
    * Large determinant spaces cannot retain every pair evaluation in memory.
@@ -189,45 +185,45 @@ public:
    * reuse the returned evaluator to recompute determinant-pair details lazily
    * during later passes such as analytic gradient accumulation.
    */
-  DeterminantPairEvaluator make_pair_evaluator() const;
+    DeterminantPairEvaluator make_pair_evaluator() const;
 
-  FullDeterminantStructureBuildResult build_with_pair_evaluations(
-      const std::vector<std::vector<int>>& alpha_det,
-      const std::vector<std::vector<int>>& beta_det,
-      const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
-      const std::vector<double>& ovlp_act,
-      const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
-      int n_orbitals,
-      const std::vector<double>& eri_act,
-      int n_structures) const;
+    FullDeterminantStructureBuildResult
+    build_with_pair_evaluations(SpinStringRows alpha_det,
+                                SpinStringRows beta_det,
+                                StructureIncidence determinant_to_structure_terms,
+                                const std::vector<double>& ovlp_act,
+                                const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
+                                int n_orbitals,
+                                const std::vector<double>& eri_act,
+                                int n_structures) const;
 
-private:
-  FullDeterminantStructureBuildResult build_impl(
-      const std::vector<std::vector<int>>& alpha_det,
-      const std::vector<std::vector<int>>& beta_det,
-      const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
-      const std::vector<double>& ovlp_act,
-      const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
-      int n_orbitals,
-      const std::vector<double>& eri_act,
-      int n_structures,
-      const SameSpinPairCacheContext* same_spin_pair_cache,
-      bool store_pair_evaluations) const;
+  private:
+    FullDeterminantStructureBuildResult
+    build_impl(SpinStringRows alpha_det,
+               SpinStringRows beta_det,
+               StructureIncidence determinant_to_structure_terms,
+               const std::vector<double>& ovlp_act,
+               const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
+               int n_orbitals,
+               const std::vector<double>& eri_act,
+               int n_structures,
+               const SameSpinPairCacheContext* same_spin_pair_cache,
+               bool store_pair_evaluations) const;
 
-  FullDeterminantStructureBuildResult build_impl(
-      const std::vector<std::vector<int>>& alpha_det,
-      const std::vector<std::vector<int>>& beta_det,
-      const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
-      const std::vector<double>& ovlp_act,
-      const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
-      int n_orbitals,
-      const xmvb::integrals::ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-      int n_structures,
-      const SameSpinPairCacheContext* same_spin_pair_cache,
-      bool store_pair_evaluations) const;
+    FullDeterminantStructureBuildResult build_impl(
+        SpinStringRows alpha_det,
+        SpinStringRows beta_det,
+        StructureIncidence determinant_to_structure_terms,
+        const std::vector<double>& ovlp_act,
+        const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
+        int n_orbitals,
+        const xmvb::integrals::ActiveSpaceTwoElectronResult& active_space_two_electron_result,
+        int n_structures,
+        const SameSpinPairCacheContext* same_spin_pair_cache,
+        bool store_pair_evaluations) const;
 
-  DeterminantOverlapResolver determinant_overlap_resolver_;
-  DeterminantHamiltonianResolver determinant_hamiltonian_resolver_;
+    DeterminantOverlapResolver determinant_overlap_resolver_;
+    DeterminantHamiltonianResolver determinant_hamiltonian_resolver_;
 };
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

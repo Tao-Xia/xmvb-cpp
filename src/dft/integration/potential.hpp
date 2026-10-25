@@ -9,7 +9,7 @@
 namespace xmvb::integrals {
 struct LibcintInput;
 class BasisEvaluator;
-}  // namespace xmvb::integrals
+} // namespace xmvb::integrals
 
 namespace xmvb::dft {
 struct Grid;
@@ -18,9 +18,9 @@ class GridBasis;
 class ResponseCache;
 
 struct XcResult {
-  double energy = 0.0;
-  std::array<double, 2> electron_count{};
-  std::array<Eigen::MatrixXd, 2> potential;
+    double energy = 0.0;
+    std::array<double, 2> electron_count{};
+    std::array<Eigen::MatrixXd, 2> potential;
 };
 
 /** Integrates the restricted/spin-polarized semilocal XC part on an AO grid.
@@ -29,27 +29,26 @@ struct XcResult {
  * Owns one budgeted shared AO/reference workspace; calls are serialized by SCF.
  */
 class XcIntegrator {
- public:
-  XcIntegrator(const integrals::LibcintInput& input,
-               const Grid& grid,
-               const Functional& functional);
-  ~XcIntegrator();
-  XcIntegrator(const XcIntegrator&) = delete;
-  XcIntegrator& operator=(const XcIntegrator&) = delete;
+  public:
+    XcIntegrator(const integrals::LibcintInput& input,
+                 const Grid& grid,
+                 const Functional& functional);
+    ~XcIntegrator();
+    XcIntegrator(const XcIntegrator&) = delete;
+    XcIntegrator& operator=(const XcIntegrator&) = delete;
 
-  XcResult evaluate(
-      std::span<const Eigen::Ref<const Eigen::MatrixXd>> density) const;
+    XcResult evaluate(std::span<const Eigen::Ref<const Eigen::MatrixXd>> density) const;
 
-  /** Directional derivative of the AO XC potential at density. */
-  std::array<Eigen::MatrixXd, 2> response(
-      std::span<const Eigen::Ref<const Eigen::MatrixXd>> density,
-      std::span<const Eigen::Ref<const Eigen::MatrixXd>> delta_density) const;
+    /** Directional derivative of the AO XC potential at density. */
+    std::array<Eigen::MatrixXd, 2>
+    response(std::span<const Eigen::Ref<const Eigen::MatrixXd>> density,
+             std::span<const Eigen::Ref<const Eigen::MatrixXd>> delta_density) const;
 
- private:
-  const Grid& grid_;
-  const Functional& functional_;
-  std::unique_ptr<GridBasis> basis_;
-  std::unique_ptr<ResponseCache> response_;
+  private:
+    const Grid& grid_;
+    const Functional& functional_;
+    std::unique_ptr<GridBasis> basis_;
+    std::unique_ptr<ResponseCache> response_;
 };
 
-}  // namespace xmvb::dft
+} // namespace xmvb::dft

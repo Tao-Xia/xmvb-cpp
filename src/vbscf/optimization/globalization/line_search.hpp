@@ -9,11 +9,11 @@
 namespace xmvb::vb {
 
 /** @brief Retracts a reduced step and packs the resulting orbital parameters. */
-Eigen::VectorXd build_nonredundant_lifted_trial_parameters(
-    const OrbitalPreparationInput& current_orbital_input,
-    const OrbitalChart& current_space,
-    const SparseParameterLayout& parameter_view,
-    const Eigen::VectorXd& reduced_step);
+Eigen::VectorXd
+build_nonredundant_lifted_trial_parameters(const OrbitalPreparationInput& current_orbital_input,
+                                           const OrbitalChart& current_space,
+                                           const SparseParameterLayout& parameter_view,
+                                           const Eigen::VectorXd& reduced_step);
 
 bool try_armijo_backtracking_nonredundant_direction(
     VbScfObjective* objective,
@@ -33,4 +33,4 @@ bool try_armijo_backtracking_nonredundant_direction(
     double* accepted_energy,
     bool* accepted_chart_changed = nullptr);
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

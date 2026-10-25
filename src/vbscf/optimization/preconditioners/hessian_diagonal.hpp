@@ -9,10 +9,10 @@ struct AcceptedPointContext;
 struct VbScfInput;
 
 struct AnalyticOrbitalDiagonal {
-  Eigen::MatrixXd mo_coefficients;
-  Eigen::MatrixXd rotation_diagonal;
-  Eigen::MatrixXd inactive_inverse_transform;
-  Eigen::MatrixXd active_inverse_transform;
+    Eigen::MatrixXd mo_coefficients;
+    Eigen::MatrixXd rotation_diagonal;
+    Eigen::MatrixXd inactive_inverse_transform;
+    Eigen::MatrixXd active_inverse_transform;
 };
 
 /**
@@ -21,8 +21,7 @@ struct AnalyticOrbitalDiagonal {
  * HAO and OEO use the same accepted AO-metric orthogonal frame. Sparse
  * supports enter only when this model is pulled into the orbital chart.
  */
-AnalyticOrbitalDiagonal build_analytic_orbital_diagonal(
-    const VbScfInput& input,
-    const AcceptedPointContext& accepted);
+AnalyticOrbitalDiagonal build_analytic_orbital_diagonal(const VbScfInput& input,
+                                                        const AcceptedPointContext& accepted);
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

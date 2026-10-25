@@ -53,22 +53,18 @@ void accumulate_directional_beta_overlap_gradient(
 
 void accumulate_local_alpha_overlap_gradient(
     const SameSpinPairCacheContext& same_spin_pair_cache,
-    const std::vector<DirectionalOppositeSpinPairData>&
-        alpha_directional_pair_data,
-    const std::vector<DirectionalOppositeSpinPairData>&
-        beta_directional_pair_data,
+    const std::vector<DirectionalOppositeSpinPairData>& alpha_directional_pair_data,
+    const std::vector<DirectionalOppositeSpinPairData>& beta_directional_pair_data,
     const SelectedStateDeterminantMatrices& selected_states,
     int n_active_orbitals,
     std::vector<double>* active_orbital_overlap_gradient);
 
 void accumulate_local_beta_overlap_gradient(
     const SameSpinPairCacheContext& same_spin_pair_cache,
-    const std::vector<DirectionalOppositeSpinPairData>&
-        alpha_directional_pair_data,
-    const std::vector<DirectionalOppositeSpinPairData>&
-        beta_directional_pair_data,
+    const std::vector<DirectionalOppositeSpinPairData>& alpha_directional_pair_data,
+    const std::vector<DirectionalOppositeSpinPairData>& beta_directional_pair_data,
     const SelectedStateDeterminantMatrices& selected_states,
     int n_active_orbitals,
     std::vector<double>* active_orbital_overlap_gradient);
 
-}  // namespace xmvb::vb::detail
+} // namespace xmvb::vb::detail

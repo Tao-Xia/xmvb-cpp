@@ -9,15 +9,15 @@
 namespace xmvb::vb::detail {
 
 struct SameSpinAcceptedTileWeights {
-  Eigen::MatrixXd hamiltonian;
-  Eigen::MatrixXd overlap;
-  Eigen::MatrixXd partner_total;
+    Eigen::MatrixXd hamiltonian;
+    Eigen::MatrixXd overlap;
+    Eigen::MatrixXd partner_total;
 
-  void reset(int n_rows, int n_cols) {
-    hamiltonian.setZero(n_rows, n_cols);
-    overlap.setZero(n_rows, n_cols);
-    partner_total.setZero(n_rows, n_cols);
-  }
+    void reset(int n_rows, int n_cols) {
+        hamiltonian.setZero(n_rows, n_cols);
+        overlap.setZero(n_rows, n_cols);
+        partner_total.setZero(n_rows, n_cols);
+    }
 };
 
 void accumulate_alpha_accepted_tile_weights(
@@ -68,4 +68,4 @@ void accumulate_beta_directional_tile_weights(
     int right_end,
     SameSpinAcceptedTileWeights* weights);
 
-}  // namespace xmvb::vb::detail
+} // namespace xmvb::vb::detail

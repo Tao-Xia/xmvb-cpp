@@ -1,5 +1,7 @@
 #pragma once
 
+#include "mcscf/ci/string_table.hpp"
+
 #include <utility>
 #include <vector>
 
@@ -13,19 +15,17 @@ namespace xmvb::vb::detail {
 struct SameSpinAcceptedTileWeights;
 class SameSpinDirectionalPairTileView;
 
-SameSpinMatrixBackwardContribution make_zero_backward_contribution(
-    int n_active_orbitals);
+SameSpinMatrixBackwardContribution make_zero_backward_contribution(int n_active_orbitals);
 
-void account_for_close_shell_spin_reuse(
-    Eigen::MatrixXd* active_one_electron_gradient,
-    SameSpinMatrixBackwardContribution* result);
+void account_for_close_shell_spin_reuse(Eigen::MatrixXd* active_one_electron_gradient,
+                                        SameSpinMatrixBackwardContribution* result);
 
-SameSpinMatrixBackwardContribution finalize_backward_contribution(
-    SameSpinMatrixBackwardContribution result,
-    const Eigen::MatrixXd& active_one_electron_gradient);
+SameSpinMatrixBackwardContribution
+finalize_backward_contribution(SameSpinMatrixBackwardContribution result,
+                               const Eigen::MatrixXd& active_one_electron_gradient);
 
 void accumulate_spin_matrix_backward(
-    const std::vector<std::vector<int>>& unique_determinants,
+    const xmvb::mcscf::StringTable& unique_determinants,
     const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
     const Eigen::MatrixXd& hamiltonian_weight_matrix,
     const Eigen::MatrixXd& overlap_weight_matrix,
@@ -37,7 +37,7 @@ void accumulate_spin_matrix_backward(
     std::vector<double>* packed_active_two_electron_gradient);
 
 void accumulate_accepted_spin_backward_tile(
-    const std::vector<std::vector<int>>& unique_determinants,
+    const xmvb::mcscf::StringTable& unique_determinants,
     const AcceptedSpinPairTile& accepted_tile,
     const Eigen::Ref<const Eigen::MatrixXd>& hamiltonian_weights,
     const Eigen::Ref<const Eigen::MatrixXd>& overlap_weights,
@@ -48,10 +48,9 @@ void accumulate_accepted_spin_backward_tile(
     std::vector<double>* packed_active_two_electron_gradient);
 
 void accumulate_spin_local_matrix_backward(
-    const std::vector<std::vector<int>>& unique_determinants,
+    const xmvb::mcscf::StringTable& unique_determinants,
     const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
-    const std::vector<SameSpinPolynomialDirectionalPairData>&
-        ordered_directional_data,
+    const std::vector<SameSpinPolynomialDirectionalPairData>& ordered_directional_data,
     const Eigen::MatrixXd& hamiltonian_weight_matrix,
     const Eigen::MatrixXd& overlap_weight_matrix,
     const Eigen::MatrixXd& partner_total_transfer_matrix,
@@ -67,8 +66,7 @@ void accumulate_spin_local_matrix_backward(
     std::vector<double>* active_orbital_overlap_gradient,
     std::vector<double>* packed_active_two_electron_gradient);
 
-SameSpinMatrixBackwardContribution
-build_support_sparse_same_spin_backward_contribution_by_tiles(
+SameSpinMatrixBackwardContribution build_support_sparse_same_spin_backward_contribution_by_tiles(
     const SameSpinPairCacheContext& same_spin_pair_cache,
     const SelectedStateDeterminantMatrices& selected_states,
     const std::vector<double>& selected_state_energies,
@@ -84,7 +82,7 @@ build_support_sparse_directional_same_spin_backward_contribution_by_tiles(
     int n_active_orbitals);
 
 void accumulate_local_primary_pair_tile(
-    const std::vector<std::vector<int>>& unique_determinants,
+    const xmvb::mcscf::StringTable& unique_determinants,
     const AcceptedSpinPairTile& accepted,
     const SameSpinDirectionalPairTileView& directional_tile,
     const SameSpinAcceptedTileWeights& accepted_weights,
@@ -97,7 +95,7 @@ void accumulate_local_primary_pair_tile(
     std::vector<double>* packed_active_two_electron_gradient);
 
 void accumulate_accepted_pair_weight_response_tile(
-    const std::vector<std::vector<int>>& unique_determinants,
+    const xmvb::mcscf::StringTable& unique_determinants,
     const std::vector<SpinDeterminantPairEvaluation>& accepted_pairs,
     const SameSpinAcceptedTileWeights& directional_weights,
     int left_begin,
@@ -108,4 +106,4 @@ void accumulate_accepted_pair_weight_response_tile(
     std::vector<double>* active_orbital_overlap_gradient,
     std::vector<double>* packed_active_two_electron_gradient);
 
-}  // namespace xmvb::vb::detail
+} // namespace xmvb::vb::detail

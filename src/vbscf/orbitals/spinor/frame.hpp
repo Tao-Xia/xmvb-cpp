@@ -11,18 +11,24 @@ namespace xmvb::vb::spinor {
  * of computational basis. A singular Gram matrix is rejected, not regularized.
  */
 class Frame {
-public:
-  Frame(const Eigen::Ref<const Eigen::MatrixXcd>& coefficients,
-        const Eigen::Ref<const Eigen::MatrixXd>& ao_overlap);
+  public:
+    Frame(const Eigen::Ref<const Eigen::MatrixXcd>& coefficients,
+          const Eigen::Ref<const Eigen::MatrixXd>& ao_overlap);
 
-  const Eigen::MatrixXcd& gram() const noexcept { return gram_; }
-  const Eigen::MatrixXcd& upper() const noexcept { return upper_; }
-  const Eigen::MatrixXcd& coefficients() const noexcept { return coefficients_; }
+    const Eigen::MatrixXcd& gram() const noexcept {
+        return gram_;
+    }
+    const Eigen::MatrixXcd& upper() const noexcept {
+        return upper_;
+    }
+    const Eigen::MatrixXcd& coefficients() const noexcept {
+        return coefficients_;
+    }
 
-private:
-  Eigen::MatrixXcd gram_;
-  Eigen::MatrixXcd upper_;
-  Eigen::MatrixXcd coefficients_;
+  private:
+    Eigen::MatrixXcd gram_;
+    Eigen::MatrixXcd upper_;
+    Eigen::MatrixXcd coefficients_;
 };
 
-}  // namespace xmvb::vb::spinor
+} // namespace xmvb::vb::spinor

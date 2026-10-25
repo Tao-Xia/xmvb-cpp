@@ -19,10 +19,9 @@ namespace xmvb::output {
  * @param structure_index Zero-based structure index.
  * @param prefix_width Number of columns already printed on the first line.
  */
-void print_structure(
-    std::ostream& output,
-    const vb::RawStructureData& structures,
-    int structure_index,
-    int prefix_width);
+void print_structure(std::ostream& output,
+                     const vb::RawStructureData& structures,
+                     int structure_index,
+                     int prefix_width);
 
-}  // namespace xmvb::output
+} // namespace xmvb::output

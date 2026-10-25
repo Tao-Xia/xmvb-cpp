@@ -57,6 +57,10 @@ add_executable(test_metric_point EXCLUDE_FROM_ALL
   ${CMAKE_SOURCE_DIR}/tests/vbscf/diagnostics/metric_point.cpp)
 target_link_libraries(test_metric_point PRIVATE xmvb_input xmvb_vbscf)
 
+add_executable(test_initial_ci EXCLUDE_FROM_ALL
+  ${CMAKE_SOURCE_DIR}/tests/vbscf/diagnostics/initial_ci.cpp)
+target_link_libraries(test_initial_ci PRIVATE xmvb_input xmvb_vbscf)
+
 add_executable(test_selected_metric_point EXCLUDE_FROM_ALL
   ${CMAKE_SOURCE_DIR}/tests/vbscf/diagnostics/selected_metric_point.cpp)
 target_link_libraries(test_selected_metric_point PRIVATE xmvb_input xmvb_vbscf)

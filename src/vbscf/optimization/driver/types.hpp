@@ -22,8 +22,8 @@ namespace xmvb::vb {
 // independently rebuilt charts: their basis drift is an O(step) false secant.
 // See eqs 66d--66h of the orbital-optimization theory document.
 struct PackedSecantPair {
-  Eigen::VectorXd packed_step;
-  Eigen::VectorXd packed_gradient_change;
+    Eigen::VectorXd packed_step;
+    Eigen::VectorXd packed_gradient_change;
 };
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

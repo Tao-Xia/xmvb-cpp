@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "integrals/ao/input.hpp"
+#include "integrals/ao/graph.hpp"
 
 namespace xmvb::libcint {
 
@@ -16,18 +17,20 @@ namespace xmvb::libcint {
  * staging a redundant four-index AO representation.
  */
 struct MaterializedAoIntegralBuffers {
-  int n_basis_functions = 0;
-  Eigen::MatrixXd ao_core_hamiltonian_matrix;
-  std::vector<int> left_pair_indices;
-  std::vector<int> right_pair_indices;
-  std::vector<double> two_electron_values;
+    int n_basis_functions = 0;
+    Eigen::MatrixXd ao_core_hamiltonian_matrix;
+    std::vector<int> left_pair_indices;
+    std::vector<int> right_pair_indices;
+    std::vector<double> two_electron_values;
+    std::vector<integrals::AoIntegralChunk> chunks;
 };
 
-xmvb::integrals::AoIntegralInput build_core_hamiltonian_only_ao_integral_input(
-    int n_basis_functions,
-    Eigen::MatrixXd ao_core_hamiltonian_matrix);
+xmvb::integrals::AoIntegralInput
+build_core_hamiltonian_only_ao_integral_input(int n_basis_functions,
+                                              Eigen::MatrixXd ao_core_hamiltonian_matrix);
 
 xmvb::integrals::AoIntegralInput build_materialized_ao_integral_input(
-    MaterializedAoIntegralBuffers buffers);
+    MaterializedAoIntegralBuffers buffers,
+    integrals::AoPairLayout layout = integrals::AoPairLayout::Automatic);
 
-}  // namespace xmvb::libcint
+} // namespace xmvb::libcint

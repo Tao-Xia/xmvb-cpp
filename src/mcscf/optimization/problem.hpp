@@ -18,8 +18,8 @@ namespace xmvb::mcscf {
  * model equations.
  */
 class QuadraticProblem {
-public:
-  /**
+  public:
+    /**
    * @brief Constructs a matrix-free generalized-metric quadratic problem.
    *
    * @param gradient Gradient covector at the accepted point.
@@ -30,54 +30,56 @@ public:
    * @param hessian_lower_bound Optional certified lower bound on every
    * generalized Hessian eigenvalue. An estimate is not sufficient.
    */
-  QuadraticProblem(
-      Eigen::VectorXd gradient,
-      linalg::VectorAction apply_hessian,
-      linalg::VectorAction apply_metric,
-      DualNorm dual_norm,
-      linalg::VectorAction apply_preconditioner = {},
-      std::optional<double> hessian_lower_bound = std::nullopt);
+    QuadraticProblem(Eigen::VectorXd gradient,
+                     linalg::VectorAction apply_hessian,
+                     linalg::VectorAction apply_metric,
+                     DualNorm dual_norm,
+                     linalg::VectorAction apply_preconditioner = {},
+                     std::optional<double> hessian_lower_bound = std::nullopt);
 
-  /** @brief Number of optimization coordinates. */
-  Eigen::Index size() const noexcept { return gradient_.size(); }
+    /** @brief Number of optimization coordinates. */
+    Eigen::Index size() const noexcept {
+        return gradient_.size();
+    }
 
-  /** @brief Gradient covector at the accepted point. */
-  const Eigen::VectorXd& gradient() const noexcept { return gradient_; }
+    /** @brief Gradient covector at the accepted point. */
+    const Eigen::VectorXd& gradient() const noexcept {
+        return gradient_;
+    }
 
-  /** @brief Applies the Hessian and validates its result. */
-  Eigen::VectorXd apply_hessian(const Eigen::VectorXd& direction) const;
+    /** @brief Applies the Hessian and validates its result. */
+    Eigen::VectorXd apply_hessian(const Eigen::VectorXd& direction) const;
 
-  /** @brief Applies the coordinate metric and validates its result. */
-  Eigen::VectorXd apply_metric(const Eigen::VectorXd& direction) const;
+    /** @brief Applies the coordinate metric and validates its result. */
+    Eigen::VectorXd apply_metric(const Eigen::VectorXd& direction) const;
 
-  /** @brief Measures a finite covector in the physical dual metric. */
-  double dual_norm(const Eigen::VectorXd& covector) const;
+    /** @brief Measures a finite covector in the physical dual metric. */
+    double dual_norm(const Eigen::VectorXd& covector) const;
 
-  /** @brief Whether a residual preconditioner was supplied. */
-  bool has_preconditioner() const noexcept {
-    return static_cast<bool>(apply_preconditioner_);
-  }
+    /** @brief Whether a residual preconditioner was supplied. */
+    bool has_preconditioner() const noexcept {
+        return static_cast<bool>(apply_preconditioner_);
+    }
 
-  /** @brief Applies the optional residual preconditioner. */
-  Eigen::VectorXd apply_preconditioner(const Eigen::VectorXd& covector) const;
+    /** @brief Applies the optional residual preconditioner. */
+    Eigen::VectorXd apply_preconditioner(const Eigen::VectorXd& covector) const;
 
-  /** @brief Certified lower bound on the generalized Hessian spectrum. */
-  const std::optional<double>& hessian_lower_bound() const noexcept {
-    return hessian_lower_bound_;
-  }
+    /** @brief Certified lower bound on the generalized Hessian spectrum. */
+    const std::optional<double>& hessian_lower_bound() const noexcept {
+        return hessian_lower_bound_;
+    }
 
-private:
-  Eigen::VectorXd apply_checked(
-      const linalg::VectorAction& action,
-      const Eigen::VectorXd& vector,
-      const char* name) const;
+  private:
+    Eigen::VectorXd apply_checked(const linalg::VectorAction& action,
+                                  const Eigen::VectorXd& vector,
+                                  const char* name) const;
 
-  const Eigen::VectorXd gradient_;
-  const linalg::VectorAction apply_hessian_;
-  const linalg::VectorAction apply_metric_;
-  const DualNorm dual_norm_;
-  const linalg::VectorAction apply_preconditioner_;
-  const std::optional<double> hessian_lower_bound_;
+    const Eigen::VectorXd gradient_;
+    const linalg::VectorAction apply_hessian_;
+    const linalg::VectorAction apply_metric_;
+    const DualNorm dual_norm_;
+    const linalg::VectorAction apply_preconditioner_;
+    const std::optional<double> hessian_lower_bound_;
 };
 
-}  // namespace xmvb::mcscf
+} // namespace xmvb::mcscf

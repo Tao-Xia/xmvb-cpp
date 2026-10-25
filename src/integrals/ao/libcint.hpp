@@ -46,4 +46,4 @@ int infer_n_basis_functions(const LibcintInput& input);
  */
 std::vector<double> build_cartesian_ao_normalization(const LibcintInput& input);
 
-}  // namespace xmvb::integrals
+} // namespace xmvb::integrals

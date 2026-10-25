@@ -12,18 +12,18 @@ namespace xmvb::integrals {
  * and K(mu,nu) = sum_rs (mu r|nu s) P(r,s).
  */
 struct JkWeights {
-  double coulomb = 1.0;
-  double exchange = 0.0;
+    double coulomb = 1.0;
+    double exchange = 0.0;
 };
 
 /** Contract a symmetric total-electron AO density against exact ERIs. */
-Eigen::MatrixXd contract_jk(
-    const Eigen::Ref<const Eigen::MatrixXd>& density,
-    const AoIntegralInput& ao, JkWeights weights = {});
+Eigen::MatrixXd contract_jk(const Eigen::Ref<const Eigen::MatrixXd>& density,
+                            const AoIntegralInput& ao,
+                            JkWeights weights = {});
 
 /** Contract a symmetric total-electron AO density against RI factors. */
-Eigen::MatrixXd contract_jk(
-    const Eigen::Ref<const Eigen::MatrixXd>& density,
-    const RiAoFactorization& ri, JkWeights weights = {});
+Eigen::MatrixXd contract_jk(const Eigen::Ref<const Eigen::MatrixXd>& density,
+                            const RiAoFactorization& ri,
+                            JkWeights weights = {});
 
-}  // namespace xmvb::integrals
+} // namespace xmvb::integrals

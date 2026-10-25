@@ -24,27 +24,27 @@ struct SelectedMetric;
  * @brief Result of evaluating an orbital point without accepting it.
  */
 struct VbScfObjectiveTrialEvaluation {
-  OrbitalPreparationInput orbital_preparation_input;
-  OrbitalGradientResult gradient_result;
-  Eigen::VectorXd gradient;
-  double energy = 0.0;
-  double gradient_inf_norm = 0.0;
-  double wall_time_seconds = 0.0;
-  bool chart_changed = false;
-  bool gradient_ready = false;
-  bool valid = false;
+    OrbitalPreparationInput orbital_preparation_input;
+    OrbitalGradientResult gradient_result;
+    Eigen::VectorXd gradient;
+    double energy = 0.0;
+    double gradient_inf_norm = 0.0;
+    double wall_time_seconds = 0.0;
+    bool chart_changed = false;
+    bool gradient_ready = false;
+    bool valid = false;
 
-  std::optional<ActiveSpaceForwardEvaluation> forward_evaluation;
-  std::unique_ptr<ElectronicStateForwardEvaluation> electronic_forward;
+    std::optional<ActiveSpaceForwardEvaluation> forward_evaluation;
+    std::unique_ptr<ElectronicStateForwardEvaluation> electronic_forward;
 };
 
 /** @brief Exact coupled gradient at a prescribed orbital/structure keyframe. */
 struct VbScfCoupledKeyframeEvaluation {
-  Eigen::VectorXd orbital_gradient;
-  Eigen::MatrixXd normalized_structure_coefficients;
-  Eigen::MatrixXd structure_residuals;
-  Eigen::MatrixXd coefficient_gradient;
-  double energy = 0.0;
+    Eigen::VectorXd orbital_gradient;
+    Eigen::MatrixXd normalized_structure_coefficients;
+    Eigen::MatrixXd structure_residuals;
+    Eigen::MatrixXd coefficient_gradient;
+    double energy = 0.0;
 };
 
 /**
@@ -55,123 +55,112 @@ struct VbScfCoupledKeyframeEvaluation {
  * molecule-static integral data are therefore never duplicated for a trial.
  */
 class VbScfObjective {
- public:
-  using TrialEvaluation = VbScfObjectiveTrialEvaluation;
+  public:
+    using TrialEvaluation = VbScfObjectiveTrialEvaluation;
 
-  VbScfObjective(
-      VbScfInput input,
-      SparseParameterLayout layout,
-      const std::vector<int>& selected_state_indices,
-      const std::vector<double>& state_average_weights,
-      double nuclear_repulsion_energy,
-      StructureEigensolver structure_eigensolver,
-      StructureSolveAccuracy structure_solve_accuracy,
-      const OrbitalGradientEvaluator* orbital_gradient_evaluator,
-      std::shared_ptr<const ElectronicStateBackend> electronic_backend = {});
+    VbScfObjective(VbScfInput input,
+                   SparseParameterLayout layout,
+                   const std::vector<int>& selected_state_indices,
+                   const std::vector<double>& state_average_weights,
+                   double nuclear_repulsion_energy,
+                   StructureEigensolver structure_eigensolver,
+                   StructureSolveAccuracy structure_solve_accuracy,
+                   const OrbitalGradientEvaluator* orbital_gradient_evaluator,
+                   std::shared_ptr<const ElectronicStateBackend> electronic_backend = {});
 
-  VbScfObjective(const VbScfObjective&) = delete;
-  VbScfObjective& operator=(const VbScfObjective&) = delete;
-  VbScfObjective(VbScfObjective&&) = default;
-  VbScfObjective& operator=(VbScfObjective&&) = default;
+    VbScfObjective(const VbScfObjective&) = delete;
+    VbScfObjective& operator=(const VbScfObjective&) = delete;
+    VbScfObjective(VbScfObjective&&) = default;
+    VbScfObjective& operator=(VbScfObjective&&) = default;
 
-  /** @brief Evaluates and accepts an orbital parameter vector. */
-  double operator()(const Eigen::VectorXd& parameter_vector,
-                    Eigen::VectorXd& gradient);
+    /** @brief Evaluates and accepts an orbital parameter vector. */
+    double operator()(const Eigen::VectorXd& parameter_vector, Eigen::VectorXd& gradient);
 
-  /** @brief Returns the current accepted VBSCF input. */
-  const VbScfInput& input() const { return input_; }
-
-  /** @brief Transfers the accepted input out after optimization. */
-  VbScfInput take_input() && { return std::move(input_); }
-
-  /** @brief Returns the gradient data at the accepted point. */
-  const OrbitalGradientResult& gradient_result() const {
-    return gradient_result_;
-  }
-
-  /** @brief Returns the exact-HVP context at the accepted point. */
-  const std::shared_ptr<AcceptedPointContext>&
-  second_order_context() const {
-    return gradient_result_.second_order_context;
-  }
-
-  /** @brief Populates the reference-energy gradient at the accepted point. */
-  void ensure_reference_gradient();
-
-  const std::vector<double>& energy_history() const { return energy_history_; }
-  const std::vector<double>& gradient_inf_norm_history() const {
-    return gradient_inf_norm_history_;
-  }
-  const std::vector<double>& iteration_time_history_seconds() const {
-    return iteration_time_history_seconds_;
-  }
-  std::size_t call_count() const { return energy_history_.size(); }
-  double objective_wall_time_seconds() const {
-    return objective_wall_time_seconds_;
-  }
-  double last_gradient_inf_norm() const {
-    if (gradient_inf_norm_history_.empty()) {
-      return 0.0;
+    /** @brief Returns the current accepted VBSCF input. */
+    const VbScfInput& input() const {
+        return input_;
     }
-    return gradient_inf_norm_history_.back();
-  }
 
-  /** @brief Evaluates a trial point without changing the accepted point. */
-  TrialEvaluation evaluate_trial(
-      const Eigen::VectorXd& parameter_vector,
-      bool canonicalize_sparse_gauge = false) const;
+    /** @brief Transfers the accepted input out after optimization. */
+    VbScfInput take_input() && {
+        return std::move(input_);
+    }
 
-  /** @brief Evaluates only the trial energy and retains reusable forward work. */
-  TrialEvaluation evaluate_trial_energy(
-      const Eigen::VectorXd& parameter_vector,
-      bool canonicalize_sparse_gauge = false) const;
+    /** @brief Returns the gradient data at the accepted point. */
+    const OrbitalGradientResult& gradient_result() const {
+        return gradient_result_;
+    }
 
-  /**
+    /** @brief Returns the exact-HVP context at the accepted point. */
+    const std::shared_ptr<AcceptedPointContext>& second_order_context() const {
+        return gradient_result_.second_order_context;
+    }
+
+    /** @brief Populates the reference-energy gradient at the accepted point. */
+    void ensure_reference_gradient();
+
+    const std::vector<double>& energy_history() const {
+        return energy_history_;
+    }
+    const std::vector<double>& gradient_inf_norm_history() const {
+        return gradient_inf_norm_history_;
+    }
+    const std::vector<double>& iteration_time_history_seconds() const {
+        return iteration_time_history_seconds_;
+    }
+
+    /** @brief Evaluates a trial point without changing the accepted point. */
+    TrialEvaluation evaluate_trial(const Eigen::VectorXd& parameter_vector,
+                                   bool canonicalize_sparse_gauge = false) const;
+
+    /** @brief Evaluates only the trial energy and retains reusable forward work. */
+    TrialEvaluation evaluate_trial_energy(const Eigen::VectorXd& parameter_vector,
+                                          bool canonicalize_sparse_gauge = false) const;
+
+    /**
    * @brief Evaluates a nonstationary coupled keyframe without rediagonalizing.
    *
    * This mirrors the CIAH keyframe operation: both the orbital displacement
    * and the current approximate structure displacement are retained.
    * metric, when supplied, is the exact selected Gram at these trial orbitals.
    */
-  VbScfCoupledKeyframeEvaluation evaluate_coupled_keyframe(
-      const Eigen::VectorXd& parameter_vector,
-      const Eigen::Ref<const Eigen::MatrixXd>& structure_coefficients,
-      const SelectedMetric* metric = nullptr) const;
+    VbScfCoupledKeyframeEvaluation
+    evaluate_coupled_keyframe(const Eigen::VectorXd& parameter_vector,
+                              const Eigen::Ref<const Eigen::MatrixXd>& structure_coefficients,
+                              const SelectedMetric* metric = nullptr) const;
 
-  /** @brief Relax CI from the supplied guess without orbital gradient backpropagation. */
-  TrialEvaluation evaluate_trial_energy_with_structure_guess(
-      const Eigen::VectorXd& parameter_vector,
-      const Eigen::Ref<const Eigen::MatrixXd>& selected_structure_coefficients) const;
+    /** @brief Relax CI from the supplied guess without orbital gradient backpropagation. */
+    TrialEvaluation evaluate_trial_energy_with_structure_guess(
+        const Eigen::VectorXd& parameter_vector,
+        const Eigen::Ref<const Eigen::MatrixXd>& selected_structure_coefficients) const;
 
-  /** @brief Completes the exact gradient for an energy-screened trial. */
-  void complete_trial(TrialEvaluation* evaluation) const;
+    /** @brief Completes the exact gradient for an energy-screened trial. */
+    void complete_trial(TrialEvaluation* evaluation) const;
 
-  /** @brief Makes a previously evaluated trial the accepted point. */
-  void commit(TrialEvaluation evaluation);
+    /** @brief Makes a previously evaluated trial the accepted point. */
+    void commit(TrialEvaluation evaluation);
 
-private:
-  mutable VbScfInput input_;
-  SparseParameterLayout layout_;
-  std::vector<int> state_indices_;
-  std::vector<double> state_weights_;
-  double nuclear_repulsion_ = 0.0;
-  StructureEigensolver structure_eigensolver_ =
-      StructureEigensolver::Davidson;
-  StructureSolveAccuracy structure_solve_accuracy_;
-  const OrbitalGradientEvaluator* gradient_evaluator_ = nullptr;
-  std::shared_ptr<const ElectronicStateBackend> electronic_backend_;
+  private:
+    mutable VbScfInput input_;
+    SparseParameterLayout layout_;
+    std::vector<int> state_indices_;
+    std::vector<double> state_weights_;
+    double nuclear_repulsion_ = 0.0;
+    StructureEigensolver structure_eigensolver_ = StructureEigensolver::Davidson;
+    StructureSolveAccuracy structure_solve_accuracy_;
+    const OrbitalGradientEvaluator* gradient_evaluator_ = nullptr;
+    std::shared_ptr<const ElectronicStateBackend> electronic_backend_;
 
-  OrbitalGradientResult gradient_result_;
-  std::vector<double> energy_history_;
-  std::vector<double> gradient_inf_norm_history_;
-  std::vector<double> iteration_time_history_seconds_;
-  double objective_wall_time_seconds_ = 0.0;
+    OrbitalGradientResult gradient_result_;
+    std::vector<double> energy_history_;
+    std::vector<double> gradient_inf_norm_history_;
+    std::vector<double> iteration_time_history_seconds_;
 
-  TrialEvaluation evaluate_trial_energy_with_initial_eigenvectors(
-      const Eigen::VectorXd& parameter_vector,
-      bool canonicalize_sparse_gauge,
-      const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors,
-      bool complete_external_gradient = false) const;
+    TrialEvaluation evaluate_trial_energy_with_initial_eigenvectors(
+        const Eigen::VectorXd& parameter_vector,
+        bool canonicalize_sparse_gauge,
+        const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors,
+        bool complete_external_gradient = false) const;
 };
 
-}  // namespace xmvb::vb
+} // namespace xmvb::vb

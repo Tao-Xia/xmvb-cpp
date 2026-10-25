@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <vector>
+#include "mcscf/ci/string_table.hpp"
 
 namespace xmvb::mcscf {
 
@@ -13,32 +14,31 @@ namespace xmvb::mcscf {
  * sparse structure-to-spin-product scatter and gather.
  */
 struct DirectCiActionPlan {
-  bool alpha_carrier_complete = false;
-  bool beta_carrier_complete = false;
-  int n_active_orbitals = 0;
-  int n_alpha_electrons = 0;
-  int n_beta_electrons = 0;
-  std::size_t n_alpha_strings = 0;
-  std::size_t n_beta_strings = 0;
-  std::size_t alpha_same_spin_connections = 0;
-  std::size_t beta_same_spin_connections = 0;
-  std::size_t opposite_spin_connections = 0;
-  long double kronecker_flops = 0.0L;
-  long double direct_ci_flops = 0.0L;
-  long double exterior_transform_flops = 0.0L;
+    bool alpha_carrier_complete = false;
+    bool beta_carrier_complete = false;
+    int n_active_orbitals = 0;
+    int n_alpha_electrons = 0;
+    int n_beta_electrons = 0;
+    std::size_t n_alpha_strings = 0;
+    std::size_t n_beta_strings = 0;
+    std::size_t alpha_same_spin_connections = 0;
+    std::size_t beta_same_spin_connections = 0;
+    std::size_t opposite_spin_connections = 0;
+    long double kronecker_flops = 0.0L;
+    long double direct_ci_flops = 0.0L;
+    long double exterior_transform_flops = 0.0L;
 
-  bool carrier_complete() const noexcept {
-    return alpha_carrier_complete && beta_carrier_complete;
-  }
+    bool carrier_complete() const noexcept {
+        return alpha_carrier_complete && beta_carrier_complete;
+    }
 
-  long double total_direct_ci_flops() const noexcept {
-    return direct_ci_flops + exterior_transform_flops;
-  }
+    long double total_direct_ci_flops() const noexcept {
+        return direct_ci_flops + exterior_transform_flops;
+    }
 
-  bool favors_direct_ci() const noexcept {
-    return carrier_complete() && total_direct_ci_flops() < kronecker_flops;
-  }
-
+    bool favors_direct_ci() const noexcept {
+        return carrier_complete() && total_direct_ci_flops() < kronecker_flops;
+    }
 };
 
 /**
@@ -48,10 +48,19 @@ struct DirectCiActionPlan {
  * Fock spaces. Completeness is verified from the occupied-orbital lists, not
  * inferred from their counts alone.
  */
-DirectCiActionPlan plan_orthogonal_direct_ci_action(
-    const std::vector<std::vector<int>>& alpha_strings,
-    const std::vector<std::vector<int>>& beta_strings,
-    int n_active_orbitals,
-    int block_width);
+DirectCiActionPlan plan_orthogonal_direct_ci_action(const SpinStrings& alpha,
+                                                    const SpinStrings& beta,
+                                                    int n_active_orbitals,
+                                                    int block_width);
+DirectCiActionPlan plan_orthogonal_direct_ci_action(const StringTable& alpha,
+                                                    const StringTable& beta,
+                                                    int n_active_orbitals,
+                                                    int block_width);
 
-}  // namespace xmvb::mcscf
+DirectCiActionPlan
+plan_orthogonal_direct_ci_action(const std::vector<std::vector<int>>& alpha_strings,
+                                 const std::vector<std::vector<int>>& beta_strings,
+                                 int n_active_orbitals,
+                                 int block_width);
+
+} // namespace xmvb::mcscf
