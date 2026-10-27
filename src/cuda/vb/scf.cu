@@ -570,9 +570,6 @@ ScfResult solve_scf(Context& context,
             return trial;
         };
         macro.energy = [](const Trial& trial) { return trial.energy; };
-        macro.relaxed_slope = [&](const Matrix<double>& step) {
-            return dot(context, segment(gradient.view(), 0, no), segment(step.view(), 0, no));
-        };
         macro.terminal = [&](Trial& trial) {
             AcceptedOrbitalChart trial_chart(
                 context, orbital, input.complete_active_space, ao_metric);
@@ -602,11 +599,6 @@ ScfResult solve_scf(Context& context,
         }
         const double change = chosen.trial->energy - accepted.energy;
         accepted = std::move(*chosen.trial);
-        // Ray refinement may retain the first trial after preparing another
-        // point. Restore the selected point, not the last evaluated candidate.
-        accepted.point->activate();
-        if (accepted.ci_point)
-            ci_solver.bind_point(accepted.ci_point);
         ++result.iterations;
         ScfIteration record{result.iterations,
                             result.hvp - hvp_before,

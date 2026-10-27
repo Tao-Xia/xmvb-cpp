@@ -234,7 +234,6 @@ void check(Case scenario) {
         return Trial{energy};
     };
     host_callbacks.energy = [](const Trial& trial) { return trial.energy; };
-    host_callbacks.relaxed_slope = [&](const Vector& p) { return gradient.dot(p); };
     host_callbacks.terminal = [](Trial&) { return false; };
     host_callbacks.step_norm = [](const Vector& x) { return x.norm(); };
     host_callbacks.maximum_component = [](const Vector& x) { return x.cwiseAbs().maxCoeff(); };
@@ -255,9 +254,6 @@ void check(Case scenario) {
         return Trial{energy};
     };
     device_callbacks.energy = [](const Trial& trial) { return trial.energy; };
-    device_callbacks.relaxed_slope = [&](const xmvb::cuda::Matrix<double>& p) {
-        return device_dot(context, device_gradient.view(), p.view());
-    };
     device_callbacks.terminal = [](Trial&) { return false; };
     device_callbacks.step_norm = [&](const xmvb::cuda::Matrix<double>& x) {
         return device_ops.norm(x);

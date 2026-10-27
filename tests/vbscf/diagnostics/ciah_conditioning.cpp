@@ -1,3 +1,6 @@
+#include <algorithm>
+#include <limits>
+#include <optional>
 #include <Eigen/Core>
 #include <Eigen/Eigenvalues>
 #include <fstream>
@@ -8,7 +11,6 @@
 #include <vector>
 
 #include "core/memory.hpp"
-#include "mcscf/optimization/ciah/macro.hpp"
 #include "vbscf/orbitals/charts/chart.hpp"
 #include "vbscf/optimization/preconditioners/hessian_diagonal.hpp"
 #include "input/loading/loader.hpp"
@@ -18,6 +20,22 @@
 
 namespace {
 using namespace xmvb::vb;
+
+/** @brief Diagnostic only: the ray prototype was not promoted to the optimizer. */
+std::optional<double>
+ray_fraction(double source, double trial, double slope, double energy_resolution) {
+    const double curvature = trial - source - slope;
+    if (!(slope < 0.0 && curvature > 0.0))
+        return std::nullopt;
+    const double fraction = -0.5 * slope / curvature;
+    const double gain = curvature * (1.0 - fraction) * (1.0 - fraction);
+    const double roundoff = std::numeric_limits<double>::epsilon() *
+                            (std::abs(source) + std::abs(trial) + std::abs(slope));
+    if (fraction > 0.0 && fraction < 1.0 && gain > std::max(roundoff, energy_resolution))
+        return fraction;
+    return std::nullopt;
+}
+
 Eigen::MatrixXd read_orbitals(const char* path, const OrbitalPreparationInput& o) {
     Eigen::MatrixXd b(o.n_basis_functions, o.n_orbitals);
     std::ifstream file(path, std::ios::binary);
@@ -157,11 +175,10 @@ int main(int argc, char** argv) {
                                                           StructureSolveAccuracy{},
                                                           Eigen::MatrixXd{});
             if (refine && sample == 0) {
-                const auto shorter = xmvb::mcscf::detail::ciah_ray_fraction(
-                    source_energy,
-                    value.total_energy(),
-                    slope,
-                    StructureSolveAccuracy{}.energy_tolerance);
+                const auto shorter = ray_fraction(source_energy,
+                                                  value.total_energy(),
+                                                  slope,
+                                                  StructureSolveAccuracy{}.energy_tolerance);
                 if (shorter)
                     fractions.push_back(*shorter);
             }

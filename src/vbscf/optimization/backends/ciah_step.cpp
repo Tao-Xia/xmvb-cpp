@@ -591,9 +591,6 @@ bool build_ciah_macro_step(VbScfObjective* objective,
         return trial;
     };
     macro_callbacks.energy = [](const Trial& trial) { return trial.energy; };
-    macro_callbacks.relaxed_slope = [&](const Eigen::VectorXd& step) {
-        return initial_gradient.head(no).dot(step.head(no));
-    };
     macro_callbacks.terminal = [&](Trial& trial) {
         // A witnessed unstable point requires actual descent, not a tiny non-descent.
         if (seek_curvature)
