@@ -434,3 +434,7 @@ if (BUILD_TESTING)
 endif()
 
 unset(_xmvb_vbscf_unit_targets)
+
+# Fixed-reference gradient/HVP/keyframe audit at prescribed molecular orbitals.
+add_executable(check_ciah_derivatives EXCLUDE_FROM_ALL ${PROJECT_SOURCE_DIR}/tests/vbscf/diagnostics/ciah_derivatives.cpp)
+target_link_libraries(check_ciah_derivatives PRIVATE xmvb_input xmvb_vbscf)
