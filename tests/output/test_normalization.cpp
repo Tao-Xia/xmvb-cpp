@@ -52,6 +52,33 @@ void check_cached_structure_weights() {
                 text.str().find("1-3") != std::string::npos &&
                 text.str().find("1-2") != std::string::npos,
             "GPU/CPU shared weight output lost values or structure topology");
+    xmvb::output::print_structure_coefficients(text, coefficients, structures);
+    require(text.str().find("COEFFICIENTS OF STRUCTURES") != std::string::npos &&
+                text.str().find("-0.20000000") != std::string::npos,
+            "common coefficient table changed the supplied CI representative");
+}
+
+void check_common_report_layout() {
+    std::ostringstream output;
+    output << std::scientific << std::setprecision(16);
+    const auto flags = output.flags();
+    xmvb::output::print_iteration_header(output);
+    xmvb::output::print_iteration_row(output, 0, -198.75, 0.0, 0.002);
+    xmvb::output::print_iteration_row(output, 1, -198.751, -0.001, 0.0001);
+    xmvb::output::print_scf_status(output, true, 1, -198.751);
+    require(output.flags() == flags && output.precision() == 16,
+            "common scalar report changed subsequent diagnostic precision");
+    const auto text = output.str();
+    require(text.find("ITER           ENERGY          DELTA_E") != std::string::npos &&
+                text.find("-198.7500000000") != std::string::npos &&
+                text.find("-0.0010000000") != std::string::npos &&
+                text.find("2.00000000e-03") != std::string::npos &&
+                text.find("VBSCF converged in     1 iterations") != std::string::npos &&
+                text.find("Total Energy:   -198.7510000000") != std::string::npos,
+            "CPU/GPU scalar report lost the common XMVB layout");
+    xmvb::output::print_scf_status(output, false, 2, -198.751);
+    require(output.str().find("VBSCF did not converge in     2 iterations") != std::string::npos,
+            "nonconverged calculation was reported as converged");
 }
 
 void check_available_norms() {
@@ -135,6 +162,7 @@ void check_selected_open_shell() {
 
 int main() {
     check_cached_structure_weights();
+    check_common_report_layout();
     check_available_norms();
     check_selected_open_shell();
 }

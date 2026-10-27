@@ -13,6 +13,7 @@
 #include "input/loading/loader.hpp"
 #include "output/orbitals/writer.hpp"
 #include "output/text/sections.hpp"
+#include "output/text/report.hpp"
 
 namespace {
 void write_csv_field(std::ostream& output, std::string_view value) {
@@ -49,6 +50,7 @@ int run_cuvbscf(const Options& command_line, const vb::InputDeckMetadata& metada
         throw std::invalid_argument("CUVBSCF requires analytic Hessian-diagonal preconditioning");
     std::cout << std::unitbuf << std::setprecision(16);
     const auto start = std::chrono::steady_clock::now();
+    const auto start_time = std::chrono::system_clock::now();
     auto load_options = command_line.load;
     load_options.ao_pair_layout = xmvb::integrals::AoPairLayout::Chunked;
     auto loaded = xmvb::vb::load_vbscf_input_with_timings(command_line.input_path, load_options);
@@ -65,58 +67,37 @@ int run_cuvbscf(const Options& command_line, const vb::InputDeckMetadata& metada
         context.enable_memory_audit();
     const double context_seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - context_start).count();
-    std::cout
-        << "method=cuvbscf_ciah\npreconditioner=analytic_hessian_diagonal\n"
-        << "structures=" << loaded.input.structure_data.n_structures << '\n'
-        << "basis_functions=" << loaded.input.orbital_preparation_input.n_basis_functions << '\n'
-        << "active_orbitals=" << loaded.input.orbital_preparation_input.n_active_orbitals << '\n'
-        << "input_unique_integrals=" << loaded.input.ao_integral_input.pair_graph.integral_count()
-        << '\n'
-        << "input_integral_chunks=" << loaded.input.ao_integral_input.pair_graph.chunks.size()
-        << '\n'
-        << "input_seconds=" << loaded.total_seconds << '\n'
-        << "input_integral_provider_seconds=" << loaded.ao_integral_provider_seconds << '\n'
-        << "input_integral_setup_seconds=" << loaded.ao_integral_setup_seconds << '\n'
-        << "input_integral_generation_seconds=" << loaded.ao_integral_generation_seconds << '\n'
-        << "input_integral_merge_seconds=" << loaded.ao_integral_merge_seconds << '\n'
-        << "input_integral_buffered_bytes=" << loaded.ao_integral_buffered_bytes << '\n'
-        << "input_pair_graph_seconds=" << loaded.ao_integral_input_build_seconds << '\n'
-        << "input_orbital_guess_seconds=" << loaded.orbital_guess_seconds << '\n'
-        << "input_structure_expansion_seconds=" << loaded.structure_expansion_seconds << '\n'
-        << "gpu_initial_free_bytes=" << context.initial_device_free_bytes() << '\n'
-        << "gpu_initial_free_gib="
-        << static_cast<double>(context.initial_device_free_bytes()) / (1024.0 * 1024.0 * 1024.0)
-        << '\n'
-        << "gpu_device_budget_bytes=" << context.device_byte_budget() << '\n'
-        << "gpu_device_budget_gib="
-        << static_cast<double>(context.device_byte_budget()) / (1024.0 * 1024.0 * 1024.0) << '\n'
-        << "iteration,energy,delta_energy,gradient_inf,hvp,ci_actions,keyframes,seconds\n";
+    xmvb::output::print_header(command_line.input_path, options, loaded, start_time);
+    std::cout << " Execution backend: CUDA GPU.\n";
+    xmvb::output::print_iteration_header(std::cout);
+    // These metadata refer to the host ERI stream consumed by solve_scf.
+    const auto integral_count = loaded.input.ao_integral_input.pair_graph.integral_count();
+    const auto integral_chunks = loaded.input.ao_integral_input.pair_graph.chunks.size();
     const auto solve_start = std::chrono::steady_clock::now();
-    auto result = xmvb::cuda::solve_scf(context,
-                                        loaded.input,
-                                        std::move(loaded.input.ao_integral_input.pair_graph),
-                                        loaded.nuclear_repulsion_energy,
-                                        options,
-                                        [](const xmvb::cuda::ScfIteration& row) {
-                                            std::cout << row.iteration << ',' << row.energy << ','
-                                                      << row.energy_change << ','
-                                                      << row.gradient_inf << ',' << row.hvp << ','
-                                                      << row.ci_actions << ',' << row.keyframes
-                                                      << ',' << row.seconds << '\n';
-                                        });
+    auto result = xmvb::cuda::solve_scf(
+        context,
+        loaded.input,
+        std::move(loaded.input.ao_integral_input.pair_graph),
+        loaded.nuclear_repulsion_energy,
+        options,
+        [](const xmvb::cuda::ScfIteration& row) {
+            xmvb::output::print_iteration_row(
+                std::cout, row.iteration, row.energy, row.energy_change, row.gradient_inf);
+        });
     const double solve_call_seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - solve_start).count();
+    std::cout << std::nounitbuf;
+    xmvb::output::print_scf_status(std::cout, result.converged, result.iterations, result.energy);
     const auto output_start = std::chrono::steady_clock::now();
     double orbital_output_seconds = 0.0, structure_weight_seconds = 0.0;
+    std::string orbital_path;
     if (result.converged) {
         auto output_orbitals = loaded.input.orbital_preparation_input;
         Eigen::MatrixXd values(result.orbitals.rows(), result.orbitals.cols());
         xmvb::cuda::copy_to_host(context, values, result.orbitals.view());
         output_orbitals.orbital_value_table.assign(values.data(), values.data() + values.size());
-        std::cout
-            << "orbital_output="
-            << xmvb::output::write_orbital_file(command_line.input_path, output_orbitals).string()
-            << '\n';
+        orbital_path =
+            xmvb::output::write_orbital_file(command_line.input_path, output_orbitals).string();
         orbital_output_seconds =
             std::chrono::duration<double>(std::chrono::steady_clock::now() - output_start).count();
         const auto weight_start = std::chrono::steady_clock::now();
@@ -124,11 +105,50 @@ int run_cuvbscf(const Options& command_line, const vb::InputDeckMetadata& metada
         Eigen::MatrixXd overlap_product(result.overlap_coefficients.rows(), 1);
         xmvb::cuda::copy_to_host(context, coefficients, result.coefficients.view());
         xmvb::cuda::copy_to_host(context, overlap_product, result.overlap_coefficients.view());
+        std::cout << "\n Full structure Hamiltonian and overlap matrices are omitted"
+                     " in matrix-free Davidson mode.\n"
+                     " Structure coefficients refer to the unnormalized input structures.\n";
+        xmvb::output::print_structure_coefficients(
+            std::cout, coefficients.col(0), loaded.raw_structure_data);
         xmvb::output::print_coulson_chirgwin_weights(
             std::cout, coefficients.col(0), overlap_product.col(0), loaded.raw_structure_data);
         structure_weight_seconds =
             std::chrono::duration<double>(std::chrono::steady_clock::now() - weight_start).count();
+        xmvb::output::print_orbitals(std::cout, loaded.static_molecule_metadata, output_orbitals);
     }
+    std::cout << "\n\n                 ===============================================\n"
+                 "                       XMVB-CPP RUN DIAGNOSTICS\n"
+                 "                 ===============================================\n\n"
+              << std::unitbuf << std::defaultfloat << std::setprecision(16);
+    std::cout << "method=cuvbscf_ciah\npreconditioner=analytic_hessian_diagonal\n"
+              << "structures=" << loaded.input.structure_data.n_structures << '\n'
+              << "basis_functions=" << loaded.input.orbital_preparation_input.n_basis_functions
+              << '\n'
+              << "active_orbitals=" << loaded.input.orbital_preparation_input.n_active_orbitals
+              << '\n'
+              << "input_unique_integrals=" << integral_count << '\n'
+              << "input_integral_chunks=" << integral_chunks << '\n'
+              << "input_seconds=" << loaded.total_seconds << '\n'
+              << "input_integral_provider_seconds=" << loaded.ao_integral_provider_seconds << '\n'
+              << "input_integral_setup_seconds=" << loaded.ao_integral_setup_seconds << '\n'
+              << "input_integral_generation_seconds=" << loaded.ao_integral_generation_seconds
+              << '\n'
+              << "input_integral_merge_seconds=" << loaded.ao_integral_merge_seconds << '\n'
+              << "input_integral_buffered_bytes=" << loaded.ao_integral_buffered_bytes << '\n'
+              << "input_pair_graph_seconds=" << loaded.ao_integral_input_build_seconds << '\n'
+              << "input_orbital_guess_seconds=" << loaded.orbital_guess_seconds << '\n'
+              << "input_structure_expansion_seconds=" << loaded.structure_expansion_seconds << '\n'
+              << "gpu_initial_free_bytes=" << context.initial_device_free_bytes() << '\n'
+              << "gpu_initial_free_gib="
+              << static_cast<double>(context.initial_device_free_bytes()) /
+                     (1024.0 * 1024.0 * 1024.0)
+              << '\n'
+              << "gpu_device_budget_bytes=" << context.device_byte_budget() << '\n'
+              << "gpu_device_budget_gib="
+              << static_cast<double>(context.device_byte_budget()) / (1024.0 * 1024.0 * 1024.0)
+              << '\n';
+    if (!orbital_path.empty())
+        std::cout << "orbital_output=" << orbital_path << '\n';
     const auto& counters = context.counters();
     std::cout << "converged=" << result.converged << '\n'
               << "termination=" << result.reason << '\n'
@@ -152,11 +172,19 @@ int run_cuvbscf(const Options& command_line, const vb::InputDeckMetadata& metada
               << std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count()
               << '\n'
               << "gpu_peak_device_bytes=" << counters.peak_device_bytes << '\n'
+              << "gpu_peak_device_gib="
+              << static_cast<double>(counters.peak_device_bytes) / (1024.0 * 1024.0 * 1024.0)
+              << '\n'
               << "gpu_graph_captures=" << counters.graph_captures << '\n'
               << "gpu_graph_launches=" << counters.graph_launches << '\n'
               << "gpu_capacity_queries=" << counters.device_capacity_queries << '\n'
               << "gpu_host_to_device_bytes=" << counters.host_to_device_bytes << '\n'
               << "gpu_device_to_host_bytes=" << counters.device_to_host_bytes << '\n';
+    std::cout << "\niteration,energy,delta_energy,gradient_inf,hvp,ci_actions,keyframes,seconds\n";
+    for (const auto& row : result.trace)
+        std::cout << row.iteration << ',' << row.energy << ',' << row.energy_change << ','
+                  << row.gradient_inf << ',' << row.hvp << ',' << row.ci_actions << ','
+                  << row.keyframes << ',' << row.seconds << '\n';
     if (context.memory_audit_enabled()) {
         constexpr const char* report_path = "gpu_peak_allocations.csv";
         std::ofstream report(report_path);

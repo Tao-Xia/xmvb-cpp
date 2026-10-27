@@ -783,6 +783,8 @@ void print_dipole_and_virial_analysis(std::ostream& output,
            << "              VIRIAL THEOREM VALUE : " << std::setw(21) << virial_ratio << '\n';
 }
 
+} // namespace
+
 void print_orbitals(std::ostream& output,
                     const vb::VbScfStaticMoleculeMetadata& metadata,
                     const vb::OrbitalPreparationInput& orbitals) {
@@ -790,7 +792,46 @@ void print_orbitals(std::ostream& output,
         output, "ORBITALS IN PRIMITIVE BASIS FUNCTIONS", metadata, sparse_orbital_matrix(orbitals));
 }
 
-} // namespace
+void print_iteration_header(std::ostream& output) {
+    output << "\n                ITER           ENERGY          DELTA_E"
+           << "      |G_PROJ|_INF\n";
+    output.flush();
+}
+
+void print_iteration_row(
+    std::ostream& output, int iteration, double energy, double energy_change, double gradient_inf) {
+    std::ostringstream row;
+    row << std::setw(19) << iteration << std::setw(22) << std::fixed << std::setprecision(10)
+        << energy << std::setw(18) << energy_change << std::setw(18) << std::scientific
+        << std::setprecision(8) << gradient_inf << '\n';
+    output << row.str();
+    output.flush();
+}
+
+void print_scf_status(std::ostream& output, bool converged, int iterations, double energy) {
+    std::ostringstream text;
+    text << "\n"
+         << (converged ? "                        VBSCF converged in "
+                       : "                    VBSCF did not converge in ")
+         << std::setw(5) << iterations << " iterations\n\n"
+         << "                  Total Energy:   " << std::fixed << std::setprecision(10) << energy
+         << '\n';
+    output << text.str();
+}
+
+void print_structure_coefficients(std::ostream& output,
+                                  const Eigen::Ref<const Eigen::VectorXd>& coefficients,
+                                  const vb::RawStructureData& structures) {
+    if (coefficients.size() != structures.n_structures)
+        throw std::invalid_argument("structure-coefficient count does not match the structures");
+    output << "\n\n              ******  COEFFICIENTS OF STRUCTURES ******\n\n";
+    for (Eigen::Index structure = 0; structure < coefficients.size(); ++structure) {
+        output << "    " << std::setw(4) << structure + 1 << "    " << std::fixed
+               << std::setprecision(8) << std::setw(13) << coefficients[structure] << "  ****** ";
+        print_structure(output, structures, structure, kStructureValuePrefixWidth);
+        output << '\n';
+    }
+}
 
 void print_coulson_chirgwin_weights(std::ostream& output,
                                     const Eigen::Ref<const Eigen::VectorXd>& coefficients,
@@ -1026,15 +1067,8 @@ double print_final_state_sections(std::ostream& output,
             output << "\n\n              ******  STATE " << selected_states[state_offset] + 1
                    << " STRUCTURE ANALYSIS ******\n";
         }
-        output << "\n\n              ******  COEFFICIENTS OF STRUCTURES ******\n\n";
-        for (Eigen::Index structure = 0; structure < normalized.coefficients.size(); ++structure) {
-            output << "    " << std::setw(4) << structure + 1 << "    " << std::fixed
-                   << std::setprecision(8) << std::setw(13) << normalized.coefficients[structure]
-                   << "  ****** ";
-            print_structure(
-                output, load_result.raw_structure_data, structure, kStructureValuePrefixWidth);
-            output << '\n';
-        }
+        print_structure_coefficients(
+            output, normalized.coefficients, load_result.raw_structure_data);
         const auto& orbitals = result.optimized_input.orbital_preparation_input;
         const int n_inactive = (orbitals.n_total_electrons - orbitals.n_active_electrons) / 2;
         print_determinant_coefficients(

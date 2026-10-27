@@ -187,9 +187,7 @@ std::function<void(const xmvb::vb::VbScfAcceptedIterationSnapshot&)> iteration_l
     };
 
     auto state = std::make_shared<LoggerState>();
-    std::cout << "\n                ITER           ENERGY          DELTA_E"
-              << "      |G_PROJ|_INF\n";
-    std::cout.flush();
+    print_iteration_header(std::cout);
 
     return [state](const xmvb::vb::VbScfAcceptedIterationSnapshot& snapshot) {
         const double delta_energy = state->has_reference_energy
@@ -199,13 +197,11 @@ std::function<void(const xmvb::vb::VbScfAcceptedIterationSnapshot&)> iteration_l
             throw std::runtime_error("iteration report requires a projected-gradient norm");
         }
         const double gradient_norm = snapshot.projected_gradient_inf_norm;
-        std::ostringstream stream;
-        stream << std::setw(19) << snapshot.accepted_iteration_index << std::setw(22) << std::fixed
-               << std::setprecision(10) << snapshot.total_energy << std::setw(18) << std::fixed
-               << std::setprecision(10) << delta_energy << std::setw(18) << std::scientific
-               << std::setprecision(8) << gradient_norm << '\n';
-        std::cout << stream.str();
-        std::cout.flush();
+        print_iteration_row(std::cout,
+                            snapshot.accepted_iteration_index,
+                            snapshot.total_energy,
+                            delta_energy,
+                            gradient_norm);
         state->previous_total_energy = snapshot.total_energy;
         state->has_reference_energy = true;
     };
@@ -233,12 +229,7 @@ void print_summary(const vb::VbScfOptimizerOptions& options,
     const double optimizer_wall_time_seconds = result.total_wall_time_seconds;
     const int effective_thread_count = allocated_cpu_thread_count();
 
-    std::cout << "\n"
-              << (command_converged ? "                        VBSCF converged in "
-                                    : "                    VBSCF did not converge in ")
-              << std::setw(5) << result.n_iterations << " iterations\n\n"
-              << "                  Total Energy:   " << std::fixed << std::setprecision(10)
-              << result.final_total_energy << '\n';
+    print_scf_status(std::cout, command_converged, result.n_iterations, result.final_total_energy);
     const double average_structure_overlap =
         print_final_state_sections(std::cout, load_result, result);
     const auto command_finish_time = std::chrono::system_clock::now();
