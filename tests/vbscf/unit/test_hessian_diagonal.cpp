@@ -151,7 +151,7 @@ void check_contracted_density_span() {
     input.orbital_preparation_input.ao_overlap_matrix = Eigen::MatrixXd::Identity(n, n);
     input.ao_integral_input.n_basis_functions = n;
     input.ao_integral_input.ao_core_hamiltonian_matrix = h;
-    std::vector<int> left, right;
+    std::vector<xmvb::integrals::PairAddress> left, right;
     std::vector<double> values;
     for (int p = 0; p < n; ++p)
         for (int q = 0; q <= p; ++q)
@@ -420,7 +420,7 @@ int main() {
     input.orbital_preparation_input.ao_overlap_matrix = Eigen::MatrixXd::Identity(n, n);
     input.ao_integral_input.n_basis_functions = n;
     input.ao_integral_input.ao_core_hamiltonian_matrix = h;
-    std::vector<int> left, right;
+    std::vector<xmvb::integrals::PairAddress> left, right;
     std::vector<double> values;
     for (int p = 0; p < n; ++p)
         for (int q = 0; q <= p; ++q)

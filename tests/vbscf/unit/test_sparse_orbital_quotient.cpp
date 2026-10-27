@@ -833,7 +833,7 @@ void check_analytic_block_pullback(const OrbitalPreparationInput& input,
     AnalyticOrbitalDiagonal model;
     const Eigen::LLT<Eigen::MatrixXd> metric(input.ao_overlap_matrix);
     model.mo_coefficients = metric.matrixU().solve(Eigen::MatrixXd::Identity(n_bf, n_bf));
-    if (complete_active_space && input.orbital_type == kOrbitalTypeOeo) {
+    if (input.orbital_type == kOrbitalTypeOeo) {
         const Eigen::MatrixXd white = metric.matrixU() * orbitals;
         const Eigen::HouseholderQR<Eigen::MatrixXd> qr(white);
         const Eigen::MatrixXd frame = qr.householderQ() * Eigen::MatrixXd::Identity(n_bf, n_bf);
@@ -935,7 +935,7 @@ void check_analytic_block_pullback(const OrbitalPreparationInput& input,
                      reference.apply_inverse_augmented_hessian_diagonal(coordinate_probe, shift))
                             .norm() < 2e-11,
                     "AH-only preparation changed the signed preconditioner");
-        if (complete_active_space && input.orbital_type == kOrbitalTypeOeo) {
+        if (input.orbital_type == kOrbitalTypeOeo) {
             bool refused_positive_action = false;
             try {
                 ah.apply_reduced_curvature(coordinate_probe);
@@ -1005,8 +1005,10 @@ void check_analytic_block_pullback(const OrbitalPreparationInput& input,
         lifts.push_back(chart.expand_retract_input_tangent(input, Eigen::VectorXd::Unit(size, j)));
     Eigen::MatrixXd signed_reference = Eigen::MatrixXd::Zero(size, size);
     const int n_core_rotations = (n_bf - n_core) * n_core;
+    const bool full_frame = input.orbital_type == kOrbitalTypeOeo;
+    const int active_start = complete_active_space ? input.n_orbitals : n_core;
     Eigen::MatrixXd rotation_map =
-        Eigen::MatrixXd::Zero(n_core_rotations + (n_bf - input.n_orbitals) * n_active, size);
+        Eigen::MatrixXd::Zero(n_core_rotations + (n_bf - active_start) * n_active, size);
     Eigen::VectorXd rotation_weights = Eigen::VectorXd::Zero(rotation_map.rows());
     const Eigen::VectorXd probe = Eigen::VectorXd::LinSpaced(size, -0.4, 0.7);
     double maximum_rotation = 0.0;
@@ -1042,10 +1044,10 @@ void check_analytic_block_pullback(const OrbitalPreparationInput& input,
                                               (component * component.transpose());
                 maximum_rotation =
                     std::max(maximum_rotation, std::abs(source[q] * component.dot(probe)));
-                if (target < n_core || p >= input.n_orbitals) {
+                if (target < n_core || p >= active_start) {
                     const int row = target < n_core ? p - n_core + q * (n_bf - n_core)
-                                                    : n_core_rotations + p - input.n_orbitals +
-                                                          q * (n_bf - input.n_orbitals);
+                                                    : n_core_rotations + p - active_start +
+                                                          q * (n_bf - active_start);
                     rotation_map.row(row).noalias() += source[q] * component.transpose();
                     rotation_weights[row] = model.rotation_diagonal(p, source_offset + q);
                 }
@@ -1064,7 +1066,6 @@ void check_analytic_block_pullback(const OrbitalPreparationInput& input,
                     .norm() < 1.0e-10,
             "fused analytic positive inverse differs from reference");
     const double shift = spectrum.eigenvalues().minCoeff() - 1.0;
-    const bool full_frame = complete_active_space && input.orbital_type == kOrbitalTypeOeo;
     const Eigen::MatrixXd shifted_reference =
         full_frame
             ? Eigen::MatrixXd(rotation_map.transpose() *
