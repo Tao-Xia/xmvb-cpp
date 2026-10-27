@@ -606,7 +606,7 @@ xmvb::vb::VbScfInput coupling_input() {
     ao.n_basis_functions = 3;
     ao.ao_core_hamiltonian_matrix.resize(3, 3);
     ao.ao_core_hamiltonian_matrix << -1.1, 0.13, 0.04, 0.13, -0.6, -0.08, 0.04, -0.08, 0.2;
-    std::vector<int> left, right;
+    std::vector<xmvb::integrals::PairAddress> left, right;
     std::vector<double> values;
     for (int p = 0; p < 6; ++p) {
         for (int q = 0; q <= p; ++q) {
@@ -629,6 +629,49 @@ xmvb::vb::VbScfInput coupling_input() {
         }
     }
     return input;
+}
+
+/** @brief Selected-space coupling symmetry in production and isolated cofactor builds. */
+void check_selected_coupling_symmetry() {
+    auto input = coupling_input();
+    auto& orbitals = input.orbital_preparation_input;
+    // The selected structures use orbitals 0 and 1 only. The same fixture is
+    // also linked to the cofactor-only diagnostic implementation.
+    orbitals.n_orbitals = orbitals.n_active_orbitals = 3;
+    orbitals.orbital_basis_counts = {3, 3, 3};
+    orbitals.orbital_basis_index_table = {1, 2, 3, 1, 2, 3, 1, 2, 3};
+    orbitals.orbital_value_table = {1.0, 0.2, -0.1, 0.15, 0.9, 0.1, -0.08, 0.1, 1.1};
+    const auto accepted = xmvb::vb::OrbitalGradientEvaluator{}.evaluate(input, {0}, {1.0}, 0.4);
+    const xmvb::vb::SparseParameterLayout layout(orbitals);
+    const auto& prepared = accepted.orbital_preparation_result;
+    const xmvb::vb::OrbitalChart chart(
+        orbitals,
+        layout,
+        prepared.auxiliary_orbital_matrix.leftCols(orbitals.n_orbitals),
+        prepared.physical_orbital_frame.normalized_orbital_matrix,
+        nullptr,
+        false,
+        false,
+        nullptr,
+        xmvb::vb::OrbitalChart::Coordinates::Unwhitened);
+    const xmvb::vb::ExactHvpOperator hessian(accepted.second_order_context, &input, layout, &chart);
+#ifdef XMVB_TEST_COFACTOR_REFERENCE
+    require(!hessian.structure_action().supports_integral_direction(),
+            "cofactor regression silently used direct-CI");
+#endif
+    const xmvb::vb::StructureTangentOperator structure(accepted.second_order_context,
+                                                       hessian.structure_action());
+    const xmvb::vb::AffineCoupling affine(*accepted.second_order_context, hessian, structure);
+    const Eigen::Index no = chart.reduced_size(), ns = structure.tangent_size();
+    const Eigen::VectorXd p = Eigen::VectorXd::LinSpaced(no, -0.37, 0.62).normalized();
+    const Eigen::VectorXd v = Eigen::VectorXd::LinSpaced(no, 0.53, -0.21).normalized();
+    const Eigen::VectorXd q = Eigen::VectorXd::LinSpaced(ns, 0.13, 0.57).normalized();
+    const auto a = affine.apply(p, q), b = affine.apply(v, q);
+    const double skew = p.dot(b.orbital.orbital_hessian) - v.dot(a.orbital.orbital_hessian);
+    const double mixed = p.dot(a.adjoint) - q.dot(a.forcing);
+    std::cout << "selected orbital skew=" << skew << " coupling adjoint error=" << mixed << '\n';
+    require(std::abs(skew) < 2e-10, "cofactor orbital HVP is not symmetric");
+    require(std::abs(mixed) < 2e-10, "cofactor forward/reverse couplings are not adjoints");
 }
 
 /** Compare the complete orbital/CI coupling action with its separate calls. */
@@ -823,6 +866,14 @@ void check_affine_keyframe_hvp(int n_states, bool selected, bool stationary) {
 
 int main() {
     try {
+        check_selected_coupling_symmetry();
+#ifdef XMVB_TEST_COFACTOR_REFERENCE
+        for (int n_states : {1, 2})
+            for (bool selected : {false, true})
+                for (bool stationary : {false, true})
+                    check_affine_keyframe_hvp(n_states, selected, stationary);
+        return 0;
+#endif
         const StructureFixture fixture = make_fixture();
         check_single_state(fixture);
         check_equal_weight_multistate(fixture);

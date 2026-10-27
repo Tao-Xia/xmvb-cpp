@@ -442,6 +442,27 @@ int main() {
                         .maxCoeff() <= 1.0e-13,
             "RI-native opposite-spin direction disagrees with packed reference");
 
+    // Differentiating both spin factors must include the integral direction once,
+    // not twice. The beta-only channel is exactly G delta_P, even when delta_G != 0.
+    const Eigen::MatrixXd cofactor_projection =
+        packed_directional_tile.raw_channel_values * ri_kernel.transpose();
+    require((packed_directional_tile.cofactor_projected_channel_values - cofactor_projection)
+                        .cwiseAbs()
+                        .maxCoeff() < 1e-13 &&
+                (factor_directional_tile.cofactor_projected_channel_values - cofactor_projection)
+                        .cwiseAbs()
+                        .maxCoeff() < 1e-13,
+            "cofactor-only channels counted the integral direction");
+    require((packed_directional_tile.projected_channel_values - cofactor_projection).norm() > 1e-5,
+            "test fixture fails to expose a duplicated integral direction");
+    const auto channels = packed_directional_tile.view();
+    const auto transposed_channels = packed_directional_tile.view(true);
+    for (int channel = 0; channel < n_channels; ++channel)
+        require((channels.cofactor_projected_channel(channel).transpose() -
+                 transposed_channels.cofactor_projected_channel(channel))
+                        .norm() == 0,
+                "cofactor-only channel transpose view changed its orientation");
+
     xmvb::vb::SameSpinPairCacheContext cache;
     fill_pair_cache(n_alpha, n_channels, 0, &cache.alpha_pair_cache);
     fill_pair_cache(n_beta, n_channels, 1, &cache.beta_pair_cache);
