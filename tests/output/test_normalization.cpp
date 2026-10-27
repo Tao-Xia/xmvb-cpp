@@ -2,12 +2,56 @@
 
 #include <cmath>
 #include <stdexcept>
+#include <sstream>
+#include <iomanip>
+
+#include "output/text/sections.hpp"
 
 namespace {
 
 void require(bool condition, const char* message) {
     if (!condition)
         throw std::runtime_error(message);
+}
+
+void check_cached_structure_weights() {
+    const Eigen::Vector2d coefficients(1.0, -0.2);
+    Eigen::Matrix2d metric;
+    metric << 1.0, 0.5, 0.5, 1.0;
+    const Eigen::Vector2d overlap_product = metric * coefficients;
+    const auto weights = xmvb::output::coulson_chirgwin_weights(coefficients, overlap_product);
+    require((weights - Eigen::Vector2d(15.0 / 14.0, -1.0 / 14.0)).norm() < 1e-14,
+            "CC weights must use the off-diagonal overlap and allow negative entries");
+    require(std::abs(weights.sum() - 1.0) < 1e-14, "CC weights do not sum to unity");
+    require(
+        (xmvb::output::coulson_chirgwin_weights(-3 * coefficients, -3 * overlap_product) - weights)
+                .norm() < 1e-14,
+        "CC weights depend on the CI normalization or phase");
+    const Eigen::Vector2d scale(2.0, 3.0);
+    require((xmvb::output::coulson_chirgwin_weights(
+                 (scale.array() * coefficients.array()).matrix(),
+                 (overlap_product.array() / scale.array()).matrix()) -
+             weights)
+                    .norm() < 1e-14,
+            "CC weights depend on individual structure normalization");
+    xmvb::vb::RawStructureData structures;
+    structures.n_structures = 2;
+    structures.n_total_electrons = structures.n_active_electrons = 4;
+    structures.spin_multiplicity = 1;
+    structures.raw_structure_orbitals = {1, 2, 3, 4, 1, 3, 2, 4};
+    std::ostringstream text;
+    text << std::scientific << std::unitbuf << std::setprecision(16);
+    const auto flags = text.flags();
+    xmvb::output::print_coulson_chirgwin_weights(text, coefficients, overlap_product, structures);
+    require(text.flags() == flags && text.precision() == 16,
+            "weight output changed subsequent energy precision or buffering");
+    require(text.str().find("WEIGHTS OF STRUCTURES") != std::string::npos &&
+                text.str().find("Coulson-Chirgwin Weights") != std::string::npos &&
+                text.str().find("1.07142857") != std::string::npos &&
+                text.str().find("-0.07142857") != std::string::npos &&
+                text.str().find("1-3") != std::string::npos &&
+                text.str().find("1-2") != std::string::npos,
+            "GPU/CPU shared weight output lost values or structure topology");
 }
 
 void check_available_norms() {
@@ -90,6 +134,7 @@ void check_selected_open_shell() {
 } // namespace
 
 int main() {
+    check_cached_structure_weights();
     check_available_norms();
     check_selected_open_shell();
 }

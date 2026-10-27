@@ -20,6 +20,12 @@ void print_input_sections(std::ostream& output,
                           const char* optimizer_name,
                           int max_iterations);
 
+/** @brief Print the matrix-free CC weight table in the common XMVB layout. */
+void print_coulson_chirgwin_weights(std::ostream& output,
+                                    const Eigen::Ref<const Eigen::VectorXd>& coefficients,
+                                    const Eigen::Ref<const Eigen::VectorXd>& overlap_product,
+                                    const vb::RawStructureData& structures);
+
 /** @brief Prints requested final analyses; returns the exact mean structure overlap. */
 double print_final_state_sections(std::ostream& output,
                                   const vb::VbScfInputLoadResult& load_result,

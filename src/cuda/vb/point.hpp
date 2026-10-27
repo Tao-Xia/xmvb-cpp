@@ -1,5 +1,7 @@
 #pragma once
 
+#include <utility>
+
 #include "cuda/ci/sigma.hpp"
 #include "cuda/integrals/exact.hpp"
 #include "cuda/vb/action.hpp"
@@ -93,6 +95,12 @@ class VbPoint {
                    ? ConstPairPanel{}
                    : ConstPairPanel{
                          exchange_products_.data(), integrals_->pair_count(), n * n, n * n};
+    }
+    /** @brief Transfer the final cached M*C to reporting; no new action or copy.
+     * The point must not be evaluated or differentiated after this transfer.
+     */
+    Matrix<double> release_overlap_product() {
+        return std::move(selected_m_);
     }
     double energy() const noexcept {
         return total_energy_;

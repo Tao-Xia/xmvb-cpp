@@ -377,7 +377,7 @@ void print_weight_table(std::ostream& output,
                         const Eigen::VectorXd& weights,
                         const vb::RawStructureData& structures) {
     output << "\n         " << title << "\n\n";
-    for (int index = 0; index < weights.size(); ++index) {
+    for (Eigen::Index index = 0; index < weights.size(); ++index) {
         output << "    " << std::setw(4) << index + 1 << "    " << std::fixed
                << std::setprecision(8) << std::setw(13) << weights[index] << "  ****** ";
         print_structure(output, structures, index, kStructureValuePrefixWidth);
@@ -392,11 +392,7 @@ void print_structure_weights(std::ostream& output,
     if (coefficients.size() == 0 || overlap.rows() != coefficients.size()) {
         throw std::invalid_argument("structure-weight dimensions are inconsistent");
     }
-    const double norm = coefficients.dot(overlap * coefficients);
-    if (!(norm > 0.0)) {
-        throw std::domain_error("structure coefficients have a non-positive norm");
-    }
-    const Eigen::VectorXd cc = coefficients.array() * (overlap * coefficients).array() / norm;
+    const Eigen::VectorXd cc = coulson_chirgwin_weights(coefficients, overlap * coefficients);
 
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> solver(overlap);
     if (solver.info() != Eigen::Success) {
@@ -444,12 +440,8 @@ void print_structure_weights(std::ostream& output,
 void print_matrix_free_structure_weights(std::ostream& output,
                                          const NormalizedStructureState& state,
                                          const vb::RawStructureData& structures) {
-    const double norm = state.raw_coefficients.dot(state.raw_overlap_product);
-    if (!(norm > 0.0)) {
-        throw std::domain_error("structure coefficients have a non-positive norm");
-    }
     const Eigen::VectorXd cc =
-        state.raw_coefficients.array() * state.raw_overlap_product.array() / norm;
+        coulson_chirgwin_weights(state.raw_coefficients, state.raw_overlap_product);
     Eigen::VectorXd renormalized = state.coefficients.array().square();
     renormalized /= renormalized.sum();
 
@@ -799,6 +791,22 @@ void print_orbitals(std::ostream& output,
 }
 
 } // namespace
+
+void print_coulson_chirgwin_weights(std::ostream& output,
+                                    const Eigen::Ref<const Eigen::VectorXd>& coefficients,
+                                    const Eigen::Ref<const Eigen::VectorXd>& overlap_product,
+                                    const vb::RawStructureData& structures) {
+    if (coefficients.size() != structures.n_structures)
+        throw std::invalid_argument(
+            "structure-weight count does not match the selected structures");
+    const auto weights = coulson_chirgwin_weights(coefficients, overlap_product);
+    const auto flags = output.flags();
+    const auto precision = output.precision();
+    output << std::nounitbuf << "\n\n             ******  WEIGHTS OF STRUCTURES ******\n";
+    print_weight_table(output, "Coulson-Chirgwin Weights", weights, structures);
+    output.flags(flags);
+    output.precision(precision);
+}
 
 void print_program_preamble(std::ostream& output,
                             const std::string& input_path,

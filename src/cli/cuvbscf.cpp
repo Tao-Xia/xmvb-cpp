@@ -12,6 +12,7 @@
 #include "cuda/vb/scf.hpp"
 #include "input/loading/loader.hpp"
 #include "output/orbitals/writer.hpp"
+#include "output/text/sections.hpp"
 
 namespace {
 void write_csv_field(std::ostream& output, std::string_view value) {
@@ -106,6 +107,7 @@ int run_cuvbscf(const Options& command_line, const vb::InputDeckMetadata& metada
     const double solve_call_seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - solve_start).count();
     const auto output_start = std::chrono::steady_clock::now();
+    double orbital_output_seconds = 0.0, structure_weight_seconds = 0.0;
     if (result.converged) {
         auto output_orbitals = loaded.input.orbital_preparation_input;
         Eigen::MatrixXd values(result.orbitals.rows(), result.orbitals.cols());
@@ -115,9 +117,18 @@ int run_cuvbscf(const Options& command_line, const vb::InputDeckMetadata& metada
             << "orbital_output="
             << xmvb::output::write_orbital_file(command_line.input_path, output_orbitals).string()
             << '\n';
+        orbital_output_seconds =
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - output_start).count();
+        const auto weight_start = std::chrono::steady_clock::now();
+        Eigen::MatrixXd coefficients(result.coefficients.rows(), 1);
+        Eigen::MatrixXd overlap_product(result.overlap_coefficients.rows(), 1);
+        xmvb::cuda::copy_to_host(context, coefficients, result.coefficients.view());
+        xmvb::cuda::copy_to_host(context, overlap_product, result.overlap_coefficients.view());
+        xmvb::output::print_coulson_chirgwin_weights(
+            std::cout, coefficients.col(0), overlap_product.col(0), loaded.raw_structure_data);
+        structure_weight_seconds =
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - weight_start).count();
     }
-    const double output_seconds =
-        std::chrono::duration<double>(std::chrono::steady_clock::now() - output_start).count();
     const auto& counters = context.counters();
     std::cout << "converged=" << result.converged << '\n'
               << "termination=" << result.reason << '\n'
@@ -135,7 +146,8 @@ int run_cuvbscf(const Options& command_line, const vb::InputDeckMetadata& metada
               << "context_seconds=" << context_seconds << '\n'
               << "solve_call_seconds=" << solve_call_seconds << '\n'
               << "solver_teardown_seconds=" << solve_call_seconds - result.seconds << '\n'
-              << "orbital_output_seconds=" << output_seconds << '\n'
+              << "orbital_output_seconds=" << orbital_output_seconds << '\n'
+              << "structure_weight_output_seconds=" << structure_weight_seconds << '\n'
               << "process_seconds="
               << std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count()
               << '\n'

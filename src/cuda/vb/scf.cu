@@ -621,6 +621,8 @@ ScfResult solve_scf(Context& context,
         if (observe)
             observe(record);
     }
+    if (result.converged)
+        result.overlap_coefficients = accepted.point->release_overlap_product();
     result.energy = accepted.energy;
     result.orbitals = std::move(accepted.raw);
     result.coefficients = std::move(accepted.coefficients);
