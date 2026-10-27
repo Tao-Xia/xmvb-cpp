@@ -850,6 +850,34 @@ void check_analytic_block_pullback(const OrbitalPreparationInput& input,
         model.inactive_inverse_transform(0, 1) = 0.23;
     if (n_active > 1)
         model.active_inverse_transform(0, 1) = -0.31;
+    if (input.orbital_type == kOrbitalTypeOeo) {
+        // Roundoff in an ill-conditioned orthogonalization breaks the exact
+        // frame identity used by the inexpensive Gram inverse. Reproduce that
+        // defect without altering the actual orbital coordinates or rank.
+        auto perturbed = model;
+        perturbed.mo_coefficients.col(n_core) *= 1.0 + 1e-8;
+        OrbitalChart ah(input,
+                        layout,
+                        orbitals,
+                        orbitals,
+                        nullptr,
+                        false,
+                        complete_active_space,
+                        nullptr,
+                        OrbitalChart::Coordinates::Unwhitened);
+        const int rank = ah.reduced_size();
+        const auto signature = ah.rank_signature();
+        ah.set_curvature(input, nullptr, &perturbed, OrbitalChart::CurvatureUse::AugmentedHessian);
+        const Eigen::VectorXd x = Eigen::VectorXd::LinSpaced(rank, -.3, .7);
+        const Eigen::VectorXd y = Eigen::VectorXd::LinSpaced(rank, .6, -.2);
+        const Eigen::VectorXd bx = ah.apply_inverse_augmented_hessian_diagonal(x, -2.0);
+        const Eigen::VectorXd by = ah.apply_inverse_augmented_hessian_diagonal(y, -2.0);
+        require(ah.reduced_size() == rank && ah.rank_signature() == signature && bx.allFinite() &&
+                    by.allFinite() &&
+                    std::abs(x.dot(by) - y.dot(bx)) <
+                        2e-10 * std::max({1.0, x.norm() * by.norm(), y.norm() * bx.norm()}),
+                "refined rotation inverse changed rank or lost self-adjointness");
+    }
     const OrbitalChart chart(input,
                              layout,
                              orbitals,

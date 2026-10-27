@@ -4,6 +4,7 @@
 #include <cmath>
 #include <limits>
 #include <stdexcept>
+#include <sstream>
 
 #include <Eigen/LU>
 #include <Eigen/QR>
@@ -80,14 +81,32 @@ void OrbitalChart::build_rotation_inverse(const OrbitalPreparationInput& input,
                 orbital.ah_frame_inverse.noalias() =
                     norm * norm * orbital.inverse_raw_tangent_gram * forward.transpose();
             }
-            const Eigen::MatrixXd error = orbital.ah_frame_inverse * forward -
-                                          Eigen::MatrixXd::Identity(tangent_width, tangent_width);
-            const double bound = 512.0 * std::numeric_limits<double>::epsilon() *
-                                 std::max(1, static_cast<int>(input.n_basis_functions)) *
-                                 std::max(1.0, forward.norm() * orbital.ah_frame_inverse.norm());
-            if (!orbital.ah_frame_inverse.allFinite() || error.norm() > bound)
-                throw std::runtime_error(
-                    "analytic rotation inverse failed its residual certificate");
+            Eigen::MatrixXd error = orbital.ah_frame_inverse * forward -
+                                    Eigen::MatrixXd::Identity(tangent_width, tangent_width);
+            const auto residual_bound = [&] {
+                return 512.0 * std::numeric_limits<double>::epsilon() *
+                       std::max(1, static_cast<int>(input.n_basis_functions)) *
+                       std::max(1.0, forward.norm() * orbital.ah_frame_inverse.norm());
+            };
+            double bound = residual_bound();
+            double error_norm = error.norm();
+            if (error_norm > bound && orbital.ah_frame_inverse.allFinite()) {
+                // Reuse an already certified inverse unchanged. Otherwise
+                // refine the same map: if E=B*F-I, (B-E*B)*F-I=-E^2.
+                // This is residual refinement, not a different preconditioner.
+                orbital.ah_frame_inverse -= (error * orbital.ah_frame_inverse).eval();
+                error.noalias() = orbital.ah_frame_inverse * forward;
+                error.diagonal().array() -= 1.0;
+                bound = residual_bound();
+                error_norm = error.norm();
+            }
+            if (!orbital.ah_frame_inverse.allFinite() || error_norm > bound) {
+                std::ostringstream message;
+                message << "analytic rotation inverse failed its residual certificate: orbital="
+                        << orbital.orbital_index << ", core=" << core << ", residual=" << error_norm
+                        << ", bound=" << bound;
+                throw std::runtime_error(message.str());
+            }
             // The full-frame inverse replaces the signed local spectral inverse;
             // retain the independent positive block needed by P-LBFGS.
             orbital.ah_block_eigenvalues.resize(0);
