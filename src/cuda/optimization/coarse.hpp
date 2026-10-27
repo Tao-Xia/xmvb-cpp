@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include <functional>
 #include <vector>
 
@@ -20,11 +22,12 @@ class DeviceCoarsePreconditioner {
   public:
     using BaseInverse = std::function<void(linalg::ConstMatrixView, linalg::MatrixView)>;
     struct SupportRange {
-        int begin, length, capacity;
+        std::int64_t begin, length;
+        int capacity;
     };
 
     DeviceCoarsePreconditioner(Context& context,
-                               int dimension,
+                               std::int64_t dimension,
                                int capacity,
                                double lindep,
                                double action_accuracy = 0.0,
@@ -41,7 +44,7 @@ class DeviceCoarsePreconditioner {
     void observe_range(linalg::ConstMatrixView direction,
                        linalg::ConstMatrixView image,
                        linalg::ConstMatrixView metric_image,
-                       int begin);
+                       std::int64_t begin);
     /** Signed symmetric balancing inverse with exactly one base inverse call. */
     void apply(linalg::ConstMatrixView residual,
                double eigenvalue,
@@ -51,7 +54,7 @@ class DeviceCoarsePreconditioner {
     int size() const noexcept {
         return size_;
     }
-    int dimension() const noexcept {
+    std::int64_t dimension() const noexcept {
         return dimension_;
     }
 
@@ -74,10 +77,12 @@ class DeviceCoarsePreconditioner {
                          double scale = 1.0) const;
 
     struct CompactColumn {
-        int begin, length, panel, slot;
+        std::int64_t begin, length;
+        int panel, slot;
     };
     struct CompactPanel {
-        int begin, length, used, capacity;
+        std::int64_t begin, length;
+        int used, capacity;
         Buffer<double> basis, metric;
     };
     const double* basis_data(const CompactColumn& column) const;
@@ -85,7 +90,8 @@ class DeviceCoarsePreconditioner {
     linalg::ConstMatrixView panel_view(const CompactPanel& panel, bool metric, int used) const;
 
     Context* context_;
-    int dimension_, capacity_, size_ = 0;
+    std::int64_t dimension_;
+    int capacity_, size_ = 0;
     double lindep_, action_accuracy_;
     std::vector<CompactColumn> columns_;
     std::vector<CompactPanel> panels_;

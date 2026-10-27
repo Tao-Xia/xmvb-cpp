@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "vbscf/derivatives/hessian/responses/opposite_spin/overlap_contractions_internal.hpp"
 
 #include "mcscf/ci/string_table.hpp"
@@ -180,9 +181,9 @@ void accumulate_singular_spin_overlap_gradient_from_dense_image_local(
 void accumulate_overlap_gradient_by_pair_graph(
     const std::vector<SpinDeterminantPairEvaluation>& primary_pair_cache,
     const xmvb::mcscf::StringTable& unique_primary_determinants,
-    int n_unique_primary,
+    std::int64_t n_unique_primary,
     const std::vector<SpinDeterminantPairEvaluation>& partner_pair_cache,
-    int n_unique_partner,
+    std::int64_t n_unique_partner,
     const SelectedStatePairGraph& pair_graph,
     int n_active_orbitals,
     const xmvb::integrals::ActiveSpaceTwoElectronView& two_electron_view,
@@ -193,7 +194,8 @@ void accumulate_overlap_gradient_by_pair_graph(
     // of G y required by the inverse-overlap pullback.  The former P-channel
     // sweep repeated the coefficient contraction once for every active pair.
     const int n_packed_active_pairs = xmvb::integrals::packed_active_pair_count(n_active_orbitals);
-    const int n_threads = std::min(xmvb::effective_openmp_thread_count(), n_unique_primary);
+    const int n_threads =
+        std::min<std::int64_t>(xmvb::effective_openmp_thread_count(), n_unique_primary);
     std::vector<std::vector<double>> partial_gradients(
         n_threads, std::vector<double>(active_orbital_overlap_gradient->size(), 0.0));
 #pragma omp parallel if (n_threads > 1) num_threads(n_threads)
@@ -216,8 +218,8 @@ void accumulate_overlap_gradient_by_pair_graph(
         Eigen::MatrixXd pair_dense_image;
         Eigen::MatrixXd inverse_overlap_gradient;
 #pragma omp for schedule(static)
-        for (int primary_right = 0; primary_right < n_unique_primary; ++primary_right) {
-            for (int primary_left = 0; primary_left < n_unique_primary; ++primary_left) {
+        for (Eigen::Index primary_right = 0; primary_right < n_unique_primary; ++primary_right) {
+            for (Eigen::Index primary_left = 0; primary_left < n_unique_primary; ++primary_left) {
                 const auto& pair_evaluation = primary_pair_cache[ordered_spin_pair_storage_index(
                     primary_left, primary_right, n_unique_primary)];
                 if (pair_evaluation.overlap_result.nullity > 1) {
@@ -276,7 +278,7 @@ void accumulate_overlap_gradient_by_pair_graph(
                     pair_dense_image.resize(n_electrons, n_electrons);
                     for (int left_column = 0; left_column < n_electrons; ++left_column) {
                         for (int right_row = 0; right_row < n_electrons; ++right_row) {
-                            const int channel = xmvb::core::PairIndex::packed_pair_index(
+                            const auto channel = xmvb::core::PairIndex::packed_pair_index(
                                 occ_R[right_row], occ_L[left_column]);
                             pair_dense_image(right_row, left_column) = projected_image[channel];
                         }
@@ -300,7 +302,7 @@ void accumulate_overlap_gradient_by_pair_graph(
                     inverse_overlap_gradient.setZero(n_electrons, n_electrons);
                     for (int left_column = 0; left_column < n_electrons; ++left_column) {
                         for (int right_row = 0; right_row < n_electrons; ++right_row) {
-                            const int channel = xmvb::core::PairIndex::packed_pair_index(
+                            const auto channel = xmvb::core::PairIndex::packed_pair_index(
                                 occ_R[right_row], occ_L[left_column]);
                             inverse_overlap_gradient(left_column, right_row) =
                                 projected_image[channel];
@@ -339,14 +341,15 @@ void accumulate_local_overlap_gradient_by_pair_graph(
     const std::vector<SpinDeterminantPairEvaluation>& primary_pair_cache,
     const std::vector<DirectionalOppositeSpinPairData>& primary_directional_pairs,
     const xmvb::mcscf::StringTable& unique_primary_determinants,
-    int n_unique_primary,
+    std::int64_t n_unique_primary,
     const std::vector<SpinDeterminantPairEvaluation>& partner_pair_cache,
     const std::vector<DirectionalOppositeSpinPairData>& partner_directional_pairs,
-    int n_unique_partner,
+    std::int64_t n_unique_partner,
     const SelectedStatePairGraph& pair_graph,
     int n_active_orbitals,
     std::vector<double>* active_orbital_overlap_gradient) {
-    const int n_threads = std::min(xmvb::effective_openmp_thread_count(), n_unique_primary);
+    const int n_threads =
+        std::min<std::int64_t>(xmvb::effective_openmp_thread_count(), n_unique_primary);
     std::vector<std::vector<double>> partial_gradients(
         n_threads, std::vector<double>(active_orbital_overlap_gradient->size(), 0.0));
 #pragma omp parallel if (n_threads > 1) num_threads(n_threads)
@@ -362,8 +365,8 @@ void accumulate_local_overlap_gradient_by_pair_graph(
         Eigen::MatrixXd cofactor_weight;
         Eigen::MatrixXd delta_cofactor_weight;
 #pragma omp for schedule(static)
-        for (int primary_right = 0; primary_right < n_unique_primary; ++primary_right) {
-            for (int primary_left = 0; primary_left < n_unique_primary; ++primary_left) {
+        for (Eigen::Index primary_right = 0; primary_right < n_unique_primary; ++primary_right) {
+            for (Eigen::Index primary_left = 0; primary_left < n_unique_primary; ++primary_left) {
                 const auto& occ_left = unique_primary_determinants[primary_left];
                 const auto& occ_right = unique_primary_determinants[primary_right];
                 const int n_electrons = static_cast<int>(occ_left.size());

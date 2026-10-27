@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "cuda/optimization/ciah.hpp"
 
 #include <cmath>
@@ -86,7 +87,7 @@ struct DeviceBackend {
         check_cuda(cudaMemsetAsync(finite_flag.data(), 1, sizeof(int), context.stream()),
                    "CIAH finite flag init");
         constexpr int threads = 256;
-        const int blocks = blas_int((n + threads - 1) / threads);
+        const int blocks = ((n + threads - 1) / threads);
         finite_vector_kernel<<<blocks, threads, 0, context.stream()>>>(
             v.data(), n, finite_flag.data());
         check_cuda(cudaGetLastError(), "CIAH finite kernel");
@@ -104,7 +105,7 @@ struct DeviceBackend {
     Vector ones() const {
         Vector v = zeros();
         constexpr int threads = 256;
-        const int blocks = blas_int((n + threads - 1) / threads);
+        const int blocks = ((n + threads - 1) / threads);
         ones_vector_kernel<<<blocks, threads, 0, context.stream()>>>(v.data(), n);
         check_cuda(cudaGetLastError(), "CIAH ones kernel");
         return v;
@@ -113,15 +114,15 @@ struct DeviceBackend {
         return copy_vector(context, n, v.view());
     }
     void axpy(Vector& y, double a, const Vector& x) const {
-        check_cublas(cublasDaxpy(context.blas(), blas_int(n), &a, x.data(), 1, y.data(), 1),
+        check_cublas(cublasDaxpy_64(context.blas(), (n), &a, x.data(), 1, y.data(), 1),
                      "CIAH cublasDaxpy");
     }
     void scal(Vector& x, double a) const {
-        check_cublas(cublasDscal(context.blas(), blas_int(n), &a, x.data(), 1), "CIAH cublasDscal");
+        check_cublas(cublasDscal_64(context.blas(), (n), &a, x.data(), 1), "CIAH cublasDscal");
     }
     double dot(const Vector& a, const Vector& b) const {
         double value = 0.0;
-        check_cublas(cublasDdot(context.blas(), blas_int(n), a.data(), 1, b.data(), 1, &value),
+        check_cublas(cublasDdot_64(context.blas(), (n), a.data(), 1, b.data(), 1, &value),
                      "CIAH cublasDdot");
         return value;
     }
@@ -130,7 +131,7 @@ struct DeviceBackend {
         const nvtx3::scoped_range range{"ciah.projection_products"};
         using Product = mcscf::detail::CiahProduct;
         static_assert(sizeof(Product) == 2 * sizeof(double));
-        const int count = blas_int(requests.size());
+        const std::int64_t count = (requests.size());
         Buffer<Product> result(context, count);
         Buffer<const double*> left(context, count), right(context, count);
         Buffer<double*> output(context, count);
@@ -145,21 +146,21 @@ struct DeviceBackend {
         context.copy_to_device(right.data(), b.data(), count * sizeof(double*));
         context.copy_to_device(output.data(), out.data(), count * sizeof(double*));
         const double one = 1.0, zero = 0.0;
-        check_cublas(cublasDgemmBatched(context.blas(),
-                                        CUBLAS_OP_N,
-                                        CUBLAS_OP_N,
-                                        1,
-                                        1,
-                                        blas_int(n),
-                                        &one,
-                                        left.data(),
-                                        1,
-                                        right.data(),
-                                        blas_int(n),
-                                        &zero,
-                                        output.data(),
-                                        1,
-                                        count),
+        check_cublas(cublasDgemmBatched_64(context.blas(),
+                                           CUBLAS_OP_N,
+                                           CUBLAS_OP_N,
+                                           1,
+                                           1,
+                                           (n),
+                                           &one,
+                                           left.data(),
+                                           1,
+                                           right.data(),
+                                           (n),
+                                           &zero,
+                                           output.data(),
+                                           1,
+                                           count),
                      "CIAH batched projection dot products");
         absolute_products<<<count, 256, 0, context.stream()>>>(
             left.data(), right.data(), n, result.data());
@@ -170,8 +171,7 @@ struct DeviceBackend {
     }
     double norm(const Vector& v) const {
         double value = 0.0;
-        check_cublas(cublasDnrm2(context.blas(), blas_int(n), v.data(), 1, &value),
-                     "CIAH cublasDnrm2");
+        check_cublas(cublasDnrm2_64(context.blas(), (n), v.data(), 1, &value), "CIAH cublasDnrm2");
         return value;
     }
     double stable_norm(const Vector& v) const {
@@ -305,19 +305,18 @@ DeviceCiahVectorOps::Vector DeviceCiahVectorOps::zeros_like(const Vector& v) con
 }
 
 void DeviceCiahVectorOps::axpy(Vector& y, double factor, const Vector& x) const {
-    check_cublas(
-        cublasDaxpy(context->blas(), blas_int(y.rows()), &factor, x.data(), 1, y.data(), 1),
-        "CIAH path cublasDaxpy");
+    check_cublas(cublasDaxpy_64(context->blas(), (y.rows()), &factor, x.data(), 1, y.data(), 1),
+                 "CIAH path cublasDaxpy");
 }
 
 void DeviceCiahVectorOps::scal(Vector& x, double factor) const {
-    check_cublas(cublasDscal(context->blas(), blas_int(x.rows()), &factor, x.data(), 1),
+    check_cublas(cublasDscal_64(context->blas(), (x.rows()), &factor, x.data(), 1),
                  "CIAH path cublasDscal");
 }
 
 double DeviceCiahVectorOps::dot(const Vector& x, const Vector& y) const {
     double result = 0.0;
-    check_cublas(cublasDdot(context->blas(), blas_int(x.rows()), x.data(), 1, y.data(), 1, &result),
+    check_cublas(cublasDdot_64(context->blas(), (x.rows()), x.data(), 1, y.data(), 1, &result),
                  "CIAH path cublasDdot");
     return result;
 }
@@ -333,7 +332,7 @@ DeviceCiahVectorOps::segment_norm(const Vector& x, std::int64_t begin, std::int6
     if (!count)
         return 0.0;
     double result = 0.0;
-    check_cublas(cublasDnrm2(context->blas(), blas_int(count), x.data() + begin, 1, &result),
+    check_cublas(cublasDnrm2_64(context->blas(), (count), x.data() + begin, 1, &result),
                  "CIAH path cublasDnrm2");
     return result;
 }

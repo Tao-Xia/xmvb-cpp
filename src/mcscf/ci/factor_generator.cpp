@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "mcscf/ci/factors_internal.hpp"
 
 #include <algorithm>
@@ -12,8 +13,8 @@
 
 namespace xmvb::mcscf {
 SpinAmplitudeWorkspace::SpinAmplitudeWorkspace(const SpinFactorSource& source,
-                                               int width,
-                                               int columns)
+                                               Eigen::Index width,
+                                               Eigen::Index columns)
     : source_(source), width_(width), mapped_(detail::use_amplitude_map(source)),
       a_(source.n_alpha, mapped_ ? 0 : width), b_(source.n_beta, mapped_ ? 0 : width),
       moment_(mapped_ ? 0 : width, mapped_ ? 0 : columns) {
@@ -40,8 +41,8 @@ void SpinAmplitudeWorkspace::add(const Eigen::Ref<const Eigen::MatrixXd>& alpha,
         source_.contract(true, alpha, result_beta, scale);
         return;
     }
-    for (int first = 0; first < source_.count; first += width_) {
-        const int count = std::min(width_, source_.count - first);
+    for (Eigen::Index first = 0; first < source_.count; first += width_) {
+        const Eigen::Index count = std::min<Eigen::Index>(width_, source_.count - first);
         auto a = a_.leftCols(count), b = b_.leftCols(count);
         if (width_ != source_.count) {
             source_.load(first, count, a, b);
@@ -99,7 +100,7 @@ Eigen::MatrixXd generator_adjoint(const DirectCiSigmaAction& sigma,
     const int nl = plan.left, nr = plan.right, p = plan.channels;
     const bool timing = profiling::phase_totals().enabled;
     const auto start = timing ? Clock::now() : Clock::time_point{};
-    SpinAmplitudeWorkspace moments(bra, nl, nr * std::max(1, p));
+    SpinAmplitudeWorkspace moments(bra, nl, nr * std::max<Eigen::Index>(1, p));
     Eigen::MatrixXd a(left.n_alpha, nr), b(left.n_beta, nr);
     Eigen::MatrixXd wa(left.n_alpha, nr), wb(left.n_beta, nr);
     Eigen::MatrixXd ca(left.n_alpha, hamiltonian ? nr : 0), cb(left.n_beta, hamiltonian ? nr : 0);
@@ -111,8 +112,8 @@ Eigen::MatrixXd generator_adjoint(const DirectCiSigmaAction& sigma,
     if (hamiltonian)
         sweep = std::make_unique<FactorActionWorkspace>(
             shape, d, rows * nr * (3 * p + 6) * sizeof(double));
-    for (int first = 0; first < ket.count; first += nr) {
-        const int width = std::min(nr, ket.count - first);
+    for (Eigen::Index first = 0; first < ket.count; first += nr) {
+        const Eigen::Index width = std::min<Eigen::Index>(nr, ket.count - first);
         auto aa = a.leftCols(width), bb = b.leftCols(width);
         ket.load(first, width, aa, bb);
         auto weighted_a = wa.leftCols(width), weighted_b = wb.leftCols(width);
@@ -130,8 +131,8 @@ Eigen::MatrixXd generator_adjoint(const DirectCiSigmaAction& sigma,
         const SpinFactorSource weighted{left.n_alpha,
                                         left.n_beta,
                                         width,
-                                        [&](int offset,
-                                            int count,
+                                        [&](std::int64_t offset,
+                                            Eigen::Index count,
                                             Eigen::Ref<Eigen::MatrixXd> x,
                                             Eigen::Ref<Eigen::MatrixXd> y) {
                                             x = weighted_a.middleCols(offset, count);
@@ -148,8 +149,8 @@ Eigen::MatrixXd generator_adjoint(const DirectCiSigmaAction& sigma,
         const SpinFactorSource factors{left.n_alpha,
                                        left.n_beta,
                                        width,
-                                       [&](int offset,
-                                           int count,
+                                       [&](std::int64_t offset,
+                                           Eigen::Index count,
                                            Eigen::Ref<Eigen::MatrixXd> x,
                                            Eigen::Ref<Eigen::MatrixXd> y) {
                                            x = aa.middleCols(offset, count);

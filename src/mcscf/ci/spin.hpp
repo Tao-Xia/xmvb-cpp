@@ -22,7 +22,7 @@ class SpinSpace {
     }
     Eigen::MatrixXd apply_squared(const Eigen::Ref<const Eigen::MatrixXd>& x) const;
     Eigen::MatrixXd project(const Eigen::Ref<const Eigen::MatrixXd>& x, int twice_spin) const;
-    int dimension(int twice_spin) const;
+    std::size_t dimension(int twice_spin) const;
 
   private:
     int n_, na_, nb_;

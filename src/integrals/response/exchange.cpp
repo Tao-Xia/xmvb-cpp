@@ -56,9 +56,9 @@ void build_exchange_integrals(ExactPackedActiveTwoElectronAdjointCache* cache) {
                 const auto pair = ao_pair_index(mu, nu);
                 double* target = half.row(item).data();
                 std::fill_n(target, n_bf * n, 0.0);
-                for (int edge = graph.row_offsets[pair]; edge < graph.row_offsets[pair + 1];
+                for (PairAddress edge = graph.row_offsets[pair]; edge < graph.row_offsets[pair + 1];
                      ++edge) {
-                    const int right = graph.columns[edge];
+                    const auto right = graph.columns[edge];
                     const int k = graph.pair_first[right], l = graph.pair_second[right];
                     const double value = graph.values[edge];
                     const double* c_k = coefficients.row(k).data();

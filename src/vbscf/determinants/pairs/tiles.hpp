@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
+#include "core/index.hpp"
 #include <stdexcept>
 #include <vector>
 
@@ -16,10 +18,10 @@ namespace xmvb::vb {
  * agree on the same indexing convention.
  */
 struct SupportWindow {
-    int begin = 0;
-    int end = 0;
+    std::int64_t begin = 0;
+    std::int64_t end = 0;
 
-    int size() const {
+    std::int64_t size() const {
         return end - begin;
     }
 
@@ -36,20 +38,21 @@ struct SupportWindow {
  * callers can gather only the touched rows or columns before doing the dense
  * local contraction.
  */
-inline SupportWindow
-find_support_window(const std::vector<int>& support, int global_begin, int global_end) {
+inline SupportWindow find_support_window(const std::vector<std::int64_t>& support,
+                                         std::int64_t global_begin,
+                                         std::int64_t global_end) {
     const auto begin_iterator = std::lower_bound(support.begin(), support.end(), global_begin);
     const auto end_iterator = std::lower_bound(begin_iterator, support.end(), global_end);
     return SupportWindow{
-        static_cast<int>(std::distance(support.begin(), begin_iterator)),
-        static_cast<int>(std::distance(support.begin(), end_iterator)),
+        static_cast<std::int64_t>(std::distance(support.begin(), begin_iterator)),
+        static_cast<std::int64_t>(std::distance(support.begin(), end_iterator)),
     };
 }
 
 /**
  * @brief Returns the square-grid tile index containing one global element.
  */
-inline int tile_index_for_element(int element_index, int tile_size) {
+inline std::int64_t tile_index_for_element(std::int64_t element_index, std::int64_t tile_size) {
     if (element_index < 0) {
         throw std::invalid_argument("element_index must be non-negative");
     }
@@ -62,20 +65,21 @@ inline int tile_index_for_element(int element_index, int tile_size) {
 /**
  * @brief Returns the number of tiles needed to cover one extent.
  */
-inline int tile_count_for_extent(int extent, int tile_size) {
+inline std::int64_t tile_count_for_extent(std::int64_t extent, std::int64_t tile_size) {
     if (extent < 0) {
         throw std::invalid_argument("extent must be non-negative");
     }
     if (tile_size <= 0) {
         throw std::invalid_argument("tile_size must be positive");
     }
-    return extent == 0 ? 0 : (extent + tile_size - 1) / tile_size;
+    return extent == 0 ? 0 : extent / tile_size + (extent % tile_size != 0);
 }
 
 /**
  * @brief Returns the half-open global window covered by one tile id.
  */
-inline SupportWindow tile_window_for_index(int tile_index, int tile_size, int extent) {
+inline SupportWindow
+tile_window_for_index(std::int64_t tile_index, std::int64_t tile_size, std::int64_t extent) {
     if (tile_index < 0) {
         throw std::invalid_argument("tile_index must be non-negative");
     }
@@ -85,19 +89,25 @@ inline SupportWindow tile_window_for_index(int tile_index, int tile_size, int ex
     if (extent < 0) {
         throw std::invalid_argument("extent must be non-negative");
     }
-    const int begin = tile_index * tile_size;
-    return SupportWindow{begin, std::min(extent, begin + tile_size)};
+    const auto begin = core::checked_index<std::int64_t>(core::checked_multiply(
+        core::checked_index<std::size_t>(tile_index), core::checked_index<std::size_t>(tile_size)));
+    return SupportWindow{begin,
+                         begin >= extent ? extent : begin + std::min(tile_size, extent - begin)};
 }
 
 /**
  * @brief Returns the flattened task index for one square tile pair.
  */
-inline int square_tile_task_index(int row_tile, int column_tile, int n_tiles) {
+inline std::int64_t
+square_tile_task_index(std::int64_t row_tile, std::int64_t column_tile, std::int64_t n_tiles) {
     if (row_tile < 0 || column_tile < 0 || n_tiles <= 0) {
         throw std::invalid_argument(
             "square tile task index requires non-negative tiles and positive n_tiles");
     }
-    return row_tile * n_tiles + column_tile;
+    return core::checked_index<std::int64_t>(
+        core::checked_add(core::checked_multiply(core::checked_index<std::size_t>(row_tile),
+                                                 core::checked_index<std::size_t>(n_tiles)),
+                          core::checked_index<std::size_t>(column_tile)));
 }
 
 /**
@@ -107,8 +117,10 @@ inline int square_tile_task_index(int row_tile, int column_tile, int n_tiles) {
  * active. This helper turns that sparse pair set into the sparse tile-task set
  * needed by the streamed tile kernels, without visiting empty square tiles.
  */
-inline std::vector<int> build_active_square_tile_task_indices(
-    const std::vector<std::size_t>& active_pair_indices, int leading_dimension, int tile_size) {
+inline std::vector<std::int64_t>
+build_active_square_tile_task_indices(const std::vector<std::size_t>& active_pair_indices,
+                                      std::int64_t leading_dimension,
+                                      std::int64_t tile_size) {
     if (tile_size <= 0) {
         throw std::invalid_argument("tile_size must be positive");
     }
@@ -116,15 +128,17 @@ inline std::vector<int> build_active_square_tile_task_indices(
         return {};
     }
 
-    const int n_tiles = tile_count_for_extent(leading_dimension, tile_size);
+    const std::int64_t n_tiles = tile_count_for_extent(leading_dimension, tile_size);
     const std::size_t leading_dimension_size = leading_dimension;
-    std::vector<int> active_tile_indices;
+    std::vector<std::int64_t> active_tile_indices;
     active_tile_indices.reserve(active_pair_indices.size());
     for (const std::size_t pair_storage_index : active_pair_indices) {
-        const int row_index = static_cast<int>(pair_storage_index / leading_dimension_size);
-        const int column_index = static_cast<int>(pair_storage_index % leading_dimension_size);
-        const int row_tile = tile_index_for_element(row_index, tile_size);
-        const int column_tile = tile_index_for_element(column_index, tile_size);
+        const std::int64_t row_index =
+            static_cast<std::int64_t>(pair_storage_index / leading_dimension_size);
+        const std::int64_t column_index =
+            static_cast<std::int64_t>(pair_storage_index % leading_dimension_size);
+        const std::int64_t row_tile = tile_index_for_element(row_index, tile_size);
+        const std::int64_t column_tile = tile_index_for_element(column_index, tile_size);
         active_tile_indices.push_back(square_tile_task_index(row_tile, column_tile, n_tiles));
     }
     std::sort(active_tile_indices.begin(), active_tile_indices.end());

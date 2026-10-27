@@ -14,7 +14,7 @@ namespace xmvb::linalg {
  * @brief Accuracy and work limit for matrix-free generalized-eigen response.
  */
 struct EigenResponseOptions {
-    int max_iterations;
+    Eigen::Index max_iterations;
     double relative_residual_tolerance;
 };
 

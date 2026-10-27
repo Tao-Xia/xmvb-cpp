@@ -135,7 +135,7 @@ prepare_timed_active_space_context(const VbScfInput& input,
                 : integrals::transform_ri_active_integrals(*ao_ri_result, raw_active_coefficients);
     } else {
         if (integral_frame.size() != 0) {
-            std::vector<int> row_offsets(n_basis_functions + 1, 0);
+            std::vector<std::size_t> row_offsets(n_basis_functions + 1, 0);
             std::vector<int> orbital_indices;
             std::vector<double> values;
             for (int row = 0; row < n_basis_functions; ++row) {
@@ -146,7 +146,7 @@ prepare_timed_active_space_context(const VbScfInput& input,
                         values.push_back(value);
                     }
                 }
-                row_offsets[row + 1] = static_cast<int>(values.size());
+                row_offsets[row + 1] = values.size();
             }
             context.active_space_two_electron_result = integrals::transform_exact_active_integrals(
                 input.ao_integral_input, row_offsets, orbital_indices, values, n_active_orbitals);

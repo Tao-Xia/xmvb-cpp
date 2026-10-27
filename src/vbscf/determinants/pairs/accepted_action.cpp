@@ -1,3 +1,5 @@
+#include "core/index.hpp"
+#include <cstdint>
 #include "vbscf/determinants/pairs/accepted_action.hpp"
 
 #include <algorithm>
@@ -12,9 +14,9 @@ namespace {
 int plan_scalar_tile_extent(const AcceptedPairTileProvider& provider,
                             int n_active_orbitals,
                             std::size_t workspace_bytes) {
-    const int n_unique = provider.size();
+    const std::int64_t n_unique = provider.size();
     if (n_unique <= 1) {
-        return std::max(1, n_unique);
+        return std::max<std::int64_t>(1, n_unique);
     }
     const std::size_t full_bound =
         estimate_same_spin_pair_cache_bytes(provider.unique_spin_strings(), n_active_orbitals);
@@ -22,9 +24,10 @@ int plan_scalar_tile_extent(const AcceptedPairTileProvider& provider,
     const std::size_t pair_bytes =
         std::max<std::size_t>(1, (full_bound + pair_count - 1) / pair_count + 2 * sizeof(double));
     const std::size_t maximum_pairs = std::max<std::size_t>(1, workspace_bytes / pair_bytes);
-    return std::max(
+    return std::max<std::int64_t>(
         1,
-        std::min(n_unique, static_cast<int>(std::sqrt(static_cast<long double>(maximum_pairs)))));
+        std::min<std::int64_t>(
+            n_unique, static_cast<int>(std::sqrt(static_cast<long double>(maximum_pairs)))));
 }
 
 } // namespace
@@ -36,8 +39,8 @@ AcceptedSpinPairActionResult apply_accepted_spin_pair_action(
     const xmvb::integrals::ActiveSpaceTwoElectronResult& active_two_electron,
     const Eigen::Ref<const Eigen::MatrixXd>& vectors,
     std::size_t workspace_bytes) {
-    const int n_unique = provider.size();
-    const int n_active_orbitals = static_cast<int>(active_one_electron.rows());
+    const std::int64_t n_unique = provider.size();
+    const int n_active_orbitals = core::checked_index<std::int64_t>(active_one_electron.rows());
     if (n_unique <= 0 || vectors.rows() != n_unique || vectors.cols() <= 0 ||
         active_one_electron.cols() != n_active_orbitals) {
         throw std::invalid_argument("accepted spin-pair action dimensions are inconsistent");
@@ -46,10 +49,10 @@ AcceptedSpinPairActionResult apply_accepted_spin_pair_action(
     AcceptedSpinPairActionResult result{Eigen::MatrixXd::Zero(n_unique, vectors.cols()),
                                         Eigen::MatrixXd::Zero(n_unique, vectors.cols())};
     const int extent = plan_scalar_tile_extent(provider, n_active_orbitals, workspace_bytes);
-    for (int left_begin = 0; left_begin < n_unique; left_begin += extent) {
-        const int left_end = std::min(n_unique, left_begin + extent);
-        for (int right_begin = 0; right_begin < n_unique; right_begin += extent) {
-            const int right_end = std::min(n_unique, right_begin + extent);
+    for (std::int64_t left_begin = 0; left_begin < n_unique; left_begin += extent) {
+        const std::int64_t left_end = std::min<std::int64_t>(n_unique, left_begin + extent);
+        for (std::int64_t right_begin = 0; right_begin < n_unique; right_begin += extent) {
+            const std::int64_t right_end = std::min<std::int64_t>(n_unique, right_begin + extent);
             const AcceptedSpinPairTile tile = provider.build(
                 left_begin,
                 left_end,

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/index.hpp"
+
 #include "mcscf/ci/string_table.hpp"
 
 #include <cstddef>
@@ -19,13 +21,14 @@ struct AcceptedPairTileBuildOptions {
 
 /** Bounded accepted-point pair payload for one rectangular spin-string tile. */
 struct AcceptedSpinPairTile {
-    int left_begin = 0;
-    int right_begin = 0;
-    int left_size = 0;
-    int right_size = 0;
+    Eigen::Index left_begin = 0;
+    Eigen::Index right_begin = 0;
+    Eigen::Index left_size = 0;
+    Eigen::Index right_size = 0;
     std::vector<SpinDeterminantPairEvaluation> pairs;
 
-    const SpinDeterminantPairEvaluation& pair(int left_local, int right_local) const;
+    const SpinDeterminantPairEvaluation& pair(Eigen::Index left_local,
+                                              Eigen::Index right_local) const;
 };
 
 /**
@@ -43,8 +46,8 @@ class AcceptedPairTileProvider {
                              int n_active_orbitals,
                              double linear_dependence_threshold = 1.0e-12);
 
-    int size() const noexcept {
-        return static_cast<int>(unique_spin_strings_.size());
+    Eigen::Index size() const noexcept {
+        return core::checked_index<Eigen::Index>(unique_spin_strings_.size());
     }
 
     const mcscf::StringTable& unique_spin_strings() const noexcept {
@@ -52,10 +55,10 @@ class AcceptedPairTileProvider {
     }
 
     AcceptedSpinPairTile
-    build(int left_begin,
-          int left_end,
-          int right_begin,
-          int right_end,
+    build(Eigen::Index left_begin,
+          Eigen::Index left_end,
+          Eigen::Index right_begin,
+          Eigen::Index right_end,
           const std::vector<double>& active_overlap,
           const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron,
           const xmvb::integrals::ActiveSpaceTwoElectronResult& active_two_electron,

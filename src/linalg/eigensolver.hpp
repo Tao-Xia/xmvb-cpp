@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/index.hpp"
+
 #include <span>
 
 #include <functional>
@@ -45,7 +47,7 @@ using GeneralizedEigenAction =
  */
 struct DavidsonOptions {
     int n_roots;
-    int max_iterations;
+    Eigen::Index max_iterations;
     int max_subspace_dimension;
     /** Maximum change of consecutive Ritz energies requested by the outer calculation. */
     double energy_tolerance;
@@ -75,7 +77,7 @@ struct DavidsonOptions {
    * iteration number, active subspace size, lowest Ritz energy, and largest
    * algebraic relative residual, and largest stationarity residual among roots.
    */
-    std::function<void(int, int, double, double, double)> observe_iteration = {};
+    std::function<void(Eigen::Index, int, double, double, double)> observe_iteration = {};
     /** @brief Exact identity metric: the action returns an empty overlap image.
    * Shares the generalized solver but omits the redundant S-basis storage,
    * products and reorthogonalization updates. Subspace/accuracy budgets stay
@@ -91,7 +93,7 @@ struct DavidsonOptions {
  * Accuracy is mandatory:
  * this core routine does not invent a machine-precision stopping target.
  */
-DavidsonOptions make_davidson_options(int dimension,
+DavidsonOptions make_davidson_options(Eigen::Index dimension,
                                       int n_roots,
                                       double energy_tolerance,
                                       double relative_residual_tolerance,
@@ -115,7 +117,7 @@ struct DavidsonResult {
     std::vector<double> relative_residual_norms;
     /** @brief CI stationarity residuals in Hamiltonian units. */
     std::vector<double> stationarity_residual_norms;
-    int iterations = 0;
+    Eigen::Index iterations = 0;
     int block_actions = 0;
     int peak_subspace_dimension = 0;
 };
@@ -140,7 +142,7 @@ class GeneralizedEigensolver {
    */
     GeneralizedEigenResult solve_dense(std::span<const double> hamiltonian_matrix,
                                        std::span<const double> overlap_matrix,
-                                       int dimension) const;
+                                       Eigen::Index dimension) const;
 
     /**
    * @brief Solves only the generalized eigenvalues.
@@ -150,7 +152,7 @@ class GeneralizedEigensolver {
    */
     std::vector<double> solve_dense_eigenvalues(std::span<const double> hamiltonian_matrix,
                                                 std::span<const double> overlap_matrix,
-                                                int dimension) const;
+                                                Eigen::Index dimension) const;
 
     /**
    * @brief Solves the lowest generalized eigenpairs from block H/S actions.

@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "output/text/sections.hpp"
 
 #include "output/text/structure.hpp"
@@ -100,7 +101,7 @@ std::string centered_field(const std::string& value, int width) {
     return std::string(left_padding, ' ') + value + std::string(right_padding, ' ');
 }
 
-int structure_ionic_order(const vb::RawStructureData& structures, int structure_index) {
+int structure_ionic_order(const vb::RawStructureData& structures, std::int64_t structure_index) {
     const int n_inactive = (structures.n_total_electrons - structures.n_active_electrons) / 2;
     const int* orbitals = structures.structure_orbitals_data(structure_index);
     std::map<int, int> active_occupations;
@@ -118,14 +119,14 @@ void print_ionic_class_summary(std::ostream& output,
                                const vb::RawStructureData& structures,
                                const vb::StructureExpansion& determinants) {
     struct IonicClass {
-        int n_structures = 0;
-        int n_determinants = 0;
-        int first_structure = 0;
-        int last_structure = 0;
+        std::size_t n_structures = 0;
+        std::size_t n_determinants = 0;
+        std::size_t first_structure = 0;
+        std::size_t last_structure = 0;
     };
     std::map<int, IonicClass> classes;
     std::vector<int> ionic_order_by_structure(structures.n_structures, 0);
-    for (int structure = 0; structure < structures.n_structures; ++structure) {
+    for (std::size_t structure = 0; structure < structures.n_structures; ++structure) {
         const int ionic_order = structure_ionic_order(structures, structure);
         ionic_order_by_structure[structure] = ionic_order;
         auto& ionic_class = classes[ionic_order];
@@ -145,9 +146,9 @@ void print_ionic_class_summary(std::ostream& output,
         }
     }
 
-    int first_determinant = 1;
+    std::size_t first_determinant = 1;
     for (const auto& [ionic_order, ionic_class] : classes) {
-        const int last_determinant = first_determinant + ionic_class.n_determinants - 1;
+        const auto last_determinant = first_determinant + ionic_class.n_determinants - 1;
         output << "Number of " << std::setw(3) << ionic_order
                << "th ion structures   is : " << std::setw(10) << ionic_class.n_structures
                << "  from " << std::setw(10) << ionic_class.first_structure << " to "
@@ -185,7 +186,7 @@ std::string ao_label(const vb::VbScfStaticMoleculeMetadata& metadata, int basis_
 
 Eigen::VectorXd
 selected_structure_coefficients(const vb::VbScfResult& result, int state, double* phase = nullptr) {
-    const int n_str = result.n_structures;
+    const auto n_str = result.n_structures;
     if (n_str <= 0 || result.eigenvector_matrix.size() % static_cast<std::size_t>(n_str) != 0) {
         return {};
     }
@@ -211,7 +212,7 @@ selected_structure_coefficients(const vb::VbScfResult& result, int state, double
     return coefficients;
 }
 
-Eigen::MatrixXd structure_matrix(const std::vector<double>& storage, int n_str) {
+Eigen::MatrixXd structure_matrix(const std::vector<double>& storage, std::int64_t n_str) {
     if (n_str <= 0 || storage.size() != n_str * n_str) {
         return {};
     }
@@ -229,7 +230,7 @@ struct NormalizedStructureState {
 NormalizedStructureState normalize_structure_state(const vb::VbScfResult& result,
                                                    int state,
                                                    const Eigen::VectorXd& structure_norms) {
-    const int n_str = result.n_structures;
+    const auto n_str = result.n_structures;
     const Eigen::MatrixXd raw_overlap =
         structure_matrix(result.structure_matrices.overlap_matrix, n_str);
     const Eigen::MatrixXd raw_hamiltonian =
@@ -302,7 +303,7 @@ void print_determinant_coefficients(std::ostream& output,
                                     const vb::StructureExpansion& determinants,
                                     int n_inactive) {
     const auto alpha_rows = determinants.alpha(), beta_rows = determinants.beta();
-    const int n_determinants = static_cast<int>(alpha_rows.size());
+    const auto n_determinants = alpha_rows.size();
     if (beta_rows.size() != alpha_rows.size() ||
         determinants.incidence().size() != alpha_rows.size()) {
         throw std::invalid_argument("final determinant topology has inconsistent dimensions");
@@ -311,26 +312,26 @@ void print_determinant_coefficients(std::ostream& output,
     output << "\n\n          ******  UNNORMALIZED DETERMINANT COEFFICIENTS  ******\n\n"
            << "                                     INA   A\n"
            << "                                     INA   B\n";
-    std::vector<int> display_order(n_determinants);
-    std::iota(display_order.begin(), display_order.end(), 0);
+    std::vector<std::size_t> display_order(n_determinants);
+    std::iota(display_order.begin(), display_order.end(), std::size_t{0});
     std::stable_sort(display_order.begin(),
                      display_order.end(),
-                     [&determinants, &alpha_rows](int left, int right) {
+                     [&determinants, &alpha_rows](std::size_t left, std::size_t right) {
                          const auto& left_terms = determinants.incidence()[left];
                          const auto& right_terms = determinants.incidence()[right];
-                         const int left_structure = left_terms.empty()
-                                                        ? std::numeric_limits<int>::max()
-                                                        : left_terms.front().structure_index;
-                         const int right_structure = right_terms.empty()
-                                                         ? std::numeric_limits<int>::max()
-                                                         : right_terms.front().structure_index;
+                         const std::size_t left_structure =
+                             left_terms.empty() ? std::numeric_limits<std::size_t>::max()
+                                                : left_terms.front().structure_index;
+                         const std::size_t right_structure =
+                             right_terms.empty() ? std::numeric_limits<std::size_t>::max()
+                                                 : right_terms.front().structure_index;
                          if (left_structure != right_structure) {
                              return left_structure < right_structure;
                          }
                          return alpha_rows.less(right, left);
                      });
-    for (int display_index = 0; display_index < n_determinants; ++display_index) {
-        const int determinant = display_order[display_index];
+    for (std::size_t display_index = 0; display_index < n_determinants; ++display_index) {
+        const auto determinant = display_order[display_index];
         double coefficient = 0.0;
         for (const auto& term : determinants.incidence()[determinant]) {
             if (term.structure_index < 0 || term.structure_index >= structure_coefficients.size()) {
@@ -353,8 +354,8 @@ void print_structure_matrix(std::ostream& output,
     output << "\n\n              ******  " << title << " OF VB STRUCTURES  ******\n";
     constexpr int kColumnsPerBlock = 6;
     for (int first_column = 0; first_column < matrix.cols(); first_column += kColumnsPerBlock) {
-        const int last_column =
-            std::min(first_column + kColumnsPerBlock, static_cast<int>(matrix.cols()));
+        const int last_column = std::min<std::int64_t>(first_column + kColumnsPerBlock,
+                                                       static_cast<int>(matrix.cols()));
         output << "\n       ";
         for (int column = first_column; column < last_column; ++column) {
             output << std::setw(13) << column + 1;
@@ -479,7 +480,7 @@ void print_orbital_table(std::ostream& output,
     constexpr int kRowLabelWidth = 21;
     constexpr int kOrbitalColumnWidth = 11;
     for (int first = 0; first < n_orb; first += kColumnsPerBlock) {
-        const int last = std::min(first + kColumnsPerBlock, n_orb);
+        const int last = std::min<std::int64_t>(first + kColumnsPerBlock, n_orb);
         output << "\n\n" << std::string(kRowLabelWidth, ' ');
         for (int orbital = first; orbital < last; ++orbital) {
             output << centered_field(std::to_string(orbital + 1), kOrbitalColumnWidth);
@@ -909,7 +910,8 @@ void print_input_sections(std::ostream& output,
            << load_result.raw_structure_data.n_structures << "\n\n"
            << " The following structures are used in calculation"
               " (First 10 structures if more than 10):\n\n";
-    const int n_printed_structures = std::min(10, load_result.raw_structure_data.n_structures);
+    const int n_printed_structures =
+        std::min<std::size_t>(10, load_result.raw_structure_data.n_structures);
     for (int structure = 0; structure < n_printed_structures; ++structure) {
         output << "    " << std::setw(4) << structure + 1 << "   ****** ";
         print_structure(
@@ -1017,7 +1019,7 @@ double print_final_state_sections(std::ostream& output,
                    << " STRUCTURE ANALYSIS ******\n";
         }
         output << "\n\n              ******  COEFFICIENTS OF STRUCTURES ******\n\n";
-        for (int structure = 0; structure < normalized.coefficients.size(); ++structure) {
+        for (Eigen::Index structure = 0; structure < normalized.coefficients.size(); ++structure) {
             output << "    " << std::setw(4) << structure + 1 << "    " << std::fixed
                    << std::setprecision(8) << std::setw(13) << normalized.coefficients[structure]
                    << "  ****** ";

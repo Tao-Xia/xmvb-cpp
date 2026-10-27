@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "vbscf/derivatives/hessian/responses/same_spin/pair_tile_stream_internal.hpp"
 
 #include "mcscf/ci/string_table.hpp"
@@ -27,21 +28,22 @@ void stream_spin_table(const xmvb::mcscf::StringTable& unique_determinants,
                        bool include_opposite_spin,
                        int tile_extent,
                        const DirectionalPairTileConsumer& consume) {
-    const int n_unique = static_cast<int>(unique_determinants.size());
+    const std::int64_t n_unique = core::checked_index<Eigen::Index>(unique_determinants.size());
     if (n_unique <= 0 || accepted_pair_provider.size() != n_unique) {
         throw std::invalid_argument(
             "directional pair tile stream requires a matching accepted pair provider");
     }
-    tile_extent = std::max(1, std::min(n_unique, tile_extent));
-    for (int left_begin = 0; left_begin < n_unique; left_begin += tile_extent) {
-        const int left_end = std::min(n_unique, left_begin + tile_extent);
+    tile_extent = std::max<std::int64_t>(1, std::min<std::int64_t>(n_unique, tile_extent));
+    for (std::int64_t left_begin = 0; left_begin < n_unique; left_begin += tile_extent) {
+        const std::int64_t left_end = std::min<std::int64_t>(n_unique, left_begin + tile_extent);
         // Ordered row traversal keeps every partner-action panel keyed by the
         // left tile live across the complete row. Visiting an upper tile and its
         // transpose consecutively would save one directional-pair construction,
         // but it invalidates that panel before the next column and consequently
         // repeats a complete accepted partner sweep for every pair tile.
-        for (int right_begin = 0; right_begin < n_unique; right_begin += tile_extent) {
-            const int right_end = std::min(n_unique, right_begin + tile_extent);
+        for (std::int64_t right_begin = 0; right_begin < n_unique; right_begin += tile_extent) {
+            const std::int64_t right_end =
+                std::min<std::int64_t>(n_unique, right_begin + tile_extent);
             const bool transposed = right_begin < left_begin;
             const int canonical_left_begin = transposed ? right_begin : left_begin;
             const int canonical_left_end = transposed ? right_end : left_end;

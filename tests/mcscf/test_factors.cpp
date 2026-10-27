@@ -214,7 +214,7 @@ void check_case(int n, int ea, int eb) {
         const auto combined = xmvb::mcscf::sum_factors({direction, base});
         Eigen::MatrixXd full = Eigen::MatrixXd::Zero(alpha.size(), beta.size());
         for (int first = 0; first < combined.count; first += 4) {
-            const int count = std::min(4, combined.count - first);
+            const int count = std::min<Eigen::Index>(4, combined.count - first);
             Eigen::MatrixXd x(alpha.size(), count), y(beta.size(), count);
             combined.load(first, count, x, y);
             full.noalias() += x * y.transpose();

@@ -1,10 +1,15 @@
 #include <algorithm>
 #include <iostream>
+#include <limits>
 #include <set>
 #include <stdexcept>
 #include <vector>
 
 #include "input/loading/generated_structures.hpp"
+#include "input/deck/model.hpp"
+#include "mcscf/ci/product_index.hpp"
+#include "mcscf/ci/strings.hpp"
+#include "vbscf/determinants/pairs/storage.hpp"
 
 namespace {
 
@@ -74,7 +79,57 @@ void check_closed_shell(int n_orbitals, int n_inactive) {
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    using xmvb::mcscf::product_index;
+    using xmvb::mcscf::string_count;
+    using xmvb::vb::count_generated_structures;
+    xmvb::vb::InputDeckMetadata large;
+    large.structure_class_keyword = "FULL";
+    large.declared_active_orbitals = 18;
+    large.declared_active_electrons = 18;
+    large.declared_spin_multiplicity = 1;
+    const auto count = count_generated_structures(large);
+    require(count == 449141836ULL, "18-18 FULL structure count changed");
+    require(string_count(18, 9) == 48620 && product_index(48619, 48619, 48620) == 2363904399LL,
+            "18-18 spin-product address was narrowed to int");
+    xmvb::vb::RawStructureData shape;
+    shape.n_structures = count;
+    shape.n_total_electrons = 122;
+    require(shape.flat_orbital_count() == 54795303992ULL &&
+                shape.structure_orbital_offset(count - 1) == 54795303870ULL,
+            "SAPRIN structure stride was multiplied in int");
+    large.declared_active_orbitals = 20;
+    large.declared_active_electrons = 20;
+    shape.n_structures = count_generated_structures(large);
+    require(shape.n_structures == 5924217936ULL, "FULL structure count above INT_MAX was narrowed");
+    require(string_count(63, 31) == 916312070471295267ULL,
+            "representable combination overflowed an intermediate product");
+    require(xmvb::vb::unordered_determinant_pair_count(48620) == 1181976510ULL,
+            "18-18 single-spin pair count overflowed before division");
+    for (const std::size_t address : {std::size_t{0},
+                                      std::size_t{1181976509ULL},
+                                      std::size_t{2363904399ULL},
+                                      std::numeric_limits<std::size_t>::max()}) {
+        const auto pair = xmvb::vb::determinant_pair_from_storage_index(address);
+        require(xmvb::vb::canonical_determinant_pair_storage_index(pair.left, pair.right) ==
+                    address,
+                "wide triangular address failed exact round trip");
+    }
+    shape.n_structures = std::numeric_limits<std::size_t>::max();
+    bool overflow = false;
+    try {
+        (void)shape.flat_orbital_count();
+    } catch (const std::overflow_error&) {
+        overflow = true;
+    }
+    require(overflow, "an unrepresentable structure stride must fail before allocation");
+    if (argc == 2) {
+        const auto deck = xmvb::vb::parse_input_deck_model(argv[1]);
+        require(count_generated_structures(deck.metadata) == count,
+                "attached SAPRIN deck generated an unexpected FULL count");
+        std::cout << "SAPRIN: structures=" << count
+                  << ", product dimension=2363904400, raw orbital entries=54795303992\n";
+    }
     for (int n_inactive : {0, 2}) {
         for (int n_orbitals = 1; n_orbitals <= 7; ++n_orbitals) {
             for (int n_electrons = 1; n_electrons <= n_orbitals; ++n_electrons) {

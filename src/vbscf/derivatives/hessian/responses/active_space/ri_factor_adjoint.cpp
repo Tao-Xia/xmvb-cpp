@@ -45,7 +45,7 @@ apply_regular_ri_pair_space_adjoint(const SameSpinPairCacheContext& cache,
     Eigen::MatrixXd pair_adjoint(n_pairs, n_pairs);
     for (int row = 0; row < n_pairs; ++row) {
         for (int column = 0; column < n_pairs; ++column) {
-            const int packed = xmvb::core::PairIndex::packed_pair_of_pairs_index(row, column);
+            const auto packed = xmvb::core::PairIndex::packed_pair_of_pairs_index(row, column);
             const double value = same_spin.packed_active_two_electron_gradient[packed] +
                                  opposite_spin.packed_active_two_electron_gradient[packed];
             pair_adjoint(row, column) = row == column ? 2.0 * value : value;

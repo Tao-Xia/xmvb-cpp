@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "output/text/normalization.hpp"
 
 #include <cmath>
@@ -11,7 +12,7 @@ namespace xmvb::output {
 
 StructureNorms structure_norms(const vb::VbScfOptimizerResult& result) {
     const auto& scf = result.scf_result;
-    const int n_str = scf.n_structures;
+    const std::int64_t n_str = scf.n_structures;
     if (n_str <= 0)
         throw std::invalid_argument("structure report requires a nonempty space");
     Eigen::VectorXd diagonal;

@@ -100,6 +100,22 @@ Within `$CTRL`, `ISCF=7` selects TNHVP,
 `ISCF=8` selects preconditioned L-BFGS (P-LBFGS), and
 `ISCF=9` selects co-iterative augmented Hessian (CIAH). The project default
 when `ISCF` is omitted is P-LBFGS.
+In a CUDA-enabled build, replace the `$CTRL` method flag `vbscf` with
+`cuvbscf` to run GPU VBSCF through the normal executable:
+
+```text
+$ctrl
+cuvbscf
+int=libcint
+$end
+```
+
+Run `xmvb-cpp.exe example.xmi`. GPU calculations default to CIAH (`ISCF=9`),
+Davidson, and the analytic Hessian-diagonal preconditioner. The current GPU
+solver supports single-state exact integrals. CPU-only builds reject
+`cuvbscf`; they do not fall back to CPU. The standalone `cuvbscf example.xmi`
+executable uses the same GPU driver.
+
 `EIGENSOLVER=DAVIDSON` selects the default matrix-free structure solver,
 while `EIGENSOLVER=DENSE` selects the explicit dense reference solver. An
 explicit `--optimizer-backend` or `--eigensolver` command-line option overrides

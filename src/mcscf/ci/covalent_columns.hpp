@@ -1,5 +1,9 @@
 #pragma once
 
+#include "core/index.hpp"
+
+#include "mcscf/ci/product_index.hpp"
+
 #include <algorithm>
 #include <bit>
 #include <cstddef>
@@ -34,7 +38,7 @@ class CovalentColumns {
             return;
         alpha_order_.resize(alpha.size());
         branches_.resize(2 * beta.size() * choose_.size(), 0);
-        for (int i = 0; i < static_cast<int>(alpha.size()); ++i) {
+        for (StringIndex i = 0; i < core::checked_index<StringIndex>(alpha.size()); ++i) {
             std::size_t rank = 0;
             int e = 0;
             for (auto mask = alpha[i]; mask; mask &= mask - 1)
@@ -49,7 +53,7 @@ class CovalentColumns {
                 counts[0] = 1;
                 auto* nodes = branches_.data() + (2 * b + depth) * choose_.size();
                 nodes[0] = Complete;
-                int beta_count = 0;
+                std::int64_t beta_count = 0;
                 for (int k = 1; k <= n_; ++k) {
                     beta_count += (beta[b] >> (k - 1)) & 1;
                     for (int e = 0; e <= std::min(k, electrons_); ++e) {
@@ -71,8 +75,8 @@ class CovalentColumns {
    * Generating columns requires a complete alpha carrier; prefix membership
    * queries on a sampled carrier remain independent of this operation.
    */
-    void append(int beta,
-                std::vector<int>& rows,
+    void append(StringIndex beta,
+                std::vector<StringIndex>& rows,
                 int depth = 0,
                 std::size_t upper = std::numeric_limits<std::size_t>::max()) const {
         if (depth != 0 && depth != 1)
@@ -119,14 +123,15 @@ class CovalentColumns {
 
     std::size_t dynamic_bytes() const noexcept {
         return choose_.capacity() * sizeof(std::uint64_t) +
-               branches_.capacity() * sizeof(std::uint8_t) + alpha_order_.capacity() * sizeof(int);
+               branches_.capacity() * sizeof(std::uint8_t) +
+               alpha_order_.capacity() * sizeof(StringIndex);
     }
 
   private:
     int n_, electrons_, stride_;
     std::vector<std::uint64_t> choose_;
     std::vector<std::uint8_t> branches_;
-    std::vector<int> alpha_order_;
+    std::vector<StringIndex> alpha_order_;
     bool ordered_ = false;
 };
 

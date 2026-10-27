@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "vbscf/derivatives/hessian/responses/opposite_spin/backward.hpp"
 
 #include "mcscf/ci/string_table.hpp"
@@ -102,7 +103,7 @@ Eigen::MatrixXd coefficient_block(const Eigen::MatrixXd& coefficients,
                                   int primary_begin,
                                   int primary_size,
                                   int partner_begin,
-                                  int partner_size) {
+                                  Eigen::Index partner_size) {
     if (primary_spin == PrimarySpin::Alpha) {
         return coefficients.block(primary_begin, partner_begin, primary_size, partner_size);
     }
@@ -112,9 +113,9 @@ Eigen::MatrixXd coefficient_block(const Eigen::MatrixXd& coefficients,
 void accumulate_partner_tile_images(const SelectedStateDeterminantMatrices& states,
                                     const SelectedStateDeterminantMatrices* directions,
                                     PrimarySpin primary_spin,
-                                    int primary_left_begin,
+                                    std::int64_t primary_left_begin,
                                     int primary_left_size,
-                                    int primary_right_begin,
+                                    std::int64_t primary_right_begin,
                                     int primary_right_size,
                                     const AcceptedSpinPairTile& partner_tile,
                                     const Eigen::MatrixXd& partner_channels,
@@ -208,10 +209,10 @@ void accumulate_overlap_gradient(const AcceptedSpinPairTile& primary_tile,
                                  const Eigen::MatrixXd& projected_partner_images,
                                  int n_active,
                                  std::vector<double>* overlap_gradient) {
-    for (int left_local = 0; left_local < primary_tile.left_size; ++left_local) {
+    for (Eigen::Index left_local = 0; left_local < primary_tile.left_size; ++left_local) {
         const int left = primary_tile.left_begin + left_local;
         const auto& occupied_left = primary_strings[left];
-        for (int right_local = 0; right_local < primary_tile.right_size; ++right_local) {
+        for (Eigen::Index right_local = 0; right_local < primary_tile.right_size; ++right_local) {
             const int right = primary_tile.right_begin + right_local;
             const auto& occupied_right = primary_strings[right];
             const int n_electrons = static_cast<int>(occupied_left.size());
@@ -219,7 +220,7 @@ void accumulate_overlap_gradient(const AcceptedSpinPairTile& primary_tile,
             Eigen::MatrixXd cofactor_weight(n_electrons, n_electrons);
             for (int left_electron = 0; left_electron < n_electrons; ++left_electron) {
                 for (int right_electron = 0; right_electron < n_electrons; ++right_electron) {
-                    const int channel = xmvb::core::PairIndex::packed_pair_index(
+                    const auto channel = xmvb::core::PairIndex::packed_pair_index(
                         occupied_right[right_electron], occupied_left[left_electron]);
                     cofactor_weight(left_electron, right_electron) =
                         projected_partner_images(work, channel);
@@ -257,14 +258,17 @@ void consume_primary_tiles(const SameSpinPairCacheContext& cache,
         primary_spin == PrimarySpin::Alpha ? tile_plan.primary.alpha : tile_plan.primary.beta;
     const int partner_extent =
         partner_spin == PrimarySpin::Alpha ? tile_plan.partner.alpha : tile_plan.partner.beta;
-    const int n_primary = spin_size(states, primary_spin);
-    const int n_partner = spin_size(states, partner_spin);
+    const Eigen::Index n_primary = spin_size(states, primary_spin);
+    const Eigen::Index n_partner = spin_size(states, partner_spin);
     const int n_pairs = xmvb::integrals::packed_active_pair_count(n_active);
 
-    for (int primary_left = 0; primary_left < n_primary; primary_left += primary_extent) {
-        const int primary_left_end = std::min(n_primary, primary_left + primary_extent);
-        for (int primary_right = 0; primary_right < n_primary; primary_right += primary_extent) {
-            const int primary_right_end = std::min(n_primary, primary_right + primary_extent);
+    for (Eigen::Index primary_left = 0; primary_left < n_primary; primary_left += primary_extent) {
+        const std::int64_t primary_left_end =
+            std::min<std::int64_t>(n_primary, primary_left + primary_extent);
+        for (Eigen::Index primary_right = 0; primary_right < n_primary;
+             primary_right += primary_extent) {
+            const std::int64_t primary_right_end =
+                std::min<std::int64_t>(n_primary, primary_right + primary_extent);
             const AcceptedSpinPairTile primary_tile =
                 provider(cache, primary_spin)
                     .build(primary_left,
@@ -280,12 +284,14 @@ void consume_primary_tiles(const SameSpinPairCacheContext& cache,
             Eigen::MatrixXd raw_images =
                 Eigen::MatrixXd::Zero(primary_tile.left_size * primary_tile.right_size, n_pairs);
 
-            for (int partner_left = 0; partner_left < n_partner; partner_left += partner_extent) {
-                const int partner_left_end = std::min(n_partner, partner_left + partner_extent);
-                for (int partner_right = 0; partner_right < n_partner;
+            for (Eigen::Index partner_left = 0; partner_left < n_partner;
+                 partner_left += partner_extent) {
+                const std::int64_t partner_left_end =
+                    std::min<std::int64_t>(n_partner, partner_left + partner_extent);
+                for (Eigen::Index partner_right = 0; partner_right < n_partner;
                      partner_right += partner_extent) {
-                    const int partner_right_end =
-                        std::min(n_partner, partner_right + partner_extent);
+                    const std::int64_t partner_right_end =
+                        std::min<std::int64_t>(n_partner, partner_right + partner_extent);
                     const AcceptedSpinPairTile partner_tile =
                         provider(cache, partner_spin)
                             .build(partner_left,

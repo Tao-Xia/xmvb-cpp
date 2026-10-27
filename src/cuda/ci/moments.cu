@@ -1,6 +1,9 @@
+#include "core/index.hpp"
+#include <cstdint>
 #include "cuda/ci/sigma.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <numeric>
 #include <stdexcept>
@@ -17,12 +20,13 @@ constexpr int threads = 256;
 constexpr std::int64_t moment_chunk = 4096;
 
 struct StreamEvent {
-    int source, local, slot, created, annihilated;
+    std::int64_t source, local, slot;
+    int created, annihilated;
     double sign;
 };
 struct EventBatch {
-    int begin, end;
-    std::vector<int> sources;
+    std::int64_t begin, end;
+    std::vector<std::int64_t> sources;
 };
 
 // The metadata may cover the beta links in this small panel. Numerical
@@ -38,7 +42,7 @@ beta_event_batches(const mcscf::SpinConnections& graph, int first, int count) {
     });
     std::vector<EventBatch> batches;
     for (std::size_t begin = 0; begin < events.size();) {
-        EventBatch batch{static_cast<int>(begin), 0, {}};
+        EventBatch batch{core::checked_index<std::int64_t>(begin), 0, {}};
         std::size_t end = begin;
         for (; end < events.size(); ++end) {
             if (end == begin || events[end].source != events[end - 1].source) {
@@ -46,9 +50,9 @@ beta_event_batches(const mcscf::SpinConnections& graph, int first, int count) {
                     break;
                 batch.sources.push_back(events[end].source);
             }
-            events[end].slot = static_cast<int>(batch.sources.size()) - 1;
+            events[end].slot = core::checked_index<std::int64_t>(batch.sources.size()) - 1;
         }
-        batch.end = static_cast<int>(end);
+        batch.end = core::checked_index<std::int64_t>(end);
         batches.push_back(std::move(batch));
         begin = end;
     }
@@ -60,32 +64,38 @@ struct AddMoments {
         return make_double2(a.x + b.x, a.y + b.y);
     }
 };
-struct AddPairedMoments {
-    __device__ double4 operator()(double4 a, double4 b) const {
-        return make_double4(a.x + b.x, a.y + b.y, a.z + b.z, a.w + b.w);
+/** One independent oriented bilinear; common readers share the same tile. */
+struct StreamedMomentTerm {
+    linalg::ConstMatrixView left, right;
+    linalg::MatrixView output;
+    double scale;
+    bool transpose;
+};
+template <int Count> struct MomentBatch {
+    StreamedMomentTerm terms[Count];
+};
+template <int Count> struct MomentSum {
+    double values[2 * Count]{};
+};
+template <int Count> struct AddMomentSum {
+    __device__ MomentSum<Count> operator()(MomentSum<Count> a, const MomentSum<Count>& b) const {
+#pragma unroll
+        for (int i = 0; i < 2 * Count; ++i)
+            a.values[i] += b.values[i];
+        return a;
     }
 };
 
-// One packed orbital pair reads only the current target beta panel. The
-// diagonal combines both spins; off-diagonals use alpha links only because
-// beta source columns are delivered by a separate bounded gather. The paired
-// form shares the link, occupation and RHS reads of two left consumers.
-template <bool Paired>
-__global__ void reduce_streamed_alpha(linalg::ConstMatrixView left,
-                                      linalg::ConstMatrixView other,
-                                      linalg::ConstMatrixView right,
-                                      const int* alpha,
-                                      const int* beta,
+/** Link lookup and occupation decoding are shared across all derivative lanes. */
+template <int Count, bool SharedPairs>
+__global__ void reduce_streamed_alpha(MomentBatch<Count> batch,
+                                      const std::int64_t* alpha,
+                                      const std::int64_t* beta,
                                       int n_alpha,
                                       int n_beta,
                                       int first,
-                                      bool alpha_only,
-                                      double scale,
-                                      bool transpose,
-                                      linalg::MatrixView accumulator,
-                                      linalg::MatrixView other_accumulator) {
-    using Sum = std::conditional_t<Paired, double4, double2>;
-    using Reduce = cub::BlockReduce<Sum, threads>;
+                                      bool alpha_only) {
+    using Reduce = cub::BlockReduce<MomentSum<Count>, threads>;
     __shared__ typename Reduce::TempStorage storage;
     const int channel = blockIdx.x;
     int high = 0;
@@ -93,127 +103,192 @@ __global__ void reduce_streamed_alpha(linalg::ConstMatrixView left,
         ++high;
     const int low = channel - high * (high + 1) / 2;
     const int diagonal = high * (high + 1) / 2 + high;
-    Sum sum{};
-    const std::int64_t size = static_cast<std::int64_t>(n_alpha) * left.cols;
-    for (std::int64_t begin = static_cast<std::int64_t>(blockIdx.y) * moment_chunk; begin < size;
+    MomentSum<Count> sum;
+    const auto size = static_cast<std::int64_t>(n_alpha) * batch.terms[0].left.cols;
+    for (auto begin = static_cast<std::int64_t>(blockIdx.y) * moment_chunk; begin < size;
          begin += static_cast<std::int64_t>(gridDim.y) * moment_chunk)
-        for (std::int64_t index = begin + threadIdx.x; index < size && index < begin + moment_chunk;
+        for (auto index = begin + threadIdx.x; index < size && index < begin + moment_chunk;
              index += threads) {
-            const int a = static_cast<int>(index % n_alpha);
-            const int local = static_cast<int>(index / n_alpha);
-            const double weight = left.data[a + left.ld * local];
-            double other_weight = 0.0;
-            if constexpr (Paired) {
-                other_weight = other.data[a + other.ld * local];
-                if (weight == 0.0 && other_weight == 0.0)
-                    continue;
-            } else if (weight == 0.0)
-                continue;
-            if (high == low) {
-                const int occ_alpha = alpha[static_cast<std::int64_t>(diagonal) * n_alpha + a] != 0;
-                const int occ_beta =
-                    alpha_only
-                        ? 0
-                        : beta[static_cast<std::int64_t>(diagonal) * n_beta + first + local] != 0;
-                const double value = right.data[a + right.ld * local];
-                if (weight != 0.0)
-                    sum.x += weight * (occ_alpha + occ_beta) * value;
-                if constexpr (Paired)
-                    if (other_weight != 0.0)
-                        sum.z += other_weight * (occ_alpha + occ_beta) * value;
-            } else {
-                const int signed_source = alpha[static_cast<std::int64_t>(channel) * n_alpha + a];
-                if (!signed_source)
-                    continue;
-                const int source = signed_source > 0 ? signed_source - 1 : -signed_source - 1;
-                const double sign = signed_source > 0 ? 1.0 : -1.0;
-                const double value = right.data[source + right.ld * local];
-                const bool upper = alpha[static_cast<std::int64_t>(diagonal) * n_alpha + a] != 0;
-                if (weight != 0.0) {
-                    const double moment = weight * sign * value;
-                    if (upper)
-                        sum.x += moment;
+            const std::int64_t a = index % n_alpha, local = index / n_alpha;
+            double weights[Count];
+            bool nonzero = false;
+#pragma unroll
+            for (int t = 0; t < Count; ++t) {
+                const auto left = batch.terms[t].left;
+                if constexpr (SharedPairs && Count == 4) {
+                    if (t >= 2)
+                        weights[t] = weights[t - 2];
                     else
-                        sum.y += moment;
+                        weights[t] = left.data[a + left.ld * local];
+                } else
+                    weights[t] = left.data[a + left.ld * local];
+                nonzero |= weights[t] != 0.0;
+            }
+            // Exact support pruning, shared by all independent outputs.
+            if (!nonzero)
+                continue;
+            std::int64_t source = a, slot = 0;
+            double sign = 1;
+            if (high == low) {
+                sign = (alpha[static_cast<std::int64_t>(diagonal) * n_alpha + a] != 0) +
+                       (alpha_only
+                            ? 0
+                            : (beta[static_cast<std::int64_t>(diagonal) * n_beta + first + local] !=
+                               0));
+            } else {
+                const int link = alpha[static_cast<std::int64_t>(channel) * n_alpha + a];
+                if (!link)
+                    continue;
+                source = link > 0 ? link - 1 : -link - 1;
+                sign = link > 0 ? 1.0 : -1.0;
+                slot = alpha[static_cast<std::int64_t>(diagonal) * n_alpha + a] != 0 ? 0 : 1;
+            }
+            if constexpr (SharedPairs) {
+                const auto r0 = batch.terms[0].right;
+                const double v0 = r0.data[source + r0.ld * local];
+                sum.values[slot] += sign * weights[0] * v0;
+                sum.values[2 + slot] += sign * weights[1] * v0;
+                if constexpr (Count == 4) {
+                    const auto r1 = batch.terms[2].right;
+                    const double v1 = r1.data[source + r1.ld * local];
+                    sum.values[4 + slot] += sign * weights[0] * v1;
+                    sum.values[6 + slot] += sign * weights[1] * v1;
                 }
-                if constexpr (Paired)
-                    if (other_weight != 0.0) {
-                        const double moment = other_weight * sign * value;
-                        if (upper)
-                            sum.z += moment;
-                        else
-                            sum.w += moment;
-                    }
+            } else {
+#pragma unroll
+                for (int t = 0; t < Count; ++t) {
+                    const auto term = batch.terms[t];
+                    if (weights[t] != 0.0)
+                        sum.values[2 * t + slot] +=
+                            sign * weights[t] * term.right.data[source + term.right.ld * local];
+                }
             }
         }
-    if constexpr (Paired)
-        sum = Reduce(storage).Reduce(sum, AddPairedMoments{});
-    else
-        sum = Reduce(storage).Reduce(sum, AddMoments{});
+    sum = Reduce(storage).Reduce(sum, AddMomentSum<Count>{});
     if (threadIdx.x == 0) {
-        const int upper_row = transpose ? low : high;
-        const int upper_col = transpose ? high : low;
-        atomicAdd(accumulator.data + upper_row + accumulator.ld * upper_col, scale * sum.x);
-        if constexpr (Paired)
-            atomicAdd(other_accumulator.data + upper_row + other_accumulator.ld * upper_col,
-                      scale * sum.z);
-        if (high != low) {
-            const int lower_row = transpose ? high : low;
-            const int lower_col = transpose ? low : high;
-            atomicAdd(accumulator.data + lower_row + accumulator.ld * lower_col, scale * sum.y);
-            if constexpr (Paired)
-                atomicAdd(other_accumulator.data + lower_row + other_accumulator.ld * lower_col,
-                          scale * sum.w);
+#pragma unroll
+        for (int t = 0; t < Count; ++t) {
+            const auto term = batch.terms[t];
+            const std::int64_t row = term.transpose ? low : high, col = term.transpose ? high : low;
+            atomicAdd(term.output.data + row + term.output.ld * col,
+                      term.scale * sum.values[2 * t]);
+            if (high != low)
+                atomicAdd(term.output.data + col + term.output.ld * row,
+                          term.scale * sum.values[2 * t + 1]);
         }
     }
 }
 
-__global__ void reduce_streamed_beta(linalg::ConstMatrixView left,
-                                     linalg::ConstMatrixView right,
-                                     const StreamEvent* events,
-                                     int begin,
-                                     double scale,
-                                     bool transpose,
-                                     linalg::MatrixView accumulator) {
-    using Reduce = cub::BlockReduce<double, threads>;
+template <int Count, bool SharedPairs>
+__global__ void
+reduce_streamed_beta(MomentBatch<Count> batch, const StreamEvent* events, int begin) {
+    using Reduce = cub::BlockReduce<MomentSum<Count>, threads>;
     __shared__ typename Reduce::TempStorage storage;
-    const auto e = events[begin + blockIdx.x];
-    double sum = 0.0;
-    for (int a = threadIdx.x; a < left.rows; a += threads)
-        sum += left.data[a + left.ld * e.local] * right.data[a + right.ld * e.slot];
-    sum = Reduce(storage).Sum(sum);
+    const auto event = events[begin + blockIdx.x];
+    MomentSum<Count> sum;
+    for (std::int64_t a = threadIdx.x; a < batch.terms[0].left.rows; a += threads) {
+        if constexpr (SharedPairs) {
+            const auto l0 = batch.terms[0].left, l1 = batch.terms[1].left,
+                       r0 = batch.terms[0].right;
+            const double w0 = l0.data[a + l0.ld * event.local],
+                         w1 = l1.data[a + l1.ld * event.local];
+            const double v0 = r0.data[a + r0.ld * event.slot];
+            sum.values[0] += w0 * v0;
+            sum.values[2] += w1 * v0;
+            if constexpr (Count == 4) {
+                const auto r1 = batch.terms[2].right;
+                const double v1 = r1.data[a + r1.ld * event.slot];
+                sum.values[4] += w0 * v1;
+                sum.values[6] += w1 * v1;
+            }
+        } else {
+#pragma unroll
+            for (int t = 0; t < Count; ++t) {
+                const auto term = batch.terms[t];
+                sum.values[2 * t] += term.left.data[a + term.left.ld * event.local] *
+                                     term.right.data[a + term.right.ld * event.slot];
+            }
+        }
+    }
+    sum = Reduce(storage).Reduce(sum, AddMomentSum<Count>{});
     if (threadIdx.x == 0) {
-        const int row = transpose ? e.annihilated : e.created;
-        const int col = transpose ? e.created : e.annihilated;
-        atomicAdd(accumulator.data + row + accumulator.ld * col, scale * e.sign * sum);
+#pragma unroll
+        for (int t = 0; t < Count; ++t) {
+            const auto term = batch.terms[t];
+            const std::int64_t row = term.transpose ? event.annihilated : event.created;
+            const int col = term.transpose ? event.created : event.annihilated;
+            atomicAdd(term.output.data + row + term.output.ld * col,
+                      term.scale * event.sign * sum.values[2 * t]);
+        }
     }
 }
 
-__global__ void reduce_streamed_beta_pair(linalg::ConstMatrixView left,
-                                          linalg::ConstMatrixView other,
-                                          linalg::ConstMatrixView right,
-                                          const StreamEvent* events,
-                                          int begin,
-                                          double scale,
-                                          bool transpose,
-                                          linalg::MatrixView accumulator,
-                                          linalg::MatrixView other_accumulator) {
-    using Reduce = cub::BlockReduce<double2, threads>;
-    __shared__ typename Reduce::TempStorage storage;
-    const auto e = events[begin + blockIdx.x];
-    double2 sum = make_double2(0.0, 0.0);
-    for (int a = threadIdx.x; a < left.rows; a += threads) {
-        const double value = right.data[a + right.ld * e.slot];
-        sum.x += left.data[a + left.ld * e.local] * value;
-        sum.y += other.data[a + other.ld * e.local] * value;
+/** CUB supplies reductions; only irregular fermionic link gathering is custom. */
+template <int Count, bool SharedPairs = false>
+void launch_moments(Context& c,
+                    std::span<const StreamedMomentTerm> terms,
+                    dim3 grid,
+                    const std::int64_t* alpha,
+                    const std::int64_t* beta,
+                    int na,
+                    int nb,
+                    int first,
+                    bool alpha_only,
+                    const StreamEvent* events,
+                    int begin,
+                    int end) {
+    MomentBatch<Count> batch;
+    std::copy_n(terms.begin(), Count, batch.terms);
+    if (events)
+        reduce_streamed_beta<Count, SharedPairs>
+            <<<end - begin, threads, 0, c.stream()>>>(batch, events, begin);
+    else
+        reduce_streamed_alpha<Count, SharedPairs>
+            <<<grid, threads, 0, c.stream()>>>(batch, alpha, beta, na, nb, first, alpha_only);
+    check_cuda(cudaGetLastError(), "CUDA fused streamed generator reduction");
+}
+void launch_moments(Context& c,
+                    std::span<const StreamedMomentTerm> terms,
+                    dim3 grid,
+                    const std::int64_t* alpha,
+                    const std::int64_t* beta,
+                    int na,
+                    int nb,
+                    int first,
+                    bool alpha_only,
+                    const StreamEvent* events = nullptr,
+                    std::int64_t begin = 0,
+                    std::int64_t end = 0) {
+    const auto same = [](auto a, auto b) {
+        return a.data == b.data && a.ld == b.ld && a.rows == b.rows && a.cols == b.cols;
+    };
+    // The cached coupled jet is a 2x2 bilinear: two left panels, two right
+    // readers, four oriented outputs. Read each numerical input once.
+    if (terms.size() == 4 && same(terms[0].left, terms[2].left) &&
+        same(terms[1].left, terms[3].left) && same(terms[0].right, terms[1].right) &&
+        same(terms[2].right, terms[3].right)) {
+        launch_moments<4, true>(
+            c, terms, grid, alpha, beta, na, nb, first, alpha_only, events, begin, end);
+        return;
     }
-    sum = Reduce(storage).Reduce(sum, AddMoments{});
-    if (threadIdx.x == 0) {
-        const int row = transpose ? e.annihilated : e.created;
-        const int col = transpose ? e.created : e.annihilated;
-        atomicAdd(accumulator.data + row + accumulator.ld * col, scale * e.sign * sum.x);
-        atomicAdd(other_accumulator.data + row + other_accumulator.ld * col,
-                  scale * e.sign * sum.y);
+    if (terms.size() == 2 && same(terms[0].right, terms[1].right)) {
+        launch_moments<2, true>(
+            c, terms, grid, alpha, beta, na, nb, first, alpha_only, events, begin, end);
+        return;
+    }
+    switch (terms.size()) {
+#define XMVB_MOMENT_CASE(N)                                                                        \
+    case N:                                                                                        \
+        launch_moments<N>(                                                                         \
+            c, terms, grid, alpha, beta, na, nb, first, alpha_only, events, begin, end);           \
+        break
+        XMVB_MOMENT_CASE(1);
+        XMVB_MOMENT_CASE(2);
+        XMVB_MOMENT_CASE(3);
+        XMVB_MOMENT_CASE(4);
+#undef XMVB_MOMENT_CASE
+        default:
+            throw std::logic_error("invalid streamed generator batch width");
     }
 }
 
@@ -221,10 +296,10 @@ __global__ void finish_streamed(linalg::ConstMatrixView raw,
                                 linalg::MatrixView output,
                                 bool symmetric_sum,
                                 bool add) {
-    const int index = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t index = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (index >= output.rows * output.cols)
         return;
-    const int row = index % output.rows, col = index / output.rows;
+    const std::int64_t row = index % output.rows, col = index / output.rows;
     if (row > col) {
         if (!add)
             output.data[row + output.ld * col] = 0.0;
@@ -243,8 +318,8 @@ __global__ void finish_streamed(linalg::ConstMatrixView raw,
 
 __global__ void apply_streamed_alpha(linalg::ConstMatrixView input,
                                      linalg::ConstMatrixView generator,
-                                     const int* alpha,
-                                     const int* beta,
+                                     const std::int64_t* alpha,
+                                     const std::int64_t* beta,
                                      int n_alpha,
                                      int n_beta,
                                      int first,
@@ -254,8 +329,9 @@ __global__ void apply_streamed_alpha(linalg::ConstMatrixView input,
     const std::int64_t index = blockIdx.x * static_cast<std::int64_t>(blockDim.x) + threadIdx.x;
     if (index >= static_cast<std::int64_t>(n_alpha) * input.cols)
         return;
-    const int a = static_cast<int>(index % n_alpha), local = static_cast<int>(index / n_alpha);
-    const int b = first + local;
+    const std::int64_t a = static_cast<std::int64_t>(index % n_alpha),
+                       local = static_cast<int>(index / n_alpha);
+    const std::int64_t b = first + local;
     const double self = input.data[a + input.ld * local];
     double value = 0.0;
     for (int p = 0; p < orbitals; ++p) {
@@ -273,7 +349,7 @@ __global__ void apply_streamed_alpha(linalg::ConstMatrixView input,
             const int signed_source = alpha[static_cast<std::int64_t>(channel) * n_alpha + a];
             if (!signed_source)
                 continue;
-            const int source = signed_source > 0 ? signed_source - 1 : -signed_source - 1;
+            const std::int64_t source = signed_source > 0 ? signed_source - 1 : -signed_source - 1;
             const int created = alpha_high ? high : low, annihilated = alpha_high ? low : high;
             value += (signed_source > 0 ? 1.0 : -1.0) *
                      generator.data[created + generator.ld * annihilated] *
@@ -288,7 +364,7 @@ __global__ void apply_streamed_beta(linalg::ConstMatrixView input,
                                     const StreamEvent* events,
                                     int begin,
                                     linalg::MatrixView output) {
-    const int a = blockIdx.y * blockDim.x + threadIdx.x;
+    const std::int64_t a = blockIdx.y * blockDim.x + threadIdx.x;
     if (a >= output.rows)
         return;
     const auto e = events[begin + blockIdx.x];
@@ -304,8 +380,8 @@ __global__ void apply_streamed_beta(linalg::ConstMatrixView input,
 // per product and orbital channel. No product-sized index map is needed.
 __global__ void reduce_moments(linalg::ConstMatrixView left,
                                linalg::ConstMatrixView right,
-                               const int* alpha,
-                               const int* beta,
+                               const std::int64_t* alpha,
+                               const std::int64_t* beta,
                                int n_alpha,
                                int n_beta,
                                int parity,
@@ -320,10 +396,10 @@ __global__ void reduce_moments(linalg::ConstMatrixView left,
     const int diagonal = high * (high + 1) / 2 + high;
     double2 sum = make_double2(0.0, 0.0);
     for (std::int64_t column = blockIdx.y; column < right.cols; column += gridDim.y) {
-        const int b = static_cast<int>(column % n_beta);
+        const std::int64_t b = static_cast<std::int64_t>(column % n_beta);
         const int sb = beta[static_cast<std::int64_t>(channel) * n_beta + b];
         const bool beta_upper = beta[static_cast<std::int64_t>(diagonal) * n_beta + b] != 0;
-        for (int a = (parity ? b : 0) + threadIdx.x; a < n_alpha; a += threads) {
+        for (std::int64_t a = (parity ? b : 0) + threadIdx.x; a < n_alpha; a += threads) {
             const int sa = alpha[static_cast<std::int64_t>(channel) * n_alpha + a];
             if (!sa && !sb)
                 continue;
@@ -359,10 +435,10 @@ __global__ void reduce_moments(linalg::ConstMatrixView left,
 }
 
 __global__ void store_moments(const double2* partials, int partitions, linalg::MatrixView output) {
-    const int index = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t index = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (index >= output.rows * output.cols)
         return;
-    const int row = index % output.rows, column = index / output.rows;
+    const std::int64_t row = index % output.rows, column = index / output.rows;
     const int high = max(row, column), low = min(row, column);
     const int channel = high * (high + 1) / 2 + low;
     double sum = 0.0;
@@ -400,8 +476,8 @@ void DirectCiSigma::generator_moments(std::span<const linalg::ConstMatrixView> l
         workspace_->moment_partitions =
             std::max(1, (multiprocessors * blocks + n_channels_ - 1) / n_channels_);
     }
-    const int partitions =
-        static_cast<int>(std::min<std::int64_t>(workspace_->moment_partitions, right.cols));
+    const int partitions = static_cast<std::int64_t>(
+        std::min<std::int64_t>(workspace_->moment_partitions, right.cols));
     const auto count = static_cast<std::size_t>(n_channels_) * partitions;
     Buffer<double2> partials(*context_, count);
     for (std::size_t i = 0; i < left.size(); ++i) {
@@ -437,7 +513,7 @@ void DirectCiSigma::generator_adjoint_streamed(int first,
         first > n_beta_ - requests.front().terms.front().left.cols ||
         (spin_exchange_reduced && (!exchange_parity_ || !shared_spin_graph_)))
         throw std::invalid_argument("invalid CUDA streamed generator panel");
-    const int count = static_cast<int>(requests.front().terms.front().left.cols);
+    const std::int64_t count = static_cast<std::int64_t>(requests.front().terms.front().left.cols);
     for (const auto output : outputs)
         if (!output.data || output.rows != n_orbitals_ || output.cols != n_orbitals_ ||
             output.ld < output.rows)
@@ -458,7 +534,7 @@ void DirectCiSigma::generator_adjoint_streamed(int first,
     }
 
     auto& context = *context_;
-    std::vector<int> rows(n_alpha_), betas(count);
+    std::vector<std::int64_t> rows(n_alpha_), betas(count);
     std::iota(rows.begin(), rows.end(), 0);
     std::iota(betas.begin(), betas.end(), first);
     Matrix<double> tile(context, n_alpha_, count);
@@ -483,83 +559,65 @@ void DirectCiSigma::generator_adjoint_streamed(int first,
         context.copy_to_device(
             device_events.data(), events.data(), events.size() * sizeof(StreamEvent));
     }
-    for (const auto& request : requests) {
-        request.read(betas, rows, tile.view());
-        const auto cells = static_cast<std::int64_t>(n_alpha_) * count;
-        const dim3 grid(n_channels_,
-                        static_cast<unsigned int>(std::min<std::int64_t>(
-                            65535, (cells + moment_chunk - 1) / moment_chunk)));
-        for (std::size_t i = 0; i < request.terms.size(); i += 2) {
-            const auto& term = request.terms[i];
-            const bool paired = i + 1 < request.terms.size();
-            const double scale = request.scale * (spin_exchange_reduced ? 2.0 : 1.0);
-            if (paired) {
-                const auto& other = request.terms[i + 1];
-                reduce_streamed_alpha<true>
-                    <<<grid, threads, 0, context.stream()>>>(term.left,
-                                                             other.left,
-                                                             tile.view(),
-                                                             alpha_->sources.data(),
-                                                             beta_->sources.data(),
-                                                             n_alpha_,
-                                                             n_beta_,
-                                                             first,
-                                                             spin_exchange_reduced,
-                                                             scale,
-                                                             request.transpose,
-                                                             reductions[term.output].view(),
-                                                             reductions[other.output].view());
-            } else
-                reduce_streamed_alpha<false>
-                    <<<grid, threads, 0, context.stream()>>>(term.left,
-                                                             {},
-                                                             tile.view(),
-                                                             alpha_->sources.data(),
-                                                             beta_->sources.data(),
-                                                             n_alpha_,
-                                                             n_beta_,
-                                                             first,
-                                                             spin_exchange_reduced,
-                                                             scale,
-                                                             request.transpose,
-                                                             reductions[term.output].view(),
-                                                             {});
-            check_cuda(cudaGetLastError(), "CUDA streamed alpha generator reduction");
+    // Two readers can share one link sweep. The extra storage is one bounded
+    // single-spin tile, admitted from tracked headroom without a device query.
+    const bool pair_readers =
+        std::adjacent_find(requests.begin(), requests.end(), [](const auto& a, const auto& b) {
+            return a.terms.size() + b.terms.size() <= 4;
+        }) != requests.end();
+    Matrix<double> other_tile;
+    const auto tile_bytes = static_cast<std::size_t>(n_alpha_) * count * sizeof(double);
+    if (pair_readers &&
+        tile_bytes <= context.device_byte_budget() - context.counters().current_device_bytes)
+        other_tile = Matrix<double>(context, n_alpha_, count);
+    const auto cells = static_cast<std::int64_t>(n_alpha_) * count;
+    const dim3 grid(n_channels_,
+                    static_cast<unsigned>(
+                        std::min<std::int64_t>(65535, (cells + moment_chunk - 1) / moment_chunk)));
+    for (std::size_t r = 0; r < requests.size();) {
+        const bool paired = other_tile.data() && r + 1 < requests.size() &&
+                            requests[r].terms.size() + requests[r + 1].terms.size() <= 4;
+        const int readers = paired ? 2 : 1;
+        const std::array<linalg::MatrixView, 2> tiles{tile.view(), other_tile.view()};
+        std::vector<StreamedMomentTerm> terms;
+        for (int j = 0; j < readers; ++j) {
+            const auto& request = requests[r + j];
+            request.read(betas, rows, tiles[j]);
+            for (const auto& term : request.terms)
+                terms.push_back({term.left,
+                                 tiles[j],
+                                 reductions[term.output].view(),
+                                 request.scale * (spin_exchange_reduced ? 2.0 : 1.0),
+                                 request.transpose});
         }
-        if (spin_exchange_reduced)
-            continue;
-        for (const auto& batch : batches) {
-            request.read(batch.sources, rows, tile.view().columns(0, batch.sources.size()));
-            for (std::size_t i = 0; i < request.terms.size(); i += 2) {
-                const auto& term = request.terms[i];
-                const bool paired = i + 1 < request.terms.size();
-                if (paired) {
-                    const auto& other = request.terms[i + 1];
-                    reduce_streamed_beta_pair<<<batch.end - batch.begin,
-                                                threads,
-                                                0,
-                                                context.stream()>>>(
-                        term.left,
-                        other.left,
-                        tile.view(),
-                        device_events.data(),
-                        batch.begin,
-                        request.scale,
-                        request.transpose,
-                        reductions[term.output].view(),
-                        reductions[other.output].view());
-                } else
-                    reduce_streamed_beta<<<batch.end - batch.begin, threads, 0, context.stream()>>>(
-                        term.left,
-                        tile.view(),
-                        device_events.data(),
-                        batch.begin,
-                        request.scale,
-                        request.transpose,
-                        reductions[term.output].view());
-                check_cuda(cudaGetLastError(), "CUDA streamed beta generator reduction");
+        const auto reduce =
+            [&](const StreamEvent* event = nullptr, std::int64_t begin = 0, std::int64_t end = 0) {
+                for (std::size_t t = 0; t < terms.size(); t += 4)
+                    launch_moments(context,
+                                   std::span<const StreamedMomentTerm>{terms}.subspan(
+                                       t, std::min<std::size_t>(4, terms.size() - t)),
+                                   grid,
+                                   alpha_->sources.data(),
+                                   beta_->sources.data(),
+                                   n_alpha_,
+                                   n_beta_,
+                                   first,
+                                   spin_exchange_reduced,
+                                   event,
+                                   begin,
+                                   end);
+            };
+        reduce();
+        if (!spin_exchange_reduced)
+            for (const auto& batch : batches) {
+                for (int j = 0; j < readers; ++j)
+                    requests[r + j].read(
+                        batch.sources, rows, tiles[j].columns(0, batch.sources.size()));
+                // Exchange reduction is disabled here, so request scales are
+                // identical for alpha and beta contractions.
+                reduce(device_events.data(), batch.begin, batch.end);
             }
-        }
+        r += readers;
     }
     for (std::size_t l = 0; l < outputs.size(); ++l) {
         finish_streamed<<<static_cast<unsigned int>((orbital_cells + threads - 1) / threads),
@@ -567,6 +625,46 @@ void DirectCiSigma::generator_adjoint_streamed(int first,
                           0,
                           context.stream()>>>(reductions[l].view(), outputs[l], symmetric_sum, add);
         check_cuda(cudaGetLastError(), "CUDA streamed generator finish");
+    }
+}
+
+void DirectCiSigma::spin_generator_adjoints(bool beta,
+                                            std::span<const CiSpinGeneratorTerm> terms,
+                                            std::span<const linalg::MatrixView> outputs,
+                                            bool add) const {
+    const int rows = beta ? n_beta_ : n_alpha_;
+    auto& c = *context_;
+    for (auto out : outputs)
+        if (!add)
+            check_cuda(cudaMemset2DAsync(out.data,
+                                         out.ld * sizeof(double),
+                                         0,
+                                         out.rows * sizeof(double),
+                                         out.cols,
+                                         c.stream()),
+                       "clear single-spin moment");
+    const auto& graph = beta ? beta_ : alpha_;
+    for (std::size_t first = 0; first < terms.size(); first += 4) {
+        std::vector<StreamedMomentTerm> batch;
+        for (std::size_t t = first; t < std::min(first + 4, terms.size()); ++t) {
+            const auto& term = terms[t];
+            if (term.output >= outputs.size() || term.left.rows != rows ||
+                term.right.rows != rows || term.left.cols != term.right.cols)
+                throw std::invalid_argument("invalid single-spin moment panels");
+            batch.push_back({term.left, term.right, outputs[term.output], term.scale, false});
+        }
+        const auto cells = static_cast<std::int64_t>(rows) * batch.front().left.cols;
+        launch_moments(c,
+                       batch,
+                       dim3(n_channels_,
+                            static_cast<unsigned>(std::min<std::int64_t>(
+                                65535, (cells + moment_chunk - 1) / moment_chunk))),
+                       graph->sources.data(),
+                       nullptr,
+                       rows,
+                       0,
+                       0,
+                       true);
     }
 }
 
@@ -583,7 +681,7 @@ void DirectCiSigma::apply_one_body_generator_columns(int first,
         image.cols != count || image.ld < image.rows || image.data == generator.data)
         throw std::invalid_argument("invalid CUDA one-body generator columns");
     auto& context = *context_;
-    std::vector<int> rows(n_alpha_), betas(count);
+    std::vector<std::int64_t> rows(n_alpha_), betas(count);
     std::iota(rows.begin(), rows.end(), 0);
     std::iota(betas.begin(), betas.end(), first);
     Matrix<double> tile(context, n_alpha_, count);

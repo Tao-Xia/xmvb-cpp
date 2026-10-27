@@ -57,7 +57,7 @@ class StringTable {
     }
     void reserve(std::size_t count) {
         own();
-        data_->words.reserve(count * data_->width);
+        data_->words.reserve(core::checked_multiply(count, data_->width));
     }
     void clear() {
         data_ = std::make_shared<Data>();
@@ -86,7 +86,7 @@ class StringTable {
             --required;
         if (required > data_->width) {
             const auto count = size();
-            std::vector<std::uint64_t> widened(count * required, 0);
+            std::vector<std::uint64_t> widened(core::checked_multiply(count, required), 0);
             for (std::size_t i = 0; i < count; ++i)
                 std::copy_n(data_->words.data() + i * data_->width,
                             data_->width,
@@ -95,7 +95,7 @@ class StringTable {
             data_->width = required;
         }
         const auto begin = data_->words.size();
-        data_->words.resize(begin + data_->width, 0);
+        data_->words.resize(core::checked_add(begin, data_->width), 0);
         std::copy_n(row.data(), required, data_->words.data() + begin);
     }
     void push_mask(std::uint64_t mask) {

@@ -1,3 +1,4 @@
+#include "core/index.hpp"
 #include "cuda/vb/chart.hpp"
 #include "cuda/vb/orbitals.hpp"
 #include "cuda/linalg/blas.hpp"
@@ -58,14 +59,14 @@ __global__ void expand_rows(const int* slots,
                             int mapped_rows,
                             int raw_basis,
                             int raw_ld) {
-    const int row = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t row = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (row >= mapped_rows)
         return;
     const int block = row_block[row];
     const int local = row_local[row];
-    const int count = row_count[block];
+    const std::int64_t count = row_count[block];
     const int dimension = reduced_size[block];
-    const int offset = first_basis[block];
+    const std::int64_t offset = first_basis[block];
     const int coordinate = reduced_offset[block];
     double value = 0.0;
     for (int j = 0; j < dimension; ++j)
@@ -86,7 +87,8 @@ __global__ void project_coordinates(const int* slots,
                                     int coordinates,
                                     int raw_basis,
                                     int raw_ld) {
-    const int coordinate = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t coordinate =
+        static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (coordinate >= coordinates)
         return;
     const int block = coordinate_block[coordinate];
@@ -109,10 +111,10 @@ __global__ void add_step(linalg::ConstMatrixView accepted,
                          int* info,
                          int basis,
                          int orbitals) {
-    const int index = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t index = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (index >= basis * orbitals)
         return;
-    const int row = index % basis, col = index / basis;
+    const std::int64_t row = index % basis, col = index / basis;
     const double value = row >= stored_counts[col]
                              ? 0.0
                              : accepted.data[col * accepted.ld + row] + scale * direction[index];
@@ -219,7 +221,8 @@ struct AcceptedOrbitalChart::Impl {
         context.copy_to_device(stored_counts.data(), counts.data(), counts.size() * sizeof(int));
         const auto blocks = vb::detect_orbital_blocks(input);
         int occupied_block = 0;
-        for (int block = 0; block < static_cast<int>(blocks.size()); ++block) {
+        for (std::int64_t block = 0; block < core::checked_index<std::int64_t>(blocks.size());
+             ++block) {
             int block_occupied = 0;
             for (const int orbital : blocks[block]) {
                 if (orbital >= inactive + active)
@@ -260,9 +263,9 @@ struct AcceptedOrbitalChart::Impl {
         for (auto& meta : metas) {
             meta.local_ray =
                 meta.orbital >= inactive && !active_subspace && meta.differentiable == meta.stored;
-            const int source = meta.orbital < inactive || meta.local_ray ? -1
-                               : active_subspace                         ? -2
-                                                                         : meta.orbital;
+            const std::int64_t source = meta.orbital < inactive || meta.local_ray ? -1
+                                        : active_subspace                         ? -2
+                                                                                  : meta.orbital;
             const auto [where, inserted] = groups.emplace(
                 std::make_tuple(source, meta.local_ao, meta.forbidden_ao), quotient_groups);
             meta.quotient_group = where->second;
@@ -375,7 +378,7 @@ void AcceptedOrbitalChart::rebuild(const OrbitalGeometry& geometry) {
         if (meta.local_ray)
             ray_quotient = p.restrict_ray(geometry, meta, shared->view());
         const auto& quotient = meta.local_ray ? ray_quotient : *shared;
-        local.size = static_cast<int>(quotient.cols());
+        local.size = core::checked_index<std::int64_t>(quotient.cols());
         for (int value : {meta.block + 1, meta.block_orbital + 1, local.size + 1}) {
             p.signature ^= static_cast<std::uint64_t>(value);
             p.signature *= 1099511628211ull;
@@ -397,7 +400,7 @@ void AcceptedOrbitalChart::rebuild(const OrbitalGeometry& geometry) {
         auto covariant = chart_product(ctx, stored_overlap.view(), coeff.view());
         double squared_norm = 0.0;
         check_cublas(
-            cublasDdot(ctx.blas(), stored, coeff.data(), 1, covariant.data(), 1, &squared_norm),
+            cublasDdot_64(ctx.blas(), stored, coeff.data(), 1, covariant.data(), 1, &squared_norm),
             "cublasDdot chart orbital norm");
         if (!(squared_norm > 0.0) || !std::isfinite(squared_norm))
             throw std::runtime_error("raw quotient has nonpositive orbital norm");
@@ -420,7 +423,7 @@ void AcceptedOrbitalChart::rebuild(const OrbitalGeometry& geometry) {
         auto inverse = chart_product(ctx, inverse_root.view(), inverse_root.view());
         auto image = chart_product(ctx, inverse.view(), projection.view());
         double squared = 0.0;
-        check_cublas(cublasDdot(ctx.blas(), q, projection.data(), 1, image.data(), 1, &squared),
+        check_cublas(cublasDdot_64(ctx.blas(), q, projection.data(), 1, image.data(), 1, &squared),
                      "cublasDdot chart radial projection");
         local.delta = 1.0 - squared;
         if (!(local.delta > 0.0) || !std::isfinite(local.delta))
@@ -439,16 +442,16 @@ void AcceptedOrbitalChart::rebuild(const OrbitalGeometry& geometry) {
             local.inverse = Matrix<double>(ctx, q, q);
             chart_copy(ctx, local.inverse.view(), inverse.view());
             const double alpha = 1.0 / local.delta;
-            check_cublas(cublasDger(ctx.blas(),
-                                    q,
-                                    q,
-                                    &alpha,
-                                    image.data(),
-                                    1,
-                                    image.data(),
-                                    1,
-                                    local.inverse.data(),
-                                    q),
+            check_cublas(cublasDger_64(ctx.blas(),
+                                       q,
+                                       q,
+                                       &alpha,
+                                       image.data(),
+                                       1,
+                                       image.data(),
+                                       1,
+                                       local.inverse.data(),
+                                       q),
                          "CUDA chart rank-one metric inverse");
         } else {
             // The bound may be inconclusive near the rank boundary. Preserve the
@@ -519,8 +522,8 @@ Matrix<double> AcceptedOrbitalChart::Impl::build_quotient(const OrbitalGeometry&
     Matrix<double> source(ctx, basis, nsource);
     if (nsource) {
         if (meta.orbital >= inactive && !meta.local_ray) {
-            const int na = nsource - inactive;
-            const int first = active_subspace ? inactive : meta.orbital;
+            const std::int64_t na = nsource - inactive;
+            const std::int64_t first = active_subspace ? inactive : meta.orbital;
             Matrix<double> residual(ctx, basis, na);
             chart_copy(ctx, residual.view(), geometry.normalized().columns(first, na));
             if (inactive) {
@@ -537,7 +540,7 @@ Matrix<double> AcceptedOrbitalChart::Impl::build_quotient(const OrbitalGeometry&
             auto eig = symmetric_spectrum(ctx, solver, metric.view());
             const double scale = eig.host_values.back();
             if (!(scale > 0.0) ||
-                !(eig.host_values.front() > DBL_EPSILON * std::max(1, na) * scale))
+                !(eig.host_values.front() > DBL_EPSILON * std::max<std::int64_t>(1, na) * scale))
                 throw std::runtime_error(
                     "active orbital subspace is rank deficient outside inactive span");
             auto root = spectral_power(ctx, eig, -0.5);
@@ -553,7 +556,7 @@ Matrix<double> AcceptedOrbitalChart::Impl::build_quotient(const OrbitalGeometry&
         return Matrix<double>(ctx, m, 0);
     if (!nsource)
         return chart_eye(ctx, m);
-    const int forbidden = static_cast<int>(meta.forbidden_ao.size());
+    const std::int64_t forbidden = core::checked_index<std::int64_t>(meta.forbidden_ao.size());
     Matrix<double> admissible(ctx, nsource, 0);
     if (!forbidden) {
         admissible = chart_eye(ctx, nsource);
@@ -617,7 +620,7 @@ Matrix<double> AcceptedOrbitalChart::Impl::restrict_ray(const OrbitalGeometry& g
     auto image = chart_product(ctx, local_overlap.view(), orbital.view());
     auto row = chart_product(ctx, image.view(), base, Operation::transpose);
     double norm = 0.0;
-    check_cublas(cublasDnrm2(ctx.blas(), q0, row.data(), 1, &norm), "CUDA chart ray norm");
+    check_cublas(cublasDnrm2_64(ctx.blas(), q0, row.data(), 1, &norm), "CUDA chart ray norm");
     if (!std::isfinite(norm))
         throw std::runtime_error("nonfinite CUDA chart ray norm");
     const int rank = norm > DBL_EPSILON * q0 * norm ? 1 : 0; // Same single-row SVD rank test.
@@ -640,16 +643,16 @@ Matrix<double> AcceptedOrbitalChart::Impl::restrict_ray(const OrbitalGeometry& g
     auto reflector_image = chart_product(ctx, base, v.view());
     chart_copy(ctx, quotient.view(), base.columns(1, q));
     const double alpha = -tau;
-    check_cublas(cublasDger(ctx.blas(),
-                            m,
-                            q,
-                            &alpha,
-                            reflector_image.data(),
-                            1,
-                            v.data() + 1,
-                            1,
-                            quotient.data(),
-                            m),
+    check_cublas(cublasDger_64(ctx.blas(),
+                               m,
+                               q,
+                               &alpha,
+                               reflector_image.data(),
+                               1,
+                               v.data() + 1,
+                               1,
+                               quotient.data(),
+                               m),
                  "CUDA chart rank-one ray restriction");
     chart_sign_columns<<<grid(q), kThreads, 0, ctx.stream()>>>(quotient.data(), m, q);
     check_cuda(cudaGetLastError(), "CUDA chart local ray quotient signs");
@@ -764,7 +767,7 @@ void AcceptedOrbitalChart::Impl::build_rotation_frame(const OrbitalGeometry& geo
         check_cuda(cudaGetLastError(), "CUDA chart rotation orbital norm gather");
         auto sx = chart_product(ctx, s.view(), x.view());
         double norm2 = 0.0;
-        check_cublas(cublasDdot(ctx.blas(), meta.stored, x.data(), 1, sx.data(), 1, &norm2),
+        check_cublas(cublasDdot_64(ctx.blas(), meta.stored, x.data(), 1, sx.data(), 1, &norm2),
                      "cublasDdot chart rotation orbital norm");
         if (!(norm2 > 0.0))
             throw std::runtime_error("CUDA chart nonpositive rotation orbital norm");
@@ -792,7 +795,7 @@ void AcceptedOrbitalChart::Impl::build_rotation_frame(const OrbitalGeometry& geo
         const Const inverse =
             is_core ? inactive_inverse_transform.view() : geometry.frame_inverse_transform();
         const int source_count = is_core ? inactive : active;
-        const int source_row = is_core ? meta.orbital : meta.orbital - inactive;
+        const std::int64_t source_row = is_core ? meta.orbital : meta.orbital - inactive;
         block.source_weights = Matrix<double>(ctx, source_count, 1);
         chart_take_row<<<grid(source_count), kThreads, 0, ctx.stream()>>>(
             inverse, source_row, block.source_weights.data(), source_count);
@@ -891,14 +894,14 @@ OrbitalChartMap::OrbitalChartMap(Context& context,
     std::vector<unsigned char> seen(static_cast<std::size_t>(basis) * orbitals, 0);
     for (std::size_t b = 0; b < blocks.size(); ++b) {
         const auto& block = blocks[b];
-        const int rows = static_cast<int>(block.raw_slots.size());
+        const std::int64_t rows = core::checked_index<std::int64_t>(block.raw_slots.size());
         if (rows <= 0 || block.reduced_size <= 0 || block.reduced_offset < 0 ||
             block.reduced_offset + block.reduced_size > reduced_size ||
             block.basis.size() != static_cast<std::size_t>(rows) * block.reduced_size)
             throw std::invalid_argument("CUDA orbital tangent block dimensions are invalid");
-        first_row.push_back(static_cast<int>(slots.size()));
+        first_row.push_back(core::checked_index<std::int64_t>(slots.size()));
         row_count.push_back(rows);
-        first_basis.push_back(static_cast<int>(basis_data.size()));
+        first_basis.push_back(core::checked_index<std::int64_t>(basis_data.size()));
         offsets.push_back(block.reduced_offset);
         sizes.push_back(block.reduced_size);
         const int orbital = block.raw_slots.front() / basis;
@@ -925,7 +928,7 @@ OrbitalChartMap::OrbitalChartMap(Context& context,
     }
     if (std::find(coordinate_block.begin(), coordinate_block.end(), -1) != coordinate_block.end())
         throw std::invalid_argument("CUDA orbital tangent coordinates are incomplete");
-    mapped_rows_ = static_cast<int>(slots.size());
+    mapped_rows_ = core::checked_index<std::int64_t>(slots.size());
     raw_slots_ = Buffer<int>(context, slots.size());
     row_block_ = Buffer<int>(context, row_block.size());
     row_local_ = Buffer<int>(context, row_local.size());
@@ -1084,7 +1087,7 @@ Matrix<double> chart_product(Context& ctx, Const a, Const b, Operation opa, Oper
 }
 
 __global__ void chart_identity(double* x, int n) {
-    const int k = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t k = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (k < n * n)
         x[k] = (k % n == k / n) ? 1.0 : 0.0;
 }
@@ -1100,7 +1103,7 @@ Matrix<double> chart_eye(Context& ctx, int n) {
 
 __global__ void chart_scatter_inactive(
     Const raw, const int* support, const int* counts, double* output, int basis, int inactive) {
-    const int k = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t k = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (k >= basis * inactive)
         return;
     const int orbital = k / basis, slot = k % basis;
@@ -1110,13 +1113,13 @@ __global__ void chart_scatter_inactive(
 
 __global__ void
 chart_gather_rows(Const source, const int* rows, double* output, int count, int columns) {
-    const int k = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t k = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (k < count * columns)
         output[k] = source.data[(k / count) * source.ld + rows[k % count]];
 }
 
 __global__ void chart_gather_overlap(Const ao, const int* rows, double* output, int count) {
-    const int k = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t k = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (k < count * count) {
         const int i = k % count, j = k / count;
         output[k] = ao.data[rows[j] * ao.ld + rows[i]];
@@ -1124,20 +1127,20 @@ __global__ void chart_gather_overlap(Const ao, const int* rows, double* output, 
 }
 
 __global__ void chart_gather_coeff(Const raw, int orbital, double* output, int count) {
-    const int k = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t k = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (k < count)
         output[k] = raw.data[orbital * raw.ld + k];
 }
 
 __global__ void chart_subtract(double* y, const double* x, int n) {
-    const int k = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t k = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (k < n)
         y[k] -= x[k];
 }
 
 __global__ void
 chart_compose(double* target, Const left, Const right, int first_right, int rows, int cols) {
-    const int k = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t k = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (k < rows * cols) {
         const int i = k % rows, j = k / rows;
         target[k] = j < first_right ? left.data[j * left.ld + i]
@@ -1146,13 +1149,13 @@ chart_compose(double* target, Const left, Const right, int first_right, int rows
 }
 
 __global__ void chart_ray_reflector(const double* row, double* v, int n, double denominator) {
-    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t i = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i < n)
         v[i] = i == 0 ? 1.0 : row[i] / denominator;
 }
 
 __global__ void chart_sign_columns(double* x, int rows, int cols) {
-    const int j = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t j = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (j >= cols)
         return;
     int pivot = 0;
@@ -1170,7 +1173,7 @@ __global__ void chart_sign_columns(double* x, int rows, int cols) {
 }
 
 __global__ void chart_stored_quotient(Const u, double* output, int stored, int local, int columns) {
-    const int k = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t k = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (k < stored * columns) {
         const int i = k % stored, j = k / stored;
         output[k] = i < local ? u.data[j * u.ld + i] : 0.0;
@@ -1178,22 +1181,22 @@ __global__ void chart_stored_quotient(Const u, double* output, int stored, int l
 }
 
 __global__ void chart_scale_vector(double* x, int n, double scale) {
-    const int k = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t k = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (k < n)
         x[k] *= scale;
 }
 
 __global__ void chart_normalize_columns(Mut values, Const gram) {
-    const int k = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t k = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (k < values.rows * values.cols) {
-        const int row = k % values.rows, col = k / values.rows;
+        const std::int64_t row = k % values.rows, col = k / values.rows;
         values.data[row + col * values.ld] /= sqrt(gram.data[col + col * gram.ld]);
     }
 }
 
 __global__ void chart_make_basis(
     Const u, Const x, Const r, double* out, int local, int q, double norm, bool sphere) {
-    const int k = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t k = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (k < local * q) {
         const int i = k % local, j = k / local;
         out[k] = norm * u.data[j * u.ld + i] - (sphere ? x.data[i] * r.data[j] : 0.0);
@@ -1201,7 +1204,7 @@ __global__ void chart_make_basis(
 }
 
 __global__ void chart_rank_one(double* metric, const double* r, int q) {
-    const int k = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t k = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (k < q * q)
         metric[k] -= r[k % q] * r[k / q];
 }
@@ -1214,7 +1217,7 @@ __global__ void chart_add_retraction(Const accepted,
                                      int basis,
                                      int orbitals,
                                      double scale) {
-    const int k = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t k = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (k >= basis * orbitals)
         return;
     const int i = k % basis, j = k / basis;
@@ -1238,7 +1241,7 @@ __global__ void chart_sphere_flag(Const raw, int orbital, int first, int stored,
 
 __global__ void
 chart_scatter_basis(Const local, const int* ao, double* dense, int basis, int rows, int columns) {
-    const int k = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t k = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (k < rows * columns) {
         const int i = k % rows, j = k / rows;
         dense[j * basis + ao[i]] = local.data[j * local.ld + i];
@@ -1246,7 +1249,7 @@ chart_scatter_basis(Const local, const int* ao, double* dense, int basis, int ro
 }
 
 __global__ void chart_take_row(Const matrix, int row, double* output, int columns) {
-    const int j = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t j = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (j < columns)
         output[j] = matrix.data[j * matrix.ld + row];
 }
@@ -1259,7 +1262,7 @@ __global__ void chart_scatter_raw_dense(Const raw,
                                         int basis,
                                         int ncore,
                                         int nactive) {
-    const int k = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t k = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (k >= basis * (ncore + nactive))
         return;
     const int orbital = k / basis, slot = k % basis;
@@ -1280,7 +1283,7 @@ __global__ void chart_gather_dense_raw(Const core,
                                        int basis,
                                        int ncore,
                                        int nactive) {
-    const int k = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t k = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (k >= basis * (ncore + nactive))
         return;
     const int orbital = k / basis, slot = k % basis;
@@ -1299,7 +1302,7 @@ __global__ void chart_ray_project(Const direction,
                                   Mut output,
                                   int basis,
                                   int active) {
-    const int k = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t k = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (k >= basis * active)
         return;
     const int ao = k % basis, j = k / basis;
@@ -1312,7 +1315,7 @@ __global__ void chart_ray_project(Const direction,
 }
 
 __global__ void chart_diagonal(Const matrix, double* output, int n) {
-    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t i = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i < n)
         output[i] = matrix.data[i * matrix.ld + i];
 }
@@ -1324,7 +1327,7 @@ __global__ void chart_rotation_weights(Const diagonal,
                                        int source_count,
                                        int first_row,
                                        int first_source) {
-    const int row = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t row = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (row >= external)
         return;
     double value = 0.0;
@@ -1338,14 +1341,14 @@ __global__ void chart_rotation_weights(Const diagonal,
 
 __global__ void chart_rotation_curvature(
     const double* components, const double* weights, double* weighted, int external, int q) {
-    const int k = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t k = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (k < external * q)
         weighted[k] = components[k] * weights[k % external];
 }
 
 __global__ void chart_rotation_diagonal(
     Const components, const double* weights, double* output, int external, int q) {
-    const int j = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t j = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (j >= q)
         return;
     double value = 0.0;
@@ -1358,7 +1361,7 @@ __global__ void chart_rotation_diagonal(
 
 __global__ void chart_ah_divide(
     double* frame, Const diagonal, int rows, int cols, int first_row, double eigenvalue) {
-    const int k = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t k = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (k >= rows * cols)
         return;
     const int i = k % rows, j = k / rows;
@@ -1369,7 +1372,7 @@ __global__ void chart_ah_divide(
 }
 
 __global__ void chart_subtract_identity(double* matrix, int n) {
-    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t i = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i < n)
         matrix[i * n + i] -= 1.0;
 }
@@ -1385,13 +1388,13 @@ chart_projector_apply(Context& ctx, Const overlap, Const carrier, Const inverse,
     auto weights = chart_product(ctx, inverse, inner.view());
     auto removed = chart_product(ctx, carrier, weights.view());
     const double minus_one = -1.0;
-    check_cublas(cublasDaxpy(ctx.blas(),
-                             static_cast<int>(x.rows * x.cols),
-                             &minus_one,
-                             removed.data(),
-                             1,
-                             result.data(),
-                             1),
+    check_cublas(cublasDaxpy_64(ctx.blas(),
+                                static_cast<int>(x.rows * x.cols),
+                                &minus_one,
+                                removed.data(),
+                                1,
+                                result.data(),
+                                1),
                  "cublasDaxpy chart physical projector");
     return result;
 }
@@ -1464,18 +1467,18 @@ void AcceptedOrbitalChart::project_vector(Const raw_direction, Mut reduced_vecto
         auto pulled =
             chart_product(ctx, block.basis.view(), covariant.view(), Operation::transpose);
         const double alpha = 1.0, beta = 0.0;
-        check_cublas(cublasDgemv(ctx.blas(),
-                                 CUBLAS_OP_N,
-                                 block.size,
-                                 block.size,
-                                 &alpha,
-                                 block.raw_inverse_gram.data(),
-                                 block.size,
-                                 pulled.data(),
-                                 1,
-                                 &beta,
-                                 reduced_vector.data + block.offset,
-                                 1),
+        check_cublas(cublasDgemv_64(ctx.blas(),
+                                    CUBLAS_OP_N,
+                                    block.size,
+                                    block.size,
+                                    &alpha,
+                                    block.raw_inverse_gram.data(),
+                                    block.size,
+                                    pulled.data(),
+                                    1,
+                                    &beta,
+                                    reduced_vector.data + block.offset,
+                                    1),
                      "cublasDgemv chart raw-vector projection");
     }
 }
@@ -1558,21 +1561,21 @@ void AcceptedOrbitalChart::physical_metric(Const vector, Mut covector) const {
                 chart_product(ctx, hi.view(), p.metric_SA.view(), Operation::transpose);
             auto feedback = chart_product(ctx, p.metric_CGi.view(), overlap_active.view());
             const double minus_one = -1.0;
-            check_cublas(cublasDaxpy(ctx.blas(),
-                                     p.basis * p.active,
-                                     &minus_one,
-                                     direct.data(),
-                                     1,
-                                     delta_t.data(),
-                                     1),
+            check_cublas(cublasDaxpy_64(ctx.blas(),
+                                        p.basis * p.active,
+                                        &minus_one,
+                                        direct.data(),
+                                        1,
+                                        delta_t.data(),
+                                        1),
                          "cublasDaxpy chart physical inactive-active direct");
-            check_cublas(cublasDaxpy(ctx.blas(),
-                                     p.basis * p.active,
-                                     &minus_one,
-                                     feedback.data(),
-                                     1,
-                                     delta_t.data(),
-                                     1),
+            check_cublas(cublasDaxpy_64(ctx.blas(),
+                                        p.basis * p.active,
+                                        &minus_one,
+                                        feedback.data(),
+                                        1,
+                                        delta_t.data(),
+                                        1),
                          "cublasDaxpy chart physical inactive-active feedback");
         }
     }
@@ -1628,11 +1631,11 @@ void AcceptedOrbitalChart::physical_metric(Const vector, Mut covector) const {
             auto feedback = chart_product(ctx, p.metric_active.view(), inner.view());
             const double minus_one = -1.0;
             check_cublas(
-                cublasDaxpy(
+                cublasDaxpy_64(
                     ctx.blas(), p.basis * p.inactive, &minus_one, direct.data(), 1, yi.data(), 1),
                 "cublasDaxpy chart physical core adjoint direct");
             check_cublas(
-                cublasDaxpy(
+                cublasDaxpy_64(
                     ctx.blas(), p.basis * p.inactive, &minus_one, feedback.data(), 1, yi.data(), 1),
                 "cublasDaxpy chart physical core adjoint feedback");
         }
@@ -1680,7 +1683,7 @@ double AcceptedOrbitalChart::coordinate_dual_norm(Const covector) const {
     inverse_metric(covector, image.view());
     double squared = 0.0;
     check_cublas(
-        cublasDdot(p.context.blas(), p.reduced, covector.data, 1, image.data(), 1, &squared),
+        cublasDdot_64(p.context.blas(), p.reduced, covector.data, 1, image.data(), 1, &squared),
         "cublasDdot chart dual norm");
     if (!(squared >= 0.0) || !std::isfinite(squared))
         throw std::runtime_error("invalid CUDA chart coordinate dual norm");
@@ -1697,40 +1700,40 @@ double AcceptedOrbitalChart::reference_gradient_inf_norm(Const covector) const {
             continue;
         Matrix<double> u(p.context, block.size, 1), reference(p.context, block.size, 1);
         const double alpha = 1.0, beta = 0.0;
-        check_cublas(cublasDgemv(p.context.blas(),
-                                 CUBLAS_OP_N,
-                                 block.size,
-                                 block.size,
-                                 &alpha,
-                                 block.reference_root.data(),
-                                 block.size,
-                                 block.projection.data(),
-                                 1,
-                                 &beta,
-                                 u.data(),
-                                 1),
+        check_cublas(cublasDgemv_64(p.context.blas(),
+                                    CUBLAS_OP_N,
+                                    block.size,
+                                    block.size,
+                                    &alpha,
+                                    block.reference_root.data(),
+                                    block.size,
+                                    block.projection.data(),
+                                    1,
+                                    &beta,
+                                    u.data(),
+                                    1),
                      "cublasDgemv chart reference projection");
-        check_cublas(cublasDgemv(p.context.blas(),
-                                 CUBLAS_OP_N,
-                                 block.size,
-                                 block.size,
-                                 &alpha,
-                                 block.reference_root.data(),
-                                 block.size,
-                                 covector.data + block.offset,
-                                 1,
-                                 &beta,
-                                 reference.data(),
-                                 1),
+        check_cublas(cublasDgemv_64(p.context.blas(),
+                                    CUBLAS_OP_N,
+                                    block.size,
+                                    block.size,
+                                    &alpha,
+                                    block.reference_root.data(),
+                                    block.size,
+                                    covector.data + block.offset,
+                                    1,
+                                    &beta,
+                                    reference.data(),
+                                    1),
                      "cublasDgemv chart reference covector");
         double dot = 0.0;
         check_cublas(
-            cublasDdot(p.context.blas(), block.size, u.data(), 1, reference.data(), 1, &dot),
+            cublasDdot_64(p.context.blas(), block.size, u.data(), 1, reference.data(), 1, &dot),
             "cublasDdot chart reference radial term");
         const double root = std::sqrt(block.delta);
         const double correction = dot / (root * (1.0 + root));
         check_cublas(
-            cublasDaxpy(
+            cublasDaxpy_64(
                 p.context.blas(), block.size, &correction, u.data(), 1, reference.data(), 1),
             "cublasDaxpy chart reference covector");
         int pivot = 0;
@@ -1778,41 +1781,42 @@ double AcceptedOrbitalChart::max_component(Const vector) const {
         if (!block.size)
             continue;
         const bool is_core = block.orbital < p.inactive;
-        const int first = p.full_rotation_frame && !is_core ? p.active : 0;
-        const int count = external_count - first;
+        const std::int64_t first = p.full_rotation_frame && !is_core ? p.active : 0;
+        const std::int64_t count = external_count - first;
         if (!count)
             continue;
         Matrix<double> external(p.context, count, 1);
         const double alpha = 1.0, beta = 0.0;
-        check_cublas(cublasDgemv(p.context.blas(),
-                                 CUBLAS_OP_N,
-                                 count,
-                                 block.size,
-                                 &alpha,
-                                 block.rotation_components.data() + first,
-                                 external_count,
-                                 vector.data + block.offset,
-                                 1,
-                                 &beta,
-                                 external.data(),
-                                 1),
+        check_cublas(cublasDgemv_64(p.context.blas(),
+                                    CUBLAS_OP_N,
+                                    count,
+                                    block.size,
+                                    &alpha,
+                                    block.rotation_components.data() + first,
+                                    external_count,
+                                    vector.data + block.offset,
+                                    1,
+                                    &beta,
+                                    external.data(),
+                                    1),
                      "cublasDgemv chart rotation components");
         if (!p.full_rotation_frame) {
             maximum = std::max(maximum,
                                maximum_absolute(external.data(), count) * block.source_weight_max);
         } else {
             Mut frame = is_core ? core_frame.view() : active_frame.view();
-            check_cublas(cublasDger(p.context.blas(),
-                                    count,
-                                    static_cast<int>(block.source_weights.rows()),
-                                    &alpha,
-                                    external.data(),
-                                    1,
-                                    block.source_weights.data(),
-                                    1,
-                                    frame.data,
-                                    static_cast<int>(frame.ld)),
-                         "cublasDger chart complete rotation frame");
+            check_cublas(
+                cublasDger_64(p.context.blas(),
+                              count,
+                              core::checked_index<std::int64_t>(block.source_weights.rows()),
+                              &alpha,
+                              external.data(),
+                              1,
+                              block.source_weights.data(),
+                              1,
+                              frame.data,
+                              static_cast<int>(frame.ld)),
+                "cublasDger chart complete rotation frame");
         }
     }
     if (p.full_rotation_frame) {
@@ -1863,7 +1867,7 @@ void AcceptedOrbitalChart::set_hessian_diagonal(const OrbitalGeometry& geometry,
             block.size);
         check_cuda(cudaGetLastError(), "CUDA chart analytic local diagonal");
         if (p.full_rotation_frame) {
-            const int first = core ? 0 : p.active;
+            const std::int64_t first = core ? 0 : p.active;
             const int rows = core ? external_count : virtual_count;
             if (block.size != rows)
                 throw std::runtime_error("full-AO rotation map dimension mismatch");
@@ -1879,19 +1883,19 @@ void AcceptedOrbitalChart::set_hessian_diagonal(const OrbitalGeometry& geometry,
                                                                                rows);
             check_cuda(cudaGetLastError(), "CUDA chart rotation inverse certificate");
             double residual = 0.0, forward_norm = 0.0, inverse_norm = 0.0;
-            check_cublas(cublasDnrm2(ctx.blas(), rows * rows, certificate.data(), 1, &residual),
+            check_cublas(cublasDnrm2_64(ctx.blas(), rows * rows, certificate.data(), 1, &residual),
                          "cublasDnrm2 chart rotation inverse residual");
             double column_norm = 0.0;
-            for (int column = 0; column < rows; ++column) {
+            for (std::int64_t column = 0; column < rows; ++column) {
                 check_cublas(
-                    cublasDnrm2(
+                    cublasDnrm2_64(
                         ctx.blas(), rows, forward.data + column * forward.ld, 1, &column_norm),
                     "cublasDnrm2 chart rotation forward column");
                 forward_norm += column_norm * column_norm;
             }
             forward_norm = std::sqrt(forward_norm);
             check_cublas(
-                cublasDnrm2(
+                cublasDnrm2_64(
                     ctx.blas(), rows * rows, block.ah_frame_inverse.data(), 1, &inverse_norm),
                 "cublasDnrm2 chart rotation inverse");
             const double bound = 512.0 * DBL_EPSILON * std::max(1, p.basis) *
@@ -1987,18 +1991,18 @@ void AcceptedOrbitalChart::apply_inverse_hessian_diagonal(Const covector,
         const bool core = block.orbital < p.inactive;
         Mut source = core ? core_sources.view().column(block.orbital)
                           : active_sources.view().column(block.orbital - p.inactive);
-        check_cublas(cublasDgemv(ctx.blas(),
-                                 CUBLAS_OP_T,
-                                 block.size,
-                                 block.size,
-                                 &alpha,
-                                 block.ah_frame_inverse.data(),
-                                 block.size,
-                                 covector.data + block.offset,
-                                 1,
-                                 &beta,
-                                 source.data,
-                                 1),
+        check_cublas(cublasDgemv_64(ctx.blas(),
+                                    CUBLAS_OP_T,
+                                    block.size,
+                                    block.size,
+                                    &alpha,
+                                    block.ah_frame_inverse.data(),
+                                    block.size,
+                                    covector.data + block.offset,
+                                    1,
+                                    &beta,
+                                    source.data,
+                                    1),
                      "cublasDgemv chart full-frame source projection");
     }
     auto solve_group = [&](Const source, Const inverse, Const diagonal, int first_row) {
@@ -2006,13 +2010,13 @@ void AcceptedOrbitalChart::apply_inverse_hessian_diagonal(Const covector,
         if (!source.rows || !source.cols)
             return solved;
         auto frame = chart_product(ctx, source, inverse, Operation::none, Operation::transpose);
-        chart_ah_divide<<<grid(static_cast<int>(frame.rows() * frame.cols())),
+        chart_ah_divide<<<grid(core::checked_index<std::int64_t>(frame.rows() * frame.cols())),
                           kThreads,
                           0,
                           ctx.stream()>>>(frame.data(),
                                           diagonal,
-                                          static_cast<int>(frame.rows()),
-                                          static_cast<int>(frame.cols()),
+                                          core::checked_index<std::int64_t>(frame.rows()),
+                                          core::checked_index<std::int64_t>(frame.cols()),
                                           first_row,
                                           eigenvalue);
         check_cuda(cudaGetLastError(), "CUDA chart full-frame analytic denominator");
@@ -2034,18 +2038,18 @@ void AcceptedOrbitalChart::apply_inverse_hessian_diagonal(Const covector,
         const bool core = block.orbital < p.inactive;
         const Const source = core ? solved_core.view().column(block.orbital)
                                   : solved_active.view().column(block.orbital - p.inactive);
-        check_cublas(cublasDgemv(ctx.blas(),
-                                 CUBLAS_OP_N,
-                                 block.size,
-                                 block.size,
-                                 &alpha,
-                                 block.ah_frame_inverse.data(),
-                                 block.size,
-                                 source.data,
-                                 1,
-                                 &beta,
-                                 direction.data + block.offset,
-                                 1),
+        check_cublas(cublasDgemv_64(ctx.blas(),
+                                    CUBLAS_OP_N,
+                                    block.size,
+                                    block.size,
+                                    &alpha,
+                                    block.ah_frame_inverse.data(),
+                                    block.size,
+                                    source.data,
+                                    1,
+                                    &beta,
+                                    direction.data + block.offset,
+                                    1),
                      "cublasDgemv chart full-frame analytic inverse");
     }
 }

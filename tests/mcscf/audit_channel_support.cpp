@@ -209,7 +209,7 @@ void census(const std::string& space, int tile_rows) {
         live = 0;
     };
     auto cursor = support.cursor(1);
-    int a, b;
+    xmvb::mcscf::StringIndex a, b;
     bool in_support;
     while (cursor.next(a, b, in_support)) {
         if (a > b)

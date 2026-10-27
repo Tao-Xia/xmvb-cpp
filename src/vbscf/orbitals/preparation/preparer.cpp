@@ -396,7 +396,7 @@ ActiveSpaceOrbitalPreparer::prepare(const OrbitalPreparationInput& input) const 
         active_auxiliary_orbitals.transpose() * basis_overlap_matrix * active_auxiliary_orbitals;
     require_finite_matrix(active_overlap_matrix, "active_orbital_overlap_matrix");
 
-    std::vector<int> active_sparse_row_offsets(input.n_basis_functions + 1, 0);
+    std::vector<std::size_t> active_sparse_row_offsets(input.n_basis_functions + 1, 0);
     std::vector<int> active_sparse_orbital_indices;
     std::vector<double> active_sparse_values;
     active_sparse_orbital_indices.reserve(input.n_basis_functions * input.n_active_orbitals);

@@ -286,7 +286,7 @@ void check_frontier(int n, int na, int nb) {
     const SpinStrings alpha(n, na), beta(n, nb);
     const ProductSupport support(n, alpha.masks(), beta.masks());
     const auto an = make_neighbors(alpha, n), bn = make_neighbors(beta, n);
-    std::vector<int> rows;
+    std::vector<std::int64_t> rows;
     std::uint64_t checked = 0;
     for (int b = 0; b < beta.size(); ++b) {
         rows.clear();
@@ -325,14 +325,14 @@ void cost(int n) {
     const SpinStrings alpha(n, electrons), beta(n, electrons);
     const ProductSupport support(n, alpha.masks(), beta.masks());
     const auto an = make_neighbors(alpha, n), bn = make_neighbors(beta, n);
-    std::vector<int> rows;
+    std::vector<std::int64_t> rows;
     std::uint64_t s0 = 0, full_i = 0, upper_i = 0, old_channels = 0, cross_targets = 0,
                   cross_mac = 0, source_alpha_channels = 0, source_beta_channels = 0;
     std::size_t peak_rows = 0;
     for (int b = 0; b < beta.size(); ++b) {
         rows.clear();
         support.append_column_rows(b, rows, 1);
-        peak_rows = std::max(peak_rows, rows.capacity() * sizeof(int));
+        peak_rows = std::max(peak_rows, rows.capacity() * sizeof(std::int64_t));
         for (const int a : rows) {
             ++full_i;
             const bool source = support.contains(a, b);

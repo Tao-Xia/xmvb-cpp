@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <algorithm>
 #include <cmath>
 #include <chrono>
@@ -196,8 +197,10 @@ Eigen::VectorXd flatten_structure_tangent(const xmvb::vb::StructureTangent& tang
                                              tangent.scaled_coefficients.size());
 }
 
-xmvb::vb::StructureTangent unflatten_structure_tangent(
-    const Eigen::Ref<const Eigen::VectorXd>& coefficients, int n_structures, int n_states) {
+xmvb::vb::StructureTangent
+unflatten_structure_tangent(const Eigen::Ref<const Eigen::VectorXd>& coefficients,
+                            std::int64_t n_structures,
+                            int n_states) {
     if (coefficients.size() != n_structures * n_states) {
         throw std::invalid_argument("coupled reference tangent has inconsistent dimensions");
     }
@@ -213,7 +216,7 @@ CoupledReferenceAudit audit_coupled_structure_elimination(
     const Eigen::Ref<const Eigen::VectorXd>& relaxed_hvp,
     bool enforce) {
     const xmvb::vb::StructureTangentOperator structure(accepted, exact_hvp.structure_action());
-    const int n_structures = structure.n_structures();
+    const std::int64_t n_structures = structure.n_structures();
     const int n_states = structure.n_states();
     const int dimension = n_structures * n_states;
     constexpr int kMaximumDenseReferenceDimension = 4096;
@@ -249,7 +252,8 @@ CoupledReferenceAudit audit_coupled_structure_elimination(
     }
     const double eigenvalue_scale = std::max(1.0, spectrum.eigenvalues().cwiseAbs().maxCoeff());
     const double rank_tolerance = 1.0e3 * std::numeric_limits<double>::epsilon() *
-                                  static_cast<double>(std::max(1, dimension)) * eigenvalue_scale;
+                                  static_cast<double>(std::max<std::int64_t>(1, dimension)) *
+                                  eigenvalue_scale;
     Eigen::VectorXd inverse_eigenvalues = Eigen::VectorXd::Zero(dimension);
     int response_rank = 0;
     for (int mode = 0; mode < dimension; ++mode) {
@@ -425,10 +429,10 @@ int main(int argc, char** argv) {
                     for (int row = 0; row < n_bf; ++row)
                         local_gradient[row] = packed_gradient[layout.packed_index(orbital, row)];
                     for (int source = 0; source < gauge_size; ++source)
-                        gauge_derivative =
-                            std::max(gauge_derivative,
-                                     std::abs(local_gradient.dot(occupied.col(source))) /
-                                         occupied.col(source).norm());
+                        gauge_derivative = std::max<std::int64_t>(
+                            gauge_derivative,
+                            std::abs(local_gradient.dot(occupied.col(source))) /
+                                occupied.col(source).norm());
                     std::cout << "chart_orbital=" << orbital << ",tangent=" << columns[orbital]
                               << ",gauge=" << gauge_size << ",combined_rank=" << rank << '\n';
                     if (rank != n_bf || columns[orbital] + gauge_size != n_bf)
@@ -562,7 +566,7 @@ int main(int argc, char** argv) {
                           << ",orbital_relative=" << orbital_error
                           << ",forcing_relative=" << forcing_error
                           << ",preconditioned_relative=" << preconditioned_error << std::endl;
-                worst = std::max({worst, orbital_error, forcing_error});
+                worst = std::max<std::int64_t>({worst, orbital_error, forcing_error});
                 probe = ref_preconditioned;
             }
             if (!std::isfinite(worst) || worst > 1.0e-10)
@@ -956,7 +960,7 @@ int main(int argc, char** argv) {
         }
         double coupling_batch_structure_error = 0.0;
         for (Eigen::Index column = 0; column < 2; ++column) {
-            coupling_batch_structure_error = std::max(
+            coupling_batch_structure_error = std::max<std::int64_t>(
                 coupling_batch_structure_error,
                 relative_matrix_error(
                     block_coupling.scaled_structure_forcing[static_cast<std::size_t>(column)],

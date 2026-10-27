@@ -86,7 +86,7 @@ __global__ void projected_mo_diagonal(linalg::ConstMatrixView mo,
                                       linalg::MatrixView output,
                                       int column,
                                       int nbf) {
-    const int p = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t p = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (p >= nbf)
         return;
     double value = 0.0;
@@ -101,12 +101,12 @@ __global__ void add_active_coulomb(linalg::ConstMatrixView j_active,
                                    int column,
                                    int nbf,
                                    int active) {
-    const int p = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t p = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (p >= nbf)
         return;
     double coulomb = 0.0;
-    for (int a = 0; a < active; ++a)
-        for (int b = 0; b < active; ++b)
+    for (std::int64_t a = 0; a < active; ++a)
+        for (std::int64_t b = 0; b < active; ++b)
             coulomb += j_active.data[p + j_active.ld * pair(a, b)] * weight.data[a + weight.ld * b];
     response.data[p + response.ld * column] += 2.0 * coulomb;
 }
@@ -123,11 +123,11 @@ __global__ void potential_and_gradient(linalg::ConstMatrixView hmo,
                                        int nbf,
                                        int ncore,
                                        int active) {
-    const int p = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t p = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (p >= nbf)
         return;
     double pot = vmo.data[p + vmo.ld * p];
-    for (int a = 0; a < active; ++a)
+    for (std::int64_t a = 0; a < active; ++a)
         pot += 0.5 * density_images.data[p + density_images.ld * a];
     potential[p] = pot;
     if (p < ncore) {
@@ -135,7 +135,7 @@ __global__ void potential_and_gradient(linalg::ConstMatrixView hmo,
         return;
     }
     double value = 0.0;
-    const int a = p - ncore;
+    const std::int64_t a = p - ncore;
     if (a < active)
         for (int u = 0; u < active; ++u) {
             value += (hmo.data[p + hmo.ld * (ncore + u)] + vmo.data[p + vmo.ld * (ncore + u)]) *
@@ -182,7 +182,7 @@ __global__ void rdm_contractions(linalg::ConstMatrixView j_active,
 __device__ double occupation(linalg::ConstMatrixView dm1, int ncore, int active, int p, int q) {
     if (p < ncore || q < ncore)
         return p == q && p < ncore ? 2.0 : 0.0;
-    const int a = p - ncore, b = q - ncore;
+    const std::int64_t a = p - ncore, b = q - ncore;
     return a < active && b < active ? dm1.data[a + dm1.ld * b] : 0.0;
 }
 
@@ -218,7 +218,7 @@ __device__ double raw_diagonal(int p,
     if (p >= ncore && p < nocc)
         value += vmo.data[q + vmo.ld * q] * dm1.data[(p - ncore) * (dm1.ld + 1)];
     if (p >= ncore && p < nocc && q >= ncore && q < nocc) {
-        const int a = p - ncore, b = q - ncore;
+        const std::int64_t a = p - ncore, b = q - ncore;
         value -= vmo.data[p + vmo.ld * q] * dm1.data[a + dm1.ld * b];
         value -= vmo.data[q + vmo.ld * p] * dm1.data[b + dm1.ld * a];
     }
@@ -445,8 +445,8 @@ Matrix<double> build_analytic_rotation_diagonal(Context& context,
         densities = Matrix<double>(context, nbf, nbf * width);
         responses = Matrix<double>(context, nbf, nbf * width);
     }
-    for (int begin = 0; begin < 2 * active; begin += width) {
-        const int count = std::min(width, 2 * active - begin);
+    for (std::int64_t begin = 0; begin < 2 * active; begin += width) {
+        const std::int64_t count = std::min<std::int64_t>(width, 2 * active - begin);
         for (int local = 0; local < count; ++local) {
             if (!exchange_products.data) {
                 const int channel = begin + local;

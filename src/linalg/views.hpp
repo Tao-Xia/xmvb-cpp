@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <stdexcept>
 #include <type_traits>
+#include "core/index.hpp"
 
 namespace xmvb::linalg {
 
@@ -25,7 +26,9 @@ template <class T> struct BasicMatrixView {
         if (first < 0 || count < 0 || first > cols || count > cols - first) {
             throw std::out_of_range("matrix view column range");
         }
-        return {data == nullptr ? nullptr : data + first * ld, rows, count, ld};
+        const auto offset = core::checked_index<std::ptrdiff_t>(core::checked_multiply(
+            core::checked_index<std::size_t>(first), core::checked_index<std::size_t>(ld)));
+        return {data == nullptr ? nullptr : data + offset, rows, count, ld};
     }
 
     template <class U = T>
@@ -37,5 +40,11 @@ template <class T> struct BasicMatrixView {
 
 using MatrixView = BasicMatrixView<double>;
 using ConstMatrixView = BasicMatrixView<const double>;
+
+/** @brief Native logical element count, checked before flattening a vector. */
+template <class T> std::int64_t element_count(BasicMatrixView<T> view) {
+    return core::checked_index<std::int64_t>(core::checked_multiply(
+        core::checked_index<std::size_t>(view.rows), core::checked_index<std::size_t>(view.cols)));
+}
 
 } // namespace xmvb::linalg

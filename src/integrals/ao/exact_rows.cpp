@@ -45,8 +45,9 @@ void contract_row(const AoIntegralInput& ao, int mu, const double* source,
             std::fill_n(sum, core_width, 0.0);
         const int hi = std::max(mu, j), lo = std::min(mu, j);
         const int pair = hi * (hi + 1) / 2 + lo;
-        for (int edge = graph.row_offsets[pair]; edge < graph.row_offsets[pair + 1]; ++edge) {
-            const int right = graph.columns[edge];
+        for (PairAddress edge = graph.row_offsets[pair]; edge < graph.row_offsets[pair + 1];
+             ++edge) {
+            const auto right = graph.columns[edge];
             const int k = graph.pair_first[right], l = graph.pair_second[right];
             const double value = graph.values[edge];
             // D is symmetric: keep the ordered left partner j as the AO column.

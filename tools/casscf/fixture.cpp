@@ -89,8 +89,8 @@ Input read(const std::filesystem::path& path) {
              .isApprox(Eigen::MatrixXd::Identity(nbf, nbf), 1e-8))
         throw std::runtime_error("invalid AO symmetry or initial MO orthonormality");
 
-    std::vector<int> left;
-    std::vector<int> right;
+    std::vector<std::int64_t> left;
+    std::vector<std::int64_t> right;
     std::vector<double> values;
     left.reserve(static_cast<std::size_t>(neri));
     right.reserve(static_cast<std::size_t>(neri));

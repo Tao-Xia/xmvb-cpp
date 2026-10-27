@@ -155,7 +155,7 @@ StructureResponseBlock ExactHvpOperator::State::solve_structure_response_block(
         relative_residual_tolerance >= 1.0 || !std::isfinite(relative_residual_tolerance)) {
         throw std::invalid_argument("invalid structure-response forcing block");
     }
-    const int n_structures = accepted_point_context_->n_structures;
+    const Eigen::Index n_structures = accepted_point_context_->n_structures;
     const int n_states = static_cast<int>(accepted_point_context_->selected_state_indices.size());
     const int n_directions = static_cast<int>(scaled_structure_forcing.size());
     Eigen::MatrixXd raw_forcing(n_structures, n_states * n_directions);
@@ -941,7 +941,7 @@ Eigen::VectorXd ExactHvpOperator::State::apply_structure_response_adjoint(
     const Eigen::Ref<const Eigen::MatrixXd>& coefficient_response,
     const Eigen::Ref<const Eigen::MatrixXd>& state_multipliers) const {
     xmvb::profiling::ScopedPhase phase(xmvb::profiling::Phase::StructureAdjoint);
-    const int n_structures = accepted_point_context_->n_structures;
+    const Eigen::Index n_structures = accepted_point_context_->n_structures;
     const int n_states = static_cast<int>(accepted_point_context_->selected_state_indices.size());
     if (coefficient_response.rows() != n_structures || coefficient_response.cols() != n_states ||
         state_multipliers.rows() != n_states || state_multipliers.cols() != n_states ||

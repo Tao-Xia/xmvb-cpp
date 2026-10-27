@@ -56,6 +56,25 @@ int main() {
         require(default_method.metadata.electronic_method == xmvb::vb::ElectronicMethod::Vbscf,
                 "omitted method must retain the VBSCF default");
 
+        const auto gpu_path = root / "gpu.xmi";
+        write_deck(gpu_path, "", "CuVbScF");
+        const auto gpu = xmvb::vb::parse_input_deck_model(gpu_path.string());
+        require(gpu.metadata.electronic_method == xmvb::vb::ElectronicMethod::CuVbscf,
+                "CUVBSCF must select GPU VBSCF, independent of keyword case");
+        require(gpu.metadata.structure_eigensolver == xmvb::vb::StructureEigensolver::Davidson &&
+                    implicit.metadata.structure_eigensolver ==
+                        xmvb::vb::StructureEigensolver::Davidson,
+                "CPU and GPU inputs must default to Davidson");
+        const auto gpu_conflict_path = root / "gpu-conflict.xmi";
+        write_deck(gpu_conflict_path, "", "vbscf cuvbscf");
+        bool rejected_gpu_conflict = false;
+        try {
+            (void)xmvb::vb::parse_input_deck_model(gpu_conflict_path.string());
+        } catch (const std::invalid_argument&) {
+            rejected_gpu_conflict = true;
+        }
+        require(rejected_gpu_conflict, "conflicting CPU/GPU method flags must be rejected");
+
         const auto casscf_path = root / "casscf.xmi";
         write_deck(casscf_path, "iscf=7", "casscf");
         const auto casscf = xmvb::vb::parse_input_deck_model(casscf_path.string());

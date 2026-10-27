@@ -144,11 +144,11 @@ std::vector<double> unpack_symmetric_active_two_rdm(const std::vector<double>& p
     std::vector<double> dm2(static_cast<std::size_t>(nactive) * nactive * nactive * nactive);
     for (int p = 0; p < nactive; ++p)
         for (int q = 0; q < nactive; ++q) {
-            const int pq = core::PairIndex::packed_pair_index(p, q);
+            const auto pq = core::PairIndex::packed_pair_index(p, q);
             for (int r = 0; r < nactive; ++r)
                 for (int s = 0; s < nactive; ++s) {
-                    const int rs = core::PairIndex::packed_pair_index(r, s);
-                    const int packed = core::PairIndex::packed_pair_of_pairs_index(pq, rs);
+                    const auto rs = core::PairIndex::packed_pair_index(r, s);
+                    const auto packed = core::PairIndex::packed_pair_of_pairs_index(pq, rs);
                     const int multiplicity =
                         (p == q ? 1 : 2) * (r == s ? 1 : 2) * (pq == rs ? 1 : 2);
                     dm2[tensor4_index(p, q, r, s, nactive)] =

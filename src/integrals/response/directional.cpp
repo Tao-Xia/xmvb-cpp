@@ -167,7 +167,7 @@ void compute_exact_packed_active_two_electron_integral_directional_derivative(
         for (std::size_t right_active_pair_index = 0;
              right_active_pair_index <= left_active_pair_index;
              ++right_active_pair_index) {
-            const int packed_index = xmvb::core::PairIndex::packed_pair_of_pairs_index(
+            const auto packed_index = xmvb::core::PairIndex::packed_pair_of_pairs_index(
                 static_cast<int>(left_active_pair_index),
                 static_cast<int>(right_active_pair_index));
             (*delta_packed_active_two_electron_integrals)[packed_index] =

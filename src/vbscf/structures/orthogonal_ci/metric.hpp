@@ -75,7 +75,7 @@ class StructureMetricInverse {
     std::size_t block_count() const noexcept {
         return spin_.block_count();
     }
-    int max_block_size() const noexcept {
+    Eigen::Index max_block_size() const noexcept {
         return spin_.max_block_size();
     }
 
@@ -89,7 +89,7 @@ class StructureMetricInverse {
   private:
     const StructureAction* action_;
     SpinMetric spin_;
-    int chunk_width_ = 0;
+    Eigen::Index chunk_width_ = 0;
 };
 
 } // namespace xmvb::vb

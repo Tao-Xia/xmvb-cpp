@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/index.hpp"
+
 #include <functional>
 #include <cmath>
 #include <memory>
@@ -237,7 +239,7 @@ struct CiahOriginRay {
 
 /** @brief Trial-space inverse spectrum, diagnostic only, not a stopping rule. */
 struct CiahInverseSpectrum {
-    int dimension = 0;
+    Eigen::Index dimension = 0;
     bool positive_curvature = false;
     double curvature_min = 0.0, curvature_max = 0.0;
     double inverse_min = 0.0, inverse_max = 0.0;

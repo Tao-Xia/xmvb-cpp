@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/index.hpp"
+
 #include "mcscf/ci/string_table.hpp"
 
 #include <memory>
@@ -58,7 +60,7 @@ class RepresentationOverlap {
             return selected_metric_;
         }
         /** @brief Whether the selected matrix fits its existing workspace quarter. */
-        static bool fits_selected(int dimension) noexcept;
+        static bool fits_selected(Eigen::Index dimension) noexcept;
 
       private:
         friend class RepresentationOverlap;

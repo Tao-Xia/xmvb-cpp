@@ -30,7 +30,7 @@ struct SparseActivePairCoefficient {
 };
 
 struct SparseAoPairCoefficients {
-    std::vector<int> row_offsets;
+    std::vector<std::size_t> row_offsets;
     std::vector<int> packed_active_pair_indices;
     std::vector<double> values;
 };
@@ -58,13 +58,13 @@ bool retain_dense_pair_products(const AoPairGraph& graph,
     const long double graph_bytes =
         (graph.chunks.empty() ? 0.0L
                               : static_cast<long double>(graph.integral_count()) *
-                                    (2 * sizeof(int) + sizeof(double))) +
-        static_cast<long double>(graph.row_offsets.size()) * sizeof(int) +
-        static_cast<long double>(graph.columns.size()) * sizeof(int) +
+                                    (2 * sizeof(PairAddress) + sizeof(double))) +
+        static_cast<long double>(graph.row_offsets.size()) * sizeof(PairAddress) +
+        static_cast<long double>(graph.columns.size()) * sizeof(PairAddress) +
         static_cast<long double>(graph.values.size()) * sizeof(double) +
-        static_cast<long double>(graph.integral_rows.size()) * sizeof(int) +
-        static_cast<long double>(graph.integral_edges.size()) * sizeof(int) +
-        static_cast<long double>(graph.integral_columns.size()) * sizeof(int) +
+        static_cast<long double>(graph.integral_rows.size()) * sizeof(PairAddress) +
+        static_cast<long double>(graph.integral_edges.size()) * sizeof(PairAddress) +
+        static_cast<long double>(graph.integral_columns.size()) * sizeof(PairAddress) +
         static_cast<long double>(graph.integral_values.size()) * sizeof(double) +
         static_cast<long double>(graph.pair_first.size()) * sizeof(int) +
         static_cast<long double>(graph.pair_second.size()) * sizeof(int);
@@ -94,7 +94,7 @@ std::vector<ActivePair> build_active_pair_list(int n_active_orbitals) {
     return active_pairs;
 }
 
-std::vector<double> build_dense_active_coefficients(const std::span<const int> row_offsets,
+std::vector<double> build_dense_active_coefficients(const std::span<const std::size_t> row_offsets,
                                                     const std::span<const int> orbital_indices,
                                                     const std::span<const double> coefficients,
                                                     int n_basis_functions,
@@ -111,8 +111,8 @@ std::vector<double> build_dense_active_coefficients(const std::span<const int> r
     std::vector<double> dense_active_coefficients(n_basis * basis_stride, 0.0);
     for (int basis_function_index = 0; basis_function_index < n_basis_functions;
          ++basis_function_index) {
-        const int begin = row_offsets[basis_function_index];
-        const int end = row_offsets[basis_function_index + 1];
+        const auto begin = row_offsets[basis_function_index];
+        const auto end = row_offsets[basis_function_index + 1];
         double* basis_coefficients = dense_active_coefficients.data() +
                                      static_cast<std::size_t>(basis_function_index) * basis_stride;
         for (int offset = begin; offset < end; ++offset) {
@@ -184,7 +184,8 @@ std::vector<double> contract_pair_coefficients_to_packed_active_integrals(
         static_cast<std::size_t>(n_active_pairs * (n_active_pairs + 1) / 2), 0.0);
     for (int left = 0; left < n_active_pairs; ++left) {
         for (int right = 0; right <= left; ++right) {
-            const int packed_index = xmvb::core::PairIndex::packed_pair_of_pairs_index(left, right);
+            const auto packed_index =
+                xmvb::core::PairIndex::packed_pair_of_pairs_index(left, right);
             packed_active_two_electron_integrals[packed_index] = active_pair_matrix(left, right);
         }
     }
@@ -192,15 +193,15 @@ std::vector<double> contract_pair_coefficients_to_packed_active_integrals(
 }
 
 std::vector<SparseActivePairCoefficient>
-build_sparse_active_pair_row(const std::span<const int> active_sparse_row_offsets,
+build_sparse_active_pair_row(const std::span<const std::size_t> active_sparse_row_offsets,
                              const std::span<const int> active_sparse_orbital_indices,
                              const std::span<const double> active_sparse_values,
                              int first_basis_function,
                              int second_basis_function) {
-    const int first_begin = active_sparse_row_offsets[first_basis_function];
-    const int first_end = active_sparse_row_offsets[first_basis_function + 1];
-    const int second_begin = active_sparse_row_offsets[second_basis_function];
-    const int second_end = active_sparse_row_offsets[second_basis_function + 1];
+    const auto first_begin = active_sparse_row_offsets[first_basis_function];
+    const auto first_end = active_sparse_row_offsets[first_basis_function + 1];
+    const auto second_begin = active_sparse_row_offsets[second_basis_function];
+    const auto second_end = active_sparse_row_offsets[second_basis_function + 1];
     const int first_count = first_end - first_begin;
     const int second_count = second_end - second_begin;
     if (first_count <= 0 || second_count <= 0) {
@@ -275,7 +276,7 @@ build_sparse_active_pair_row(const std::span<const int> active_sparse_row_offset
 }
 
 SparseAoPairCoefficients
-build_sparse_ao_pair_coefficients(const std::span<const int> active_sparse_row_offsets,
+build_sparse_ao_pair_coefficients(const std::span<const std::size_t> active_sparse_row_offsets,
                                   const std::span<const int> active_sparse_orbital_indices,
                                   const std::span<const double> active_sparse_values,
                                   int n_basis_functions,
@@ -314,10 +315,10 @@ build_sparse_ao_pair_coefficients(const std::span<const int> active_sparse_row_o
     sparse_pair_coefficients.row_offsets.resize(n_ao_pairs + 1, 0);
     std::size_t nnz = 0;
     for (std::size_t ao_pair = 0; ao_pair < n_ao_pairs; ++ao_pair) {
-        sparse_pair_coefficients.row_offsets[ao_pair] = static_cast<int>(nnz);
+        sparse_pair_coefficients.row_offsets[ao_pair] = nnz;
         nnz += pair_rows[ao_pair].size();
     }
-    sparse_pair_coefficients.row_offsets[n_ao_pairs] = static_cast<int>(nnz);
+    sparse_pair_coefficients.row_offsets[n_ao_pairs] = nnz;
     sparse_pair_coefficients.packed_active_pair_indices.resize(nnz);
     sparse_pair_coefficients.values.resize(nnz);
 
@@ -326,7 +327,7 @@ build_sparse_ao_pair_coefficients(const std::span<const int> active_sparse_row_o
          ao_pair_offset < static_cast<std::ptrdiff_t>(n_ao_pairs);
          ++ao_pair_offset) {
         const std::size_t ao_pair = ao_pair_offset;
-        const int begin = sparse_pair_coefficients.row_offsets[ao_pair];
+        const auto begin = sparse_pair_coefficients.row_offsets[ao_pair];
         const auto& source_row = pair_rows[ao_pair];
         for (std::size_t entry_index = 0; entry_index < source_row.size(); ++entry_index) {
             const std::size_t target_index = begin + entry_index;
@@ -373,7 +374,7 @@ ActiveSpaceTwoElectronResult build_packed_active_two_electron_integrals_sparse(
     Eigen::MatrixXd dense_active_coefficients,
     int n_basis_functions,
     int n_active_orbitals) {
-    const int last_active_pair_index =
+    const auto last_active_pair_index =
         xmvb::core::PairIndex::packed_pair_index(n_active_orbitals - 1, n_active_orbitals - 1);
     const std::size_t packed_size = xmvb::core::PairIndex::packed_pair_of_pairs_index(
                                         last_active_pair_index, last_active_pair_index) +
@@ -409,10 +410,10 @@ ActiveSpaceTwoElectronResult build_packed_active_two_electron_integrals_sparse(
             const std::size_t left_ao_pair_index = eri.left_pair;
             const std::size_t right_ao_pair_index = eri.right_pair;
             const double ao_integral_value = eri.value;
-            const int left_begin = sparse_pair_coefficients.row_offsets[left_ao_pair_index];
-            const int left_end = sparse_pair_coefficients.row_offsets[left_ao_pair_index + 1];
-            const int right_begin = sparse_pair_coefficients.row_offsets[right_ao_pair_index];
-            const int right_end = sparse_pair_coefficients.row_offsets[right_ao_pair_index + 1];
+            const auto left_begin = sparse_pair_coefficients.row_offsets[left_ao_pair_index];
+            const auto left_end = sparse_pair_coefficients.row_offsets[left_ao_pair_index + 1];
+            const auto right_begin = sparse_pair_coefficients.row_offsets[right_ao_pair_index];
+            const auto right_end = sparse_pair_coefficients.row_offsets[right_ao_pair_index + 1];
             if (left_begin == left_end || right_begin == right_end) {
                 continue;
             }
@@ -431,7 +432,7 @@ ActiveSpaceTwoElectronResult build_packed_active_two_electron_integrals_sparse(
                         if (coefficient == 0.0) {
                             continue;
                         }
-                        const int packed_index = xmvb::core::PairIndex::packed_pair_of_pairs_index(
+                        const auto packed_index = xmvb::core::PairIndex::packed_pair_of_pairs_index(
                             left_active_pair_index, right_active_pair_index);
                         local_packed_integrals[packed_index] += ao_integral_value * coefficient;
                     }
@@ -451,7 +452,7 @@ ActiveSpaceTwoElectronResult build_packed_active_two_electron_integrals_sparse(
                     }
                     const int right_active_pair_index =
                         sparse_pair_coefficients.packed_active_pair_indices[right_offset];
-                    const int packed_index = xmvb::core::PairIndex::packed_pair_of_pairs_index(
+                    const auto packed_index = xmvb::core::PairIndex::packed_pair_of_pairs_index(
                         left_active_pair_index, right_active_pair_index);
                     local_packed_integrals[packed_index] +=
                         ao_integral_value * coefficient *
@@ -486,7 +487,7 @@ ActiveSpaceTwoElectronResult build_packed_active_two_electron_integrals_sparse(
 
 ActiveSpaceTwoElectronResult
 transform_exact_active_integrals(const AoIntegralInput& ao_integral_input,
-                                 const std::span<const int> row_offsets,
+                                 const std::span<const std::size_t> row_offsets,
                                  const std::span<const int> orbital_indices,
                                  const std::span<const double> coefficients,
                                  int n_active_orbitals) {

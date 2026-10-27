@@ -23,8 +23,8 @@ class Strings {
   public:
     Strings(int n_spinor, int n_electrons, int n_a, std::size_t max_states);
 
-    int dimension() const noexcept {
-        return static_cast<int>(masks_.size());
+    Eigen::Index dimension() const noexcept {
+        return static_cast<Eigen::Index>(masks_.size());
     }
     int n_spinor() const noexcept {
         return n_spinor_;
@@ -40,7 +40,7 @@ class Strings {
     }
 
     /** @throws std::invalid_argument if mask is outside this carrier. */
-    int index(std::uint64_t mask) const;
+    Eigen::Index index(std::uint64_t mask) const;
 
     /**
    * @brief Target row for a_created^dagger a_removed on source row.
@@ -49,7 +49,7 @@ class Strings {
    * +1 or -1, including +1 for an occupied diagonal substitution. Labels and
    * source row must be in range; sign must be non-null.
    */
-    int substitution(int source, int created, int removed, int* sign) const;
+    Eigen::Index substitution(Eigen::Index source, int created, int removed, int* sign) const;
 
     /**
    * @brief Apply sum_pq block(p,q) a_p^dagger a_q to every RHS column.
@@ -70,7 +70,7 @@ class Strings {
     int n_electrons_ = 0;
     int n_a_ = 0;
     std::vector<std::uint64_t> masks_;
-    std::unordered_map<std::uint64_t, int> index_by_mask_;
+    std::unordered_map<std::uint64_t, Eigen::Index> index_by_mask_;
 };
 
 } // namespace xmvb::vb::spinor

@@ -75,6 +75,9 @@ set(XMVB_MCSCF_SOURCES
   mcscf/ci/sigma_plan.cpp
   mcscf/ci/generator_tiles.cpp
   mcscf/ci/spin_channels.cpp
+  mcscf/ci/similarity.cpp
+  mcscf/ci/similarity_derivatives.cpp
+  mcscf/ci/raw_action.cpp
   mcscf/ci/factors.cpp
   mcscf/ci/factor_generator.cpp
   mcscf/ci/factor_plan.cpp

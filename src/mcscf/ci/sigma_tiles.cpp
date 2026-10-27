@@ -1,3 +1,5 @@
+#include "core/index.hpp"
+#include <cstdint>
 #include "mcscf/ci/sigma.hpp"
 #include "mcscf/ci/workspace.hpp"
 #include "mcscf/ci/scratch.hpp"
@@ -142,8 +144,8 @@ DirectCiSigmaAction::contract_tiled(int width,
     std::size_t kernel_entries = pairs * envelopes;
     if (source_projected_image) {
         kernel_entries = 0;
-        for (int first = 0; first < n_orbitals_; ++first)
-            for (int last = first; last < n_orbitals_ - 1; ++last) {
+        for (StringIndex first = 0; first < n_orbitals_; ++first)
+            for (StringIndex last = first; last < n_orbitals_ - 1; ++last) {
                 const auto k = static_cast<std::size_t>((first + 1) * (n_orbitals_ - 1 - last));
                 kernel_entries += k * k;
             }
@@ -192,9 +194,9 @@ DirectCiSigmaAction::contract_tiled(int width,
         restricted_channels
             ? ((separate_output && !has_forcing ? 2 : 1) + static_cast<int>(projected_image))
             : 0;
-    const int row_limit = static_cast<int>(std::max<std::size_t>(
+    const StringIndex row_limit = static_cast<std::int64_t>(std::max<std::size_t>(
         1,
-        std::min<std::size_t>(std::numeric_limits<int>::max() / width,
+        std::min<std::size_t>(std::numeric_limits<StringIndex>::max() / width,
                               workspace_bytes / (slab_factor * sizeof(double) * width * pairs))));
     const int workers = coarse_openmp_thread_count(
         effective_openmp_thread_count(), static_cast<std::size_t>(row_limit) * width * pairs);
@@ -259,7 +261,7 @@ DirectCiSigmaAction::contract_tiled(int width,
     auto& active_support = plan.active_support;
     auto& released_columns = plan.released;
     auto& diagonal_images = plan.diagonal_rows;
-    std::vector<int> same_group, offsets, positions, image_index;
+    std::vector<StringIndex> same_group, offsets, positions, image_index;
     std::vector<detail::SigmaGatherRow> target_rows;
     const auto& channel_groups = plan.channel_groups;
     detail::ChannelLayout channel_layout;
@@ -268,7 +270,7 @@ DirectCiSigmaAction::contract_tiled(int width,
     ChannelWorkspace workspace(workspace_bytes);
     std::size_t panel_size = 0, channel_size = 0, scratch_size = 0, packed_size = 0,
                 source_capacity = 0;
-    int count = 0, n_halo = 0, n_columns = 0;
+    std::int64_t count = 0, n_halo = 0, n_columns = 0;
     bool finished = false;
     std::exception_ptr failure;
     const bool timing = profiling::phase_totals().enabled;
@@ -327,7 +329,8 @@ DirectCiSigmaAction::contract_tiled(int width,
                                         static_cast<bool>(request.direction) *
                                             static_cast<bool>(request.image || request.forcing);
                                 for (int group = 0; group < channel_product.groups(); ++group)
-                                    owners += std::min(team, channel_layout.size(group));
+                                    owners +=
+                                        std::min<StringIndex>(team, channel_layout.size(group));
                                 const auto diagonal_products = static_cast<std::size_t>(width) *
                                                                diagonal_images.size() * products;
                                 // Exact scan count of the former all-diagonals-per-owner loop;
@@ -401,7 +404,7 @@ DirectCiSigmaAction::contract_tiled(int width,
                             cooperative_openmp_for(
                                 groups.size(), index_workers, [&](std::ptrdiff_t g) {
                                     same_group[column_index[groups[g].beta]] = g;
-                                    for (int i = groups[g].begin; i < groups[g].end; ++i) {
+                                    for (StringIndex i = groups[g].begin; i < groups[g].end; ++i) {
                                         const int channel_group =
                                             channel_groups.empty() ? 0 : channel_groups[i];
                                         const auto image = channel_layout.output_index(
@@ -422,7 +425,7 @@ DirectCiSigmaAction::contract_tiled(int width,
                                         std::sort(begin, end, before);
                                     // Store one row-record index for all RHSs and responses. The
                                     // composed address already includes the packed group offset.
-                                    for (int i = groups[g].begin; i < groups[g].end; ++i)
+                                    for (StringIndex i = groups[g].begin; i < groups[g].end; ++i)
                                         image_index[static_cast<std::size_t>(g) * n_halo +
                                                     halo_index[target_rows[i].alpha]] =
                                             i - groups[g].begin;
@@ -439,10 +442,14 @@ DirectCiSigmaAction::contract_tiled(int width,
                             beta_offsets.resize(groups.size() * beta_graph.n_singles());
                             beta_map_bytes = std::max(
                                 beta_map_bytes, beta_offsets.capacity() * sizeof(Eigen::Index));
-                            for (int g = 0; g < static_cast<int>(groups.size()); ++g) {
+                            for (std::int64_t g = 0;
+                                 g < core::checked_index<std::int64_t>(groups.size());
+                                 ++g) {
                                 groups[g].column = column_index[groups[g].beta] * width;
                                 const auto& links = beta_graph.singles(groups[g].beta);
-                                for (int link = 0; link < static_cast<int>(links.size()); ++link) {
+                                for (std::int64_t link = 0;
+                                     link < core::checked_index<std::int64_t>(links.size());
+                                     ++link) {
                                     incoming[positions[column_index[links[link].source]]++] = {
                                         g,
                                         links[link].pair,
@@ -481,16 +488,16 @@ DirectCiSigmaAction::contract_tiled(int width,
             // Scattered/state channels are ragged row-major until multiplication;
             // transformed images are column-major, compact only for projected H/S.
 
-            const int first = count * width * thread / team;
-            const int last = count * width * (thread + 1) / team;
+            const StringIndex first = count * width * thread / team;
+            const StringIndex last = count * width * (thread + 1) / team;
             const bool identity_halo = n_halo == n_alpha_;
-            const auto scatter = [&](int row, double* values) {
-                const int local = row % count, v = row / count;
+            const auto scatter = [&](std::int64_t row, double* values) {
+                const StringIndex local = row % count, v = row / count;
                 const int channel_group = channel_groups.empty() ? 0 : channel_groups[local];
                 double* target = values + channel_layout.packed(row, channel_group);
                 std::fill_n(target, channel_product.channels(channel_group), 0.0);
-                const int a = active[local], g = group_index[local], beta = groups[g].beta;
-                const int h = identity_halo ? a : halo_index[a];
+                const std::int64_t a = active[local], g = group_index[local], beta = groups[g].beta;
+                const StringIndex h = identity_halo ? a : halo_index[a];
                 const double* column = input.col(groups[g].column + v).data();
                 // A depth-one target outside S has no own coefficient, although its
                 // one-body neighbors can still contribute to E*c and must be kept.
@@ -535,9 +542,9 @@ DirectCiSigmaAction::contract_tiled(int width,
                         });
                     }
                 } else {
-                    for (int link = 0; link < alpha_links.size(); ++link)
+                    for (std::int64_t link = 0; link < alpha_links.size(); ++link)
                         add_alpha(link, alpha_links[link].pair);
-                    for (int link = 0; link < beta_links.size(); ++link)
+                    for (std::int64_t link = 0; link < beta_links.size(); ++link)
                         add_beta(link, beta_links[link].pair);
                 }
             };
@@ -550,7 +557,7 @@ DirectCiSigmaAction::contract_tiled(int width,
                         scatter_start = tick();
                     }
                 }
-                for (int row = first; row < last; ++row)
+                for (std::int64_t row = first; row < last; ++row)
                     scatter(row, values);
                 if (timing) {
 #pragma omp barrier
@@ -614,7 +621,7 @@ DirectCiSigmaAction::contract_tiled(int width,
                     // An identical bra borrows A directly: no second scatter or copy.
                     // A distinct B remains immutable across all temporal responses.
 #pragma omp barrier
-                    const int available = std::min(team, count * width);
+                    const int available = std::min<std::int64_t>(team, count * width);
                     const auto full_area = static_cast<std::size_t>(pairs) * pairs;
                     const bool row_partition = full_area <= scratch_size / (2 * available);
                     const int parts = row_partition ? available : 1;
@@ -682,9 +689,10 @@ DirectCiSigmaAction::contract_tiled(int width,
                         // Both images use identical group row ownership.
                         const Eigen::OuterStride<> image_stride(count * width);
                         for (int group = 0; group < channel_product.groups(); ++group) {
-                            const int size = channel_layout.size(group);
-                            const int begin = channel_layout.begin(group) + size * thread / team;
-                            const int end =
+                            const std::int64_t size = channel_layout.size(group);
+                            const StringIndex begin =
+                                channel_layout.begin(group) + size * thread / team;
+                            const StringIndex end =
                                 channel_layout.begin(group) + size * (thread + 1) / team;
                             if (begin == end)
                                 continue;
@@ -719,7 +727,7 @@ DirectCiSigmaAction::contract_tiled(int width,
                                                      const DirectCiTileWriter& writer,
                                                      const double* channel_values) {
                             const std::size_t image_rows = static_cast<std::size_t>(count) * width;
-                            const auto value = [&](int row, int rhs, int pair) {
+                            const auto value = [&](std::int64_t row, int rhs, int pair) {
                                 const auto& target = target_rows[row];
                                 if constexpr (!Projected && FirstRhs)
                                     return channel_values[target.image +
@@ -743,101 +751,106 @@ DirectCiSigmaAction::contract_tiled(int width,
                                                          : image_rows)];
                                 }
                             };
-                            const DirectCiColumnAccumulator accumulate = [&, channel_values](
-                                                                             int source,
-                                                                             int v,
-                                                                             int first,
-                                                                             int last,
-                                                                             double* destination,
-                                                                             const int* rows,
-                                                                             int n_rows) {
-                                if (first == last)
-                                    return;
-                                int begin = first, end = last;
-                                if (rows) {
-                                    begin =
-                                        std::lower_bound(rows, rows + n_rows, halo[first]) - rows;
-                                    end = std::upper_bound(
-                                              rows + begin, rows + n_rows, halo[last - 1]) -
-                                          rows;
-                                    if (begin == end)
+                            const DirectCiColumnAccumulator accumulate =
+                                [&, channel_values](StringIndex source,
+                                                    int v,
+                                                    StringIndex first,
+                                                    StringIndex last,
+                                                    double* destination,
+                                                    const StringIndex* rows,
+                                                    StringIndex n_rows) {
+                                    if (first == last)
                                         return;
-                                }
-                                const int same = same_group[source];
-                                if (same >= 0) {
-                                    const int* index = image_index.data() +
-                                                       static_cast<std::size_t>(same) * n_halo;
-                                    const auto beta_occupied =
-                                        OccupiedOrbitals(beta_masks[columns[source]]);
-                                    for (int i = begin; i < end; ++i) {
-                                        const int a = rows ? rows[i] : halo[i];
-                                        const int local =
-                                            rows ? (identity_halo ? a : halo_index[a]) : i;
-                                        if (local < first || local >= last)
-                                            continue;
-                                        double sum = 0;
-                                        if (index[local] >= 0) {
-                                            const int row = groups[same].begin + index[local];
-                                            for (const int p : OccupiedOrbitals(alpha_masks[a]))
-                                                sum +=
-                                                    value(row,
-                                                          v,
-                                                          core::PairIndex::packed_pair_index(p, p));
-                                            for (const int p : beta_occupied)
-                                                sum +=
-                                                    value(row,
-                                                          v,
-                                                          core::PairIndex::packed_pair_index(p, p));
-                                        }
-                                        const auto& links = alpha_->singles(a);
-                                        for (int link = 0; link < static_cast<int>(links.size());
-                                             ++link) {
-                                            const int h = identity_halo
-                                                              ? links[link].source
-                                                              : halo_index[links[link].source];
-                                            const int target = h < 0 ? -1 : index[h];
-                                            if (target >= 0)
-                                                sum += links[link].sign *
-                                                       value(groups[same].begin + target,
-                                                             v,
-                                                             links[link].pair);
-                                        }
-                                        destination[rows ? i : a] += sum;
+                                    StringIndex begin = first, end = last;
+                                    if (rows) {
+                                        begin = std::lower_bound(rows, rows + n_rows, halo[first]) -
+                                                rows;
+                                        end = std::upper_bound(
+                                                  rows + begin, rows + n_rows, halo[last - 1]) -
+                                              rows;
+                                        if (begin == end)
+                                            return;
                                     }
-                                }
-                                // One beta edge fixes the channel, sign and target-row map for
-                                // the entire alpha range. Do not rediscover them for every pixel.
-                                for (int edge = offsets[source]; edge < offsets[source + 1];
-                                     ++edge) {
-                                    const auto& link = incoming[edge];
-                                    const auto& group = groups[link.group];
-                                    const detail::SigmaGatherImage<Projected, FirstRhs> image{
-                                        .values = Projected
-                                                      ? channel_values
-                                                      : channel_values +
-                                                            static_cast<std::size_t>(link.pair) *
-                                                                image_rows,
-                                        .rhs_strides = channel_layout.rhs_strides(),
-                                        .projected = Projected ? &channel_product : nullptr,
-                                        .pair = link.pair,
-                                        .width = width,
-                                        .raises_source = link.created > link.annihilated};
-                                    detail::gather_beta_rows(
-                                        image,
-                                        v,
-                                        link.sign,
-                                        {target_rows.data() + group.begin,
-                                         static_cast<std::size_t>(group.end - group.begin)},
-                                        rows ? rows[begin] : halo[first],
-                                        rows ? rows[end - 1] + 1 : halo[last - 1] + 1,
-                                        destination + (rows ? begin : 0),
-                                        rows ? rows + begin : nullptr,
-                                        rows ? end - begin : 0,
-                                        image_index.data() +
-                                            static_cast<std::size_t>(link.group) * n_halo,
-                                        identity_halo ? nullptr : halo_index.data());
-                                }
-                            };
+                                    const int same = same_group[source];
+                                    if (same >= 0) {
+                                        const StringIndex* index =
+                                            image_index.data() +
+                                            static_cast<std::size_t>(same) * n_halo;
+                                        const auto beta_occupied =
+                                            OccupiedOrbitals(beta_masks[columns[source]]);
+                                        for (int i = begin; i < end; ++i) {
+                                            const std::int64_t a = rows ? rows[i] : halo[i];
+                                            const StringIndex local =
+                                                rows ? (identity_halo ? a : halo_index[a]) : i;
+                                            if (local < first || local >= last)
+                                                continue;
+                                            double sum = 0;
+                                            if (index[local] >= 0) {
+                                                const std::int64_t row =
+                                                    groups[same].begin + index[local];
+                                                for (const int p : OccupiedOrbitals(alpha_masks[a]))
+                                                    sum += value(
+                                                        row,
+                                                        v,
+                                                        core::PairIndex::packed_pair_index(p, p));
+                                                for (const int p : beta_occupied)
+                                                    sum += value(
+                                                        row,
+                                                        v,
+                                                        core::PairIndex::packed_pair_index(p, p));
+                                            }
+                                            const auto& links = alpha_->singles(a);
+                                            for (std::int64_t link = 0;
+                                                 link <
+                                                 core::checked_index<std::int64_t>(links.size());
+                                                 ++link) {
+                                                const StringIndex h =
+                                                    identity_halo ? links[link].source
+                                                                  : halo_index[links[link].source];
+                                                const StringIndex target = h < 0 ? -1 : index[h];
+                                                if (target >= 0)
+                                                    sum += links[link].sign *
+                                                           value(groups[same].begin + target,
+                                                                 v,
+                                                                 links[link].pair);
+                                            }
+                                            destination[rows ? i : a] += sum;
+                                        }
+                                    }
+                                    // One beta edge fixes the channel, sign and target-row map for
+                                    // the entire alpha range. Do not rediscover them for every pixel.
+                                    for (std::int64_t edge = offsets[source];
+                                         edge < offsets[source + 1];
+                                         ++edge) {
+                                        const auto& link = incoming[edge];
+                                        const auto& group = groups[link.group];
+                                        const detail::SigmaGatherImage<Projected, FirstRhs> image{
+                                            .values = Projected ? channel_values
+                                                                : channel_values +
+                                                                      static_cast<std::size_t>(
+                                                                          link.pair) *
+                                                                          image_rows,
+                                            .rhs_strides = channel_layout.rhs_strides(),
+                                            .projected = Projected ? &channel_product : nullptr,
+                                            .pair = link.pair,
+                                            .width = width,
+                                            .raises_source = link.created > link.annihilated};
+                                        detail::gather_beta_rows(
+                                            image,
+                                            v,
+                                            link.sign,
+                                            {target_rows.data() + group.begin,
+                                             static_cast<std::size_t>(group.end - group.begin)},
+                                            rows ? rows[begin] : halo[first],
+                                            rows ? rows[end - 1] + 1 : halo[last - 1] + 1,
+                                            destination + (rows ? begin : 0),
+                                            rows ? rows + begin : nullptr,
+                                            rows ? end - begin : 0,
+                                            image_index.data() +
+                                                static_cast<std::size_t>(link.group) * n_halo,
+                                            identity_halo ? nullptr : halo_index.data());
+                                    }
+                                };
                             writer(columns, halo, accumulate);
                         };
                         const auto write_start = tick();

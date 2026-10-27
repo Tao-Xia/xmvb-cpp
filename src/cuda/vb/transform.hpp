@@ -1,7 +1,10 @@
 #pragma once
 
+#include <cstdint>
+
 #include <cstddef>
 #include <memory>
+#include <limits>
 #include <span>
 #include <vector>
 
@@ -24,12 +27,20 @@ struct ExteriorDirection {
 /** Device replay of the CPU transform's retained diagonal and ordered shears. */
 class ExteriorTransform {
   public:
-    /** Fixed device schedule; coefficients are updated separately in place. */
+    /** Immutable combinatorial addressing; a null order denotes colex order. */
+    struct Index {
+        const std::uint64_t *masks, *choose;
+        const std::int64_t* order;
+        int orbitals;
+    };
     struct Shear {
         std::size_t offset;
-        int count;
+        std::int64_t count;
     };
-    ExteriorTransform(Context& context, const vb::ExteriorOrbitalTransform& source);
+    /** Resource ceiling used by the same exact fused/streamed column algorithm. */
+    ExteriorTransform(Context& context,
+                      const vb::ExteriorOrbitalTransform& source,
+                      std::size_t shared_memory_bytes = std::numeric_limits<std::size_t>::max());
     /** Independent numerical frame with borrowed immutable spin topology. */
     ExteriorTransform(Context& context, const ExteriorTransform& reference);
     ~ExteriorTransform();
@@ -53,13 +64,11 @@ class ExteriorTransform {
                               const std::uint64_t* allowed,
                               int columns,
                               bool adjoint = false) const;
-    /** Fixed device column table and caller-owned stripe for graph replay.
+    /** Fixed device column table for graph replay.
    * The same right-transform kernels serve ordinary temporary tile callers.
    */
-    int right_workspace_extent(std::int64_t rows) const;
     void apply_right_columns(double* const* columns,
                              std::int64_t rows,
-                             linalg::MatrixView stripe = {},
                              bool adjoint = false,
                              bool inverse = false) const;
     ExteriorDirection direction(linalg::ConstMatrixView upper,
@@ -76,8 +85,7 @@ class ExteriorTransform {
     apply_right(linalg::MatrixView coefficients, bool adjoint = false, bool inverse = false) const;
     /** Ordered right action across independent beta-column tiles of one lane.
    * Tiles have equal alpha row counts and together cover exactly dimension()
-   * columns. Small spin spaces run directly from the tile columns; larger
-   * spaces use bounded transposed alpha-row stripes.
+   * columns. Both fused and streaming updates operate directly on tile columns.
    */
     void apply_right_tiles(std::span<const linalg::MatrixView> tiles,
                            bool adjoint = false,
@@ -93,12 +101,12 @@ class ExteriorTransform {
    * second orbital factorization or per-thread exterior recursion is needed.
    * Storage is the caller's single-spin panel, never a product carrier.
    */
-    void sample_rows(std::span<const int> rows, linalg::MatrixView output) const;
+    void sample_rows(std::span<const std::int64_t> rows, linalg::MatrixView output) const;
     /** Sample consecutive rows [first, first + output.cols) without an index upload. */
     void sample_rows(int first, linalg::MatrixView output) const;
     /** Requested adjoint rows and their tangent, without a host identity panel. */
     void sample_directional_rows(const ExteriorDirection& direction,
-                                 std::span<const int> rows,
+                                 std::span<const std::int64_t> rows,
                                  linalg::MatrixView primal,
                                  linalg::MatrixView tangent) const;
     /** Sample consecutive primal/tangent rows without an index upload. */
@@ -107,7 +115,7 @@ class ExteriorTransform {
                                  linalg::MatrixView primal,
                                  linalg::MatrixView tangent) const;
 
-    int dimension() const noexcept {
+    std::int64_t dimension() const noexcept {
         return dimension_;
     }
     int n_orbitals() const noexcept {
@@ -136,25 +144,34 @@ class ExteriorTransform {
                (topology_.use_count() == 1
                     ? topology_->occupations.size() * sizeof(std::uint64_t) +
                           topology_->schedule.size() * sizeof(Shear) +
+                          topology_->choose.size() * sizeof(std::uint64_t) +
+                          topology_->order.size() * sizeof(std::int64_t) +
                           topology_->edges.size() * sizeof(vb::ExteriorOrbitalTransform::ShearEdge)
                     : 0) +
                (right_pointer_upload_ ? right_pointer_upload_bytes() : 0);
     }
 
   private:
+    Index index_view() const noexcept {
+        return {topology_->occupations.data(),
+                topology_->choose.data(),
+                topology_->order.data(),
+                n_orbitals_};
+    }
     double* const* upload_right_columns(const std::vector<double*>& columns) const;
     std::size_t right_pointer_upload_bytes() const noexcept;
     struct Topology {
         explicit Topology(Context& context, std::size_t strings) : occupations(context, strings) {}
-        Buffer<std::uint64_t> occupations;
+        Buffer<std::uint64_t> occupations, choose;
+        Buffer<std::int64_t> order;
         Buffer<vb::ExteriorOrbitalTransform::ShearEdge> edges;
         std::vector<Shear> shears;
         Buffer<Shear> schedule;
     };
     Context* context_;
-    int dimension_;
+    std::int64_t dimension_;
     int n_orbitals_;
-    int shared_values_ = 0;
+    int shared_values_ = 0, tile_values_ = 0;
     Buffer<double> scales_;
     Buffer<double> inverse_scales_;
     Buffer<double> shear_coefficients_;

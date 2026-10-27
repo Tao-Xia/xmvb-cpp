@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include "mcscf/ci/string_table.hpp"
 
 #include <vector>
@@ -24,16 +26,17 @@ struct DirectionalOppositeSpinPairData {
 
 /** Directional opposite-spin data local to one unique-spin pair tile. */
 struct DirectionalOppositeSpinPairTile {
-    int left_begin = 0;
-    int right_begin = 0;
-    int left_size = 0;
-    int right_size = 0;
+    std::int64_t left_begin = 0;
+    std::int64_t right_begin = 0;
+    Eigen::Index left_size = 0;
+    Eigen::Index right_size = 0;
     std::vector<DirectionalOppositeSpinPairData> pairs;
     /** Pair-major contiguous storage, with one packed channel per column. */
     Eigen::MatrixXd raw_channel_values;
     Eigen::MatrixXd projected_channel_values;
 
-    const DirectionalOppositeSpinPairData& pair(int left_local, int right_local) const;
+    const DirectionalOppositeSpinPairData& pair(Eigen::Index left_local,
+                                                Eigen::Index right_local) const;
 
     DirectionalOppositeSpinPairTileView view(bool transposed = false) const;
 };
@@ -48,15 +51,15 @@ class DirectionalOppositeSpinPairTileView {
                                         bool transposed) noexcept
         : storage_(&storage), transposed_(transposed) {}
 
-    int left_begin() const noexcept;
-    int right_begin() const noexcept;
-    int left_size() const noexcept;
-    int right_size() const noexcept;
+    std::int64_t left_begin() const noexcept;
+    std::int64_t right_begin() const noexcept;
+    Eigen::Index left_size() const noexcept;
+    Eigen::Index right_size() const noexcept;
     ConstChannelMap raw_channel(int packed_pair) const;
     ConstChannelMap projected_channel(int packed_pair) const;
 
     template <typename Consumer>
-    void with_pair(int left_local, int right_local, Consumer&& consume) const {
+    void with_pair(Eigen::Index left_local, Eigen::Index right_local, Consumer&& consume) const {
         if (!transposed_) {
             consume(storage_->pair(left_local, right_local));
             return;
@@ -84,7 +87,7 @@ class DirectionalOppositeSpinPairTileView {
 DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
     const xmvb::mcscf::StringTable& unique_determinants,
     const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
-    int n_unique_determinants,
+    std::int64_t n_unique_determinants,
     int n_active_orbitals,
     const xmvb::integrals::ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     const ActiveSpaceIntegralDirectionView& direction,

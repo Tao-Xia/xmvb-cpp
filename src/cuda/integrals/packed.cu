@@ -63,23 +63,23 @@ __device__ void add_double(double* address, double value) {
 #endif
 }
 
-__global__ void pack_csr_rows(const int* offsets,
-                              const int* columns,
+__global__ void pack_csr_rows(const std::int64_t* offsets,
+                              const std::int64_t* columns,
                               const double* source_values,
                               std::int64_t first_row,
-                              int row_count,
-                              int first_edge,
-                              int edge_count,
+                              std::int64_t row_count,
+                              std::int64_t first_edge,
+                              std::int64_t edge_count,
                               int block_edge,
                               std::int64_t blocks,
                               double* packed_values) {
     for (std::int64_t index = blockIdx.x * static_cast<std::int64_t>(blockDim.x) + threadIdx.x;
          index < edge_count;
          index += gridDim.x * static_cast<std::int64_t>(blockDim.x)) {
-        const int global_edge = first_edge + static_cast<int>(index);
-        int lo = 0, hi = row_count;
+        const std::int64_t global_edge = first_edge + index;
+        std::int64_t lo = 0, hi = row_count;
         while (lo < hi) {
-            const int mid = (lo + hi) / 2;
+            const std::int64_t mid = lo + (hi - lo) / 2;
             if (offsets[mid + 1] <= global_edge)
                 lo = mid + 1;
             else
@@ -102,8 +102,8 @@ __global__ void pack_csr_rows(const int* offsets,
 // A canonical integral supplies one symmetric AO-pair matrix entry. Store
 // only its lower block tile; diagonal tiles also need the transpose lane.
 // Atomic addition preserves the existing additive duplicate-entry contract.
-__global__ void pack_unique(const int* rows,
-                            const int* columns,
+__global__ void pack_unique(const std::int64_t* rows,
+                            const std::int64_t* columns,
                             const double* values,
                             std::int64_t count,
                             int edge,
@@ -253,17 +253,18 @@ PackedAoPairMatrix::PackedAoPairMatrix(Context& context,
         const auto count =
             std::min({largest,
                       static_cast<std::size_t>(edge_) * static_cast<std::size_t>(n_pairs_),
-                      available / (2 * sizeof(int) + sizeof(double))});
+                      available / (2 * sizeof(std::int64_t) + sizeof(double))});
         if (!count)
             throw std::runtime_error("unique ERI staging cannot hold one entry");
-        Buffer<int> rows(context, count), columns(context, count);
+        Buffer<std::int64_t> rows(context, count), columns(context, count);
         Buffer<double> staging(context, count);
         graph.for_each_chunk([&](auto source_rows, auto source_columns, auto source_values) {
             for (std::size_t begin = 0; begin < source_values.size(); begin += count) {
                 const auto size = std::min(count, source_values.size() - begin);
-                context.copy_to_device(rows.data(), source_rows.data() + begin, size * sizeof(int));
                 context.copy_to_device(
-                    columns.data(), source_columns.data() + begin, size * sizeof(int));
+                    rows.data(), source_rows.data() + begin, size * sizeof(std::int64_t));
+                context.copy_to_device(
+                    columns.data(), source_columns.data() + begin, size * sizeof(std::int64_t));
                 context.copy_to_device(
                     staging.data(), source_values.data() + begin, size * sizeof(double));
                 pack_unique<<<grid(size), 256, 0, context.stream()>>>(rows.data(),
@@ -298,15 +299,16 @@ PackedAoPairMatrix::PackedAoPairMatrix(Context& context,
         }
         if (end == begin)
             throw std::runtime_error("packed AO-pair CSR row staging exceeds device budget");
-        const int first_edge = graph.row_offsets[begin];
-        const int edge_count = graph.row_offsets[end] - first_edge;
+        const std::int64_t first_edge = graph.row_offsets[begin];
+        const std::int64_t edge_count = graph.row_offsets[end] - first_edge;
         if (edge_count > 0) {
-            Buffer<int> offsets(context, end - begin + 1);
-            Buffer<int> columns(context, edge_count);
+            Buffer<std::int64_t> offsets(context, end - begin + 1);
+            Buffer<std::int64_t> columns(context, edge_count);
             Buffer<double> staging_values(context, edge_count);
             context.copy_to_device(offsets.data(),
                                    graph.row_offsets.data() + begin,
-                                   static_cast<std::size_t>(end - begin + 1) * sizeof(int));
+                                   static_cast<std::size_t>(end - begin + 1) *
+                                       sizeof(std::int64_t));
             context.copy_to_device(columns.data(),
                                    graph.columns.data() + first_edge,
                                    static_cast<std::size_t>(edge_count) * sizeof(int));
@@ -390,63 +392,63 @@ void PackedAoPairMatrix::apply(ConstPairPanel source,
             if (tail != edge_ && tail_output >= out_begin && tail_output < out_end) {
                 const auto prefix = static_cast<int>(tail_output - out_begin);
                 if (prefix > 0)
-                    check_cublas(cublasDgemmStridedBatched(context_->blas(),
-                                                           CUBLAS_OP_N,
-                                                           operation,
-                                                           channels,
-                                                           edge_,
-                                                           edge_,
-                                                           &alpha,
-                                                           input,
-                                                           static_cast<int>(source.ld),
-                                                           source_stride,
-                                                           tile,
-                                                           edge_,
-                                                           tile_stride,
-                                                           &beta,
-                                                           output,
-                                                           static_cast<int>(target.ld),
-                                                           target_stride,
-                                                           prefix),
+                    check_cublas(cublasDgemmStridedBatched_64(context_->blas(),
+                                                              CUBLAS_OP_N,
+                                                              operation,
+                                                              channels,
+                                                              edge_,
+                                                              edge_,
+                                                              &alpha,
+                                                              input,
+                                                              static_cast<int>(source.ld),
+                                                              source_stride,
+                                                              tile,
+                                                              edge_,
+                                                              tile_stride,
+                                                              &beta,
+                                                              output,
+                                                              static_cast<int>(target.ld),
+                                                              target_stride,
+                                                              prefix),
                                  "packed AO-pair batched GEMM");
                 const auto tail_tile = tile + static_cast<std::int64_t>(prefix) * tile_stride;
                 const auto tail_input = source.data + (n_blocks_ - 1) * source_stride;
                 auto* tail_output_ptr = target.data + (tail_output * edge_ - first_row) * target.ld;
-                check_cublas(cublasDgemm(context_->blas(),
-                                         CUBLAS_OP_N,
-                                         operation,
-                                         channels,
-                                         edge_,
-                                         tail,
-                                         &alpha,
-                                         tail_input,
-                                         static_cast<int>(source.ld),
-                                         tail_tile,
-                                         edge_,
-                                         &beta,
-                                         tail_output_ptr,
-                                         static_cast<int>(target.ld)),
+                check_cublas(cublasDgemm_64(context_->blas(),
+                                            CUBLAS_OP_N,
+                                            operation,
+                                            channels,
+                                            edge_,
+                                            tail,
+                                            &alpha,
+                                            tail_input,
+                                            static_cast<int>(source.ld),
+                                            tail_tile,
+                                            edge_,
+                                            &beta,
+                                            tail_output_ptr,
+                                            static_cast<int>(target.ld)),
                              "packed AO-pair tail GEMM");
                 return;
             }
-            check_cublas(cublasDgemmStridedBatched(context_->blas(),
-                                                   CUBLAS_OP_N,
-                                                   operation,
-                                                   channels,
-                                                   edge_,
-                                                   edge_,
-                                                   &alpha,
-                                                   input,
-                                                   static_cast<int>(source.ld),
-                                                   source_stride,
-                                                   tile,
-                                                   edge_,
-                                                   tile_stride,
-                                                   &beta,
-                                                   output,
-                                                   static_cast<int>(target.ld),
-                                                   target_stride,
-                                                   static_cast<int>(out_end - out_begin)),
+            check_cublas(cublasDgemmStridedBatched_64(context_->blas(),
+                                                      CUBLAS_OP_N,
+                                                      operation,
+                                                      channels,
+                                                      edge_,
+                                                      edge_,
+                                                      &alpha,
+                                                      input,
+                                                      static_cast<int>(source.ld),
+                                                      source_stride,
+                                                      tile,
+                                                      edge_,
+                                                      tile_stride,
+                                                      &beta,
+                                                      output,
+                                                      static_cast<int>(target.ld),
+                                                      target_stride,
+                                                      static_cast<int>(out_end - out_begin)),
                          "packed AO-pair batched GEMM");
         };
 
@@ -474,20 +476,20 @@ void PackedAoPairMatrix::apply(ConstPairPanel source,
             const int k =
                 static_cast<int>(std::min<std::int64_t>(edge_, n_pairs_ - source_block * edge_));
             const auto operation = block >= source_block ? CUBLAS_OP_T : CUBLAS_OP_N;
-            check_cublas(cublasDgemm(context_->blas(),
-                                     CUBLAS_OP_N,
-                                     operation,
-                                     channels,
-                                     edge_,
-                                     k,
-                                     &alpha,
-                                     input,
-                                     static_cast<int>(source.ld),
-                                     tile,
-                                     edge_,
-                                     &beta,
-                                     scratch.data(),
-                                     channels),
+            check_cublas(cublasDgemm_64(context_->blas(),
+                                        CUBLAS_OP_N,
+                                        operation,
+                                        channels,
+                                        edge_,
+                                        k,
+                                        &alpha,
+                                        input,
+                                        static_cast<int>(source.ld),
+                                        tile,
+                                        edge_,
+                                        &beta,
+                                        scratch.data(),
+                                        channels),
                          "packed AO-pair boundary GEMM");
         }
         const auto copied = copy_end - copy_begin;

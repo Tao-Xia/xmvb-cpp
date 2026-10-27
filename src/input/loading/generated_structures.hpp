@@ -17,6 +17,9 @@ namespace xmvb::vb {
 bool can_build_generated_raw_structures_from_structure_class(const InputDeckMetadata& metadata,
                                                              int n_total_electrons) noexcept;
 
+/** @brief Exact structure count without allocating or enumerating structures. */
+std::size_t count_generated_structures(const InputDeckMetadata& metadata);
+
 /**
  * @brief Builds raw structures from the input structure class.
  *

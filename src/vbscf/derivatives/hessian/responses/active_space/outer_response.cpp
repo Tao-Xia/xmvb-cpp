@@ -40,10 +40,11 @@ void throw_if_nonfinite(const Eigen::MatrixXd& values, const char* label) {
     }
 }
 
-void throw_if_nonfinite(const Eigen::SparseMatrix<double, Eigen::RowMajor, int>& values,
+void throw_if_nonfinite(const Eigen::SparseMatrix<double, Eigen::RowMajor, Eigen::Index>& values,
                         const char* label) {
     for (int outer = 0; outer < values.outerSize(); ++outer) {
-        for (Eigen::SparseMatrix<double, Eigen::RowMajor, int>::InnerIterator entry(values, outer);
+        for (Eigen::SparseMatrix<double, Eigen::RowMajor, Eigen::Index>::InnerIterator entry(values,
+                                                                                             outer);
              entry;
              ++entry) {
             if (!std::isfinite(entry.value())) {

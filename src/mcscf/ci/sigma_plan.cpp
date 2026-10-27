@@ -1,3 +1,5 @@
+#include "core/index.hpp"
+#include <cstdint>
 #include "mcscf/ci/sigma_plan.hpp"
 
 #include <algorithm>
@@ -27,18 +29,18 @@ SigmaTilePlan::SigmaTilePlan(const SpinConnections& alpha,
         throw std::invalid_argument("packed sigma channels require a certified support");
     const auto width = static_cast<Bytes>(budget.width);
     column_bytes_ = sizeof(double) * width * budget.halo_slabs;
-    group_bytes_ = sizeof(int) * width * (1 + static_cast<int>(budget.projected_image));
+    group_bytes_ = sizeof(StringIndex) * width * (1 + static_cast<int>(budget.projected_image));
     entry_bytes_ = sizeof(double) * width * budget.packed_slabs;
     row_bytes_ = sizeof(SigmaGatherRow) +
                  sizeof(double) * width * (budget.slabs - budget.packed_slabs) * budget.pairs;
     if (budget.packed_slabs)
-        row_bytes_ += sizeof(int) + width * (sizeof(int) + sizeof(std::size_t));
+        row_bytes_ += sizeof(StringIndex) + width * (sizeof(StringIndex) + sizeof(std::size_t));
     if (support_ && support_->has_channel_envelopes()) {
         // Every beta column belongs to the complete singly occupied family.
         beta_targets_ = support_->columns();
     } else if (support_) {
         auto cursor = support_->cursor(1);
-        int b;
+        StringIndex b;
         while (cursor.next_column(b))
             beta_targets_.push_back(b);
     } else {
@@ -51,15 +53,15 @@ SigmaTilePlan::SigmaTilePlan(const SpinConnections& alpha,
     new_beta_.reserve(beta.n_singles() + 1);
     if (release) {
         last_use_.assign(beta.n_strings(), -1);
-        for (int p = 0; p < static_cast<int>(beta_targets_.size()); ++p) {
-            const int b = beta_targets_[p];
+        for (std::int64_t p = 0; p < core::checked_index<std::int64_t>(beta_targets_.size()); ++p) {
+            const std::int64_t b = beta_targets_[p];
             last_use_[b] = p;
             for (const auto& edge : beta.singles(b))
                 last_use_[edge.source] = p;
         }
         release_order_.resize(beta.n_strings());
         std::iota(release_order_.begin(), release_order_.end(), 0);
-        std::sort(release_order_.begin(), release_order_.end(), [&](int a, int b) {
+        std::sort(release_order_.begin(), release_order_.end(), [&](StringIndex a, StringIndex b) {
             return last_use_[a] < last_use_[b] || (last_use_[a] == last_use_[b] && a < b);
         });
     }
@@ -70,7 +72,7 @@ std::size_t SigmaTilePlan::payload_bytes() const {
 }
 
 SigmaTileBoundary SigmaTilePlan::boundary() const noexcept {
-    return {static_cast<int>(active.size()),
+    return {core::checked_index<std::int64_t>(active.size()),
             payload_bytes(),
             halo.size() == static_cast<std::size_t>(alpha_.n_strings()),
             columns.size() == static_cast<std::size_t>(beta_.n_strings())};
@@ -78,14 +80,14 @@ SigmaTileBoundary SigmaTilePlan::boundary() const noexcept {
 
 bool SigmaTilePlan::prepare_column() {
     while (next_beta_ < beta_targets_.size()) {
-        const int b = beta_targets_[next_beta_];
+        const std::int64_t b = beta_targets_[next_beta_];
         if (!column_ready_) {
             if (support_ && support_->has_channel_envelopes()) {
-                const int upper = parity_ ? b + (parity_ > 0) : alpha_.n_strings();
+                const std::int64_t upper = parity_ ? b + (parity_ > 0) : alpha_.n_strings();
                 support_->append_column_rows(b, column_rows_, 1, upper);
             } else if (support_) {
                 auto cursor = support_->column(b, 1);
-                int a, ignored;
+                StringIndex a, ignored;
                 bool label;
                 while (cursor.next(a, ignored, label)) {
                     if (parity_ && (a > b || (a == b && parity_ < 0)))
@@ -96,9 +98,9 @@ bool SigmaTilePlan::prepare_column() {
             }
             column_ready_ = true;
         }
-        const int size = support_  ? static_cast<int>(column_rows_.size())
-                         : parity_ ? b + (parity_ > 0)
-                                   : alpha_.n_strings();
+        const StringIndex size = support_  ? core::checked_index<std::int64_t>(column_rows_.size())
+                                 : parity_ ? b + (parity_ > 0)
+                                           : alpha_.n_strings();
         if (next_alpha_ < size)
             return true;
         column_rows_.clear();
@@ -110,8 +112,8 @@ bool SigmaTilePlan::prepare_column() {
     return false;
 }
 
-SigmaTilePlan::Node SigmaTilePlan::column_node(int row) const {
-    const int b = beta_targets_[next_beta_], a = support_ ? column_rows_[row] : row;
+SigmaTilePlan::Node SigmaTilePlan::column_node(StringIndex row) const {
+    const std::int64_t b = beta_targets_[next_beta_], a = support_ ? column_rows_[row] : row;
     if (support_ && support_->has_channel_envelopes()) {
         if (budget_.packed_slabs) {
             const auto [first, last] = support_->channel_envelope(a, b);
@@ -139,11 +141,11 @@ bool SigmaTilePlan::pull(Node& node) {
 }
 
 void SigmaTilePlan::reset_tile() {
-    for (const int a : halo)
+    for (const StringIndex a : halo)
         halo_index[a] = -1;
-    for (const int b : columns)
+    for (const StringIndex b : columns)
         column_index[b] = -1;
-    for (const int a : seen_alpha_)
+    for (const StringIndex a : seen_alpha_)
         alpha_seen_[a] = 0;
     groups.clear();
     active.clear();
@@ -166,17 +168,18 @@ void SigmaTilePlan::append_node(const Node& node, bool new_group, bool expand_al
         alpha_seen_[node.alpha] = 1;
         seen_alpha_.push_back(node.alpha);
     }
-    for (const int a : new_alpha_) {
+    for (const StringIndex a : new_alpha_) {
         halo_index[a] = 0;
         halo.push_back(a);
     }
-    for (const int b : new_beta_) {
+    for (const StringIndex b : new_beta_) {
         column_index[b] = 0;
         columns.push_back(b);
     }
     if (new_group)
-        groups.push_back(
-            {node.beta, static_cast<int>(active.size()), static_cast<int>(active.size())});
+        groups.push_back({node.beta,
+                          core::checked_index<std::int64_t>(active.size()),
+                          core::checked_index<std::int64_t>(active.size())});
     if (parity_ && node.alpha == node.beta)
         diagonal_rows.push_back(active.size());
     unsupported_targets += !node.supported;
@@ -195,24 +198,25 @@ void SigmaTilePlan::append_node(const Node& node, bool new_group, bool expand_al
  * neighbor tests or geometric-growth push_back calls. No plan cache is kept.
  */
 bool SigmaTilePlan::append_column_tail(const Node& first) {
-    const int size = support_  ? static_cast<int>(column_rows_.size())
-                     : parity_ ? first.beta + (parity_ > 0)
-                               : alpha_.n_strings();
-    const int count = size - next_alpha_ + 1;
-    const auto limit = static_cast<std::size_t>(std::numeric_limits<int>::max() / budget_.width);
+    const StringIndex size = support_  ? core::checked_index<std::int64_t>(column_rows_.size())
+                             : parity_ ? first.beta + (parity_ > 0)
+                                       : alpha_.n_strings();
+    const std::int64_t count = size - next_alpha_ + 1;
+    const auto limit =
+        static_cast<std::size_t>(std::numeric_limits<StringIndex>::max() / budget_.width);
     if (count <= 1 || active.size() >= limit ||
         static_cast<std::size_t>(count) > limit - active.size() ||
         payload_ + static_cast<Bytes>(count) * (row_bytes_ + entry_bytes_ * budget_.pairs) >
             budget_.bytes)
         return false;
-    const int begin = active.size(), end = begin + count, group = groups.size() - 1;
+    const StringIndex begin = active.size(), end = begin + count, group = groups.size() - 1;
     active.resize(end);
     active_support.resize(end);
     group_index.resize(end, group);
     if (budget_.packed_slabs)
         channel_groups.resize(end);
     std::size_t channels = 0;
-    for (int i = begin; i < end; ++i) {
+    for (StringIndex i = begin; i < end; ++i) {
         const auto node = i == begin ? first : column_node(next_alpha_++);
         active[i] = node.alpha;
         active_support[i] = node.supported;
@@ -231,15 +235,15 @@ bool SigmaTilePlan::append_column_tail(const Node& first) {
 
 bool SigmaTilePlan::finish_tile(bool sorted_halo, bool sorted_columns) {
     while (next_release_ < release_order_.size() &&
-           last_use_[release_order_[next_release_]] < static_cast<int>(next_beta_))
+           last_use_[release_order_[next_release_]] < core::checked_index<StringIndex>(next_beta_))
         released.push_back(release_order_[next_release_++]);
     if (!sorted_halo)
         std::sort(halo.begin(), halo.end());
     if (!sorted_columns)
         std::sort(columns.begin(), columns.end());
-    for (int i = 0; i < static_cast<int>(halo.size()); ++i)
+    for (std::int64_t i = 0; i < core::checked_index<std::int64_t>(halo.size()); ++i)
         halo_index[halo[i]] = i;
-    for (int i = 0; i < static_cast<int>(columns.size()); ++i)
+    for (std::int64_t i = 0; i < core::checked_index<std::int64_t>(columns.size()); ++i)
         column_index[columns[i]] = i;
     return !active.empty();
 }
@@ -259,7 +263,9 @@ bool SigmaTilePlan::next() {
         if (!new_group && halo.size() == static_cast<std::size_t>(alpha_.n_strings()) &&
             append_column_tail(node))
             continue;
-        const auto include = [](int id, const std::vector<int>& index, std::vector<int>& added) {
+        const auto include = [](StringIndex id,
+                                const std::vector<StringIndex>& index,
+                                std::vector<StringIndex>& added) {
             if (index[id] < 0)
                 added.push_back(id);
         };
@@ -288,7 +294,7 @@ bool SigmaTilePlan::next() {
             bytes += halo.size() * (column_bytes_ * new_beta_.size() + group_bytes_ * new_group);
         if (bytes > budget_.bytes ||
             active.size() >=
-                static_cast<std::size_t>(std::numeric_limits<int>::max() / budget_.width)) {
+                static_cast<std::size_t>(std::numeric_limits<StringIndex>::max() / budget_.width)) {
             byte_limited_ = bytes > budget_.bytes;
             if (active.empty())
                 throw std::length_error("one direct-CI target exceeds the tile workspace");
@@ -316,21 +322,21 @@ bool SigmaTilePlan::next_known(const SigmaTileBoundary& boundary) {
     active_support.reserve(boundary.targets);
     if (budget_.packed_slabs)
         channel_groups.reserve(boundary.targets);
-    int remaining = boundary.targets;
+    StringIndex remaining = boundary.targets;
     while (remaining) {
         if (!prepare_column())
             throw std::invalid_argument("sigma tile boundary exceeds target stream");
-        const int b = beta_targets_[next_beta_];
-        const int size = support_  ? static_cast<int>(column_rows_.size())
-                         : parity_ ? b + (parity_ > 0)
-                                   : alpha_.n_strings();
-        const int count = std::min(remaining, size - next_alpha_);
-        const int begin = active.size(), end = begin + count, group = groups.size();
+        const std::int64_t b = beta_targets_[next_beta_];
+        const StringIndex size = support_  ? core::checked_index<std::int64_t>(column_rows_.size())
+                                 : parity_ ? b + (parity_ > 0)
+                                           : alpha_.n_strings();
+        const std::int64_t count = std::min<StringIndex>(remaining, size - next_alpha_);
+        const StringIndex begin = active.size(), end = begin + count, group = groups.size();
         // A tile's intersection with one beta column is one contiguous segment.
         // Its group and beta-link neighborhood are constant across all targets.
         groups.push_back({b, begin, end});
         if (!boundary.full_beta && columns.size() < static_cast<std::size_t>(beta_.n_strings())) {
-            const auto include = [&](int id) {
+            const auto include = [&](StringIndex id) {
                 if (column_index[id] < 0) {
                     column_index[id] = 0;
                     columns.push_back(id);
@@ -345,7 +351,7 @@ bool SigmaTilePlan::next_known(const SigmaTileBoundary& boundary) {
         active_support.resize(end);
         if (budget_.packed_slabs)
             channel_groups.resize(end);
-        for (int i = begin; i < end; ++i) {
+        for (StringIndex i = begin; i < end; ++i) {
             const auto node = column_node(next_alpha_++);
             active[i] = node.alpha;
             active_support[i] = node.supported;
@@ -359,7 +365,7 @@ bool SigmaTilePlan::next_known(const SigmaTileBoundary& boundary) {
                 !alpha_seen_[node.alpha]) {
                 alpha_seen_[node.alpha] = 1;
                 seen_alpha_.push_back(node.alpha);
-                const auto include = [&](int id) {
+                const auto include = [&](StringIndex id) {
                     if (halo_index[id] < 0) {
                         halo_index[id] = 0;
                         halo.push_back(id);

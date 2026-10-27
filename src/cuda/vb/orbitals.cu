@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "cuda/vb/orbitals.hpp"
 
 #include <cfloat>
@@ -42,7 +43,7 @@ bool supplied(View view) {
 }
 
 void zero(Context& context, Mutable output) {
-    for (int column = 0; column < output.cols; ++column)
+    for (std::int64_t column = 0; column < output.cols; ++column)
         check_cuda(cudaMemsetAsync(output.column(column).data,
                                    0,
                                    static_cast<std::size_t>(output.rows) * sizeof(double),
@@ -53,7 +54,7 @@ void zero(Context& context, Mutable output) {
 void copy(Context& context, Mutable output, View input) {
     if (output.rows != input.rows || output.cols != input.cols)
         throw std::invalid_argument("CUDA orbital copy shape mismatch");
-    for (int column = 0; column < input.cols; ++column)
+    for (std::int64_t column = 0; column < input.cols; ++column)
         check_cuda(cudaMemcpyAsync(output.column(column).data,
                                    input.column(column).data,
                                    input.rows * sizeof(double),
@@ -63,7 +64,7 @@ void copy(Context& context, Mutable output, View input) {
 }
 
 __global__ void identity_kernel(double* output, int n) {
-    const int index = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t index = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (index < n * n)
         output[index] = index / n == index % n ? 1.0 : 0.0;
 }
@@ -83,14 +84,14 @@ void axpy(Context& context, Mutable y, View x, double alpha) {
         throw std::invalid_argument("CUDA orbital axpy shape mismatch");
     const int size = static_cast<int>(y.rows * y.cols);
     if (size)
-        check_cublas(cublasDaxpy(context.blas(), size, &alpha, x.data, 1, y.data, 1),
+        check_cublas(cublasDaxpy_64(context.blas(), size, &alpha, x.data, 1, y.data, 1),
                      "cublasDaxpy orbital accumulation");
 }
 
 __global__ void sym_kernel(double* target, const double* source, int n, double factor) {
-    const int index = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t index = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (index < n * n) {
-        const int row = index % n, col = index / n;
+        const std::int64_t row = index % n, col = index / n;
         target[index] += factor * (source[index] + source[col + row * n]);
     }
 }
@@ -139,10 +140,10 @@ __global__ void normalize_kernel(const double* raw,
                                  double* normalized,
                                  double* inverse_norms,
                                  int* info) {
-    const int orbital = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t orbital = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (orbital >= orbitals)
         return;
-    const int count = counts[orbital];
+    const std::int64_t count = counts[orbital];
     double norm2 = 0.0;
     for (int j = 0; j < count; ++j) {
         const int bj = support[orbital * basis + j];
@@ -158,7 +159,7 @@ __global__ void normalize_kernel(const double* raw,
     }
     const double inv = rsqrt(norm2);
     inverse_norms[orbital] = inv;
-    for (int b = 0; b < basis; ++b)
+    for (std::int64_t b = 0; b < basis; ++b)
         normalized[orbital * basis + b] = 0.0;
     for (int j = 0; j < count; ++j)
         normalized[orbital * basis + support[orbital * basis + j]] = raw[orbital * basis + j] * inv;
@@ -173,20 +174,20 @@ __global__ void normalize_direction_kernel(const double* direction,
                                            int basis,
                                            int orbitals,
                                            double* delta_normalized) {
-    const int orbital = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t orbital = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (orbital >= orbitals)
         return;
     const double inv = inverse_norms[orbital];
     double projection = 0.0;
     for (int j = 0; j < differentiable[orbital]; ++j) {
-        const int b = support[orbital * basis + j];
+        const std::int64_t b = support[orbital * basis + j];
         projection += direction[orbital * basis + j] * s_normalized[orbital * basis + b];
     }
     projection *= inv;
-    for (int b = 0; b < basis; ++b)
+    for (std::int64_t b = 0; b < basis; ++b)
         delta_normalized[orbital * basis + b] = -projection * normalized[orbital * basis + b];
     for (int j = 0; j < differentiable[orbital]; ++j) {
-        const int b = support[orbital * basis + j];
+        const std::int64_t b = support[orbital * basis + j];
         delta_normalized[orbital * basis + b] += inv * direction[orbital * basis + j];
     }
 }
@@ -200,16 +201,16 @@ __global__ void normalization_pullback_kernel(const int* support,
                                               int basis,
                                               int orbitals,
                                               double* raw_gradient) {
-    const int orbital = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t orbital = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (orbital >= orbitals)
         return;
     double scalar = 0.0;
-    for (int b = 0; b < basis; ++b)
+    for (std::int64_t b = 0; b < basis; ++b)
         scalar += gradient[orbital * basis + b] * normalized[orbital * basis + b];
     for (int j = 0; j < basis; ++j)
         raw_gradient[orbital * basis + j] = 0.0;
     for (int j = 0; j < differentiable[orbital]; ++j) {
-        const int b = support[orbital * basis + j];
+        const std::int64_t b = support[orbital * basis + j];
         raw_gradient[orbital * basis + j] =
             inverse_norms[orbital] *
             (gradient[orbital * basis + b] - scalar * s_normalized[orbital * basis + b]);
@@ -229,12 +230,12 @@ __global__ void normalization_pullback_direction_kernel(const int* support,
                                                         int basis,
                                                         int orbitals,
                                                         double* raw_gradient_direction) {
-    const int orbital = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t orbital = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (orbital >= orbitals)
         return;
     const double inv = inverse_norms[orbital];
     double scalar = 0.0, delta_scalar = 0.0, projection = 0.0;
-    for (int b = 0; b < basis; ++b) {
+    for (std::int64_t b = 0; b < basis; ++b) {
         scalar += gradient[orbital * basis + b] * normalized[orbital * basis + b];
         delta_scalar += delta_gradient[orbital * basis + b] * normalized[orbital * basis + b] +
                         gradient[orbital * basis + b] * delta_normalized[orbital * basis + b];
@@ -246,7 +247,7 @@ __global__ void normalization_pullback_direction_kernel(const int* support,
     for (int j = 0; j < basis; ++j)
         raw_gradient_direction[orbital * basis + j] = 0.0;
     for (int j = 0; j < differentiable[orbital]; ++j) {
-        const int b = support[orbital * basis + j], index = orbital * basis + b;
+        const std::int64_t b = support[orbital * basis + j], index = orbital * basis + b;
         raw_gradient_direction[orbital * basis + j] =
             inv * (delta_gradient[index] - delta_scalar * s_normalized[index] -
                    scalar * s_delta_normalized[index] -
@@ -255,9 +256,9 @@ __global__ void normalization_pullback_direction_kernel(const int* support,
 }
 
 __global__ void phi_kernel(double* output, const double* input, int n) {
-    const int index = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t index = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (index < n * n) {
-        const int row = index % n, col = index / n;
+        const std::int64_t row = index % n, col = index / n;
         output[index] = row > col ? 0.0 : (row == col ? 0.5 : 1.0) * input[index];
     }
 }
@@ -265,17 +266,17 @@ __global__ void phi_kernel(double* output, const double* input, int n) {
 // Phi maps symmetric Z to the upper triangular Cholesky generator K.
 // Its adjoint is symmetric under the full Frobenius inner product.
 __global__ void phi_adjoint_kernel(double* output, const double* input, int n) {
-    const int index = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t index = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (index < n * n) {
-        const int row = index % n, col = index / n;
+        const std::int64_t row = index % n, col = index / n;
         output[index] = 0.5 * input[row < col ? row + col * n : col + row * n];
     }
 }
 
 __global__ void upper_from_lower_kernel(double* upper, const double* lower, int n) {
-    const int index = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t index = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (index < n * n) {
-        const int row = index % n, col = index / n;
+        const std::int64_t row = index % n, col = index / n;
         upper[index] = row <= col ? lower[col + row * n] : 0.0;
     }
 }
@@ -344,7 +345,7 @@ OrbitalGeometry::OrbitalGeometry(Context& context,
             throw std::invalid_argument("CUDA orbital sparse coefficient count is invalid");
         std::vector<unsigned char> seen(basis_, 0);
         for (int j = 0; j < stored[o]; ++j) {
-            const int b = input.orbital_basis_index_table[o * basis_ + j] - 1;
+            const std::int64_t b = input.orbital_basis_index_table[o * basis_ + j] - 1;
             if (b < 0 || b >= basis_ || seen[b]++)
                 throw std::invalid_argument("CUDA orbital sparse support is invalid");
             support[o * basis_ + j] = b;
@@ -459,18 +460,18 @@ void OrbitalGeometry::prepare() {
         throw std::runtime_error("CUDA active overlap is not positive definite");
     const double one = 1.0;
     identity(context, frame_inverse_.view());
-    check_cublas(cublasDtrsm(context.blas(),
-                             CUBLAS_SIDE_LEFT,
-                             CUBLAS_FILL_MODE_LOWER,
-                             CUBLAS_OP_T,
-                             CUBLAS_DIAG_NON_UNIT,
-                             active_count_,
-                             active_count_,
-                             &one,
-                             factor.data(),
-                             active_count_,
-                             frame_inverse_.data(),
-                             active_count_),
+    check_cublas(cublasDtrsm_64(context.blas(),
+                                CUBLAS_SIDE_LEFT,
+                                CUBLAS_FILL_MODE_LOWER,
+                                CUBLAS_OP_T,
+                                CUBLAS_DIAG_NON_UNIT,
+                                active_count_,
+                                active_count_,
+                                &one,
+                                factor.data(),
+                                active_count_,
+                                frame_inverse_.data(),
+                                active_count_),
                  "cublasDtrsm orbital frame inverse");
     // R is the transpose of the lower Cholesky triangle.
     upper_from_lower_kernel<<<grid(active_count_ * active_count_), kThreads, 0, context.stream()>>>(

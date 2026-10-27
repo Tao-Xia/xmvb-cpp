@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "cuda/linalg/svd.hpp"
 
 #include <algorithm>

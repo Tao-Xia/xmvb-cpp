@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cstdint>
 #include <functional>
 #include <list>
 #include <stdexcept>
@@ -16,16 +17,16 @@ namespace xmvb::mcscf {
  */
 template <class Tile> class ColumnCache {
   public:
-    using Build = std::function<Tile(int)>;
-    using Consume = std::function<void(int, Tile&)>;
-    using Price = std::function<std::size_t(int)>;
+    using Build = std::function<Tile(std::int64_t)>;
+    using Consume = std::function<void(std::int64_t, Tile&)>;
+    using Price = std::function<std::size_t(std::int64_t)>;
     ColumnCache(std::size_t bytes, Build build, Consume consume = {}, Price price = {})
         : budget_(std::max<std::size_t>(1, bytes)), build_(std::move(build)),
           consume_(std::move(consume)), price_(std::move(price)) {}
-    bool contains(int key) const {
+    bool contains(std::int64_t key) const {
         return index_.contains(key);
     }
-    Tile& get(int key) {
+    Tile& get(std::int64_t key) {
         const auto found = index_.find(key);
         if (found != index_.end()) {
             panels_.splice(panels_.begin(), panels_, found->second);
@@ -53,7 +54,7 @@ template <class Tile> class ColumnCache {
         ++evictions;
         return true;
     }
-    Tile& insert(int key, Tile tile) {
+    Tile& insert(std::int64_t key, Tile tile) {
         const auto bytes = tile.bytes();
         reserve(bytes);
         panels_.push_front({key, std::move(tile)});
@@ -62,7 +63,7 @@ template <class Tile> class ColumnCache {
         index_[key] = panels_.begin();
         return panels_.front().tile;
     }
-    void release(int key) {
+    void release(std::int64_t key) {
         const auto found = index_.find(key);
         if (found == index_.end())
             return;
@@ -86,7 +87,7 @@ template <class Tile> class ColumnCache {
 
   private:
     struct Entry {
-        int key;
+        std::int64_t key;
         Tile tile;
     };
     std::size_t budget_, resident_ = 0;
@@ -94,7 +95,7 @@ template <class Tile> class ColumnCache {
     Consume consume_;
     Price price_;
     std::list<Entry> panels_;
-    std::unordered_map<int, typename std::list<Entry>::iterator> index_;
+    std::unordered_map<std::int64_t, typename std::list<Entry>::iterator> index_;
 };
 
 } // namespace xmvb::mcscf

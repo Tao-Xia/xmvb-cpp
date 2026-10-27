@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "cuda/vb/point.hpp"
 
 #include <array>
@@ -61,13 +62,12 @@ void copy(Context& context, Out out, View in) {
 }
 void scale(Context& context, Out out, double value) {
     if (out.ld == out.rows) {
-        check_cublas(
-            cublasDscal(context.blas(), blas_int(out.rows * out.cols), &value, out.data, 1),
-            "point scale");
+        check_cublas(cublasDscal_64(context.blas(), out.rows * out.cols, &value, out.data, 1),
+                     "point scale");
         return;
     }
     for (std::int64_t j = 0; j < out.cols; ++j)
-        check_cublas(cublasDscal(context.blas(), blas_int(out.rows), &value, out.column(j).data, 1),
+        check_cublas(cublasDscal_64(context.blas(), out.rows, &value, out.column(j).data, 1),
                      "point scale");
 }
 void add(Context& context, Out out, View in, double value = 1.0) {
@@ -75,40 +75,29 @@ void add(Context& context, Out out, View in, double value = 1.0) {
         throw std::invalid_argument("CUDA point sum dimensions");
     if (out.ld == out.rows && in.ld == in.rows) {
         check_cublas(
-            cublasDaxpy(
-                context.blas(), blas_int(out.rows * out.cols), &value, in.data, 1, out.data, 1),
+            cublasDaxpy_64(context.blas(), out.rows * out.cols, &value, in.data, 1, out.data, 1),
             "point sum");
         return;
     }
     for (std::int64_t j = 0; j < out.cols; ++j)
-        check_cublas(cublasDaxpy(context.blas(),
-                                 blas_int(out.rows),
-                                 &value,
-                                 in.column(j).data,
-                                 1,
-                                 out.column(j).data,
-                                 1),
-                     "point sum");
+        check_cublas(
+            cublasDaxpy_64(
+                context.blas(), out.rows, &value, in.column(j).data, 1, out.column(j).data, 1),
+            "point sum");
 }
 double dot(Context& context, View x, View y) {
     if (x.rows != y.rows || x.cols != y.cols)
         throw std::invalid_argument("CUDA point dot dimensions");
     double result = 0.0;
     if (x.ld == x.rows && y.ld == y.rows) {
-        check_cublas(
-            cublasDdot(context.blas(), blas_int(x.rows * x.cols), x.data, 1, y.data, 1, &result),
-            "point dot");
+        check_cublas(cublasDdot_64(context.blas(), x.rows * x.cols, x.data, 1, y.data, 1, &result),
+                     "point dot");
         return result;
     }
     for (std::int64_t j = 0; j < x.cols; ++j) {
         double column = 0.0;
-        check_cublas(cublasDdot(context.blas(),
-                                blas_int(x.rows),
-                                x.column(j).data,
-                                1,
-                                y.column(j).data,
-                                1,
-                                &column),
+        check_cublas(cublasDdot_64(
+                         context.blas(), x.rows, x.column(j).data, 1, y.column(j).data, 1, &column),
                      "point dot");
         result += column;
     }
@@ -165,8 +154,10 @@ VbPoint::VbPoint(Context& context,
             input.n_active_orbitals * (input.n_active_orbitals + 1) / 2,
             input.n_active_orbitals * (input.n_active_orbitals + 1) / 2),
       endpoint_{Matrix<double>(context, action.size(), 1)},
-      products_(action.make_product_contraction()), selected_gradient_(context, action.size(), 1),
-      normalization_(context, 18, 1), one_adjoint_(context, one_.rows(), one_.cols()),
+      operator_first_(action.make_operator_first()),
+      products_(operator_first_ ? nullptr : action.make_product_contraction()),
+      selected_gradient_(context, action.size(), 1), normalization_(context, 18, 1),
+      one_adjoint_(context, one_.rows(), one_.cols()),
       pair_adjoint_(context, pair_.rows(), pair_.cols()),
       frame_gradient_(context, one_.rows(), one_.cols()),
       frame_moment_(context, one_.rows(), one_.cols()),
@@ -196,7 +187,8 @@ void VbPoint::prepare(View raw) {
     const nvtx3::scoped_range range{"point.prepare"};
     ready_ = false;
     prepared_ = false;
-    products_->update_frame();
+    if (products_)
+        products_->update_frame();
     endpoint_.readers.reset();
     endpoint_.images.reset();
     exchange_products_ = {};
@@ -223,6 +215,8 @@ void VbPoint::prepare(View raw) {
                                                            pair_.rows(),
                                                            pair_.rows()});
     sigma_.update_integrals(one_.view(), pair_.view());
+    if (operator_first_)
+        operator_first_->update(one_.view(), pair_.view(), geometry_.frame_transform());
     frame_identity_ = OrbitalFrameIdentity::fresh();
     select_frame();
     c.copy_to_host(&core_energy_, core_energy.data(), sizeof(double));
@@ -285,17 +279,26 @@ double VbPoint::evaluate_coefficients(View coefficients, View overlap_image) {
                                      action_->term_structures_data(),
                                      action_->term_weights_data(),
                                      action_->size()};
-    auto jet = products_->jet(incidence,
-                              sigma_,
-                              endpoint_,
-                              geometry_.frame_transform(),
-                              {},
-                              {},
-                              nullptr,
-                              product_workspace_bytes(),
-                              nullptr,
-                              {},
-                              overlap_image);
+    auto jet = operator_first_ ? operator_first_->jet(sigma_,
+                                                      coefficients,
+                                                      {},
+                                                      {},
+                                                      {},
+                                                      {},
+                                                      product_workspace_bytes(),
+                                                      nullptr,
+                                                      overlap_image)
+                               : products_->jet(incidence,
+                                                sigma_,
+                                                endpoint_,
+                                                geometry_.frame_transform(),
+                                                {},
+                                                {},
+                                                nullptr,
+                                                product_workspace_bytes(),
+                                                nullptr,
+                                                {},
+                                                overlap_image);
     selected_h_ = std::move(jet.hamiltonian);
     selected_m_ = std::move(jet.overlap);
     one_adjoint_ = std::move(jet.one);
@@ -305,7 +308,10 @@ double VbPoint::evaluate_coefficients(View coefficients, View overlap_image) {
     if (!(norm_ > 0.0) || !std::isfinite(norm_))
         throw std::runtime_error("CUDA VB state has invalid norm");
     active_energy_ = dot(c, coefficients, selected_h_.view()) / norm_;
-    products_->accept(endpoint_, active_energy_);
+    if (operator_first_)
+        operator_first_->accept(active_energy_);
+    else
+        products_->accept(endpoint_, active_energy_);
     total_energy_ = core_energy_ + active_energy_ + nuclear_;
     scale(c, one_adjoint_.view(), 1.0 / norm_);
     scale(c, pair_adjoint_.view(), 1.0 / norm_);
@@ -390,16 +396,16 @@ void VbPoint::hessian(View orbital,
         gemm(c, factor.view(), d.inactive_density.view(), overlap_core_.view());
         inactive_projection = Matrix<double>(c, nb, nc);
         const double one = 1.0, zero = 0.0;
-        check_cublas(cublasDspmv(c.blas(),
-                                 CUBLAS_FILL_MODE_UPPER,
-                                 blas_int(nb * nc),
-                                 &one,
-                                 inactive_response_.data(),
-                                 factor.data(),
-                                 1,
-                                 &zero,
-                                 inactive_projection.data(),
-                                 1),
+        check_cublas(cublasDspmv_64(c.blas(),
+                                    CUBLAS_FILL_MODE_UPPER,
+                                    nb * nc,
+                                    &one,
+                                    inactive_response_.data(),
+                                    factor.data(),
+                                    1,
+                                    &zero,
+                                    inactive_projection.data(),
+                                    1),
                      "CUDA symmetric core density projection");
         // Self-adjoint G makes the reverse cross response the transpose of the
         // active-density response. No second cross image or transform exists.
@@ -425,29 +431,37 @@ void VbPoint::hessian(View orbital,
          Operation::transpose);
     integrals_->directional(
         geometry_.orthogonal_active(), d.orthogonal_active.view(), dg.view(), pair_products());
-    direction_sigma_.update_integrals(dh.view(), dg.view());
+    if (!operator_first_)
+        direction_sigma_.update_integrals(dh.view(), dg.view());
     const ProductIncidence incidence{action_->term_offsets_data(),
                                      action_->term_structures_data(),
                                      action_->term_weights_data(),
                                      action_->size()};
     ProductJet ci_jet;
-    auto jet = products_->jet(incidence,
-                              sigma_,
-                              endpoint_,
-                              geometry_.frame_transform(),
-                              structure,
-                              d.frame_transform.view(),
-                              &direction_sigma_,
-                              product_workspace_bytes(),
-                              split ? &ci_jet : nullptr,
-                              generator.view());
+    auto jet = operator_first_ ? operator_first_->jet(sigma_,
+                                                      endpoint_.coefficients.view(),
+                                                      structure,
+                                                      d.frame_transform.view(),
+                                                      dh.view(),
+                                                      dg.view(),
+                                                      product_workspace_bytes(),
+                                                      split ? &ci_jet : nullptr)
+                               : products_->jet(incidence,
+                                                sigma_,
+                                                endpoint_,
+                                                geometry_.frame_transform(),
+                                                structure,
+                                                d.frame_transform.view(),
+                                                &direction_sigma_,
+                                                product_workspace_bytes(),
+                                                split ? &ci_jet : nullptr,
+                                                generator.view());
     if (ci_overlap_image.data)
         copy(c, ci_overlap_image, ci_jet.overlap.view());
     device_scalars(c, [&] {
         const auto inner = [&](View a, View b, int slot) {
             check_cublas(
-                cublasDdot(
-                    c.blas(), blas_int(a.rows), a.data, 1, b.data, 1, normalization_.data() + slot),
+                cublasDdot_64(c.blas(), a.rows, a.data, 1, b.data, 1, normalization_.data() + slot),
                 "point selected device dot");
         };
         inner(structure, selected_m_.view(), 0);
@@ -465,42 +479,38 @@ void VbPoint::hessian(View orbital,
             const double* coefficients = normalization_.data() + 2 + 8 * lane;
             const auto scaled = [&](Out out, int slot) {
                 if (out.ld == out.rows) {
-                    check_cublas(cublasDscal(c.blas(),
-                                             blas_int(out.rows * out.cols),
-                                             coefficients + slot,
-                                             out.data,
-                                             1),
-                                 "point device scale");
+                    check_cublas(
+                        cublasDscal_64(
+                            c.blas(), out.rows * out.cols, coefficients + slot, out.data, 1),
+                        "point device scale");
                     return;
                 }
                 for (std::int64_t j = 0; j < out.cols; ++j)
-                    check_cublas(cublasDscal(c.blas(),
-                                             blas_int(out.rows),
-                                             coefficients + slot,
-                                             out.column(j).data,
-                                             1),
-                                 "point device scale");
+                    check_cublas(
+                        cublasDscal_64(
+                            c.blas(), out.rows, coefficients + slot, out.column(j).data, 1),
+                        "point device scale");
             };
             const auto added = [&](Out out, View in, int slot) {
                 if (out.ld == out.rows && in.ld == in.rows) {
-                    check_cublas(cublasDaxpy(c.blas(),
-                                             blas_int(out.rows * out.cols),
-                                             coefficients + slot,
-                                             in.data,
-                                             1,
-                                             out.data,
-                                             1),
+                    check_cublas(cublasDaxpy_64(c.blas(),
+                                                out.rows * out.cols,
+                                                coefficients + slot,
+                                                in.data,
+                                                1,
+                                                out.data,
+                                                1),
                                  "point device sum");
                     return;
                 }
                 for (std::int64_t j = 0; j < out.cols; ++j)
-                    check_cublas(cublasDaxpy(c.blas(),
-                                             blas_int(out.rows),
-                                             coefficients + slot,
-                                             in.column(j).data,
-                                             1,
-                                             out.column(j).data,
-                                             1),
+                    check_cublas(cublasDaxpy_64(c.blas(),
+                                                out.rows,
+                                                coefficients + slot,
+                                                in.column(j).data,
+                                                1,
+                                                out.column(j).data,
+                                                1),
                                  "point device sum");
             };
             scaled(value.one.view(), 2);

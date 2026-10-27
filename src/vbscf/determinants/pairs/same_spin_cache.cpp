@@ -1,3 +1,4 @@
+#include "core/index.hpp"
 #include "vbscf/determinants/pairs/same_spin_cache.hpp"
 
 #include "mcscf/ci/string_table.hpp"
@@ -65,14 +66,15 @@ namespace {
 
 constexpr double kContributionTolerance = 1.0e-15;
 
-int same_spin_pair_cache_thread_count(int n_unique_determinants) {
+int same_spin_pair_cache_thread_count(mcscf::StringIndex n_unique_determinants) {
     // Same-spin cache construction is row-parallel over unique determinants.
     // Keep tiny determinant spaces serial and cap the team at the number of rows
     // so dynamic scheduling does not launch workers with no cache rows to own.
     if (n_unique_determinants <= 10) {
         return 1;
     }
-    return std::max(1, std::min(xmvb::effective_openmp_thread_count(), n_unique_determinants));
+    return std::max<Eigen::Index>(
+        1, std::min<Eigen::Index>(xmvb::effective_openmp_thread_count(), n_unique_determinants));
 }
 
 bool can_reuse_close_shell_same_spin_pair_cache(SpinStringRows alpha_det, SpinStringRows beta_det) {
@@ -93,9 +95,9 @@ std::vector<std::uint64_t> spin_key(std::span<const std::uint64_t> words) {
         key.pop_back();
     return key;
 }
-std::vector<int> map_unique_strings(const mcscf::StringTable& source,
-                                    const SpinDeterminantReuseTable& reference) {
-    std::vector<int> remap(source.size());
+std::vector<mcscf::StringIndex> map_unique_strings(const mcscf::StringTable& source,
+                                                   const SpinDeterminantReuseTable& reference) {
+    std::vector<mcscf::StringIndex> remap(source.size());
     if (source == reference.unique_determinants) {
         std::iota(remap.begin(), remap.end(), 0);
         return remap;
@@ -109,7 +111,7 @@ std::vector<int> map_unique_strings(const mcscf::StringTable& source,
         }
         return remap;
     }
-    std::unordered_map<std::vector<std::uint64_t>, int, SpinWordHasher> index;
+    std::unordered_map<std::vector<std::uint64_t>, mcscf::StringIndex, SpinWordHasher> index;
     index.reserve(reference.unique_determinants.size());
     for (int i = 0; i < static_cast<int>(reference.unique_determinants.size()); ++i)
         index.emplace(spin_key(reference.unique_determinants.words(i)), i);
@@ -143,7 +145,7 @@ bool try_build_reuse_table_in_reference_basis(
         return false;
     }
     for (std::size_t i = 0; i < source.determinant_to_unique_id.size(); ++i) {
-        const int id = remap[source.determinant_to_unique_id[i]];
+        const auto id = remap[source.determinant_to_unique_id[i]];
         mapped_reuse_table->determinant_to_unique_id[i] = id;
         touched_unique_ids[id] = 1u;
     }
@@ -188,7 +190,7 @@ std::vector<double> build_dense_active_pair_kernel(const std::vector<double>& er
 
     for (int column_pair = 0; column_pair < n_packed_active_pairs; ++column_pair) {
         for (int row_pair = 0; row_pair < n_packed_active_pairs; ++row_pair) {
-            const int packed_pair_of_pairs_index =
+            const auto packed_pair_of_pairs_index =
                 xmvb::core::PairIndex::packed_pair_of_pairs_index(row_pair, column_pair);
             dense_pair_kernel[column_pair * n_packed_active_pairs + row_pair] =
                 eri_act[packed_pair_of_pairs_index];
@@ -222,7 +224,7 @@ OppositeSpinPackedPairProjection build_sparse_packed_pair_projection(
         const int orbital_index_left = occ_L[left_column];
         for (int right_row = 0; right_row < static_cast<int>(occ_R.size()); ++right_row) {
             const int orbital_index_right = occ_R[right_row];
-            const int packed_pair_index =
+            const auto packed_pair_index =
                 xmvb::core::PairIndex::packed_pair_index(orbital_index_right, orbital_index_left);
             if (touched_mask[packed_pair_index] == 0) {
                 touched_mask[packed_pair_index] = 1;
@@ -434,7 +436,8 @@ build_same_spin_pair_cache(const xmvb::mcscf::StringTable& unique_spin_determina
                            const std::vector<double>* dense_pair_kernel,
                            bool materialize_projected_pair_values,
                            bool retain_derivative_payload) {
-    const int n_unique_determinants = static_cast<int>(unique_spin_determinants.size());
+    const mcscf::StringIndex n_unique_determinants =
+        core::checked_index<mcscf::StringIndex>(unique_spin_determinants.size());
     std::vector<SpinDeterminantPairEvaluation> pair_cache(n_unique_determinants *
                                                           n_unique_determinants);
 
@@ -447,8 +450,9 @@ build_same_spin_pair_cache(const xmvb::mcscf::StringTable& unique_spin_determina
     const int n_threads = same_spin_pair_cache_thread_count(n_unique_determinants);
 
 #pragma omp parallel for schedule(dynamic, 1) if (n_threads > 1) num_threads(n_threads)
-    for (int left_index = 0; left_index < n_unique_determinants; ++left_index) {
-        for (int right_index = 0; right_index < n_unique_determinants; ++right_index) {
+    for (mcscf::StringIndex left_index = 0; left_index < n_unique_determinants; ++left_index) {
+        for (mcscf::StringIndex right_index = 0; right_index < n_unique_determinants;
+             ++right_index) {
             pair_cache[ordered_spin_pair_storage_index(
                 left_index, right_index, n_unique_determinants)] =
                 pair_evaluator.evaluate_same_spin_pair(unique_spin_determinants[left_index],
@@ -482,7 +486,8 @@ std::vector<SpinDeterminantPairEvaluation> build_same_spin_pair_cache(
     const std::vector<double>* dense_pair_kernel,
     bool materialize_projected_pair_values,
     bool retain_derivative_payload) {
-    const int n_unique_determinants = static_cast<int>(unique_spin_determinants.size());
+    const mcscf::StringIndex n_unique_determinants =
+        core::checked_index<mcscf::StringIndex>(unique_spin_determinants.size());
     std::vector<SpinDeterminantPairEvaluation> pair_cache(n_unique_determinants *
                                                           n_unique_determinants);
     const xmvb::integrals::ActiveSpaceTwoElectronView two_electron_view =
@@ -490,8 +495,9 @@ std::vector<SpinDeterminantPairEvaluation> build_same_spin_pair_cache(
     const int n_threads = same_spin_pair_cache_thread_count(n_unique_determinants);
 
 #pragma omp parallel for schedule(dynamic, 1) if (n_threads > 1) num_threads(n_threads)
-    for (int left_index = 0; left_index < n_unique_determinants; ++left_index) {
-        for (int right_index = 0; right_index < n_unique_determinants; ++right_index) {
+    for (mcscf::StringIndex left_index = 0; left_index < n_unique_determinants; ++left_index) {
+        for (mcscf::StringIndex right_index = 0; right_index < n_unique_determinants;
+             ++right_index) {
             pair_cache[ordered_spin_pair_storage_index(
                 left_index, right_index, n_unique_determinants)] =
                 pair_evaluator.evaluate_same_spin_pair(unique_spin_determinants[left_index],
@@ -525,7 +531,8 @@ void populate_same_spin_phi_cache_entries(
         throw std::invalid_argument("pair_cache must not be null");
     }
 
-    const int n_unique_determinants = static_cast<int>(unique_spin_determinants.size());
+    const mcscf::StringIndex n_unique_determinants =
+        core::checked_index<mcscf::StringIndex>(unique_spin_determinants.size());
     if (pair_cache->size() != n_unique_determinants * n_unique_determinants) {
         throw std::invalid_argument(
             "same-spin phi cache population size does not match unique-spin dimensions");
@@ -533,8 +540,9 @@ void populate_same_spin_phi_cache_entries(
     const int n_threads = same_spin_pair_cache_thread_count(n_unique_determinants);
 
 #pragma omp parallel for schedule(dynamic, 1) if (n_threads > 1) num_threads(n_threads)
-    for (int left_index = 0; left_index < n_unique_determinants; ++left_index) {
-        for (int right_index = 0; right_index < n_unique_determinants; ++right_index) {
+    for (mcscf::StringIndex left_index = 0; left_index < n_unique_determinants; ++left_index) {
+        for (mcscf::StringIndex right_index = 0; right_index < n_unique_determinants;
+             ++right_index) {
             auto& pair_evaluation = (*pair_cache)[ordered_spin_pair_storage_index(
                 left_index, right_index, n_unique_determinants)];
             populate_same_spin_phi_cache_entry(unique_spin_determinants[left_index],
@@ -619,7 +627,7 @@ SpinDeterminantReuseTable build_spin_determinant_reuse_table(SpinStringRows spin
     }
     reuse_table.determinant_to_unique_id.resize(spin_determinants.size(), -1);
     if (spin_determinants.strings().word_width() == 1) {
-        std::unordered_map<std::uint64_t, int> ids;
+        std::unordered_map<std::uint64_t, mcscf::StringIndex> ids;
         ids.reserve(spin_determinants.size());
         for (std::size_t i = 0; i < spin_determinants.size(); ++i) {
             const auto mask = spin_determinants.mask(i);
@@ -630,7 +638,7 @@ SpinDeterminantReuseTable build_spin_determinant_reuse_table(SpinStringRows spin
             reuse_table.determinant_to_unique_id[i] = found->second;
         }
     } else {
-        std::unordered_map<std::vector<std::uint64_t>, int, SpinWordHasher> ids;
+        std::unordered_map<std::vector<std::uint64_t>, mcscf::StringIndex, SpinWordHasher> ids;
         ids.reserve(spin_determinants.size());
         for (std::size_t i = 0; i < spin_determinants.size(); ++i) {
             auto key = spin_key(spin_determinants.words(i));
@@ -644,9 +652,13 @@ SpinDeterminantReuseTable build_spin_determinant_reuse_table(SpinStringRows spin
     return reuse_table;
 }
 
-std::size_t
-ordered_spin_pair_storage_index(int left_index, int right_index, int n_unique_determinants) {
-    return left_index * n_unique_determinants + right_index;
+std::size_t ordered_spin_pair_storage_index(mcscf::StringIndex left_index,
+                                            mcscf::StringIndex right_index,
+                                            mcscf::StringIndex n_unique_determinants) {
+    return core::checked_add(
+        core::checked_multiply(core::checked_index<std::size_t>(left_index),
+                               core::checked_index<std::size_t>(n_unique_determinants)),
+        core::checked_index<std::size_t>(right_index));
 }
 
 std::size_t
@@ -655,12 +667,12 @@ estimate_same_spin_pair_cache_bytes(const xmvb::mcscf::StringTable& unique_spin_
     int max_electron_count = 0;
     for (std::size_t i = 0; i < unique_spin_determinants.size(); ++i)
         max_electron_count =
-            std::max(max_electron_count, unique_spin_determinants.electron_count(i));
+            std::max<Eigen::Index>(max_electron_count, unique_spin_determinants.electron_count(i));
     const std::size_t n_packed_active_pairs =
         n_orbitals == 0 ? 0 : xmvb::integrals::packed_active_pair_count(n_orbitals);
     const std::size_t max_occupied_pair_count =
         static_cast<std::size_t>(max_electron_count) *
-        static_cast<std::size_t>(std::max(0, max_electron_count - 1)) / 2;
+        static_cast<std::size_t>(std::max<Eigen::Index>(0, max_electron_count - 1)) / 2;
 
     // A cached same-spin pair keeps one `SpinDeterminantPairEvaluation`, plus
     // the dominant dynamic overlap payload:
@@ -737,7 +749,7 @@ SpinDeterminantReuseTable complete_spin_reuse_table(SpinStringRows determinants,
         return table;
     }
     const mcscf::SpinStrings complete(n_orbitals, n_electrons);
-    std::vector<int> remap(table.unique_determinants.size());
+    std::vector<mcscf::StringIndex> remap(table.unique_determinants.size());
     for (std::size_t i = 0; i < remap.size(); ++i)
         remap[i] = complete.index(table.unique_determinants.mask(i));
     for (auto& id : table.determinant_to_unique_id)
@@ -1029,8 +1041,8 @@ DeterminantPairEvaluation evaluate_full_determinant_pair_with_optional_same_spin
     const DeterminantPairEvaluator& pair_evaluator,
     SpinStringRows alpha_det,
     SpinStringRows beta_det,
-    int determinant_index_left,
-    int determinant_index_right,
+    Eigen::Index determinant_index_left,
+    Eigen::Index determinant_index_right,
     const std::vector<double>& ovlp_act,
     const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_orbitals,
@@ -1130,8 +1142,8 @@ DeterminantPairEvaluation evaluate_full_determinant_pair_with_optional_same_spin
     const DeterminantPairEvaluator& pair_evaluator,
     SpinStringRows alpha_det,
     SpinStringRows beta_det,
-    int determinant_index_left,
-    int determinant_index_right,
+    Eigen::Index determinant_index_left,
+    Eigen::Index determinant_index_right,
     const std::vector<double>& ovlp_act,
     const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_orbitals,

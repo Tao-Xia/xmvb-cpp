@@ -106,7 +106,7 @@ StructureTangentOperator::StructureTangentOperator(
     const double metric_error =
         (selected_metric - Eigen::MatrixXd::Identity(n_states_, n_states_)).norm();
     const double metric_tolerance =
-        1.0e3 * std::numeric_limits<double>::epsilon() * std::max(1, n_structures_);
+        1.0e3 * std::numeric_limits<double>::epsilon() * std::max<Eigen::Index>(1, n_structures_);
     if (!std::isfinite(metric_error) || metric_error > metric_tolerance) {
         throw std::invalid_argument(
             "coupled structure operator requires S-orthonormal selected states");
@@ -118,7 +118,7 @@ StructureTangentOperator::StructureTangentOperator(
 
     Eigen::ColPivHouseholderQR<Eigen::MatrixXd> factor(selected_images.overlap);
     factor.setThreshold(std::numeric_limits<double>::epsilon() *
-                        std::max(n_structures_, n_states_));
+                        std::max<Eigen::Index>(n_structures_, n_states_));
     if (factor.rank() != n_states_) {
         throw std::invalid_argument("selected-state metric images are linearly dependent");
     }
@@ -133,7 +133,7 @@ StructureTangentOperator::StructureTangentOperator(
                                        static_cast<int>(action_->supports_carrier_diagonal()));
 }
 
-int StructureTangentOperator::n_structures() const noexcept {
+Eigen::Index StructureTangentOperator::n_structures() const noexcept {
     return n_structures_;
 }
 
@@ -141,7 +141,7 @@ int StructureTangentOperator::n_states() const noexcept {
     return n_states_;
 }
 
-int StructureTangentOperator::tangent_size() const noexcept {
+Eigen::Index StructureTangentOperator::tangent_size() const noexcept {
     return (n_structures_ - n_states_) * n_states_;
 }
 
@@ -168,7 +168,7 @@ Eigen::VectorXd StructureTangentOperator::coordinates(const StructureTangent& ta
     const Eigen::MatrixXd transformed =
         constraint_qr_.householderQ().adjoint() * tangent.scaled_coefficients;
     const double tolerance = 1024.0 * std::numeric_limits<double>::epsilon() *
-                             std::max(1, n_structures_ * n_states_) *
+                             std::max<Eigen::Index>(1, n_structures_ * n_states_) *
                              std::max(1.0, tangent.scaled_coefficients.norm());
     if (transformed.topRows(n_states_).norm() > tolerance) {
         throw std::invalid_argument("structure tangent is not horizontal");
@@ -552,9 +552,10 @@ StructureTangentOperator::apply_inverse_shifted_preconditioner(const Eigen::Vect
         if (scale == 0.0) {
             continue;
         }
-        const double floor = std::max(std::numeric_limits<double>::min(),
-                                      std::numeric_limits<double>::epsilon() *
-                                          static_cast<double>(std::max(1, n_structures_)) * scale);
+        const double floor =
+            std::max(std::numeric_limits<double>::min(),
+                     std::numeric_limits<double>::epsilon() *
+                         static_cast<double>(std::max<Eigen::Index>(1, n_structures_)) * scale);
         denominator = denominator.cwiseMax(floor);
         ambient.col(state).array() /= denominator.array();
     }

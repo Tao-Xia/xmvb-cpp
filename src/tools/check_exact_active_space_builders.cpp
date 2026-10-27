@@ -324,7 +324,7 @@ xmvb::integrals::ActiveSpaceTwoElectronResult build_reference_active_space_two_e
             for (int r = 0; r <= p; ++r) {
                 const int s_upper = (r == p) ? q : r;
                 for (int s = 0; s <= s_upper; ++s) {
-                    const int packed_index =
+                    const auto packed_index =
                         xmvb::core::PairIndex::two_electron_storage_index(p, q, r, s);
                     packed_active_two_electron_integrals[packed_index] =
                         active_two_electron_tensor[active_tensor_index(p, q, r, s)];

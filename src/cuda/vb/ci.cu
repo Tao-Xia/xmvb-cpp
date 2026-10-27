@@ -1,3 +1,5 @@
+#include "core/index.hpp"
+#include <cstdint>
 #include "cuda/vb/ci.hpp"
 
 #include <algorithm>
@@ -15,8 +17,8 @@ namespace xmvb::cuda {
 namespace {
 
 __global__ void
-positive_model(const double* h, const double* m, double energy, double* model, int n) {
-    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+positive_model(const double* h, const double* m, double energy, double* model, std::int64_t n) {
+    const std::int64_t i = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i < n) {
         const double em = energy * m[i];
         const double scale = fmax(1.0, fmax(fabs(h[i]), fabs(em)));
@@ -29,8 +31,8 @@ __global__ void augmented_positive_model(const double* h,
                                          double selected_energy,
                                          double eigenvalue,
                                          double* model,
-                                         int n) {
-    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+                                         std::int64_t n) {
+    const std::int64_t i = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i < n)
         model[i] = fmax(fabs(h[i] - (selected_energy + eigenvalue) * m[i]), 1.0e-8);
 }
@@ -41,8 +43,8 @@ __global__ void augmented_diagonal_inverse(const double* h,
                                            double energy,
                                            double shift,
                                            double* out,
-                                           int n) {
-    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+                                           std::int64_t n) {
+    const std::int64_t i = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i < n) {
         double denominator = h[i] - (energy + shift) * m[i];
         if (fabs(denominator) < 1.0e-8)
@@ -51,8 +53,12 @@ __global__ void augmented_diagonal_inverse(const double* h,
     }
 }
 
-__global__ void select_jacobi_seed(
-    linalg::MatrixView seed, const double* h, const double* m, int* selected, int n, int column) {
+__global__ void select_jacobi_seed(linalg::MatrixView seed,
+                                   const double* h,
+                                   const double* m,
+                                   int* selected,
+                                   std::int64_t n,
+                                   int column) {
     __shared__ double minima[256];
     __shared__ int indices[256];
     const int lane = threadIdx.x;
@@ -100,8 +106,10 @@ __global__ void rayleigh_norm(double* energy, double* norm) {
 linalg::DavidsonResult download_result(Context& context, const DeviceDavidsonResult& device) {
     linalg::DavidsonResult host;
     host.eigenpairs.eigenvalues = device.eigenpairs.eigenvalues;
-    const int n = static_cast<int>(device.eigenpairs.eigenvector_matrix.rows());
-    const int roots = static_cast<int>(device.eigenpairs.eigenvector_matrix.cols());
+    const std::int64_t n =
+        core::checked_index<std::int64_t>(device.eigenpairs.eigenvector_matrix.rows());
+    const int roots =
+        core::checked_index<std::int64_t>(device.eigenpairs.eigenvector_matrix.cols());
     host.eigenpairs.eigenvector_matrix.resize(static_cast<std::size_t>(n) * roots);
     context.copy_to_host(host.eigenpairs.eigenvector_matrix.data(),
                          device.eigenpairs.eigenvector_matrix.data(),
@@ -206,7 +214,7 @@ void StructureCi::inverse_augmented_hessian_model(linalg::ConstMatrixView rhs,
             refresh();
             point = point_.get();
         }
-        const int n = action_->size();
+        const std::int64_t n = action_->size();
         if (selected_mode_) {
             augmented_diagonal_inverse<<<(n + 255) / 256, 256, 0, context_->stream()>>>(
                 point->diagonal_h.data(),
@@ -240,7 +248,7 @@ void StructureCi::precondition(linalg::ConstMatrixView residual,
     } else if (point_->metric) {
         point_->metric->solve(residual, output);
     } else {
-        const int n = action_->size();
+        const std::int64_t n = action_->size();
         positive_model<<<(n + 255) / 256, 256, 0, context_->stream()>>>(
             point_->diagonal_h.data(), point_->diagonal_m.data(), energy, positive_.data(), n);
         check_cuda(cudaGetLastError(), "CUDA CI positive inverse model");
@@ -298,7 +306,7 @@ DeviceDavidsonResult StructureCi::solve_device(linalg::ConstMatrixView initial,
                                               options,
                                               inverse);
     if (full_) {
-        const int n = action_->size(), roots = options.n_roots;
+        const std::int64_t n = action_->size(), roots = options.n_roots;
         Matrix<double> m_structure(*context_, n, roots);
         full_->ci_covector_to_structure(result.eigenpairs.eigenvector_matrix.view(),
                                         m_structure.view());
@@ -314,7 +322,7 @@ DeviceDavidsonResult StructureCi::solve_device(linalg::ConstMatrixView initial,
 
 DeviceDavidsonResult StructureCi::solve_device(const linalg::DavidsonOptions& options) {
     refresh();
-    const int count = std::min(options.max_subspace_dimension, 2 * options.n_roots);
+    const std::int64_t count = std::min(options.max_subspace_dimension, 2 * options.n_roots);
     if (count <= 0 || count > action_->size())
         throw std::invalid_argument("CUDA structure CI initial count");
     Matrix<double> seed(*context_, action_->size(), count);
@@ -324,7 +332,7 @@ DeviceDavidsonResult StructureCi::solve_device(const linalg::DavidsonOptions& op
                                static_cast<std::size_t>(seed.rows()) * seed.cols() * sizeof(double),
                                context_->stream()),
                "CUDA structure CI clear seed");
-    for (int column = 0; column < count / 2; ++column) {
+    for (std::int64_t column = 0; column < count / 2; ++column) {
         select_jacobi_seed<<<1, 256, 0, context_->stream()>>>(seed.view(),
                                                               point_->diagonal_h.data(),
                                                               point_->diagonal_m.data(),
@@ -353,21 +361,21 @@ void StructureCi::energy_norm_device(linalg::ConstMatrixView state,
     check_cublas(cublasSetPointerMode(context_->blas(), CUBLAS_POINTER_MODE_DEVICE),
                  "CUDA CI device scalar pointer mode");
     try {
-        check_cublas(cublasDdot(context_->blas(),
-                                static_cast<int>(state.rows),
-                                state.data,
-                                1,
-                                h.data(),
-                                1,
-                                energy.data),
+        check_cublas(cublasDdot_64(context_->blas(),
+                                   static_cast<int>(state.rows),
+                                   state.data,
+                                   1,
+                                   h.data(),
+                                   1,
+                                   energy.data),
                      "CUDA CI device energy dot");
-        check_cublas(cublasDdot(context_->blas(),
-                                static_cast<int>(state.rows),
-                                state.data,
-                                1,
-                                m.data(),
-                                1,
-                                norm.data),
+        check_cublas(cublasDdot_64(context_->blas(),
+                                   static_cast<int>(state.rows),
+                                   state.data,
+                                   1,
+                                   m.data(),
+                                   1,
+                                   norm.data),
                      "CUDA CI device norm dot");
     } catch (...) {
         cublasSetPointerMode(context_->blas(), CUBLAS_POINTER_MODE_HOST);

@@ -1,3 +1,5 @@
+#include "core/index.hpp"
+#include <cstdint>
 #include "cuda/ci/sigma.hpp"
 
 #include <algorithm>
@@ -19,31 +21,37 @@ namespace xmvb::cuda {
 namespace {
 
 unsigned grid(std::size_t work) {
-    return static_cast<unsigned>(std::min<std::size_t>(65535, (work + 255) / 256));
+    return static_cast<unsigned>(std::min<std::size_t>(65535, (work / 256 + (work % 256 != 0))));
 }
 
 struct PackedGroup {
     std::size_t offset;
-    int begin, channels, selector_offset;
+    std::int64_t begin;
+    int channels, selector_offset;
     bool operator==(const PackedGroup&) const = default;
 };
 
 /** A beta label is constant over the CPU plan's target group. */
-__global__ void expand_beta_labels(const int* descriptors, int groups, int* betas) {
-    for (int g = blockIdx.x; g < groups; g += gridDim.x) {
-        const int* entry = descriptors + 3 * g;
-        for (int row = entry[1] + threadIdx.x; row < entry[2]; row += blockDim.x)
+__global__ void
+expand_beta_labels(const std::int64_t* descriptors, std::int64_t groups, std::int64_t* betas) {
+    for (std::int64_t g = blockIdx.x; g < groups; g += gridDim.x) {
+        const std::int64_t* entry = descriptors + 3 * g;
+        for (std::int64_t row = entry[1] + threadIdx.x; row < entry[2]; row += blockDim.x)
             betas[row] = entry[0];
     }
 }
 
 /** Stable packed-to-original permutation already determines each channel
  * label. Recover labels without uploading a second per-target array. */
-__global__ void expand_channel_labels(
-    const PackedGroup* layout, int groups, int rows, int width, const int* inverse, int* labels) {
-    for (int g = blockIdx.x; g < groups; g += gridDim.x) {
-        const int begin = layout[g].begin;
-        const int end = g + 1 < groups ? layout[g + 1].begin : rows;
+__global__ void expand_channel_labels(const PackedGroup* layout,
+                                      std::int64_t groups,
+                                      std::int64_t rows,
+                                      int width,
+                                      const std::int64_t* inverse,
+                                      std::int64_t* labels) {
+    for (std::int64_t g = blockIdx.x; g < groups; g += gridDim.x) {
+        const std::int64_t begin = layout[g].begin;
+        const std::int64_t end = g + 1 < groups ? layout[g + 1].begin : rows;
         for (int i = threadIdx.x; i < (end - begin) / width; i += blockDim.x)
             labels[inverse[begin + i]] = g;
     }
@@ -51,21 +59,21 @@ __global__ void expand_channel_labels(
 
 /** CPU plan maps only: no product-sized address table is uploaded. */
 struct TileMap {
-    const int *active, *betas, *groups, *supported, *halo_index, *column_index;
+    const std::int64_t *active, *betas, *groups, *supported, *halo_index, *column_index;
     const int* local;
     const PackedGroup* packed_groups;
-    int count, width, pairs, alpha, beta;
+    std::int64_t count, width, pairs, alpha, beta;
 
-    __device__ int group(int row) const {
+    __device__ std::int64_t group(std::int64_t row) const {
         return groups ? groups[row % count] : 0;
     }
-    __device__ bool is_supported(int row) const {
+    __device__ bool is_supported(std::int64_t row) const {
         return groups ? group(row) == 0 : (!supported || supported[row % count]);
     }
-    __device__ int halo_row(int row) const {
+    __device__ std::int64_t halo_row(std::int64_t row) const {
         return halo_index ? halo_index[row] : row;
     }
-    __device__ int column(int col) const {
+    __device__ std::int64_t column(std::int64_t col) const {
         return column_index ? column_index[col] : col;
     }
     __device__ std::size_t packed_row(int image, int group) const {
@@ -78,7 +86,7 @@ struct TileMap {
 
 __global__ void pack_kernel(linalg::ConstMatrixView kernel,
                             const int* channels,
-                            int count,
+                            std::int64_t count,
                             linalg::MatrixView output) {
     for (auto i = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
          i < static_cast<std::size_t>(output.rows) * count;
@@ -100,7 +108,7 @@ add_gram(linalg::ConstMatrixView gram, linalg::MatrixView total, const int* chan
 
 struct GroupTile {
     std::size_t offset, scratch;
-    int group, begin, size;
+    std::int64_t group, begin, size;
     std::size_t selected;
     int channels;
     bool operator==(const GroupTile&) const = default;
@@ -108,7 +116,7 @@ struct GroupTile {
 
 struct GroupedGemm {
     std::vector<cublasOperation_t> transa, transb;
-    std::vector<int> m, n, k, lda, ldb, ldc, group_size;
+    std::vector<std::int64_t> m, n, k, lda, ldb, ldc, group_size;
     std::vector<double> alpha, beta;
 
     void reserve(std::size_t count) {
@@ -127,7 +135,7 @@ struct GroupedGemm {
 
     void prepare(std::span<const GroupTile> groups,
                  int pairs,
-                 int image_rows,
+                 std::int64_t image_rows,
                  double scale,
                  double previous,
                  bool gram,
@@ -164,23 +172,24 @@ struct GroupedGemm {
              double* const* result) const {
         check_cublas(cublasSetPointerMode(context.blas(), CUBLAS_POINTER_MODE_HOST),
                      "set grouped GEMM host scalars");
-        check_cublas(cublasDgemmGroupedBatched(context.blas(),
-                                               transa.data(),
-                                               transb.data(),
-                                               m.data(),
-                                               n.data(),
-                                               k.data(),
-                                               alpha.data(),
-                                               left,
-                                               lda.data(),
-                                               right,
-                                               ldb.data(),
-                                               beta.data(),
-                                               result,
-                                               ldc.data(),
-                                               static_cast<int>(group_size.size()),
-                                               group_size.data()),
-                     "cublasDgemmGroupedBatched");
+        check_cublas(
+            cublasDgemmGroupedBatched_64(context.blas(),
+                                         transa.data(),
+                                         transb.data(),
+                                         m.data(),
+                                         n.data(),
+                                         k.data(),
+                                         alpha.data(),
+                                         left,
+                                         lda.data(),
+                                         right,
+                                         ldb.data(),
+                                         beta.data(),
+                                         result,
+                                         ldc.data(),
+                                         core::checked_index<std::int64_t>(group_size.size()),
+                                         group_size.data()),
+            "cublasDgemmGroupedBatched");
     }
 };
 
@@ -189,10 +198,10 @@ struct GroupedGemm {
  * packet upload, pinned-slot synchronization or per-panel descriptor cache.
  */
 __global__ void build_group_tiles(const PackedGroup* layout,
-                                  int groups,
-                                  int total_rows,
-                                  int first,
-                                  int rows,
+                                  std::int64_t groups,
+                                  std::int64_t total_rows,
+                                  std::int64_t first,
+                                  std::int64_t rows,
                                   std::size_t origin,
                                   int pairs,
                                   GroupTile* output) {
@@ -204,11 +213,11 @@ __global__ void build_group_tiles(const PackedGroup* layout,
     }
     int rank = 0, previous = -1;
     std::size_t scratch = 0;
-    for (int g = 0; g < groups; ++g) {
+    for (std::int64_t g = 0; g < groups; ++g) {
         const auto entry = layout[g];
-        const int end = g + 1 < groups ? layout[g + 1].begin : total_rows;
-        const int begin = first > entry.begin ? first : entry.begin;
-        const int last = first + rows < end ? first + rows : end;
+        const std::int64_t end = g + 1 < groups ? layout[g + 1].begin : total_rows;
+        const std::int64_t begin = first > entry.begin ? first : entry.begin;
+        const std::int64_t last = first + rows < end ? first + rows : end;
         if (begin >= last)
             continue;
         const auto area = static_cast<std::size_t>(entry.channels) * entry.channels;
@@ -230,8 +239,8 @@ __global__ void build_group_tiles(const PackedGroup* layout,
 // Grouped GEMM pointers use the numerical panel's dedicated tiny scratch.
 template <bool Gram>
 __global__ void grouped_pointers(const GroupTile* groups,
-                                 int first,
-                                 int count,
+                                 std::int64_t first,
+                                 std::int64_t count,
                                  const double* source,
                                  const double* second,
                                  const double* full_kernel,
@@ -242,7 +251,7 @@ __global__ void grouped_pointers(const GroupTile* groups,
                                  int lanes,
                                  std::size_t source_stride,
                                  std::size_t output_stride) {
-    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t i = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i >= count * lanes)
         return;
     const int lane = i % lanes;
@@ -262,20 +271,20 @@ __global__ void grouped_pointers(const GroupTile* groups,
 __global__ void add_grouped_gram(const double* scratch,
                                  linalg::MatrixView total,
                                  const GroupTile* groups,
-                                 int first,
-                                 int last,
+                                 std::int64_t first,
+                                 std::int64_t last,
                                  const int* local,
                                  int pairs) {
     const auto work = static_cast<std::size_t>(pairs) * pairs;
     for (auto entry = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x; entry < work;
          entry += static_cast<std::size_t>(gridDim.x) * blockDim.x) {
-        const int row = entry % pairs, column = entry / pairs;
+        const std::int64_t row = entry % pairs, column = entry / pairs;
         const auto target = row + total.ld * column;
         double value = total.data[target];
         for (int i = first; i < last; ++i) {
             const auto group = groups[i];
-            const int a = local[group.group * pairs + row];
-            const int b = local[group.group * pairs + column];
+            const std::int64_t a = local[group.group * pairs + row];
+            const std::int64_t b = local[group.group * pairs + column];
             if (a >= 0 && b >= 0)
                 value += scratch[group.scratch + a + static_cast<std::size_t>(group.channels) * b];
         }
@@ -285,19 +294,19 @@ __global__ void add_grouped_gram(const double* scratch,
 
 __device__ __forceinline__ void scatter_row_channel(TileMap map,
                                                     linalg::ConstMatrixView input,
-                                                    const int* alpha,
-                                                    const int* beta,
-                                                    int row,
+                                                    const std::int64_t* alpha,
+                                                    const std::int64_t* beta,
+                                                    std::int64_t row,
                                                     int p,
                                                     std::size_t target,
                                                     int lanes,
                                                     std::size_t input_stride,
                                                     std::size_t output_stride,
                                                     double* output) {
-    const int t = row % map.count, v = row / map.count;
-    const int a = map.active[t], b = map.betas[t];
-    const int sa = alpha[static_cast<std::size_t>(p) * map.alpha + a];
-    const int sb = beta[static_cast<std::size_t>(p) * map.beta + b];
+    const std::int64_t t = row % map.count, v = row / map.count;
+    const std::int64_t a = map.active[t], b = map.betas[t];
+    const std::int64_t sa = alpha[static_cast<std::size_t>(p) * map.alpha + a];
+    const std::int64_t sb = beta[static_cast<std::size_t>(p) * map.beta + b];
     const bool take_a = sa && (abs(sa) - 1 != a || map.is_supported(t));
     const bool take_b = sb && (abs(sb) - 1 != b || map.is_supported(t));
     const auto ia =
@@ -319,11 +328,11 @@ __device__ __forceinline__ void scatter_row_channel(TileMap map,
 /** Inverse image rows are built once per symbolic tile. */
 __global__ void scatter_row_panel(TileMap map,
                                   linalg::ConstMatrixView input,
-                                  const int* alpha,
-                                  const int* beta,
-                                  const int* inverse,
-                                  int first,
-                                  int rows,
+                                  const std::int64_t* alpha,
+                                  const std::int64_t* beta,
+                                  const std::int64_t* inverse,
+                                  std::int64_t first,
+                                  std::int64_t rows,
                                   std::size_t packed_origin,
                                   int lanes,
                                   std::size_t input_stride,
@@ -332,8 +341,8 @@ __global__ void scatter_row_panel(TileMap map,
     const auto work = static_cast<std::size_t>(rows) * map.pairs;
     for (auto i = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x; i < work;
          i += static_cast<std::size_t>(gridDim.x) * blockDim.x) {
-        const int local_row = i / map.pairs, p = i % map.pairs;
-        const int row = inverse ? inverse[first + local_row] : first + local_row;
+        const std::int64_t local_row = i / map.pairs, p = i % map.pairs;
+        const std::int64_t row = inverse ? inverse[first + local_row] : first + local_row;
         const int group = map.group(row), local = map.local[group * map.pairs + p];
         if (local < 0)
             continue;
@@ -346,12 +355,12 @@ __global__ void scatter_row_panel(TileMap map,
 /** One warp owns an image row and visits only its resident group selectors. */
 __global__ void scatter_restricted_row_panel(TileMap map,
                                              linalg::ConstMatrixView input,
-                                             const int* alpha,
-                                             const int* beta,
-                                             const int* inverse,
+                                             const std::int64_t* alpha,
+                                             const std::int64_t* beta,
+                                             const std::int64_t* inverse,
                                              const int* selectors,
-                                             int first,
-                                             int rows,
+                                             std::int64_t first,
+                                             std::int64_t rows,
                                              std::size_t packed_origin,
                                              int lanes,
                                              std::size_t input_stride,
@@ -361,7 +370,7 @@ __global__ void scatter_restricted_row_panel(TileMap map,
     for (auto local_row = static_cast<std::size_t>(blockIdx.x) * 4 + warp;
          local_row < static_cast<std::size_t>(rows);
          local_row += static_cast<std::size_t>(gridDim.x) * 4) {
-        const int row = inverse[first + local_row];
+        const std::int64_t row = inverse[first + local_row];
         const int group = map.group(row);
         const auto entry = map.packed_groups[group];
         const auto base = map.packed_row(first + local_row, group) - packed_origin;
@@ -383,18 +392,18 @@ __global__ void scatter_restricted_row_panel(TileMap map,
 }
 
 __global__ void weight_row_panel(TileMap map,
-                                 const int* inverse,
-                                 int first,
-                                 int rows,
+                                 const std::int64_t* inverse,
+                                 std::int64_t first,
+                                 std::int64_t rows,
                                  std::size_t packed_origin,
                                  const double* source,
                                  double* weighted) {
     const auto work = static_cast<std::size_t>(rows) * map.pairs;
     for (auto i = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x; i < work;
          i += static_cast<std::size_t>(gridDim.x) * blockDim.x) {
-        const int local_row = i / map.pairs, p = i % map.pairs;
-        const int row = inverse ? inverse[first + local_row] : first + local_row;
-        const int t = row % map.count;
+        const std::int64_t local_row = i / map.pairs, p = i % map.pairs;
+        const std::int64_t row = inverse ? inverse[first + local_row] : first + local_row;
+        const std::int64_t t = row % map.count;
         const int group = map.group(row), local = map.local[group * map.pairs + p];
         if (local < 0)
             continue;
@@ -407,11 +416,11 @@ __global__ void weight_row_panel(TileMap map,
  * destinations execute in parallel, rather than serially inside one thread. */
 template <bool Batched = false>
 __global__ void scatter_image_row_panel(TileMap map,
-                                        const int* alpha,
-                                        const int* beta,
-                                        const int* inverse,
-                                        int first,
-                                        int rows,
+                                        const std::int64_t* alpha,
+                                        const std::int64_t* beta,
+                                        const std::int64_t* inverse,
+                                        std::int64_t first,
+                                        std::int64_t rows,
                                         const double* image,
                                         linalg::MatrixView output,
                                         bool resident,
@@ -426,23 +435,23 @@ __global__ void scatter_image_row_panel(TileMap map,
          entry += static_cast<std::size_t>(gridDim.x) * blockDim.x) {
         const auto i = Batched ? entry / lanes : entry;
         const int lane = Batched ? entry % lanes : 0;
-        const int local_row = i % rows, p = i / rows;
-        const int row = inverse ? inverse[first + local_row] : first + local_row;
-        const int t = row % map.count, v = row / map.count;
-        const int a = map.active[t], b = map.betas[t];
-        const int sa = alpha[static_cast<std::size_t>(p) * map.alpha + a];
-        const int sb = beta[static_cast<std::size_t>(p) * map.beta + b];
+        const std::int64_t local_row = i % rows, p = i / rows;
+        const std::int64_t row = inverse ? inverse[first + local_row] : first + local_row;
+        const std::int64_t t = row % map.count, v = row / map.count;
+        const std::int64_t a = map.active[t], b = map.betas[t];
+        const std::int64_t sa = alpha[static_cast<std::size_t>(p) * map.alpha + a];
+        const std::int64_t sb = beta[static_cast<std::size_t>(p) * map.beta + b];
         const double value = image[i + lane * image_stride] * (exchange && a == b ? 0.5 : 1.0);
         if (sa) {
-            const int row = resident ? abs(sa) - 1 : map.halo_row(abs(sa) - 1);
-            const int col = resident ? v * map.beta + b : map.column(b) * map.width + v;
+            const std::int64_t row = resident ? abs(sa) - 1 : map.halo_row(abs(sa) - 1);
+            const std::int64_t col = resident ? v * map.beta + b : map.column(b) * map.width + v;
             atomicAdd(column_image ? column_image[col] + row
                                    : output.data + lane * output_stride + row + output.ld * col,
                       sa > 0 ? value : -value);
         }
         if (sb) {
-            const int row = resident ? a : map.halo_row(a);
-            const int col =
+            const std::int64_t row = resident ? a : map.halo_row(a);
+            const std::int64_t col =
                 resident ? v * map.beta + abs(sb) - 1 : map.column(abs(sb) - 1) * map.width + v;
             atomicAdd(column_image ? column_image[col] + row
                                    : output.data + lane * output_stride + row + output.ld * col,
@@ -453,19 +462,20 @@ __global__ void scatter_image_row_panel(TileMap map,
 
 /** A consumer now reads the already contracted halo; it never revisits E. */
 __global__ void gather(TileMap map,
-                       const int* halo_rows,
+                       const std::int64_t* halo_rows,
                        const CiTileColumn* columns,
                        linalg::ConstMatrixView halo,
                        bool add) {
     const auto target = columns[blockIdx.x];
     const auto output = target.values;
-    const int nrows = output.rows;
+    const std::int64_t nrows = output.rows;
     const auto work = static_cast<std::size_t>(nrows) * output.cols;
     for (auto i = static_cast<std::size_t>(blockIdx.y) * blockDim.x + threadIdx.x; i < work;
          i += static_cast<std::size_t>(gridDim.y) * blockDim.x) {
-        const int r = i % nrows, column = i / nrows, v = column % map.width;
-        const int row = target.full_rows ? r : (target.rows ? target.rows : halo_rows)[r];
-        const int h = map.halo_row(row), b = target.source < 0 ? column / map.width : target.source;
+        const std::int64_t r = i % nrows, column = i / nrows, v = column % map.width;
+        const std::int64_t row = target.full_rows ? r : (target.rows ? target.rows : halo_rows)[r];
+        const std::int64_t h = map.halo_row(row),
+                           b = target.source < 0 ? column / map.width : target.source;
         const double value = h < 0 ? 0.0 : halo.data[h + halo.ld * (b * map.width + v)];
         auto& target = output.data[r + output.ld * column];
         if (add)
@@ -478,21 +488,21 @@ __global__ void gather(TileMap map,
 /** Same E^T halo as gather(), using the consumer's existing compact maps.
  * No host column descriptors, upload, or synchronization is needed. */
 __global__ void gather_panel(TileMap map,
-                             const int* betas,
-                             int first,
-                             int source_first,
+                             const std::int64_t* betas,
+                             std::int64_t first,
+                             std::int64_t source_first,
                              int lane,
                              const CiColumnMap* columns,
                              linalg::MatrixView output,
                              linalg::ConstMatrixView halo) {
-    const int source = source_first + blockIdx.x;
+    const std::int64_t source = source_first + blockIdx.x;
     const auto column = columns[betas[source] - first];
     const auto work = static_cast<std::size_t>(column.size) * map.width;
     for (auto i = static_cast<std::size_t>(blockIdx.y) * blockDim.x + threadIdx.x; i < work;
          i += static_cast<std::size_t>(gridDim.y) * blockDim.x) {
-        const int r = i % column.size, v = i / column.size;
-        const int a = column.rows ? column.rows[r] : r;
-        const int h = map.halo_row(a);
+        const std::int64_t r = i % column.size, v = i / column.size;
+        const std::int64_t a = column.rows ? column.rows[r] : r;
+        const std::int64_t h = map.halo_row(a);
         if (h >= 0)
             output.data[column.offset + r + output.ld * (lane + v)] +=
                 halo.data[h + halo.ld * (source * map.width + v)];
@@ -506,9 +516,9 @@ template <class T> Buffer<T> upload(Context& context, std::span<const T> values)
 }
 
 __global__ void read_carrier(linalg::ConstMatrixView source,
-                             const int* rows,
-                             const int* betas,
-                             int beta,
+                             const std::int64_t* rows,
+                             const std::int64_t* betas,
+                             std::int64_t beta,
                              int width,
                              linalg::MatrixView output,
                              double* const* columns = nullptr) {
@@ -524,18 +534,18 @@ __global__ void read_carrier(linalg::ConstMatrixView source,
 
 struct CarrierIndices {
     Context& context;
-    std::vector<int> rows, columns;
-    Buffer<int> indices;
-    void bind(std::span<const int> rr, std::span<const int> cc) {
+    std::vector<std::int64_t> rows, columns;
+    Buffer<std::int64_t> indices;
+    void bind(std::span<const std::int64_t> rr, std::span<const std::int64_t> cc) {
         if (std::equal(rr.begin(), rr.end(), rows.begin(), rows.end()) &&
             std::equal(cc.begin(), cc.end(), columns.begin(), columns.end()))
             return;
         rows.assign(rr.begin(), rr.end());
         columns.assign(cc.begin(), cc.end());
-        std::vector<int> packed = rows;
+        std::vector<std::int64_t> packed = rows;
         packed.insert(packed.end(), columns.begin(), columns.end());
-        indices = Buffer<int>();
-        indices = upload<int>(context, packed);
+        indices = Buffer<std::int64_t>();
+        indices = upload<std::int64_t>(context, packed);
     }
 };
 
@@ -588,11 +598,12 @@ struct DirectCiSigma::TileWorkspace {
     std::array<Boundaries, 3> boundaries;
     mcscf::detail::ChannelSelectors selectors;
     bool restricted;
-    std::vector<int> global, local, offsets, metadata;
+    std::vector<int> global, local, offsets;
+    std::vector<std::int64_t> metadata;
     std::vector<PackedGroup> packed_groups;
     Buffer<int> device_global, device_local;
     PinnedUpload device;
-    Buffer<int> labels, range;
+    Buffer<std::int64_t> labels, range;
     std::size_t packed_offset = 0;
     std::optional<mcscf::detail::SigmaTile> prepared;
     std::shared_ptr<const char> support_identity;
@@ -625,10 +636,10 @@ struct DirectCiSigma::TileWorkspace {
         return bytes >= 0 && bytes <= next.bytes;
     }
 
-    TileWorkspace(Context& context, int pairs, int orbitals, bool restrict, int spin_size)
+    TileWorkspace(Context& context, int pairs, int orbitals, bool restrict, std::int64_t spin_size)
         : selectors(pairs, orbitals, restrict), restricted(restrict),
           local(selectors.groups() * pairs, -1), offsets(selectors.groups() + 1), device(context) {
-        for (int g = 0; g < selectors.groups(); ++g) {
+        for (std::int64_t g = 0; g < selectors.groups(); ++g) {
             offsets[g] = global.size();
             for (int p = 0; p < selectors.channels(g); ++p) {
                 const int channel = selectors.global(g, p);
@@ -639,13 +650,13 @@ struct DirectCiSigma::TileWorkspace {
         offsets.back() = global.size();
         device_global = upload<int>(context, global);
         device_local = upload<int>(context, local);
-        std::vector<int> ids(spin_size);
+        std::vector<std::int64_t> ids(spin_size);
         std::iota(ids.begin(), ids.end(), 0);
-        range = upload<int>(context, ids);
+        range = upload<std::int64_t>(context, ids);
     }
 
-    const int* indices() const noexcept {
-        return reinterpret_cast<const int*>(device.data());
+    const std::int64_t* indices() const noexcept {
+        return reinterpret_cast<const std::int64_t*>(device.data());
     }
     const PackedGroup* packed() const noexcept {
         return packed_groups.empty()
@@ -653,14 +664,14 @@ struct DirectCiSigma::TileWorkspace {
                    : reinterpret_cast<const PackedGroup*>(device.data() + packed_offset);
     }
 
-    bool bind(std::vector<int> indices, std::vector<PackedGroup> layout) {
+    bool bind(std::vector<std::int64_t> indices, std::vector<PackedGroup> layout) {
         const nvtx3::scoped_range range{"ci.tile_index_upload"};
         if (metadata == indices && packed_groups == layout)
             return false;
         ++generation;
         metadata = std::move(indices);
         packed_groups = std::move(layout);
-        const auto ints = metadata.size() * sizeof(int);
+        const auto ints = metadata.size() * sizeof(std::int64_t);
         packed_offset =
             (ints + alignof(PackedGroup) - 1) / alignof(PackedGroup) * alignof(PackedGroup);
         const auto packed_bytes = packed_groups.size() * sizeof(PackedGroup);
@@ -678,8 +689,8 @@ std::size_t DirectCiSigma::tile_resident_bytes() const noexcept {
     if (!workspace_->tiles)
         return 0;
     const auto& tile = *workspace_->tiles;
-    std::size_t bytes = sizeof(int) * (tile.device_global.size() + tile.device_local.size() +
-                                       tile.labels.size() + tile.range.size()) +
+    std::size_t bytes = sizeof(int) * (tile.device_global.size() + tile.device_local.size()) +
+                        sizeof(std::int64_t) * (tile.labels.size() + tile.range.size()) +
                         tile.device.size();
     if (tile.fixed) {
         bytes += tile.fixed->numerical.size() * sizeof(double);
@@ -836,7 +847,7 @@ void DirectCiSigma::apply_tiled_responses(int width,
     const bool separate =
         static_cast<bool>(state) && (collect || has_direction || requests.size() > 1);
     const int input_halos =
-        static_cast<int>(requests.size()) + (separate && alias == requests.end());
+        core::checked_index<std::int64_t>(requests.size()) + (separate && alias == requests.end());
     const int output_halos =
         std::count_if(requests.begin(), requests.end(), [](const auto& request) {
             return static_cast<bool>(request.image);
@@ -857,18 +868,19 @@ void DirectCiSigma::apply_tiled_responses(int width,
     // retaining those large slabs would add storage and transport without
     // removing any absent channel work (e.g. broad ionic selections).
     const bool reuse_halo = collect && restricted;
-    const int responses = static_cast<int>(requests.size());
+    const std::int64_t responses = core::checked_index<std::int64_t>(requests.size());
     // Compact retained channels can batch their irregular groups. Dense
     // row-streamed operands keep the CPU schedule and its ordinary large GEMMs.
     const int image_copies = reuse_halo ? responses : 1;
     const int source_copies = input_halos;
-    const int halo_slabs = reuse_halo ? std::max(1, output_halos) : input_halos + output_halos;
+    const int halo_slabs =
+        reuse_halo ? std::max<std::int64_t>(1, output_halos) : input_halos + output_halos;
     if (restricted)
         workspace_bytes -= kernel_bytes;
     if (!workspace_->tiles || workspace_->tiles->restricted != restricted) {
         const auto generation = workspace_->tiles ? workspace_->tiles->generation + 1 : 1;
         workspace_->tiles = std::make_shared<TileWorkspace>(
-            ctx, n_channels_, n_orbitals_, restricted, std::max(n_alpha_, n_beta_));
+            ctx, n_channels_, n_orbitals_, restricted, std::max<std::int64_t>(n_alpha_, n_beta_));
         workspace_->tiles->generation = generation;
     }
     auto& symbols = *workspace_->tiles;
@@ -925,7 +937,8 @@ void DirectCiSigma::apply_tiled_responses(int width,
     // estimate as a physical device-allocation certificate.
     const auto cotangent_bytes =
         sizeof(double) * pairs * pairs * adjoint_count + panel_descriptor_bytes;
-    const auto old_index_bytes = symbols.device.size() + symbols.labels.size() * sizeof(int);
+    const auto old_index_bytes =
+        symbols.device.size() + symbols.labels.size() * sizeof(std::int64_t);
     if (!boundaries.entries.empty() &&
         (boundaries.workspace_peak + cotangent_bytes > replay_bytes ||
          boundaries.first_numeric + old_index_bytes + cotangent_bytes > replay_bytes))
@@ -1019,16 +1032,16 @@ void DirectCiSigma::apply_tiled_responses(int width,
     };
     while (next()) {
         const auto previous_index_bytes =
-            symbols.device.size() + symbols.labels.size() * sizeof(int);
+            symbols.device.size() + symbols.labels.size() * sizeof(std::int64_t);
         const auto& plan =
             replay ? *symbols.prepared : static_cast<const mcscf::detail::SigmaTile&>(*iterator);
         const nvtx3::scoped_range tile_range{"ci.tile"};
-        const int count = plan.active.size(), halo = plan.halo.size(),
-                  columns = plan.columns.size();
+        const std::int64_t count = plan.active.size(), halo = plan.halo.size(),
+                           columns = plan.columns.size();
         layout.reset(selectors, plan.channel_groups, count, width, false);
         const auto input_size = static_cast<std::size_t>(halo) * columns * width;
-        std::vector<int> metadata;
-        const auto append = [&](std::span<const int> values) {
+        std::vector<std::int64_t> metadata;
+        const auto append = [&](std::span<const std::int64_t> values) {
             const auto offset = metadata.size();
             metadata.insert(metadata.end(), values.begin(), values.end());
             return offset;
@@ -1043,7 +1056,7 @@ void DirectCiSigma::apply_tiled_responses(int width,
             plan.channel_groups.empty() || std::all_of(plan.channel_groups.begin(),
                                                        plan.channel_groups.end(),
                                                        [](int group) { return group == 0; });
-        std::vector<int> beta_groups, supported;
+        std::vector<std::int64_t> beta_groups, supported;
         // Packed covalent labels already certify membership: precisely group 0.
         // Other supports need explicit membership only when the tile has a frontier.
         if (identity && plan.unsupported_targets)
@@ -1054,24 +1067,24 @@ void DirectCiSigma::apply_tiled_responses(int width,
         const auto betas_offset = append(beta_groups), supported_offset = append(supported);
         // Map each live image row back to its original target/RHS lane once.
         // Numerical panels then visit only their own rows.
-        std::vector<int> inverse(identity ? 0 : static_cast<std::size_t>(count) * width);
+        std::vector<std::int64_t> inverse(identity ? 0 : static_cast<std::size_t>(count) * width);
         if (!identity) {
-            std::vector<int> position(selectors.groups());
-            for (int g = 0; g < selectors.groups(); ++g)
+            std::vector<std::int64_t> position(selectors.groups());
+            for (std::int64_t g = 0; g < selectors.groups(); ++g)
                 position[g] = layout.begin(g);
-            for (int row = 0; row < count * width; ++row)
+            for (std::int64_t row = 0; row < count * width; ++row)
                 inverse[position[plan.channel_groups[row % count]]++] = row;
         }
         std::vector<PackedGroup> packed_groups(identity ? 0 : selectors.groups());
         if (!identity)
-            for (int g = 0; g < selectors.groups(); ++g)
+            for (std::int64_t g = 0; g < selectors.groups(); ++g)
                 packed_groups[g] = {
                     layout.offset(g), layout.begin(g), selectors.channels(g), selector_offsets[g]};
         const auto inverse_offset = append(inverse);
         bool changed = symbols.bind(std::move(metadata), std::move(packed_groups));
         const auto label_size = static_cast<std::size_t>(count) * (identity ? 1 : 2);
         if (symbols.labels.size() != label_size) {
-            symbols.labels = Buffer<int>(ctx, label_size);
+            symbols.labels = Buffer<std::int64_t>(ctx, label_size);
             changed = true;
             ++symbols.generation;
         }
@@ -1097,8 +1110,9 @@ void DirectCiSigma::apply_tiled_responses(int width,
         const auto adjoint_bytes = sizeof(double) * pairs * pairs * adjoint_count;
         // Pointer tables and Gram scratch live inside the numerical slab. Charge
         // them once, and choose the largest RHS batch leaving at least one row.
-        const auto fixed_bytes = symbols.device.size() + symbols.labels.size() * sizeof(int) +
-                                 adjoint_bytes + (allow_grouping ? group_descriptor_bytes : 0);
+        const auto fixed_bytes = symbols.device.size() +
+                                 symbols.labels.size() * sizeof(std::int64_t) + adjoint_bytes +
+                                 (allow_grouping ? group_descriptor_bytes : 0);
         const auto minimum_row =
             sizeof(double) * pairs * ((reuse_halo ? 0 : input_halos) + image_copies);
         if (fixed_bytes >= replay_bytes ||
@@ -1126,15 +1140,15 @@ void DirectCiSigma::apply_tiled_responses(int width,
             throw std::length_error("sigma tile scratch leaves no channel panel");
         channel_entries -= extra_entries;
         const auto cache_entries =
-            l2_bytes > 0
-                ? std::min(channel_entries, static_cast<std::size_t>(l2_bytes) / sizeof(double))
-                : channel_entries;
+            l2_bytes > 0 ? std::min<std::int64_t>(
+                               channel_entries, static_cast<std::size_t>(l2_bytes) / sizeof(double))
+                         : channel_entries;
         // CPU sources are ragged. Price their actual channel counts rather than
         // reserving a full-channel slab for every response, then compacting only
         // the arithmetic inside that padded allocation.
         std::vector<mcscf::detail::ChannelLayout::Panel> row_panels;
         std::size_t panel_entries = 0;
-        for (int first = 0; first < count * width;) {
+        for (std::int64_t first = 0; first < count * width;) {
             // Preserve the single-RHS GEMM shape: output lanes are streamed writes,
             // not extra reusable operands that must all reside in L2. Independently
             // bound their actual simultaneous storage by the operation allowance.
@@ -1143,10 +1157,10 @@ void DirectCiSigma::apply_tiled_responses(int width,
                 layout.panel(first, reuse_halo ? 0 : input_halos, channel_entries, image_copies);
             const auto panel = cached.rows < bounded.rows ? cached : bounded;
             row_panels.push_back(panel);
-            panel_entries =
-                std::max(panel_entries,
-                         (reuse_halo ? 0 : input_halos) * panel.packed +
-                             static_cast<std::size_t>(panel.rows) * pairs * image_copies);
+            panel_entries = std::max<std::int64_t>(panel_entries,
+                                                   (reuse_halo ? 0 : input_halos) * panel.packed +
+                                                       static_cast<std::size_t>(panel.rows) *
+                                                           pairs * image_copies);
             first += panel.rows;
         }
         const auto required = retained_size + panel_entries + extra_entries;
@@ -1162,12 +1176,13 @@ void DirectCiSigma::apply_tiled_responses(int width,
         }
         if (!replay) {
             const auto numeric_bytes = numerical.size() * sizeof(double);
-            const auto index_bytes = symbols.device.size() + symbols.labels.size() * sizeof(int);
+            const auto index_bytes =
+                symbols.device.size() + symbols.labels.size() * sizeof(std::int64_t);
             // Repricing includes the preceding metadata packet while its
             // stream-ordered release may still be pending.
-            boundaries.workspace_peak =
-                std::max(boundaries.workspace_peak,
-                         numeric_bytes + std::max(previous_index_bytes, index_bytes));
+            boundaries.workspace_peak = std::max<std::int64_t>(
+                boundaries.workspace_peak,
+                numeric_bytes + std::max<std::int64_t>(previous_index_bytes, index_bytes));
             if (ordinal == 1)
                 boundaries.first_numeric = numeric_bytes;
         }
@@ -1200,7 +1215,7 @@ void DirectCiSigma::apply_tiled_responses(int width,
             if (requests[r].image)
                 output_slot[r] = next_slot++;
         const int state_slot =
-            separate ? (alias == requests.end() ? static_cast<int>(requests.size())
+            separate ? (alias == requests.end() ? core::checked_index<std::int64_t>(requests.size())
                                                 : static_cast<int>(alias - requests.begin()))
                      : 0;
         const auto read_source = [&](const CiTileReader& reader, double* const* columns, int slot) {
@@ -1223,7 +1238,7 @@ void DirectCiSigma::apply_tiled_responses(int width,
                             halo_view(slot).data, 0, input_size * sizeof(double), ctx.stream()),
                         "clear tiled output halo");
         }
-        const int* inverse_rows = identity ? nullptr : ptr(inverse_offset);
+        const std::int64_t* inverse_rows = identity ? nullptr : ptr(inverse_offset);
         std::vector<GroupTile> live_groups;
         live_groups.reserve(selectors.groups());
         std::vector<int> gram_ends;
@@ -1280,10 +1295,10 @@ void DirectCiSigma::apply_tiled_responses(int width,
                 const auto image_capacity = static_cast<std::size_t>(panel_rows) * pairs;
                 live_groups.clear();
                 std::size_t packed_rows = 0;
-                for (int g = 0; g < selectors.groups(); ++g) {
-                    const int first_row = std::max(panel_first, layout.begin(g));
-                    const int last_row =
-                        std::min(panel_first + panel_rows, layout.begin(g) + layout.size(g));
+                for (std::int64_t g = 0; g < selectors.groups(); ++g) {
+                    const int first_row = std::max<std::int64_t>(panel_first, layout.begin(g));
+                    const int last_row = std::min<std::int64_t>(panel_first + panel_rows,
+                                                                layout.begin(g) + layout.size(g));
                     if (first_row >= last_row)
                         continue;
                     const int k = selectors.channels(g);
@@ -1326,7 +1341,8 @@ void DirectCiSigma::apply_tiled_responses(int width,
                 gram_ends.clear();
                 gram_ends.push_back(0);
                 std::size_t gram_used = 0;
-                for (int i = 0; i < static_cast<int>(live_groups.size()); ++i) {
+                for (std::int64_t i = 0; i < core::checked_index<std::int64_t>(live_groups.size());
+                     ++i) {
                     auto& group = live_groups[i];
                     const auto area = static_cast<std::size_t>(group.channels) * group.channels;
                     const bool after_full = i > 0 && live_groups[i - 1].group == 0;
@@ -1337,7 +1353,7 @@ void DirectCiSigma::apply_tiled_responses(int width,
                     group.scratch = gram_used;
                     gram_used += area;
                 }
-                gram_ends.push_back(static_cast<int>(live_groups.size()));
+                gram_ends.push_back(core::checked_index<std::int64_t>(live_groups.size()));
                 auto* const device_groups = device_groups_storage.data();
                 if (grouped) {
                     build_group_tiles<<<1, 1, 0, ctx.stream()>>>(symbols.packed(),
@@ -1389,8 +1405,8 @@ void DirectCiSigma::apply_tiled_responses(int width,
                                             response_channels);
                 }
                 const auto grouped_call = [&](bool gram_call,
-                                              int begin,
-                                              int end,
+                                              std::int64_t begin,
+                                              std::int64_t end,
                                               const double* source,
                                               const double* second,
                                               const double* full_kernel,
@@ -1444,7 +1460,9 @@ void DirectCiSigma::apply_tiled_responses(int width,
                 const auto response_stride = reuse_halo ? layout.entries() : source_capacity;
                 const auto* const response_base =
                     reuse_halo ? full_response + packed_origin : response_channels;
-                const auto response = [&](int r) { return response_base + r * response_stride; };
+                const auto response = [&](std::int64_t r) {
+                    return response_base + r * response_stride;
+                };
                 const double* common_gram = separate ? state_channels : response(0);
                 // All adjoints consume this weighting before any sigma overwrites the
                 // same scratch. It is prepared once per row panel, not once per RHS.
@@ -1461,18 +1479,18 @@ void DirectCiSigma::apply_tiled_responses(int width,
                                                        transformed);
                     common_gram = transformed;
                 }
-                for (int first = 0; first < responses;) {
+                for (std::int64_t first = 0; first < responses;) {
                     if (!requests[first].one_adjoint.data) {
                         ++first;
                         continue;
                     }
-                    int last = first + 1;
+                    std::int64_t last = first + 1;
                     while (last < responses && last - first < batch_lanes &&
                            requests[last].one_adjoint.data)
                         ++last;
                     const int lanes = last - first;
                     for (std::size_t part = 0; part + 1 < gram_ends.size(); ++part) {
-                        const int begin = gram_ends[part], end = gram_ends[part + 1];
+                        const std::int64_t begin = gram_ends[part], end = gram_ends[part + 1];
                         if (grouped && (end - begin > 1 || lanes > 1) &&
                             live_groups[begin].group != 0) {
                             const nvtx3::scoped_range range{"ci.tile_gram"};
@@ -1487,7 +1505,7 @@ void DirectCiSigma::apply_tiled_responses(int width,
                                          lanes,
                                          response_stride,
                                          pairs * pairs);
-                            for (int r = first; r < last; ++r)
+                            for (std::int64_t r = first; r < last; ++r)
                                 add_grouped_gram<<<grid(pairs * pairs), 256, 0, ctx.stream()>>>(
                                     gram_values + (r - first) * pairs * pairs,
                                     adjoints[r].view(),
@@ -1497,8 +1515,8 @@ void DirectCiSigma::apply_tiled_responses(int width,
                                     device_local.data(),
                                     n_channels_);
                         } else
-                            for (int r = first; r < last; ++r)
-                                for (int index = begin; index < end; ++index) {
+                            for (std::int64_t r = first; r < last; ++r)
+                                for (std::int64_t index = begin; index < end; ++index) {
                                     const auto& group = live_groups[index];
                                     const int k = group.channels;
                                     const nvtx3::scoped_range range{"ci.tile_gram"};
@@ -1528,14 +1546,14 @@ void DirectCiSigma::apply_tiled_responses(int width,
                 const auto multiply = [&](const DirectCiSigma& action,
                                           int kernel_id,
                                           const double* source,
-                                          int first,
+                                          std::int64_t first,
                                           int lanes,
                                           std::size_t stride,
                                           bool add) {
                     const nvtx3::scoped_range range{"ci.tile_gemm"};
                     auto* output = transformed + first * image_capacity;
                     const auto regular = [&](const GroupTile& group, int lane = 0) {
-                        const int g = group.group, k = group.channels;
+                        const std::int64_t g = group.group, k = group.channels;
                         const auto selected =
                             g ? kernels[kernel_id].view().columns(selector_offsets[g] - pairs, k)
                               : action.channel_kernel();
@@ -1576,7 +1594,8 @@ void DirectCiSigma::apply_tiled_responses(int width,
                     }
                     if (full)
                         regular(live_groups.front());
-                    const int rest = static_cast<int>(live_groups.size()) - full;
+                    const std::int64_t rest =
+                        core::checked_index<std::int64_t>(live_groups.size()) - full;
                     if (rest > 1)
                         grouped_call(false,
                                      full,
@@ -1589,20 +1608,20 @@ void DirectCiSigma::apply_tiled_responses(int width,
                     else if (rest == 1)
                         regular(live_groups[full]);
                 };
-                const auto has_image = [&](int r) {
+                const auto has_image = [&](std::int64_t r) {
                     return requests[r].image || requests[r].carrier_image.data ||
                            requests[r].column_image;
                 };
-                for (int first = 0; first < responses;) {
+                for (std::int64_t first = 0; first < responses;) {
                     if (!has_image(first)) {
                         ++first;
                         continue;
                     }
-                    int last = first + 1;
+                    std::int64_t last = first + 1;
                     while (last < responses && last - first < batch_lanes && has_image(last))
                         ++last;
                     multiply(*this, 0, response(first), 0, last - first, response_stride, false);
-                    for (int r = first; r < last; ++r)
+                    for (std::int64_t r = first; r < last; ++r)
                         if (requests[r].direction)
                             multiply(*requests[r].direction,
                                      direction_ids[r],
@@ -1634,7 +1653,7 @@ void DirectCiSigma::apply_tiled_responses(int width,
                                                image_capacity,
                                                input_size);
                     } else
-                        for (int r = first; r < last; ++r) {
+                        for (std::int64_t r = first; r < last; ++r) {
                             const auto& request = requests[r];
                             scatter_image_row_panel<>
                                 <<<grid(static_cast<std::size_t>(panel_rows) * pairs),
@@ -1675,7 +1694,8 @@ void DirectCiSigma::apply_tiled_responses(int width,
                             output.cols != (target.source < 0 ? columns : 1) * width ||
                             output.ld < output.rows)
                             throw std::invalid_argument("invalid tiled sigma gather dimensions");
-                        work = std::max(work, static_cast<std::size_t>(output.rows) * output.cols);
+                        work = std::max<std::int64_t>(
+                            work, static_cast<std::size_t>(output.rows) * output.cols);
                     }
                     if (!work)
                         return;
@@ -1709,8 +1729,8 @@ void DirectCiSigma::apply_tiled_responses(int width,
             }
             // Input and output phases reuse the same raw halo slots. Pack all
             // available response lanes with one signed-link traversal.
-            for (int first = 0; first < responses;) {
-                const int lanes = std::min(halo_slabs, responses - first);
+            for (std::int64_t first = 0; first < responses;) {
+                const int lanes = std::min<std::int64_t>(halo_slabs, responses - first);
                 for (int lane = 0; lane < lanes; ++lane)
                     read_source(requests[first + lane].response,
                                 requests[first + lane].column_response,

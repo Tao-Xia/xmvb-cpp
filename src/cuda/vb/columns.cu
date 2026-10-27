@@ -1,3 +1,5 @@
+#include "core/index.hpp"
+#include <cstdint>
 #include "cuda/vb/columns.hpp"
 
 #include <algorithm>
@@ -15,14 +17,14 @@ struct DeviceProductPanel {
 
 __global__ void
 project_exchange_columns(const DeviceProductPanel* panels, int extent, int n_beta, int parity) {
-    const int b = blockIdx.x;
+    const std::int64_t b = blockIdx.x;
     const auto panel = panels[b / extent];
     if (!panel.maps)
         return;
     const auto column = panel.maps[b % extent];
     for (int i = blockIdx.y * blockDim.x + threadIdx.x; i < column.size;
          i += gridDim.y * blockDim.x) {
-        const int a = column.rows ? column.rows[i] : i;
+        const std::int64_t a = column.rows ? column.rows[i] : i;
         if (a > b || a >= n_beta)
             continue;
         const auto other = panels[a / extent];
@@ -50,7 +52,7 @@ project_exchange_columns(const DeviceProductPanel* panels, int extent, int n_bet
 }
 
 struct DeviceColumnRead {
-    const int* rows;
+    const std::int64_t* rows;
     const double* values;
     std::int64_t offset;
     std::int64_t ld;
@@ -59,14 +61,14 @@ struct DeviceColumnRead {
 };
 
 __global__ void gather_product_columns(const DeviceColumnRead* columns,
-                                       const int* requested,
+                                       const std::int64_t* requested,
                                        int count,
                                        int lane,
                                        linalg::MatrixView output) {
     const int col = blockIdx.x;
     const auto source = columns[col];
     for (int r = blockIdx.y * blockDim.x + threadIdx.x; r < count; r += gridDim.y * blockDim.x) {
-        const int a = requested[r];
+        const std::int64_t a = requested[r];
         double value = 0.0;
         if (source.values) {
             if (!source.rows) {
@@ -105,7 +107,7 @@ column_source(std::span<const ProductColumns* const> panels, int extent, int lan
             panel->offsets[local],
             panel->values.rows(),
             pattern.size,
-            static_cast<int>(panel->values.cols())};
+            core::checked_index<std::int64_t>(panel->values.cols())};
 }
 
 bool same_source(const DeviceColumnRead& a, const DeviceColumnRead& b) {
@@ -113,23 +115,23 @@ bool same_source(const DeviceColumnRead& a, const DeviceColumnRead& b) {
            a.size == b.size && a.width == b.width;
 }
 
-std::uint64_t read_key(std::span<const int> betas, std::span<const int> rows) {
+std::uint64_t read_key(std::span<const std::int64_t> betas, std::span<const std::int64_t> rows) {
     std::uint64_t hash = 14695981039346656037ULL;
     const auto append = [&](std::uint64_t value) { hash = (hash ^ value) * 1099511628211ULL; };
     append(betas.size());
     append(rows.size());
-    for (int b : betas)
-        append(static_cast<std::uint32_t>(b));
-    for (int r : rows)
-        append(static_cast<std::uint32_t>(r));
+    for (auto b : betas)
+        append(static_cast<std::uint64_t>(b));
+    for (auto r : rows)
+        append(static_cast<std::uint64_t>(r));
     return hash;
 }
 
 void check_column_read(std::span<const ProductColumns* const> panels,
                        int extent,
                        int lane,
-                       std::span<const int> betas,
-                       std::span<const int> rows,
+                       std::span<const std::int64_t> betas,
+                       std::span<const std::int64_t> rows,
                        linalg::MatrixView destination) {
     if (panels.empty() || extent <= 0 || lane < 0 || destination.rows != rows.size() ||
         destination.cols != betas.size() || destination.ld < destination.rows ||
@@ -141,7 +143,7 @@ __global__ void pack_columns(const CiColumnMap* maps,
                              linalg::MatrixView full,
                              linalg::MatrixView compact,
                              bool unpack) {
-    const int b = blockIdx.x;
+    const std::int64_t b = blockIdx.x;
     const auto column = maps[b];
     for (auto i = static_cast<std::size_t>(blockIdx.y) * blockDim.x + threadIdx.x;
          i < static_cast<std::size_t>(column.size) * compact.cols;
@@ -167,25 +169,25 @@ void project_exchange(Context& context,
         panels.back()->patterns.size() > static_cast<std::size_t>(extent) ||
         (parity != 1 && parity != -1))
         throw std::invalid_argument("invalid compact exchange panels");
-    const auto n_beta =
-        static_cast<int>((panels.size() - 1) * extent + panels.back()->patterns.size());
-    const int width = static_cast<int>(panels.back()->values.cols());
+    const auto n_beta = core::checked_index<std::int64_t>((panels.size() - 1) * extent +
+                                                          panels.back()->patterns.size());
+    const int width = core::checked_index<std::int64_t>(panels.back()->values.cols());
     if (width <= 0)
         throw std::invalid_argument("empty compact exchange lanes");
     std::vector<DeviceProductPanel> descriptors(panels.size());
-    int max_rows = 0;
+    std::int64_t max_rows = 0;
     for (std::size_t p = 0; p < panels.size(); ++p) {
         auto* panel = panels[p];
         if (!panel)
             continue;
-        const int columns = static_cast<int>(panel->patterns.size());
+        const std::int64_t columns = core::checked_index<std::int64_t>(panel->patterns.size());
         if (columns <= 0 || columns > extent || (p + 1 < panels.size() && columns != extent) ||
             panel->values.cols() != width || panel->offsets.size() != columns + 1 ||
             panel->maps.size() != static_cast<std::size_t>(columns) ||
             panel->values.rows() != panel->offsets.back())
             throw std::invalid_argument("incompatible compact exchange panel");
         descriptors[p] = {panel->maps.data(), panel->values.view()};
-        max_rows = std::max(max_rows, panel->max_rows);
+        max_rows = std::max<std::int64_t>(max_rows, panel->max_rows);
         if (!check_support)
             continue;
         for (int local = 0; local < columns; ++local) {
@@ -197,10 +199,10 @@ void project_exchange(Context& context,
                                    std::adjacent_find(pattern.rows.begin(), pattern.rows.end()) !=
                                        pattern.rows.end())))
                 throw std::invalid_argument("invalid exact exchange column support");
-            max_rows = std::max(max_rows, pattern.size);
-            const int b = static_cast<int>(p) * extent + local;
+            max_rows = std::max<std::int64_t>(max_rows, pattern.size);
+            const std::int64_t b = static_cast<std::int64_t>(p) * extent + local;
             for (int i = 0; i < pattern.size; ++i) {
-                const int a = pattern.full ? i : pattern.rows[i];
+                const std::int64_t a = pattern.full ? i : pattern.rows[i];
                 if (a < 0 || a >= n_beta || static_cast<std::size_t>(a / extent) >= panels.size() ||
                     !panels[a / extent])
                     throw std::invalid_argument("exchange support lacks transposed panel");
@@ -246,8 +248,8 @@ void read_product_columns(Context& context,
                           std::span<const ProductColumns* const> panels,
                           int extent,
                           int lane,
-                          std::span<const int> betas,
-                          std::span<const int> rows,
+                          std::span<const std::int64_t> betas,
+                          std::span<const std::int64_t> rows,
                           linalg::MatrixView destination) {
     check_column_read(panels, extent, lane, betas, rows, destination);
     if (betas.empty() || rows.empty())
@@ -256,7 +258,7 @@ void read_product_columns(Context& context,
     for (std::size_t j = 0; j < betas.size(); ++j)
         sources[j] = column_source(panels, extent, lane, betas[j]);
     Buffer<DeviceColumnRead> device_sources(context, sources.size());
-    Buffer<int> device_rows(context, rows.size());
+    Buffer<std::int64_t> device_rows(context, rows.size());
     context.copy_to_device(
         device_sources.data(), sources.data(), sources.size() * sizeof(DeviceColumnRead));
     context.copy_to_device(device_rows.data(), rows.data(), rows.size_bytes());
@@ -269,13 +271,13 @@ void read_product_columns(Context& context,
 struct ProductColumnReadCache::Impl {
     struct Plan {
         std::uint64_t key = 0;
-        std::vector<int> betas, rows;
+        std::vector<std::int64_t> betas, rows;
         std::vector<DeviceColumnRead> sources;
         Buffer<DeviceColumnRead> device_sources;
-        Buffer<int> device_rows;
+        Buffer<std::int64_t> device_rows;
 
         std::size_t bytes() const noexcept {
-            return (betas.size() + 2 * rows.size()) * sizeof(int) +
+            return (betas.size() + 2 * rows.size()) * sizeof(std::int64_t) +
                    2 * sources.size() * sizeof(DeviceColumnRead);
         }
     };
@@ -293,8 +295,8 @@ struct ProductColumnReadCache::Impl {
     }
 
     void read(int lane,
-              std::span<const int> betas,
-              std::span<const int> rows,
+              std::span<const std::int64_t> betas,
+              std::span<const std::int64_t> rows,
               linalg::MatrixView destination) {
         const std::span<const ProductColumns* const> sources{panels.data(), panels.size()};
         check_column_read(sources, extent, lane, betas, rows, destination);
@@ -309,7 +311,7 @@ struct ProductColumnReadCache::Impl {
         };
         auto found = std::find_if(plans.begin(), plans.end(), matches);
         if (found == plans.end()) {
-            const std::size_t needed = (betas.size() + 2 * rows.size()) * sizeof(int) +
+            const std::size_t needed = (betas.size() + 2 * rows.size()) * sizeof(std::int64_t) +
                                        2 * betas.size() * sizeof(DeviceColumnRead);
             if (needed > budget) {
                 read_product_columns(context, sources, extent, lane, betas, rows, destination);
@@ -324,18 +326,18 @@ struct ProductColumnReadCache::Impl {
             plan.betas.assign(betas.begin(), betas.end());
             plan.rows.assign(rows.begin(), rows.end());
             plan.sources.reserve(betas.size());
-            for (int b : betas)
+            for (auto b : betas)
                 plan.sources.push_back(column_source(sources, extent, lane, b));
             plan.device_sources = Buffer<DeviceColumnRead>(context, betas.size());
-            plan.device_rows = Buffer<int>(context, rows.size());
+            plan.device_rows = Buffer<std::int64_t>(context, rows.size());
             // Context synchronizes each upload while these temporary host arrays live.
             context.copy_to_device(plan.device_sources.data(),
                                    plan.sources.data(),
                                    plan.sources.size() * sizeof(DeviceColumnRead));
             context.copy_to_device(
-                plan.device_rows.data(), plan.rows.data(), plan.rows.size() * sizeof(int));
+                plan.device_rows.data(), plan.rows.data(), plan.rows.size() * sizeof(std::int64_t));
             current += plan.bytes();
-            peak = std::max(peak, current);
+            peak = std::max<std::int64_t>(peak, current);
             plans.push_front(std::move(plan));
             found = plans.begin();
         } else {
@@ -376,8 +378,8 @@ ProductColumnReadCache::ProductColumnReadCache(Context& context,
 ProductColumnReadCache::~ProductColumnReadCache() = default;
 
 void ProductColumnReadCache::read(int lane,
-                                  std::span<const int> betas,
-                                  std::span<const int> rows,
+                                  std::span<const std::int64_t> betas,
+                                  std::span<const std::int64_t> rows,
                                   linalg::MatrixView destination) {
     impl_->read(lane, betas, rows, destination);
 }
@@ -401,7 +403,7 @@ ProductColumns::ProductColumns(Context& context,
         descriptors.push_back(
             {pattern->full ? nullptr : pattern->device_rows.data(), pattern->size, offsets.back()});
         offsets.push_back(offsets.back() + pattern->size);
-        max_rows = std::max(max_rows, pattern->size);
+        max_rows = std::max<std::int64_t>(max_rows, pattern->size);
     }
     maps = Buffer<CiColumnMap>(context, descriptors.size());
     context.copy_to_device(
@@ -451,7 +453,7 @@ void ProductImages::begin(int panels) {
 }
 
 bool ProductImages::prepare(int panel, std::size_t bytes) {
-    if (panel < 0 || panel >= static_cast<int>(panels_.size()))
+    if (panel < 0 || panel >= core::checked_index<std::int64_t>(panels_.size()))
         throw std::out_of_range("accepted product panel index");
     if (complete_ || present_[panel])
         throw std::logic_error("accepted product panel was already written");
@@ -483,7 +485,7 @@ bool ProductImages::retain(int panel, ProductColumns columns) {
 }
 
 void ProductImages::finish() {
-    complete_ = enabled_ && retained_ == static_cast<int>(panels_.size());
+    complete_ = enabled_ && retained_ == core::checked_index<std::int64_t>(panels_.size());
     if (enabled_ && !complete_)
         throw std::logic_error("accepted product endpoint is incomplete");
 }

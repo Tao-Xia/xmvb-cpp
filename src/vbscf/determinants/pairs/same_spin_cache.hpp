@@ -21,7 +21,7 @@ class AcceptedPairTileProvider;
 struct SpinDeterminantReuseTable {
     mcscf::StringTable unique_determinants;
     mcscf::SpinStrings basis;
-    std::vector<int> determinant_to_unique_id;
+    std::vector<mcscf::StringIndex> determinant_to_unique_id;
 };
 
 enum class PairProjectionCache {
@@ -85,8 +85,8 @@ struct SameSpinPairCacheContext {
     // require this `N_alpha^2 N_beta^2` table to be materialized.
     std::vector<double> opposite_spin_cache;
     std::vector<bool> opposite_spin_cache_computed;
-    int n_unique_alpha = 0;
-    int n_unique_beta = 0;
+    mcscf::StringIndex n_unique_alpha = 0;
+    mcscf::StringIndex n_unique_beta = 0;
 
     std::size_t cached_same_spin_evaluation_count = 0;
     std::size_t estimated_cache_bytes = 0;
@@ -158,8 +158,9 @@ SpinDeterminantReuseTable build_spin_determinant_reuse_table(SpinStringRows spin
 /**
  * @brief Returns the dense row-major storage slot for one ordered unique pair.
  */
-std::size_t
-ordered_spin_pair_storage_index(int left_index, int right_index, int n_unique_determinants);
+std::size_t ordered_spin_pair_storage_index(mcscf::StringIndex left_index,
+                                            mcscf::StringIndex right_index,
+                                            mcscf::StringIndex n_unique_determinants);
 
 /**
  * @brief Overestimates the memory footprint of one ordered same-spin cache table.
@@ -262,8 +263,8 @@ DeterminantPairEvaluation evaluate_full_determinant_pair_with_optional_same_spin
     const DeterminantPairEvaluator& pair_evaluator,
     SpinStringRows alpha_det,
     SpinStringRows beta_det,
-    int determinant_index_left,
-    int determinant_index_right,
+    Eigen::Index determinant_index_left,
+    Eigen::Index determinant_index_right,
     const std::vector<double>& ovlp_act,
     const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_orbitals,
@@ -278,8 +279,8 @@ DeterminantPairEvaluation evaluate_full_determinant_pair_with_optional_same_spin
     const DeterminantPairEvaluator& pair_evaluator,
     SpinStringRows alpha_det,
     SpinStringRows beta_det,
-    int determinant_index_left,
-    int determinant_index_right,
+    Eigen::Index determinant_index_left,
+    Eigen::Index determinant_index_right,
     const std::vector<double>& ovlp_act,
     const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_orbitals,

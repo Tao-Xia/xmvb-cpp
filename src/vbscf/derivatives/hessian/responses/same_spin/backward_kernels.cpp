@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "vbscf/derivatives/hessian/responses/same_spin/backward.hpp"
 
 #include "mcscf/ci/string_table.hpp"
@@ -64,10 +65,10 @@ bool same_spin_local_tile_has_any_weight(const Eigen::MatrixXd& hamiltonian_weig
                                          const Eigen::MatrixXd& delta_hamiltonian_weight_matrix,
                                          const Eigen::MatrixXd& delta_overlap_weight_matrix,
                                          const Eigen::MatrixXd& delta_partner_total_transfer_matrix,
-                                         int left_begin,
-                                         int left_end,
-                                         int right_begin,
-                                         int right_end) {
+                                         std::int64_t left_begin,
+                                         std::int64_t left_end,
+                                         std::int64_t right_begin,
+                                         std::int64_t right_end) {
     for (int left_id = left_begin; left_id < left_end; ++left_id) {
         for (int right_id = right_begin; right_id < right_end; ++right_id) {
             if (std::abs(hamiltonian_weight_matrix(left_id, right_id)) > kContributionTolerance ||
@@ -168,15 +169,16 @@ void accumulate_spin_matrix_backward_tile_from_accessor(
     const HWeight& hamiltonian_weight_tile,
     const SWeight& overlap_weight_tile,
     const TWeight& partner_total_transfer_tile,
-    int left_begin,
-    int right_begin,
+    std::int64_t left_begin,
+    std::int64_t right_begin,
     int n_active_orbitals,
     Eigen::MatrixXd* active_one_electron_gradient,
     std::vector<double>* active_orbital_overlap_gradient,
     std::vector<double>* packed_active_two_electron_gradient) {
-    for (int left_local = 0; left_local < hamiltonian_weight_tile.rows(); ++left_local) {
+    for (Eigen::Index left_local = 0; left_local < hamiltonian_weight_tile.rows(); ++left_local) {
         const int left_id = left_begin + left_local;
-        for (int right_local = 0; right_local < hamiltonian_weight_tile.cols(); ++right_local) {
+        for (Eigen::Index right_local = 0; right_local < hamiltonian_weight_tile.cols();
+             ++right_local) {
             const int right_id = right_begin + right_local;
             const double hamiltonian_weight = hamiltonian_weight_tile(left_local, right_local);
             const double overlap_weight = overlap_weight_tile(left_local, right_local);
@@ -208,9 +210,9 @@ void accumulate_spin_matrix_backward_tile(
     const HWeight& hamiltonian_weight_tile,
     const SWeight& overlap_weight_tile,
     const TWeight& partner_total_transfer_tile,
-    int left_begin,
-    int right_begin,
-    int n_unique_determinants,
+    std::int64_t left_begin,
+    std::int64_t right_begin,
+    std::int64_t n_unique_determinants,
     int n_active_orbitals,
     Eigen::MatrixXd* active_one_electron_gradient,
     std::vector<double>* active_orbital_overlap_gradient,
@@ -272,7 +274,7 @@ void accumulate_spin_matrix_backward(
     const Eigen::MatrixXd& hamiltonian_weight_matrix,
     const Eigen::MatrixXd& overlap_weight_matrix,
     const Eigen::MatrixXd& partner_total_transfer_matrix,
-    int n_unique_determinants,
+    std::int64_t n_unique_determinants,
     int n_active_orbitals,
     Eigen::MatrixXd* active_one_electron_gradient,
     std::vector<double>* active_orbital_overlap_gradient,
@@ -282,15 +284,16 @@ void accumulate_spin_matrix_backward(
         throw std::invalid_argument("same-spin matrix backward output buffers must not be null");
     }
 
-    const int pair_tile_size =
-        std::min(n_unique_determinants,
-                 plan_parallel_pair_tile_extent(
-                     n_unique_determinants,
-                     unique_determinants.empty() ? 0 : unique_determinants.electron_count(),
-                     n_active_orbitals));
-    const int n_pair_tiles = (n_unique_determinants + pair_tile_size - 1) / pair_tile_size;
+    const int pair_tile_size = std::min<Eigen::Index>(
+        n_unique_determinants,
+        plan_parallel_pair_tile_extent(
+            n_unique_determinants,
+            unique_determinants.empty() ? 0 : unique_determinants.electron_count(),
+            n_active_orbitals));
+    const std::int64_t n_pair_tiles = (n_unique_determinants + pair_tile_size - 1) / pair_tile_size;
     const int n_tile_pairs = n_pair_tiles * n_pair_tiles;
-    const int n_threads = std::min(xmvb::effective_openmp_thread_count(), n_tile_pairs);
+    const int n_threads =
+        std::min<Eigen::Index>(xmvb::effective_openmp_thread_count(), n_tile_pairs);
     std::vector<Eigen::MatrixXd> partial_one_electron(
         n_threads, Eigen::MatrixXd::Zero(n_active_orbitals, n_active_orbitals));
     std::vector<std::vector<double>> partial_overlap(
@@ -302,10 +305,12 @@ void accumulate_spin_matrix_backward(
 #else
         const int thread = 0;
 #endif
-        const int left_begin = (tile_pair / n_pair_tiles) * pair_tile_size;
-        const int right_begin = (tile_pair % n_pair_tiles) * pair_tile_size;
-        const int left_end = std::min(n_unique_determinants, left_begin + pair_tile_size);
-        const int right_end = std::min(n_unique_determinants, right_begin + pair_tile_size);
+        const std::int64_t left_begin = (tile_pair / n_pair_tiles) * pair_tile_size;
+        const std::int64_t right_begin = (tile_pair % n_pair_tiles) * pair_tile_size;
+        const std::int64_t left_end =
+            std::min<Eigen::Index>(n_unique_determinants, left_begin + pair_tile_size);
+        const std::int64_t right_end =
+            std::min<Eigen::Index>(n_unique_determinants, right_begin + pair_tile_size);
         // Tile the ordered unique-pair sweep so sparse/support-aware same-spin
         // weights can skip large zero regions without touching every cached pair.
         const auto hamiltonian_weight_tile = hamiltonian_weight_matrix.block(
@@ -355,8 +360,8 @@ void accumulate_spin_local_matrix_backward_tile(
     const DHWeight& delta_hamiltonian_weight_tile,
     const DSWeight& delta_overlap_weight_tile,
     const DTWeight& delta_partner_total_transfer_tile,
-    int left_begin,
-    int right_begin,
+    std::int64_t left_begin,
+    std::int64_t right_begin,
     int n_active_orbitals,
     const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron_matrix,
     const xmvb::integrals::ActiveSpaceTwoElectronResult& active_space_two_electron_result,
@@ -368,9 +373,10 @@ void accumulate_spin_local_matrix_backward_tile(
     // all six scalar adjoints are tile-local. Reuse matrix workspaces across the
     // ordered-pair sweep to avoid allocating temporary inverse-gradient matrices
     // inside the hot loop.
-    for (int left_local = 0; left_local < hamiltonian_weight_tile.rows(); ++left_local) {
+    for (Eigen::Index left_local = 0; left_local < hamiltonian_weight_tile.rows(); ++left_local) {
         const int left_id = left_begin + left_local;
-        for (int right_local = 0; right_local < hamiltonian_weight_tile.cols(); ++right_local) {
+        for (Eigen::Index right_local = 0; right_local < hamiltonian_weight_tile.cols();
+             ++right_local) {
             const int right_id = right_begin + right_local;
             const double hamiltonian_weight = hamiltonian_weight_tile(left_local, right_local);
             const double overlap_weight = overlap_weight_tile(left_local, right_local);
@@ -477,7 +483,7 @@ void accumulate_spin_local_matrix_backward(
     const Eigen::MatrixXd& delta_hamiltonian_weight_matrix,
     const Eigen::MatrixXd& delta_overlap_weight_matrix,
     const Eigen::MatrixXd& delta_partner_total_transfer_matrix,
-    int n_unique_determinants,
+    std::int64_t n_unique_determinants,
     int n_active_orbitals,
     const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron_matrix,
     const xmvb::integrals::ActiveSpaceTwoElectronResult& active_space_two_electron_result,
@@ -498,15 +504,16 @@ void accumulate_spin_local_matrix_backward(
             "same-spin local matrix backward output buffers must not be null");
     }
 
-    const int pair_tile_size =
-        std::min(n_unique_determinants,
-                 plan_parallel_pair_tile_extent(
-                     n_unique_determinants,
-                     unique_determinants.empty() ? 0 : unique_determinants.electron_count(),
-                     n_active_orbitals));
-    const int n_pair_tiles = (n_unique_determinants + pair_tile_size - 1) / pair_tile_size;
+    const int pair_tile_size = std::min<Eigen::Index>(
+        n_unique_determinants,
+        plan_parallel_pair_tile_extent(
+            n_unique_determinants,
+            unique_determinants.empty() ? 0 : unique_determinants.electron_count(),
+            n_active_orbitals));
+    const std::int64_t n_pair_tiles = (n_unique_determinants + pair_tile_size - 1) / pair_tile_size;
     const int n_tile_pairs = n_pair_tiles * n_pair_tiles;
-    const int n_threads = std::min(xmvb::effective_openmp_thread_count(), n_tile_pairs);
+    const int n_threads =
+        std::min<Eigen::Index>(xmvb::effective_openmp_thread_count(), n_tile_pairs);
     std::vector<Eigen::MatrixXd> partial_one_electron(
         n_threads, Eigen::MatrixXd::Zero(n_active_orbitals, n_active_orbitals));
     std::vector<std::vector<double>> partial_overlap(
@@ -518,10 +525,12 @@ void accumulate_spin_local_matrix_backward(
 #else
         const int thread = 0;
 #endif
-        const int left_begin = (tile_pair / n_pair_tiles) * pair_tile_size;
-        const int right_begin = (tile_pair % n_pair_tiles) * pair_tile_size;
-        const int left_end = std::min(n_unique_determinants, left_begin + pair_tile_size);
-        const int right_end = std::min(n_unique_determinants, right_begin + pair_tile_size);
+        const std::int64_t left_begin = (tile_pair / n_pair_tiles) * pair_tile_size;
+        const std::int64_t right_begin = (tile_pair % n_pair_tiles) * pair_tile_size;
+        const std::int64_t left_end =
+            std::min<Eigen::Index>(n_unique_determinants, left_begin + pair_tile_size);
+        const std::int64_t right_end =
+            std::min<Eigen::Index>(n_unique_determinants, right_begin + pair_tile_size);
         if (!same_spin_local_tile_has_any_weight(hamiltonian_weight_matrix,
                                                  overlap_weight_matrix,
                                                  partner_total_transfer_matrix,
@@ -664,14 +673,16 @@ SameSpinMatrixBackwardContribution build_support_sparse_same_spin_backward_contr
                                false);
     SameSpinAcceptedTileWeights tile_weights;
 
-    const int alpha_tile_size = std::min(selected_states.n_unique_alpha, tile_extents.alpha);
-    for (int left_begin = 0; left_begin < selected_states.n_unique_alpha;
+    const Eigen::Index alpha_tile_size =
+        std::min<Eigen::Index>(selected_states.n_unique_alpha, tile_extents.alpha);
+    for (std::int64_t left_begin = 0; left_begin < selected_states.n_unique_alpha;
          left_begin += alpha_tile_size) {
-        const int left_end = std::min(selected_states.n_unique_alpha, left_begin + alpha_tile_size);
-        for (int right_begin = 0; right_begin < selected_states.n_unique_alpha;
+        const std::int64_t left_end =
+            std::min<Eigen::Index>(selected_states.n_unique_alpha, left_begin + alpha_tile_size);
+        for (std::int64_t right_begin = 0; right_begin < selected_states.n_unique_alpha;
              right_begin += alpha_tile_size) {
-            const int right_end =
-                std::min(selected_states.n_unique_alpha, right_begin + alpha_tile_size);
+            const std::int64_t right_end = std::min<Eigen::Index>(selected_states.n_unique_alpha,
+                                                                  right_begin + alpha_tile_size);
             accumulate_alpha_accepted_tile_weights(
                 selected_states,
                 selected_state_energies,
@@ -707,15 +718,16 @@ SameSpinMatrixBackwardContribution build_support_sparse_same_spin_backward_contr
     if (close_shell_same_spin) {
         account_for_close_shell_spin_reuse(&active_one_electron_gradient, &result);
     } else {
-        const int beta_tile_size = std::min(selected_states.n_unique_beta, tile_extents.beta);
-        for (int left_begin = 0; left_begin < selected_states.n_unique_beta;
+        const Eigen::Index beta_tile_size =
+            std::min<Eigen::Index>(selected_states.n_unique_beta, tile_extents.beta);
+        for (std::int64_t left_begin = 0; left_begin < selected_states.n_unique_beta;
              left_begin += beta_tile_size) {
-            const int left_end =
-                std::min(selected_states.n_unique_beta, left_begin + beta_tile_size);
-            for (int right_begin = 0; right_begin < selected_states.n_unique_beta;
+            const std::int64_t left_end =
+                std::min<Eigen::Index>(selected_states.n_unique_beta, left_begin + beta_tile_size);
+            for (std::int64_t right_begin = 0; right_begin < selected_states.n_unique_beta;
                  right_begin += beta_tile_size) {
-                const int right_end =
-                    std::min(selected_states.n_unique_beta, right_begin + beta_tile_size);
+                const std::int64_t right_end = std::min<Eigen::Index>(selected_states.n_unique_beta,
+                                                                      right_begin + beta_tile_size);
                 accumulate_beta_accepted_tile_weights(selected_states,
                                                       selected_state_energies,
                                                       same_spin_pair_cache.alpha_pair_cache_ref(),
@@ -776,14 +788,16 @@ build_support_sparse_directional_same_spin_backward_contribution_by_tiles(
                                false);
     SameSpinAcceptedTileWeights tile_weights;
 
-    const int alpha_tile_size = std::min(selected_states.n_unique_alpha, tile_extents.alpha);
-    for (int left_begin = 0; left_begin < selected_states.n_unique_alpha;
+    const Eigen::Index alpha_tile_size =
+        std::min<Eigen::Index>(selected_states.n_unique_alpha, tile_extents.alpha);
+    for (std::int64_t left_begin = 0; left_begin < selected_states.n_unique_alpha;
          left_begin += alpha_tile_size) {
-        const int left_end = std::min(selected_states.n_unique_alpha, left_begin + alpha_tile_size);
-        for (int right_begin = 0; right_begin < selected_states.n_unique_alpha;
+        const std::int64_t left_end =
+            std::min<Eigen::Index>(selected_states.n_unique_alpha, left_begin + alpha_tile_size);
+        for (std::int64_t right_begin = 0; right_begin < selected_states.n_unique_alpha;
              right_begin += alpha_tile_size) {
-            const int right_end =
-                std::min(selected_states.n_unique_alpha, right_begin + alpha_tile_size);
+            const std::int64_t right_end = std::min<Eigen::Index>(selected_states.n_unique_alpha,
+                                                                  right_begin + alpha_tile_size);
             accumulate_alpha_directional_tile_weights(
                 selected_states,
                 directional_selected_states,
@@ -821,15 +835,16 @@ build_support_sparse_directional_same_spin_backward_contribution_by_tiles(
     if (close_shell_same_spin) {
         account_for_close_shell_spin_reuse(&active_one_electron_gradient, &result);
     } else {
-        const int beta_tile_size = std::min(selected_states.n_unique_beta, tile_extents.beta);
-        for (int left_begin = 0; left_begin < selected_states.n_unique_beta;
+        const Eigen::Index beta_tile_size =
+            std::min<Eigen::Index>(selected_states.n_unique_beta, tile_extents.beta);
+        for (std::int64_t left_begin = 0; left_begin < selected_states.n_unique_beta;
              left_begin += beta_tile_size) {
-            const int left_end =
-                std::min(selected_states.n_unique_beta, left_begin + beta_tile_size);
-            for (int right_begin = 0; right_begin < selected_states.n_unique_beta;
+            const std::int64_t left_end =
+                std::min<Eigen::Index>(selected_states.n_unique_beta, left_begin + beta_tile_size);
+            for (std::int64_t right_begin = 0; right_begin < selected_states.n_unique_beta;
                  right_begin += beta_tile_size) {
-                const int right_end =
-                    std::min(selected_states.n_unique_beta, right_begin + beta_tile_size);
+                const std::int64_t right_end = std::min<Eigen::Index>(selected_states.n_unique_beta,
+                                                                      right_begin + beta_tile_size);
                 accumulate_beta_directional_tile_weights(
                     selected_states,
                     directional_selected_states,
@@ -905,9 +920,9 @@ void accumulate_accepted_pair_weight_response_tile(
     const xmvb::mcscf::StringTable& unique_determinants,
     const std::vector<SpinDeterminantPairEvaluation>& accepted_pairs,
     const SameSpinAcceptedTileWeights& directional_weights,
-    int left_begin,
-    int right_begin,
-    int n_unique,
+    std::int64_t left_begin,
+    std::int64_t right_begin,
+    std::int64_t n_unique,
     int n_active_orbitals,
     Eigen::MatrixXd* active_one_electron_gradient,
     std::vector<double>* active_orbital_overlap_gradient,

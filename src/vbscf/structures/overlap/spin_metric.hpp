@@ -52,7 +52,7 @@ class SpinMetric {
     std::size_t block_count() const noexcept {
         return blocks_.size();
     }
-    int max_block_size() const noexcept {
+    Eigen::Index max_block_size() const noexcept {
         return max_block_size_;
     }
     const Eigen::VectorXd& diagonal() const noexcept {
@@ -66,22 +66,22 @@ class SpinMetric {
                      std::size_t byte_limit);
 
     /** @brief Occupation topology only; performs no numerical Gram contraction. */
-    static std::vector<std::vector<int>> occupation_groups(const StructureAction& action,
-                                                           const mcscf::StringTable& alpha,
-                                                           const mcscf::StringTable& beta);
+    static std::vector<std::vector<Eigen::Index>> occupation_groups(const StructureAction& action,
+                                                                    const mcscf::StringTable& alpha,
+                                                                    const mcscf::StringTable& beta);
 
   private:
     struct Block {
-        std::vector<int> indices;
+        std::vector<Eigen::Index> indices;
         Eigen::MatrixXd lower;
     };
-    int dimension_;
+    Eigen::Index dimension_;
     /** Factor owners outlive CI actions and share the process memory allowance. */
     workspace::Reservation residency_;
     Eigen::VectorXd diagonal_;
     std::vector<Block> blocks_;
     std::size_t factor_bytes_ = 0;
-    int max_block_size_ = 0;
+    Eigen::Index max_block_size_ = 0;
 };
 
 } // namespace xmvb::vb

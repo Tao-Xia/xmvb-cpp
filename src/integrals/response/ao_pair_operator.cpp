@@ -27,7 +27,7 @@ namespace {
 #if defined(__GNUC__) && !defined(__clang__) && defined(__x86_64__)
 __attribute__((target_clones("avx512f", "avx2", "default")))
 #endif
-void contract_rows(const int* offsets, const int* columns, const double* values,
+void contract_rows(const PairAddress* offsets, const PairAddress* columns, const double* values,
                    const double* source, double* target, std::size_t width,
                    std::size_t first_row, std::size_t end_row) {
     for (std::size_t row = first_row; row < end_row; ++row) {

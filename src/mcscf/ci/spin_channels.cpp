@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "mcscf/ci/sigma.hpp"
 
 #include <algorithm>
@@ -25,7 +26,7 @@ ChannelBoundary channel_boundary(int pair) {
 
 /** @brief Orbital interval whose packed diagonal channels belong to this tile. */
 std::pair<int, int> diagonal_range(int n, int first, int last) {
-    int begin = 0, end = 0;
+    std::int64_t begin = 0, end = 0;
     while (begin < n && core::PairIndex::packed_pair_index(begin, begin) < first)
         ++begin;
     end = begin;
@@ -55,7 +56,7 @@ DirectCiSigmaAction::spin_generator_adjoint(bool beta,
 #endif
         auto& density = partials[worker];
 #pragma omp for schedule(static)
-        for (int target = 0; target < rows; ++target) {
+        for (std::int64_t target = 0; target < rows; ++target) {
             const double value = left.row(target).dot(right.row(target));
             for (int occupied : graph.occupied(target))
                 density(occupied, occupied) += value;
@@ -83,8 +84,8 @@ void DirectCiSigmaAction::apply_spin_generator(bool beta,
     const int workers = coarse_openmp_thread_count(effective_openmp_thread_count(),
                                                    static_cast<std::size_t>(rows) * factors.cols());
 #pragma omp parallel for schedule(static) if (workers > 1) num_threads(workers)
-    for (int index = 0; index < rows * factors.cols(); ++index) {
-        const int column = index / rows, target = index % rows;
+    for (std::int64_t index = 0; index < rows * factors.cols(); ++index) {
+        const std::int64_t column = index / rows, target = index % rows;
         double value = 0;
         for (int occupied : graph.occupied(target))
             value += generator(occupied, occupied) * factors(target, column);
@@ -113,9 +114,9 @@ void DirectCiSigmaAction::scatter_spin(bool beta,
     result.setZero();
     const int workers = coarse_openmp_thread_count(effective_openmp_thread_count(), result.size());
 #pragma omp parallel for schedule(static) if (workers > 1) num_threads(workers)
-    for (int index = 0; index < rows * width; ++index) {
-        const int target = index % rows, column = index / rows;
-        const auto add = [&](int source, int pair, double sign) {
+    for (std::int64_t index = 0; index < rows * width; ++index) {
+        const std::int64_t target = index % rows, column = index / rows;
+        const auto add = [&](std::int64_t source, int pair, double sign) {
             result(target, (pair - first) * width + column) += sign * factors(source, column);
         };
         const auto range_mask = ((std::uint64_t{1} << diagonal.second) - 1) ^
@@ -148,9 +149,9 @@ void DirectCiSigmaAction::gather_spin(bool beta,
     const int workers =
         coarse_openmp_thread_count(effective_openmp_thread_count(), channels.size());
 #pragma omp parallel for schedule(static) if (workers > 1) num_threads(workers)
-    for (int index = 0; index < rows * width; ++index) {
-        const int target = index % rows, column = index / rows;
-        const auto add = [&](int source, int pair, double sign) {
+    for (std::int64_t index = 0; index < rows * width; ++index) {
+        const std::int64_t target = index % rows, column = index / rows;
+        const auto add = [&](std::int64_t source, int pair, double sign) {
             images(target, column) += sign * channels(source, (pair - first) * width + column);
         };
         const auto range_mask = ((std::uint64_t{1} << diagonal.second) - 1) ^

@@ -18,8 +18,10 @@ inline constexpr std::size_t kFactorWorkspaceBytes = 64ULL * 1024ULL * 1024ULL;
  * amplitude is sum_j A_j B_j^T. No complete product or all-source array is needed.
  */
 struct SpinFactorSource {
-    int n_alpha = 0, n_beta = 0, count = 0;
-    std::function<void(int, int, Eigen::Ref<Eigen::MatrixXd>, Eigen::Ref<Eigen::MatrixXd>)> load;
+    Eigen::Index n_alpha = 0, n_beta = 0, count = 0;
+    std::function<void(
+        Eigen::Index, Eigen::Index, Eigen::Ref<Eigen::MatrixXd>, Eigen::Ref<Eigen::MatrixXd>)>
+        load;
     /** Temporary doubles per source column during load; excludes output views. */
     std::size_t workspace_rows = 0;
     /** Nominal scalar operations/element touches per column; scheduling only.
@@ -44,7 +46,9 @@ struct SpinFactorSource {
  */
 class SpinAmplitudeWorkspace {
   public:
-    SpinAmplitudeWorkspace(const SpinFactorSource& source, int source_tile, int columns);
+    SpinAmplitudeWorkspace(const SpinFactorSource& source,
+                           Eigen::Index source_tile,
+                           Eigen::Index columns);
     void add(const Eigen::Ref<const Eigen::MatrixXd>& alpha,
              const Eigen::Ref<const Eigen::MatrixXd>& beta,
              Eigen::Ref<Eigen::MatrixXd> result_alpha,
@@ -59,7 +63,7 @@ class SpinAmplitudeWorkspace {
 
   private:
     const SpinFactorSource& source_;
-    int width_;
+    Eigen::Index width_;
     bool mapped_;
     workspace::Temporary temporary_;
     Eigen::MatrixXd a_, b_, moment_;
@@ -99,7 +103,7 @@ struct FactorImageBlock {
 
 /** @brief Work and explicit numerical-slab bound, not total process memory. */
 struct FactorActionWork {
-    int source_tile = 0, channel_tile = 0;
+    Eigen::Index source_tile = 0, channel_tile = 0;
     std::size_t panels = 0, sources = 0, channel_blocks = 0, workspace_bound = 0;
     double scatter_seconds = 0, mix_seconds = 0, gather_seconds = 0;
 };
@@ -117,7 +121,7 @@ class FactorActionWorkspace {
                           int reserved_channel_panels = 0);
 
     /** @brief Shared consumer slab dimensions; reservations count inside the budget. */
-    int source_tile() const noexcept {
+    Eigen::Index source_tile() const noexcept {
         return source_tile_;
     }
     int channel_tile() const noexcept {
@@ -130,7 +134,8 @@ class FactorActionWorkspace {
                            const std::function<void(FactorImageBlock)>& finish);
 
   private:
-    int n_alpha_, n_beta_, channels_, source_tile_, channel_tile_;
+    Eigen::Index n_alpha_, n_beta_;
+    int channels_, source_tile_, channel_tile_;
     std::size_t load_rows_;
     bool overlap_only_;
     int reserved_channel_panels_;

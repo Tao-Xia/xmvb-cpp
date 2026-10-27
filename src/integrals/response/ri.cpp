@@ -176,7 +176,7 @@ Eigen::MatrixXd build_ri_active_pair_adjoint(const std::vector<double>& packed_g
         for (Eigen::Index column = 0; column < n_active_pairs; ++column) {
             const int first = static_cast<int>(row > column ? row : column);
             const int second = static_cast<int>(row > column ? column : row);
-            const int packed_index =
+            const auto packed_index =
                 xmvb::core::PairIndex::packed_pair_of_pairs_index(first, second);
             active_pair_adjoint(row, column) =
                 (row == column ? 2.0 : 1.0) * packed_gradient[packed_index];
@@ -488,7 +488,7 @@ std::vector<double> compute_ri_packed_active_two_electron_integral_directional_d
                                          0.0);
     for (Eigen::Index first = 0; first < n_active_pairs; ++first) {
         for (Eigen::Index second = 0; second <= first; ++second) {
-            const int packed_index = xmvb::core::PairIndex::packed_pair_of_pairs_index(
+            const auto packed_index = xmvb::core::PairIndex::packed_pair_of_pairs_index(
                 static_cast<int>(first), static_cast<int>(second));
             packed_direction[packed_index] =
                 one_sided_contraction(first, second) + one_sided_contraction(second, first);
@@ -527,7 +527,7 @@ Eigen::MatrixXd compute_ri_packed_active_two_electron_integral_directional_deriv
             one_sided_block.middleCols(direction * n_active_pairs, n_active_pairs);
         for (Eigen::Index first = 0; first < n_active_pairs; ++first) {
             for (Eigen::Index second = 0; second <= first; ++second) {
-                const int packed_index = xmvb::core::PairIndex::packed_pair_of_pairs_index(
+                const auto packed_index = xmvb::core::PairIndex::packed_pair_of_pairs_index(
                     static_cast<int>(first), static_cast<int>(second));
                 packed_directions(packed_index, direction) =
                     one_sided(first, second) + one_sided(second, first);

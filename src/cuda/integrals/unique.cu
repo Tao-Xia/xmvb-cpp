@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "cuda/integrals/exact.hpp"
 
 #include <algorithm>
@@ -11,8 +12,8 @@ namespace {
 // Upload only a bounded batch, scatter into its final CSR row, and discard
 // the COO staging. Never allocate a complete raw device integral stream.
 template <class Index>
-__global__ void upload_rows(const int* rows,
-                            const int* columns,
+__global__ void upload_rows(const std::int64_t* rows,
+                            const std::int64_t* columns,
                             const double* values,
                             std::int64_t count,
                             unsigned long long* cursor,
@@ -67,32 +68,35 @@ void ExactAoPairOperator::upload_unique(const integrals::AoPairGraph& graph) {
                        &active_blocks, upload_rows<Index>, 256, 0),
                    "unique CSR upload occupancy");
         const auto population = static_cast<std::size_t>(multiprocessors) * active_blocks * 256;
-        const auto capacity = std::min(
-            {largest_chunk, population, response_capacity() / (2 * sizeof(int) + sizeof(double))});
+        const auto capacity =
+            std::min({largest_chunk,
+                      population,
+                      response_capacity() / (2 * sizeof(std::int64_t) + sizeof(double))});
         if (!capacity)
             throw std::runtime_error("unique CSR budget cannot hold an upload batch");
-        Buffer<int> source_rows(context, capacity), source_columns(context, capacity);
+        Buffer<std::int64_t> source_rows(context, capacity), source_columns(context, capacity);
         Buffer<double> source_values(context, capacity);
         auto* destination = columns.data();
         graph.for_each_chunk([&](auto rows, auto columns, auto values) {
             for (std::size_t begin = 0; begin < values.size(); begin += capacity) {
                 const auto count = std::min(capacity, values.size() - begin);
                 context.copy_to_device(
-                    source_rows.data(), rows.data() + begin, count * sizeof(int));
+                    source_rows.data(), rows.data() + begin, count * sizeof(std::int64_t));
                 context.copy_to_device(
-                    source_columns.data(), columns.data() + begin, count * sizeof(int));
+                    source_columns.data(), columns.data() + begin, count * sizeof(std::int64_t));
                 context.copy_to_device(
                     source_values.data(), values.data() + begin, count * sizeof(double));
-                upload_rows<Index>
-                    <<<static_cast<unsigned int>((count + 255) / 256), 256, 0, context.stream()>>>(
-                        source_rows.data(),
-                        source_columns.data(),
-                        source_values.data(),
-                        count,
-                        cursor.data(),
-                        destination,
-                        values_.data(),
-                        diagonal_.data());
+                upload_rows<Index><<<static_cast<unsigned int>((count / 256 + (count % 256 != 0))),
+                                     256,
+                                     0,
+                                     context.stream()>>>(source_rows.data(),
+                                                         source_columns.data(),
+                                                         source_values.data(),
+                                                         count,
+                                                         cursor.data(),
+                                                         destination,
+                                                         values_.data(),
+                                                         diagonal_.data());
                 check_cuda(cudaGetLastError(), "upload unique CSR rows");
             }
         });

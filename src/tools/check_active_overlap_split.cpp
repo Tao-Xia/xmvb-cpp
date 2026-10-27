@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <algorithm>
 #include <cmath>
 #include <iomanip>
@@ -70,7 +71,7 @@ Options parse_arguments(int argc, char** argv) {
 }
 
 double structure_upper_weight(const std::vector<double>& eigenvector_matrix,
-                              int n_structures,
+                              std::int64_t n_structures,
                               int structure_row,
                               int structure_column) {
     const double coefficient_row = eigenvector_matrix[structure_row];
@@ -83,7 +84,7 @@ double structure_upper_weight(const std::vector<double>& eigenvector_matrix,
 
 double structure_upper_overlap_weight(const std::vector<double>& eigenvector_matrix,
                                       const std::vector<double>& eigenvalues,
-                                      int n_structures,
+                                      std::int64_t n_structures,
                                       int structure_row,
                                       int structure_column) {
     return -eigenvalues.front() *
@@ -96,7 +97,7 @@ StructurePairAdjoints determinant_pair_structure_adjoints(
     std::span<const xmvb::vb::StructureExpansionTerm> determinant_to_structures_right,
     const std::vector<double>& eigenvector_matrix,
     const std::vector<double>& eigenvalues,
-    int n_structures) {
+    std::int64_t n_structures) {
     StructurePairAdjoints adjoints;
     for (const auto& left_term : determinant_to_structures_left) {
         for (const auto& right_term : determinant_to_structures_right) {
@@ -122,7 +123,7 @@ StructurePairAdjoints determinant_pair_structure_adjoints(
 
 double evaluate_ground_state_energy(const std::vector<double>& hamiltonian_matrix,
                                     const std::vector<double>& overlap_matrix,
-                                    int n_structures) {
+                                    std::int64_t n_structures) {
     xmvb::linalg::GeneralizedEigensolver eigensolver;
     return eigensolver.solve_dense(hamiltonian_matrix, overlap_matrix, n_structures)
         .eigenvalues.front();
@@ -153,9 +154,9 @@ int main(int argc, char** argv) {
                                                       0.0);
 
         xmvb::vb::DeterminantOverlapResolver determinant_overlap_resolver;
-        for (int determinant_index_left = 0; determinant_index_left < n_determinants;
+        for (std::int64_t determinant_index_left = 0; determinant_index_left < n_determinants;
              ++determinant_index_left) {
-            for (int determinant_index_right = 0; determinant_index_right < n_determinants;
+            for (std::int64_t determinant_index_right = 0; determinant_index_right < n_determinants;
                  ++determinant_index_right) {
                 const auto pair_adjoints = determinant_pair_structure_adjoints(
                     load_result.input.structure_data.incidence()[determinant_index_left],
@@ -293,7 +294,8 @@ int main(int argc, char** argv) {
             });
 
         xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder structure_builder;
-        const int n_to_report = std::min(options.count, static_cast<int>(ranked_entries.size()));
+        const int n_to_report =
+            std::min<std::int64_t>(options.count, static_cast<int>(ranked_entries.size()));
         std::cout << std::setprecision(12);
         std::cout << "finite_difference_step = " << options.step << '\n';
         std::cout << "reported_entries = " << n_to_report << '\n';

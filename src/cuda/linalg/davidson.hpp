@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include <functional>
 #include <vector>
 
@@ -47,7 +49,7 @@ struct DeviceDavidsonResult {
     bool identity_overlap = false;
     std::vector<double> relative_residual_norms;
     std::vector<double> stationarity_residual_norms;
-    int iterations = 0;
+    std::int64_t iterations = 0;
     int block_actions = 0;
     int peak_subspace_dimension = 0;
 

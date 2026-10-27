@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include <vector>
 
 #include <Eigen/Core>
@@ -31,8 +33,8 @@ void multiply_right_symmetric(const Eigen::MatrixXd& left,
 
 bool selected_state_has_close_shell_diagonal(
     const SelectedStateDeterminantCoefficients& state_coefficients,
-    int n_unique_alpha,
-    int n_unique_beta);
+    std::int64_t n_unique_alpha,
+    std::int64_t n_unique_beta);
 
 bool selected_state_has_local_support(
     const SelectedStateDeterminantCoefficients& state_coefficients);
@@ -54,12 +56,12 @@ void accumulate_directional_diagonal_kernel_image_global(
 
 void validate_state_coefficient_matrix(
     const SelectedStateDeterminantCoefficients& state_coefficients,
-    int n_unique_alpha,
-    int n_unique_beta);
+    std::int64_t n_unique_alpha,
+    std::int64_t n_unique_beta);
 
 SameSpinPairScalarMatrices
 build_pair_scalar_matrices(const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
-                           int n_unique_determinants);
+                           std::int64_t n_unique_determinants);
 
 SingleChannelSameSpinWeightMatrices build_dense_same_spin_weight_matrices_from_partner_kernels(
     const SelectedStateDeterminantMatrices& selected_states,

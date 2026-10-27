@@ -1,4 +1,7 @@
 #include "libcint/materialized_provider.hpp"
+#include "core/index.hpp"
+#include "core/memory.hpp"
+#include "core/pair_index.hpp"
 
 #include <cmath>
 #include <chrono>
@@ -16,11 +19,9 @@ namespace xmvb::libcint {
 
 namespace {
 
-int pair_index(int first, int second) {
-    if (first >= second) {
-        return first * (first + 1) / 2 + second;
-    }
-    return second * (second + 1) / 2 + first;
+integrals::PairAddress pair_index(int first, int second) {
+    return core::checked_index<integrals::PairAddress>(
+        core::PairIndex::packed_pair_index(first, second));
 }
 
 } // namespace
@@ -189,18 +190,12 @@ MaterializedAoIntegralBuffers LibcintMaterializedIntegralProvider::build(
 
     const std::size_t n_basis = static_cast<std::size_t>(n_basis_functions);
     const std::size_t n_ao_pairs = n_basis * (n_basis + 1) / 2;
-    const std::size_t max_32_bit_graph_edges =
-        static_cast<std::size_t>(std::numeric_limits<int>::max());
-    const bool symmetric_graph_can_exceed_32_bits =
-        n_ao_pairs != 0 && n_ao_pairs > max_32_bit_graph_edges / n_ao_pairs;
-
-    if (symmetric_graph_can_exceed_32_bits) {
-        // A fully connected symmetric AO-pair CSR graph has n_ao_pairs^2
-        // directed edges.  Once that can exceed INT_MAX, the downstream graph
-        // keeps this once-symmetry-reduced integral stream instead.  Avoid the
-        // much larger materialization peak from retaining every per-shell vector
-        // while also growing/copying a complete aggregate: count first, allocate
-        // the exact final buffers, then let each shell write its disjoint range.
+    // Count-first materialization avoids a complete aggregate plus all producer
+    // chunks when the possible directed payload exceeds the process allowance.
+    // Address width is not a physical-space or allocation-policy switch.
+    const long double directed_bytes = static_cast<long double>(n_ao_pairs) * n_ao_pairs *
+                                       (sizeof(integrals::PairAddress) + sizeof(double));
+    if (directed_bytes > memory::default_workspace()) {
         std::vector<std::size_t> shell_integral_counts(n_shells, 0);
         if (n_threads <= 1) {
             for (int shell_i = 0; shell_i < n_shells; ++shell_i) {
@@ -243,16 +238,19 @@ MaterializedAoIntegralBuffers LibcintMaterializedIntegralProvider::build(
             const std::size_t begin = shell_integral_offsets[shell_i];
             const std::size_t expected_count = shell_integral_counts[shell_i];
             std::size_t count = 0;
-            visit_shell_i_integrals(
-                shell_evaluator, shell_i, [&](double value, int left_pair, int right_pair) {
-                    if (count < expected_count) {
-                        const std::size_t offset = begin + count;
-                        buffers.two_electron_values[offset] = value;
-                        buffers.left_pair_indices[offset] = left_pair;
-                        buffers.right_pair_indices[offset] = right_pair;
-                    }
-                    ++count;
-                });
+            visit_shell_i_integrals(shell_evaluator,
+                                    shell_i,
+                                    [&](double value,
+                                        integrals::PairAddress left_pair,
+                                        integrals::PairAddress right_pair) {
+                                        if (count < expected_count) {
+                                            const std::size_t offset = begin + count;
+                                            buffers.two_electron_values[offset] = value;
+                                            buffers.left_pair_indices[offset] = left_pair;
+                                            buffers.right_pair_indices[offset] = right_pair;
+                                        }
+                                        ++count;
+                                    });
             filled_shell_counts[shell_i] = count;
         };
 
@@ -278,28 +276,34 @@ MaterializedAoIntegralBuffers LibcintMaterializedIntegralProvider::build(
         }
     } else if (n_threads <= 1) {
         for (int shell_i = 0; shell_i < n_shells; ++shell_i) {
-            visit_shell_i_integrals(
-                evaluator, shell_i, [&](double value, int left_pair, int right_pair) {
-                    buffers.two_electron_values.push_back(value);
-                    buffers.left_pair_indices.push_back(left_pair);
-                    buffers.right_pair_indices.push_back(right_pair);
-                });
+            visit_shell_i_integrals(evaluator,
+                                    shell_i,
+                                    [&](double value,
+                                        integrals::PairAddress left_pair,
+                                        integrals::PairAddress right_pair) {
+                                        buffers.two_electron_values.push_back(value);
+                                        buffers.left_pair_indices.push_back(left_pair);
+                                        buffers.right_pair_indices.push_back(right_pair);
+                                    });
         }
     } else {
         std::vector<std::vector<double>> shell_integral_values(n_shells);
-        std::vector<std::vector<int>> shell_left_pairs(n_shells);
-        std::vector<std::vector<int>> shell_right_pairs(n_shells);
+        std::vector<std::vector<integrals::PairAddress>> shell_left_pairs(n_shells);
+        std::vector<std::vector<integrals::PairAddress>> shell_right_pairs(n_shells);
 
 #pragma omp parallel
         {
 #pragma omp for schedule(dynamic)
             for (int shell_i = 0; shell_i < n_shells; ++shell_i) {
-                visit_shell_i_integrals(
-                    evaluator, shell_i, [&](double value, int left_pair, int right_pair) {
-                        shell_integral_values[shell_i].push_back(value);
-                        shell_left_pairs[shell_i].push_back(left_pair);
-                        shell_right_pairs[shell_i].push_back(right_pair);
-                    });
+                visit_shell_i_integrals(evaluator,
+                                        shell_i,
+                                        [&](double value,
+                                            integrals::PairAddress left_pair,
+                                            integrals::PairAddress right_pair) {
+                                            shell_integral_values[shell_i].push_back(value);
+                                            shell_left_pairs[shell_i].push_back(left_pair);
+                                            shell_right_pairs[shell_i].push_back(right_pair);
+                                        });
                 if (options.ao_pair_layout == integrals::AoPairLayout::Chunked) {
                     // Only one compaction temporary may exist at a time; overlap it
                     // with other workers' integral evaluation, not their compactions.
@@ -363,8 +367,8 @@ MaterializedAoIntegralBuffers LibcintMaterializedIntegralProvider::build(
                 // The aggregate owns these entries now. Do not retain shell-sized
                 // copies while filling the rest of the output, in either input layout.
                 std::vector<double>().swap(values);
-                std::vector<int>().swap(left_pairs);
-                std::vector<int>().swap(right_pairs);
+                std::vector<integrals::PairAddress>().swap(left_pairs);
+                std::vector<integrals::PairAddress>().swap(right_pairs);
             }
         }
         merge_seconds = std::chrono::duration<double>(Clock::now() - merge_start).count();

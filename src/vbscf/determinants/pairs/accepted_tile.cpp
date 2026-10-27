@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "vbscf/determinants/pairs/accepted_tile.hpp"
 
 #include "mcscf/ci/string_table.hpp"
@@ -10,8 +11,8 @@
 
 namespace xmvb::vb {
 
-const SpinDeterminantPairEvaluation& AcceptedSpinPairTile::pair(int left_local,
-                                                                int right_local) const {
+const SpinDeterminantPairEvaluation& AcceptedSpinPairTile::pair(Eigen::Index left_local,
+                                                                Eigen::Index right_local) const {
     if (left_local < 0 || left_local >= left_size || right_local < 0 || right_local >= right_size) {
         throw std::out_of_range("accepted pair tile index is out of range");
     }
@@ -26,10 +27,10 @@ AcceptedPairTileProvider::AcceptedPairTileProvider(mcscf::StringTable unique_spi
       pair_evaluator_(overlap_resolver_, DeterminantHamiltonianResolver(overlap_resolver_)) {}
 
 AcceptedSpinPairTile AcceptedPairTileProvider::build(
-    int left_begin,
-    int left_end,
-    int right_begin,
-    int right_end,
+    Eigen::Index left_begin,
+    Eigen::Index left_end,
+    Eigen::Index right_begin,
+    Eigen::Index right_end,
     const std::vector<double>& active_overlap,
     const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron,
     const xmvb::integrals::ActiveSpaceTwoElectronResult& active_two_electron,
@@ -57,12 +58,13 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
         left_indices[i] = unique_spin_strings_[left_begin + i];
     for (int i = 0; i < tile.right_size; ++i)
         right_indices[i] = unique_spin_strings_[right_begin + i];
-    const int pair_count = tile.left_size * tile.right_size;
-    const int n_threads = std::max(1, std::min(xmvb::effective_openmp_thread_count(), pair_count));
+    const std::int64_t pair_count = tile.left_size * tile.right_size;
+    const int n_threads = std::max<std::int64_t>(
+        1, std::min<std::int64_t>(xmvb::effective_openmp_thread_count(), pair_count));
 #pragma omp parallel for schedule(static) if (n_threads > 1) num_threads(n_threads)
-    for (int pair_index = 0; pair_index < pair_count; ++pair_index) {
-        const int left_local = pair_index / tile.right_size;
-        const int right_local = pair_index % tile.right_size;
+    for (std::int64_t pair_index = 0; pair_index < pair_count; ++pair_index) {
+        const Eigen::Index left_local = pair_index / tile.right_size;
+        const Eigen::Index right_local = pair_index % tile.right_size;
         const auto& occupied_left = left_indices[left_local];
         const auto& occupied_right = right_indices[right_local];
         SpinDeterminantPairEvaluation evaluation =

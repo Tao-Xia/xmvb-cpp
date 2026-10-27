@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "output/text/structure.hpp"
 
 #include <iomanip>
@@ -9,7 +10,7 @@ namespace xmvb::output {
 
 void print_structure(std::ostream& output,
                      const vb::RawStructureData& structures,
-                     int structure_index,
+                     std::int64_t structure_index,
                      int prefix_width) {
     if (structure_index < 0 || structure_index >= structures.n_structures) {
         throw std::out_of_range("structure index is out of range");

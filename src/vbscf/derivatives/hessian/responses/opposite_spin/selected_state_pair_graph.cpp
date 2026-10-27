@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "vbscf/derivatives/hessian/responses/opposite_spin/selected_state_pair_graph_internal.hpp"
 
 #include <cstddef>
@@ -45,8 +46,9 @@ void accumulate_projected_channels(const OppositeSpinPackedPairProjection& proje
 
 SelectedStatePairGraph::SelectedStatePairGraph(
     const SelectedStateDeterminantMatrices& selected_states, PrimarySpin primary_spin) {
-    const int n_primary = primary_spin == PrimarySpin::Alpha ? selected_states.n_unique_alpha
-                                                             : selected_states.n_unique_beta;
+    const Eigen::Index n_primary = primary_spin == PrimarySpin::Alpha
+                                       ? selected_states.n_unique_alpha
+                                       : selected_states.n_unique_beta;
     terms_.reserve(selected_states.states.size());
     for (const auto& state : selected_states.states) {
         add_term(state, state, state.normalized_state_weight, primary_spin, n_primary);
@@ -57,8 +59,9 @@ SelectedStatePairGraph::SelectedStatePairGraph(
     const SelectedStateDeterminantMatrices& selected_states,
     const SelectedStateDeterminantMatrices& directional_selected_states,
     PrimarySpin primary_spin) {
-    const int n_primary = primary_spin == PrimarySpin::Alpha ? selected_states.n_unique_alpha
-                                                             : selected_states.n_unique_beta;
+    const Eigen::Index n_primary = primary_spin == PrimarySpin::Alpha
+                                       ? selected_states.n_unique_alpha
+                                       : selected_states.n_unique_beta;
     terms_.reserve(2 * selected_states.states.size());
     for (std::size_t state_index = 0; state_index < selected_states.states.size(); ++state_index) {
         const auto& accepted = selected_states.states[state_index];
@@ -72,7 +75,7 @@ void SelectedStatePairGraph::add_term(const SelectedStateDeterminantCoefficients
                                       const SelectedStateDeterminantCoefficients& right,
                                       double weight,
                                       PrimarySpin primary_spin,
-                                      int n_primary) {
+                                      Eigen::Index n_primary) {
     const bool alpha_primary = primary_spin == PrimarySpin::Alpha;
     terms_.emplace_back();
     auto& term = terms_.back();
@@ -96,15 +99,15 @@ void SelectedStatePairGraph::add_term(const SelectedStateDeterminantCoefficients
 }
 
 template <typename AccumulatePair>
-void SelectedStatePairGraph::for_each_partner_pair(int primary_left,
-                                                   int primary_right,
+void SelectedStatePairGraph::for_each_partner_pair(Eigen::Index primary_left,
+                                                   Eigen::Index primary_right,
                                                    AccumulatePair&& accumulate_pair) const {
     const auto accumulate_row_product = [&](const SparseLocalCoefficientMatrix& left_coefficients,
-                                            int left_local,
-                                            const std::vector<int>& left_partner_support,
+                                            Eigen::Index left_local,
+                                            const std::vector<Eigen::Index>& left_partner_support,
                                             const SparseLocalCoefficientMatrix& right_coefficients,
-                                            int right_local,
-                                            const std::vector<int>& right_partner_support,
+                                            Eigen::Index right_local,
+                                            const std::vector<Eigen::Index>& right_partner_support,
                                             double scale) {
         if (left_local < 0 || right_local < 0 || scale == 0.0) {
             return;
@@ -112,12 +115,12 @@ void SelectedStatePairGraph::for_each_partner_pair(int primary_left,
         for (SparseLocalCoefficientMatrix::InnerIterator left_entry(left_coefficients, left_local);
              left_entry;
              ++left_entry) {
-            const int partner_left = left_partner_support[left_entry.col()];
+            const Eigen::Index partner_left = left_partner_support[left_entry.col()];
             for (SparseLocalCoefficientMatrix::InnerIterator right_entry(right_coefficients,
                                                                          right_local);
                  right_entry;
                  ++right_entry) {
-                const int partner_right = right_partner_support[right_entry.col()];
+                const Eigen::Index partner_right = right_partner_support[right_entry.col()];
                 const double coefficient = scale * left_entry.value() * right_entry.value();
                 accumulate_pair(partner_left, partner_right, coefficient);
             }
@@ -137,14 +140,16 @@ void SelectedStatePairGraph::for_each_partner_pair(int primary_left,
 
 template <typename ProjectionAt>
 void SelectedStatePairGraph::accumulate_partner_projection_impl(
-    int primary_left,
-    int primary_right,
+    Eigen::Index primary_left,
+    Eigen::Index primary_right,
     ProjectionAt&& projection_at,
     std::vector<double>* partner_image,
     std::vector<unsigned char>* touched_flags,
     std::vector<int>* touched_channels) const {
     for_each_partner_pair(
-        primary_left, primary_right, [&](int partner_left, int partner_right, double coefficient) {
+        primary_left,
+        primary_right,
+        [&](Eigen::Index partner_left, Eigen::Index partner_right, double coefficient) {
             const auto& projection = projection_at(partner_left, partner_right);
             for (std::size_t entry = 0; entry < projection.packed_pair_indices.size(); ++entry) {
                 const int channel = projection.packed_pair_indices[entry];
@@ -158,17 +163,17 @@ void SelectedStatePairGraph::accumulate_partner_projection_impl(
 }
 
 void SelectedStatePairGraph::accumulate_partner_projection(
-    int primary_left,
-    int primary_right,
+    Eigen::Index primary_left,
+    Eigen::Index primary_right,
     const std::vector<SpinDeterminantPairEvaluation>& partner_pair_cache,
-    int n_unique_partner,
+    std::int64_t n_unique_partner,
     std::vector<double>* partner_image,
     std::vector<unsigned char>* touched_flags,
     std::vector<int>* touched_channels) const {
     accumulate_partner_projection_impl(
         primary_left,
         primary_right,
-        [&](int partner_left, int partner_right) -> const auto& {
+        [&](Eigen::Index partner_left, Eigen::Index partner_right) -> const auto& {
             return partner_pair_cache[ordered_spin_pair_storage_index(
                                           partner_left, partner_right, n_unique_partner)]
                 .opposite_spin_pair_cache.first_order_cofactor_projection;
@@ -179,14 +184,16 @@ void SelectedStatePairGraph::accumulate_partner_projection(
 }
 
 void SelectedStatePairGraph::accumulate_partner_projected_values(
-    int primary_left,
-    int primary_right,
+    Eigen::Index primary_left,
+    Eigen::Index primary_right,
     const std::vector<SpinDeterminantPairEvaluation>& partner_pair_cache,
-    int n_unique_partner,
+    std::int64_t n_unique_partner,
     const std::vector<int>& target_channels,
     std::vector<double>* target_values) const {
     for_each_partner_pair(
-        primary_left, primary_right, [&](int partner_left, int partner_right, double coefficient) {
+        primary_left,
+        primary_right,
+        [&](Eigen::Index partner_left, Eigen::Index partner_right, double coefficient) {
             const auto& projection =
                 partner_pair_cache[ordered_spin_pair_storage_index(
                                        partner_left, partner_right, n_unique_partner)]
@@ -196,14 +203,16 @@ void SelectedStatePairGraph::accumulate_partner_projected_values(
 }
 
 void SelectedStatePairGraph::accumulate_partner_projected_values(
-    int primary_left,
-    int primary_right,
+    Eigen::Index primary_left,
+    Eigen::Index primary_right,
     const std::vector<DirectionalOppositeSpinPairData>& partner_pair_data,
-    int n_unique_partner,
+    std::int64_t n_unique_partner,
     const std::vector<int>& target_channels,
     std::vector<double>* target_values) const {
     for_each_partner_pair(
-        primary_left, primary_right, [&](int partner_left, int partner_right, double coefficient) {
+        primary_left,
+        primary_right,
+        [&](Eigen::Index partner_left, Eigen::Index partner_right, double coefficient) {
             const auto& projection =
                 partner_pair_data[ordered_spin_pair_storage_index(
                                       partner_left, partner_right, n_unique_partner)]
@@ -213,17 +222,17 @@ void SelectedStatePairGraph::accumulate_partner_projected_values(
 }
 
 void SelectedStatePairGraph::accumulate_partner_projection(
-    int primary_left,
-    int primary_right,
+    Eigen::Index primary_left,
+    Eigen::Index primary_right,
     const std::vector<DirectionalOppositeSpinPairData>& partner_pair_data,
-    int n_unique_partner,
+    std::int64_t n_unique_partner,
     std::vector<double>* partner_image,
     std::vector<unsigned char>* touched_flags,
     std::vector<int>* touched_channels) const {
     accumulate_partner_projection_impl(
         primary_left,
         primary_right,
-        [&](int partner_left, int partner_right) -> const auto& {
+        [&](Eigen::Index partner_left, Eigen::Index partner_right) -> const auto& {
             return partner_pair_data[ordered_spin_pair_storage_index(
                                          partner_left, partner_right, n_unique_partner)]
                 .delta_first_order_cofactor_projection;

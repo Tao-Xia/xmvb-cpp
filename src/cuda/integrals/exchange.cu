@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "cuda/integrals/exact.hpp"
 
 #include <algorithm>
@@ -16,7 +17,8 @@ using View = linalg::ConstMatrixView;
 using Out = linalg::MatrixView;
 
 unsigned int grid(std::int64_t count) {
-    return static_cast<unsigned int>(std::min<std::int64_t>(65535, (count + 255) / 256));
+    return static_cast<unsigned int>(
+        std::min<std::int64_t>(65535, (count / 256 + (count % 256 != 0))));
 }
 
 __device__ int pair(int i, int j) {
@@ -28,8 +30,8 @@ __device__ int pair(int i, int j) {
 // Only n active channels enter the integral sweep, not n*n. The small shared
 // half image is released after preparation; no AO four-index tensor exists.
 __global__ void exchange_half(View c,
-                              const int* offsets,
-                              const int* columns,
+                              const std::int64_t* offsets,
+                              const std::int64_t* columns,
                               const double* values,
                               const int* first,
                               const int* second,
@@ -124,7 +126,9 @@ __global__ void density_image(ConstPairPanel exchange, View weights, Out out, do
 }
 
 __global__ void pair_weights(View g, double* weights, int n, int pairs) {
-    for (int p = blockIdx.x * blockDim.x + threadIdx.x; p < pairs; p += gridDim.x * blockDim.x) {
+    for (std::int64_t p = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+         p < pairs;
+         p += static_cast<std::int64_t>(gridDim.x) * blockDim.x) {
         int a = 0;
         while ((a + 1) * (a + 2) / 2 <= p)
             ++a;
@@ -357,24 +361,24 @@ void ExactAoPairOperator::project_exchange_half(const ExchangeRequest& request,
         // permuting/copying the whole AO-by-AO-by-orbital half image.
         const double one = 1.0, zero = 0.0;
         const int nt = blas_int(targets.cols);
-        check_cublas(cublasDgemmStridedBatched(context_->blas(),
-                                               CUBLAS_OP_T,
-                                               CUBLAS_OP_T,
-                                               nt,
-                                               n,
-                                               n_bf_,
-                                               &one,
-                                               targets.data,
-                                               blas_int(targets.ld),
-                                               0,
-                                               half,
-                                               n,
-                                               static_cast<long long>(n_bf_) * n,
-                                               &zero,
-                                               p.data,
-                                               nt,
-                                               static_cast<long long>(nt) * n,
-                                               n_bf_),
+        check_cublas(cublasDgemmStridedBatched_64(context_->blas(),
+                                                  CUBLAS_OP_T,
+                                                  CUBLAS_OP_T,
+                                                  nt,
+                                                  n,
+                                                  n_bf_,
+                                                  &one,
+                                                  targets.data,
+                                                  targets.ld,
+                                                  0,
+                                                  half,
+                                                  n,
+                                                  static_cast<long long>(n_bf_) * n,
+                                                  &zero,
+                                                  p.data,
+                                                  nt,
+                                                  static_cast<long long>(nt) * n,
+                                                  n_bf_),
                      "CUDA batched density response half projection");
     }
     if (response.data) {

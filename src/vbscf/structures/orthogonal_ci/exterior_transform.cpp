@@ -1,6 +1,8 @@
+#include <cstdint>
 #include "vbscf/structures/orthogonal_ci/exterior_transform.hpp"
 
 #include <algorithm>
+#include "core/index.hpp"
 #include <atomic>
 #include <bit>
 #include <cmath>
@@ -45,14 +47,14 @@ struct ExteriorOrbitalTransform::RowCache {
             : residency(std::move(reservation)), temporary(bytes), rows(std::move(value)) {}
     };
     struct Entry {
-        std::uint64_t key = 0;
+        core::IndexPair key;
         std::shared_ptr<const Eigen::MatrixXd> rows;
         std::size_t bytes = 0;
     };
 
     std::mutex mutex;
     std::list<Entry> entries;
-    std::unordered_map<std::uint64_t, std::list<Entry>::iterator> index;
+    std::unordered_map<core::IndexPair, std::list<Entry>::iterator, core::IndexPairHash> index;
     std::atomic<std::size_t> cached_bytes{0};
     std::size_t budget = 0;
 
@@ -79,11 +81,10 @@ struct ExteriorOrbitalTransform::RowCache {
         cached_bytes.store(resident, std::memory_order_relaxed);
     }
 
-    static std::uint64_t key(int begin, int count) noexcept {
-        return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(begin)) << 32) |
-               static_cast<std::uint32_t>(count);
+    static core::IndexPair key(Eigen::Index begin, Eigen::Index count) noexcept {
+        return {core::checked_index<std::size_t>(begin), core::checked_index<std::size_t>(count)};
     }
-    std::shared_ptr<const Eigen::MatrixXd> find(std::uint64_t key) {
+    std::shared_ptr<const Eigen::MatrixXd> find(core::IndexPair key) {
         std::lock_guard lock(mutex);
         const auto found = index.find(key);
         if (found == index.end())
@@ -93,7 +94,7 @@ struct ExteriorOrbitalTransform::RowCache {
     }
     template <class Build>
     std::shared_ptr<const Eigen::MatrixXd>
-    retain(std::uint64_t key, std::size_t bytes, Build&& build) {
+    retain(core::IndexPair key, std::size_t bytes, Build&& build) {
         {
             std::lock_guard lock(mutex);
             const auto found = index.find(key);
@@ -162,8 +163,7 @@ ExteriorOrbitalTransform::ExteriorOrbitalTransform(
 
     row_plan_ = std::make_shared<ExteriorRowPlan>(n_orbitals_, n_electrons_, strings_.masks());
     determinant_scales_.resize(static_cast<int>(strings_.masks().size()));
-    for (int determinant = 0; determinant < static_cast<int>(strings_.masks().size());
-         ++determinant) {
+    for (Eigen::Index determinant = 0; determinant < strings_.size(); ++determinant) {
         double scale_factor = 1.0;
         for (const int orbital : strings_.occupied(determinant))
             scale_factor *= upper_orbital_transform(orbital, orbital);
@@ -199,7 +199,8 @@ ExteriorOrbitalTransform::ExteriorOrbitalTransform(
         shear.coefficient = operation.coefficient;
         const std::uint64_t removed_bit = std::uint64_t{1} << operation.removed;
         const std::uint64_t inserted_bit = std::uint64_t{1} << operation.inserted;
-        for (int source = 0; source < static_cast<int>(strings_.masks().size()); ++source) {
+        for (Eigen::Index source = 0; source < static_cast<std::int64_t>(strings_.masks().size());
+             ++source) {
             const std::uint64_t source_mask = strings_.masks()[source];
             if ((source_mask & removed_bit) == 0 || (source_mask & inserted_bit) != 0) {
                 continue;
@@ -270,7 +271,15 @@ void ExteriorOrbitalTransform::apply_adjoint_left(Eigen::MatrixXd* coefficients)
     transform_left(*coefficients, true, false);
 }
 
-ExteriorProjection ExteriorOrbitalTransform::projection(const std::vector<int>& rows) const {
+void ExteriorOrbitalTransform::apply_adjoint_left_block(
+    Eigen::Ref<Eigen::MatrixXd> coefficients) const {
+    if (coefficients.rows() != dimension())
+        throw std::invalid_argument("left exterior adjoint block dimension mismatch");
+    transform_left(coefficients, true, false);
+}
+
+ExteriorProjection
+ExteriorOrbitalTransform::projection(const std::vector<Eigen::Index>& rows) const {
     std::vector<unsigned char> needed(dimension(), 0);
     for (int row : rows) {
         if (row < 0 || row >= dimension())
@@ -284,7 +293,7 @@ ExteriorProjection ExteriorOrbitalTransform::projection(const std::vector<int>& 
     // elementary shear are disjoint, so this sweep needs no transitive iteration.
     for (std::size_t i = 0; i < shears_.size(); ++i) {
         const auto& pairs = shears_[i].pairs;
-        for (int j = 0; j < static_cast<int>(pairs.size()); ++j)
+        for (Eigen::Index j = 0; j < core::checked_index<Eigen::Index>(pairs.size()); ++j)
             if (needed[pairs[j].source]) {
                 result.shear_pairs[i].push_back(j);
                 needed[pairs[j].target] = 1;
@@ -310,11 +319,11 @@ void ExteriorOrbitalTransform::apply_adjoint_left_block(
         coefficients.cols());
     cooperative_openmp_for(coefficients.cols(), workers, [&](std::ptrdiff_t column) {
         auto values = coefficients.col(column);
-        for (int i = static_cast<int>(shears_.size()) - 1; i >= 0; --i) {
+        for (std::int64_t i = static_cast<std::int64_t>(shears_.size()) - 1; i >= 0; --i) {
             const auto& shear = shears_[i];
             if (shear.coefficient == 0.0)
                 continue;
-            for (int j : projection.shear_pairs[i]) {
+            for (const auto j : projection.shear_pairs[i]) {
                 const auto& pair = shear.pairs[j];
                 values[pair.source] += shear.coefficient * pair.sign * values[pair.target];
             }
@@ -324,21 +333,21 @@ void ExteriorOrbitalTransform::apply_adjoint_left_block(
 }
 
 void ExteriorOrbitalTransform::apply_supported_left(Eigen::MatrixXd* coefficients,
-                                                    std::span<const int> offsets,
-                                                    std::span<const int> rows,
+                                                    std::span<const Eigen::Index> offsets,
+                                                    std::span<const Eigen::Index> rows,
                                                     bool adjoint) const {
     xmvb::profiling::ScopedPhase validation(xmvb::profiling::Phase::CiSupportedValidation);
     if (!coefficients || offsets.size() < 2 || offsets.front() != 0 ||
-        offsets.back() != static_cast<int>(rows.size()))
+        offsets.back() != core::checked_index<Eigen::Index>(rows.size()))
         throw std::invalid_argument("invalid supported exterior column pattern");
     xmvb::profiling::ScopedPhase phase(xmvb::profiling::Phase::CiTransformLeft);
     validate_left(*coefficients);
-    const int beta_count = static_cast<int>(offsets.size() - 1);
+    const Eigen::Index beta_count = static_cast<std::int64_t>(offsets.size() - 1);
     if (coefficients->cols() % beta_count != 0)
         throw std::invalid_argument("supported exterior beta columns do not match RHS blocks");
     for (int beta = 0; beta < beta_count; ++beta) {
         if (offsets[beta] < 0 || offsets[beta] > offsets[beta + 1] ||
-            offsets[beta + 1] > static_cast<int>(rows.size()))
+            offsets[beta + 1] > core::checked_index<Eigen::Index>(rows.size()))
             throw std::invalid_argument("invalid supported exterior column offsets");
     }
     for (const int alpha : rows)
@@ -359,13 +368,13 @@ void ExteriorOrbitalTransform::apply_supported_left(Eigen::MatrixXd* coefficient
         for (int beta = first; beta < last; ++beta) {
             std::fill(allowed.begin(), allowed.end(), 0);
             std::fill(words.begin(), words.end(), 0);
-            for (int index = offsets[beta]; index < offsets[beta + 1]; ++index) {
+            for (std::int64_t index = offsets[beta]; index < offsets[beta + 1]; ++index) {
                 allowed[rows[index]] = 1;
                 words[rows[index] / 64] |= std::uint64_t{1} << (rows[index] % 64);
             }
             for (Eigen::Index column = beta; column < coefficients->cols(); column += beta_count) {
                 auto values = coefficients->col(column);
-                for (int alpha = 0; alpha < dimension(); ++alpha) {
+                for (std::int64_t alpha = 0; alpha < dimension(); ++alpha) {
                     if (!allowed[alpha])
                         values[alpha] = 0.0;
                     else if (!adjoint)
@@ -380,8 +389,8 @@ void ExteriorOrbitalTransform::apply_supported_left(Eigen::MatrixXd* coefficient
                 if (shear.coefficient == 0.0)
                     continue;
                 const auto update = [&](const ShearEdge& pair) {
-                    const int target = adjoint ? pair.source : pair.target;
-                    const int source = adjoint ? pair.target : pair.source;
+                    const auto target = adjoint ? pair.source : pair.target;
+                    const auto source = adjoint ? pair.target : pair.source;
                     const double factor = shear.coefficient * pair.sign;
                     for (Eigen::Index column = beta; column < coefficients->cols();
                          column += beta_count)
@@ -410,7 +419,7 @@ void ExteriorOrbitalTransform::apply_supported_left(Eigen::MatrixXd* coefficient
                 for (Eigen::Index column = beta; column < coefficients->cols();
                      column += beta_count) {
                     auto values = coefficients->col(column);
-                    for (int alpha = 0; alpha < dimension(); ++alpha)
+                    for (std::int64_t alpha = 0; alpha < dimension(); ++alpha)
                         if (allowed[alpha])
                             values[alpha] *= determinant_scales_[alpha];
                 }
@@ -433,8 +442,8 @@ void ExteriorOrbitalTransform::apply_adjoint_right_block(
     transform_right(coefficients, true, false);
 }
 
-std::shared_ptr<const Eigen::MatrixXd> ExteriorOrbitalTransform::row_block(int begin,
-                                                                           int count) const {
+std::shared_ptr<const Eigen::MatrixXd>
+ExteriorOrbitalTransform::row_block(Eigen::Index begin, Eigen::Index count) const {
     if (begin < 0 || count <= 0 || begin > dimension() - count) {
         throw std::invalid_argument("exterior row block is out of range");
     }
@@ -447,15 +456,15 @@ std::shared_ptr<const Eigen::MatrixXd> ExteriorOrbitalTransform::row_block(int b
     row_cache_->request(bytes);
     return row_cache_->retain(RowCache::key(begin, count), bytes, [&] {
         // Generate outside the mutex; cache hits construct no row schedule.
-        std::vector<int> selected(count);
+        std::vector<Eigen::Index> selected(count);
         std::iota(selected.begin(), selected.end(), begin);
         return std::make_shared<Eigen::MatrixXd>(
             row_plan_->apply(orbital_transform_, strings_.masks(), selected));
     });
 }
 
-Eigen::SparseMatrix<double>
-ExteriorOrbitalTransform::generate_rows(std::span<const int> rows) const {
+Eigen::SparseMatrix<double, Eigen::ColMajor, Eigen::Index>
+ExteriorOrbitalTransform::generate_rows(std::span<const Eigen::Index> rows) const {
     for (const int row : rows)
         if (row < 0 || row >= dimension())
             throw std::invalid_argument("exterior row index is out of range");
@@ -467,8 +476,8 @@ ExteriorOrbitalTransform::generate_rows(std::span<const int> rows) const {
     // converting the complete panel once avoids per-row scattered stores.
     ExteriorRowPlan::Rows result(rows.size(), dimension());
     workspace::Temporary result_temporary(sizeof(double) * result.size());
-    std::vector<int> missing, positions;
-    for (int i = 0; i < static_cast<int>(rows.size()); ++i) {
+    std::vector<Eigen::Index> missing, positions;
+    for (std::int64_t i = 0; i < core::checked_index<Eigen::Index>(rows.size()); ++i) {
         if (auto value = row_cache_->find(RowCache::key(rows[i], 1)))
             result.row(i) = value->row(0);
         else {
@@ -479,7 +488,7 @@ ExteriorOrbitalTransform::generate_rows(std::span<const int> rows) const {
     if (!missing.empty()) {
         const auto values = row_plan_->apply(orbital_transform_, strings_.masks(), missing);
         workspace::Temporary values_temporary(sizeof(double) * values.size());
-        for (int i = 0; i < static_cast<int>(missing.size()); ++i) {
+        for (std::int64_t i = 0; i < core::checked_index<Eigen::Index>(missing.size()); ++i) {
             result.row(positions[i]) = values.row(i);
             // Cache immutable orbital factors, not state-dependent CI columns.
             // Input generation and output projection share the existing row budget.
@@ -492,19 +501,19 @@ ExteriorOrbitalTransform::generate_rows(std::span<const int> rows) const {
     // columns in parallel. No per-spin-product allocation or serial sparse scan.
     const Eigen::MatrixXd dense = result;
     workspace::Temporary dense_temporary(sizeof(double) * dense.size());
-    Eigen::SparseMatrix<double> factors(dense.rows(), dense.cols());
-    int* offsets = factors.outerIndexPtr();
+    Eigen::SparseMatrix<double, Eigen::ColMajor, Eigen::Index> factors(dense.rows(), dense.cols());
+    auto* offsets = factors.outerIndexPtr();
     offsets[0] = 0;
     const int workers = coarse_openmp_thread_count(cooperative_openmp_thread_count(), dense.size());
     cooperative_openmp_for(dense.cols(), workers, [&](std::ptrdiff_t column) {
         offsets[column + 1] = (dense.col(column).array() != 0.0).count();
     });
-    for (int column = 0; column < dense.cols(); ++column)
+    for (Eigen::Index column = 0; column < dense.cols(); ++column)
         offsets[column + 1] += offsets[column];
     factors.resizeNonZeros(offsets[dense.cols()]);
     cooperative_openmp_for(dense.cols(), workers, [&](std::ptrdiff_t column) {
-        int slot = offsets[column];
-        for (int row = 0; row < dense.rows(); ++row) {
+        auto slot = offsets[column];
+        for (Eigen::Index row = 0; row < dense.rows(); ++row) {
             const double value = dense(row, column);
             if (value == 0.0)
                 continue;
@@ -578,8 +587,8 @@ void ExteriorOrbitalTransform::transform_left(Eigen::Ref<Eigen::MatrixXd> coeffi
                 continue;
             const double factor = inverse ? -shear.coefficient : shear.coefficient;
             for (const ShearEdge& pair : shear.pairs) {
-                const int target = adjoint ? pair.source : pair.target;
-                const int source = adjoint ? pair.target : pair.source;
+                const auto target = adjoint ? pair.source : pair.target;
+                const auto source = adjoint ? pair.target : pair.source;
                 values[target] += (factor * pair.sign) * values[source];
             }
         }
@@ -619,8 +628,8 @@ void ExteriorOrbitalTransform::transform_right(Eigen::Ref<Eigen::MatrixXd> coeff
                 continue;
             const double factor = inverse ? -shear.coefficient : shear.coefficient;
             for (const ShearEdge& pair : shear.pairs) {
-                const int target = adjoint ? pair.source : pair.target;
-                const int source = adjoint ? pair.target : pair.source;
+                const auto target = adjoint ? pair.source : pair.target;
+                const auto source = adjoint ? pair.target : pair.source;
                 values.col(target) += (factor * pair.sign) * values.col(source);
             }
         }
@@ -651,7 +660,7 @@ ExteriorTransformDirection ExteriorOrbitalTransform::direction(
 
     ExteriorTransformDirection result;
     result.determinant_scales.resize(dimension());
-    for (int determinant = 0; determinant < dimension(); ++determinant) {
+    for (std::int64_t determinant = 0; determinant < dimension(); ++determinant) {
         double logarithmic_direction = 0.0;
         for (const int orbital : strings_.occupied(determinant))
             logarithmic_direction +=
@@ -732,8 +741,8 @@ void ExteriorOrbitalTransform::transform_directional_left(
             const Shear& shear = shears_[ordered];
             const double dc = direction.shear_coefficients[ordered];
             for (const ShearEdge& pair : shear.pairs) {
-                const int source = adjoint ? pair.target : pair.source;
-                const int target = adjoint ? pair.source : pair.target;
+                const auto source = adjoint ? pair.target : pair.source;
+                const auto target = adjoint ? pair.source : pair.target;
                 delta[target] +=
                     pair.sign * (dc * value[source] + shear.coefficient * delta[source]);
                 value[target] += (shear.coefficient * pair.sign) * value[source];
@@ -757,7 +766,7 @@ void ExteriorOrbitalTransform::apply_directional_right(
         throw std::invalid_argument("invalid directional right exterior action");
     }
     validate_right(*coefficients);
-    for (int column = 0; column < dimension(); ++column) {
+    for (std::int64_t column = 0; column < dimension(); ++column) {
         directional_coefficients->col(column) =
             determinant_scales_[column] * directional_coefficients->col(column) +
             direction.determinant_scales[column] * coefficients->col(column);
@@ -807,7 +816,7 @@ void ExteriorOrbitalTransform::apply_directional_adjoint_right(
                 (shear.coefficient * pair.sign) * coefficients->col(pair.target);
         }
     }
-    for (int column = 0; column < dimension(); ++column) {
+    for (std::int64_t column = 0; column < dimension(); ++column) {
         directional_coefficients->col(column) =
             determinant_scales_[column] * directional_coefficients->col(column) +
             direction.determinant_scales[column] * coefficients->col(column);
@@ -876,7 +885,8 @@ ExteriorOrbitalTransform::generator_pullback(std::span<const ExteriorGeneratorTe
                                              n_orbitals_ * (directional ? 2 : 1));
     cooperative_openmp_for(workers, workers, [&](std::ptrdiff_t part) {
         auto& diagonal = diagonals[part];
-        for (int string = dimension() * part / workers; string < dimension() * (part + 1) / workers;
+        for (std::int64_t string = dimension() * part / workers;
+             string < dimension() * (part + 1) / workers;
              ++string) {
             const double value = contract(string, string, false);
             const double derivative = directional ? contract(string, string, true) : 0.0;

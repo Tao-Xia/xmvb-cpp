@@ -1,3 +1,5 @@
+#include "core/index.hpp"
+#include <cstdint>
 #include "vbscf/structures/assembly/action.hpp"
 #include "mcscf/ci/workspace.hpp"
 
@@ -17,7 +19,7 @@ Eigen::VectorXd
 StructureAction::expand_support(const Eigen::Ref<const Eigen::VectorXd>& vectors) const {
     Eigen::VectorXd coefficients = Eigen::VectorXd::Zero(spin_products_.size());
 #pragma omp parallel for schedule(static) if (spin_products_.size() > 32)
-    for (int group = 0; group < static_cast<int>(spin_products_.size()); ++group)
+    for (std::size_t group = 0; group < spin_products_.size(); ++group)
         for (std::size_t t = spin_term_offsets_[group]; t < spin_term_offsets_[group + 1]; ++t)
             coefficients[group] += spin_terms_[t].coefficient * vectors[spin_terms_[t].structure];
     return coefficients;
@@ -48,7 +50,7 @@ bool StructureAction::prefer_source_contraction(const ExteriorOrbitalTransform& 
     // Count only generated support until its GEMM work alone exceeds the
     // factor estimate. Stop at that proof; no full-product membership scan.
     auto cursor = product_support_->cursor(1);
-    int a, b;
+    Eigen::Index a, b;
     bool supported;
     long double rows = 0;
     while (cursor.next(a, b, supported)) {
@@ -69,7 +71,7 @@ StructureAction::apply_source_tiles(const Eigen::Ref<const Eigen::MatrixXd>& vec
                                     std::size_t workspace_bytes) const {
     return apply_source_columns(
         vectors.cols(),
-        [&](int column) { return expand_support(vectors.col(column)); },
+        [&](std::int64_t column) { return expand_support(vectors.col(column)); },
         alpha,
         beta,
         sigma,
@@ -87,13 +89,15 @@ StructureAction::apply_source_columns(int width,
                                       std::size_t workspace_bytes) const {
     const mcscf::CiWorkspace operation(workspace_bytes, false);
     workspace_bytes = operation.bytes();
-    const mcscf::SpinFactorSource shape{
-        n_unique_alpha_, n_unique_beta_, static_cast<int>(sources_->nodes.size()), {}};
+    const mcscf::SpinFactorSource shape{n_unique_alpha_,
+                                        n_unique_beta_,
+                                        core::checked_index<std::int64_t>(sources_->nodes.size()),
+                                        {}};
     mcscf::FactorActionWorkspace workspace(
         shape, sigma.channel_kernel().rows(), workspace_bytes, overlap_only);
     StructureActionResult result{Eigen::MatrixXd::Zero(n_structures_, width),
                                  Eigen::MatrixXd::Zero(n_structures_, width)};
-    for (int column = 0; column < width; ++column) {
+    for (std::int64_t column = 0; column < width; ++column) {
         const Eigen::VectorXd values = support_column(column);
         workspace::Temporary values_temporary(sizeof(double) *
                                               static_cast<std::size_t>(values.size()));
@@ -175,9 +179,9 @@ StructureAction::project_factor_source(const mcscf::SpinFactorSource& source,
             const auto sampled = tick();
             pullback_time += seconds(pulling, sampled);
 #pragma omp parallel for schedule(static) if (spin_products_.size() > 32)
-            for (int group = 0; group < static_cast<int>(spin_products_.size()); ++group) {
-                const int i = spin_products_[group] / n_unique_beta_;
-                const int j = spin_products_[group] % n_unique_beta_;
+            for (std::size_t group = 0; group < spin_products_.size(); ++group) {
+                const Eigen::Index i = spin_products_[group] / n_unique_beta_;
+                const Eigen::Index j = spin_products_[group] % n_unique_beta_;
                 if (output_generator)
                     h_products[group] += 2 * (da.row(i).dot(block.mixed_beta.row(j)) +
                                               block.alpha_channels.row(i).dot(db.row(j)));
@@ -209,9 +213,9 @@ StructureAction::project_factor_source(const mcscf::SpinFactorSource& source,
             pullback(false, block.alpha, da);
             pullback(true, block.beta, db);
 #pragma omp parallel for schedule(static) if (spin_products_.size() > 32)
-            for (int group = 0; group < static_cast<int>(spin_products_.size()); ++group) {
-                const int i = spin_products_[group] / n_unique_beta_;
-                const int j = spin_products_[group] % n_unique_beta_;
+            for (std::size_t group = 0; group < spin_products_.size(); ++group) {
+                const Eigen::Index i = spin_products_[group] / n_unique_beta_;
+                const Eigen::Index j = spin_products_[group] % n_unique_beta_;
                 if (output_generator) {
                     m_products[group] +=
                         da.row(i).dot(block.beta.row(j)) + block.alpha.row(i).dot(db.row(j));
@@ -241,7 +245,8 @@ StructureAction::project_factor_source(const mcscf::SpinFactorSource& source,
         gather_time += work.gather_seconds;
         result.tiles.structure_projections += project_output;
 #pragma omp parallel for schedule(static) if (n_structures_ > 32)
-        for (int structure = 0; structure < (project_output ? n_structures_ : 0); ++structure) {
+        for (Eigen::Index structure = 0; structure < (project_output ? n_structures_ : 0);
+             ++structure) {
             double h = 0, m = 0;
             for (std::size_t t = structure_term_offsets_[structure];
                  t < structure_term_offsets_[structure + 1];

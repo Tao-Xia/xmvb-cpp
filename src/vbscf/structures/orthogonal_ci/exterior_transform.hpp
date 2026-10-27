@@ -24,7 +24,7 @@ struct ExteriorTransformDirection {
  * The plan belongs to the transform that constructed it; it stores no matrix.
  */
 struct ExteriorProjection {
-    std::vector<std::vector<int>> shear_pairs;
+    std::vector<std::vector<Eigen::Index>> shear_pairs;
 };
 
 /** @brief Borrowed bilinear generator moment and optional directional panels. */
@@ -46,8 +46,8 @@ struct ExteriorGeneratorTerm {
 class ExteriorOrbitalTransform {
   public:
     struct ShearEdge {
-        int source = 0;
-        int target = 0;
+        Eigen::Index source = 0;
+        Eigen::Index target = 0;
         double sign = 1.0;
     };
     ExteriorOrbitalTransform(mcscf::SpinStrings strings,
@@ -65,8 +65,10 @@ class ExteriorOrbitalTransform {
     void apply_right_block(Eigen::Ref<Eigen::MatrixXd> coefficients) const;
     /** @brief Applies the transpose exterior transform to matrix rows. */
     void apply_adjoint_left(Eigen::MatrixXd* coefficients) const;
+    /** @brief Full adjoint on a borrowed column panel, without resizing or copying. */
+    void apply_adjoint_left_block(Eigen::Ref<Eigen::MatrixXd> coefficients) const;
     /** @brief Backward dependency closure of requested output rows. */
-    ExteriorProjection projection(const std::vector<int>& rows) const;
+    ExteriorProjection projection(const std::vector<Eigen::Index>& rows) const;
     /** @brief Exact requested adjoint rows; other output rows are unspecified. */
     void apply_adjoint_left(Eigen::MatrixXd* coefficients,
                             const ExteriorProjection& projection) const;
@@ -80,8 +82,8 @@ class ExteriorOrbitalTransform {
    * repeat the same beta-column order.
    */
     void apply_supported_left(Eigen::MatrixXd* coefficients,
-                              std::span<const int> offsets,
-                              std::span<const int> rows,
+                              std::span<const Eigen::Index> offsets,
+                              std::span<const Eigen::Index> rows,
                               bool adjoint = false) const;
     /** @brief Applies the transpose exterior transform to matrix columns. */
     void apply_adjoint_right(Eigen::MatrixXd* coefficients) const;
@@ -92,12 +94,13 @@ class ExteriorOrbitalTransform {
    * Cache capacity follows the largest requested panel and shared memory
    * headroom. Borrowed rows remain valid after eviction through shared ownership.
    */
-    std::shared_ptr<const Eigen::MatrixXd> row_block(int begin, int count) const;
+    std::shared_ptr<const Eigen::MatrixXd> row_block(Eigen::Index begin, Eigen::Index count) const;
 
     /** @brief Requested rows in exact CSC format, sharing the bounded factor LRU.
    * Only exact zeros are omitted. No unrequested beta columns are generated.
    */
-    Eigen::SparseMatrix<double> generate_rows(std::span<const int> rows) const;
+    Eigen::SparseMatrix<double, Eigen::ColMajor, Eigen::Index>
+    generate_rows(std::span<const Eigen::Index> rows) const;
 
     /** @brief Applies the inverse exterior transform to rows in place. */
     void apply_inverse_left(Eigen::MatrixXd* coefficients) const;
@@ -129,7 +132,7 @@ class ExteriorOrbitalTransform {
                                          Eigen::MatrixXd* coefficients,
                                          Eigen::MatrixXd* directional_coefficients) const;
 
-    int dimension() const noexcept {
+    Eigen::Index dimension() const noexcept {
         return strings_.size();
     }
 
@@ -192,7 +195,7 @@ class ExteriorOrbitalTransform {
         std::vector<ShearEdge> pairs;
         /** Source-bit rank maps a support intersection back to the shared edges. */
         std::vector<std::uint64_t> source_words;
-        std::vector<int> word_offsets;
+        std::vector<Eigen::Index> word_offsets;
     };
 
     void validate_left(const Eigen::MatrixXd& coefficients) const;

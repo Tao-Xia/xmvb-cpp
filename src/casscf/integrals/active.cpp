@@ -77,7 +77,8 @@ PreparedCasIntegrals prepare_active_integrals(const integrals::AoIntegralInput& 
                                                .h1e_act;
 
     // Borrow sparse orbital support in the same numerical transform as VBSCF.
-    std::vector<int> offsets(1, 0), indices;
+    std::vector<std::size_t> offsets(1, 0);
+    std::vector<int> indices;
     std::vector<double> coefficients;
     for (int mu = 0; mu < n_bf; ++mu) {
         for (int a = 0; a < active; ++a) {
@@ -87,7 +88,7 @@ PreparedCasIntegrals prepare_active_integrals(const integrals::AoIntegralInput& 
             indices.push_back(a);
             coefficients.push_back(value);
         }
-        offsets.push_back(static_cast<int>(indices.size()));
+        offsets.push_back(indices.size());
     }
     result.two_electron =
         integrals::transform_exact_active_integrals(ao, offsets, indices, coefficients, active);

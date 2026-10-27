@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include <functional>
 
 #include "cuda/memory/buffer.hpp"
@@ -34,7 +36,7 @@ class SingleStateCiTangent {
   public:
     /** The accepted images are borrowed and must outlive the tangent. */
     SingleStateCiTangent(Context& context,
-                         int structures,
+                         std::int64_t structures,
                          linalg::ConstMatrixView selected_state,
                          linalg::ConstMatrixView selected_hamiltonian_image,
                          linalg::ConstMatrixView selected_metric_image,
@@ -44,7 +46,7 @@ class SingleStateCiTangent {
     SingleStateCiTangent(const SingleStateCiTangent&) = delete;
     SingleStateCiTangent& operator=(const SingleStateCiTangent&) = delete;
 
-    int tangent_size() const noexcept {
+    std::int64_t tangent_size() const noexcept {
         return structures_ - 1;
     }
     double coordinate_scale() const noexcept {
@@ -83,7 +85,7 @@ class SingleStateCiTangent {
     void check_coordinates(linalg::MatrixView view) const;
 
     Context* context_;
-    int structures_;
+    std::int64_t structures_;
     double selected_energy_, coordinate_scale_, reflector_factor_, reflected_first_;
     SingleStateCiActions actions_;
     linalg::ConstMatrixView selected_hamiltonian_image_, selected_metric_image_;

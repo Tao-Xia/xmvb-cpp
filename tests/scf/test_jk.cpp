@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
@@ -68,7 +69,7 @@ Matrix brute_jk(const AoPairGraph& graph, const Matrix& density, JkWeights weigh
 
 AoIntegralInput make_ao() {
     constexpr int n = 3;
-    std::vector<int> left, right;
+    std::vector<std::int64_t> left, right;
     std::vector<double> values;
     for (int p = 0; p < n * (n + 1) / 2; ++p)
         for (int q = 0; q <= p; ++q) {

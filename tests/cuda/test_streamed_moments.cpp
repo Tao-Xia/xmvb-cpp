@@ -49,8 +49,8 @@ void check_unequal() {
     xmvb::cuda::Matrix<double> d_generator(context, n, n), d_action(context, na, 2);
     xmvb::cuda::copy_to_device(context, d_generator.view(), generator);
     const auto reader = [&](const Matrix& source) -> xmvb::cuda::CiTileReader {
-        return [&, carrier = &source](std::span<const int> betas,
-                                      std::span<const int> rows,
+        return [&, carrier = &source](std::span<const std::int64_t> betas,
+                                      std::span<const std::int64_t> rows,
                                       xmvb::linalg::MatrixView output) {
             Matrix host(rows.size(), betas.size());
             for (int j = 0; j < host.cols(); ++j)
@@ -149,6 +149,35 @@ void check_unequal() {
         near(download(context, k ? d_out_other : d_out),
              2 * paired_expected[k],
              "paired streamed generator add mode differs from CPU");
+
+    // The uncached product jet has a two-consumer reader followed by a
+    // one-consumer reader. Their scales and orientations remain independent.
+    const std::array triple_batches{
+        xmvb::cuda::CiStreamedGeneratorBatch{reader(right_a), a_terms, -0.37, false},
+        xmvb::cuda::CiStreamedGeneratorBatch{
+            reader(right_b), std::span{b_terms}.first(1), 0.61, true}};
+    gpu.generator_adjoint_streamed(first, triple_batches, outputs);
+    Matrix padded = Matrix::Zero(na, nb);
+    padded.middleCols(first, count) = other;
+    near(download(context, d_out), paired_expected[0], "three-term generator first output");
+    Matrix second = -0.37 * cpu.one_body_generator_adjoint(padded, right_a);
+    second.triangularView<Eigen::StrictlyLower>().setZero();
+    near(download(context, d_out_other), second, "three-term generator second output");
+
+    // More than four terms are processed in bounded batches, not dropped.
+    const std::array many_terms{a_terms[0], a_terms[1], a_terms[0], a_terms[1], a_terms[0]};
+    const std::array many_batches{
+        xmvb::cuda::CiStreamedGeneratorBatch{reader(right_a), many_terms, 1.0, false}};
+    gpu.generator_adjoint_streamed(first, many_batches, outputs);
+    for (int k = 0; k < 2; ++k) {
+        Matrix l = Matrix::Zero(na, nb);
+        l.middleCols(first, count) = k ? other : left;
+        Matrix expected = (k ? 2.0 : 3.0) * cpu.one_body_generator_adjoint(l, right_a);
+        expected.triangularView<Eigen::StrictlyLower>().setZero();
+        near(download(context, k ? d_out_other : d_out),
+             expected,
+             "bounded many-term generator output");
+    }
 }
 
 void check_exchange() {
@@ -164,8 +193,8 @@ void check_exchange() {
         return Matrix((raw + raw.transpose()) * 0.5);
     };
     const Matrix left = parity_carrier(0.27), right = parity_carrier(0.63);
-    const auto read = [&](std::span<const int> betas,
-                          std::span<const int> rows,
+    const auto read = [&](std::span<const std::int64_t> betas,
+                          std::span<const std::int64_t> rows,
                           xmvb::linalg::MatrixView output) {
         Matrix tile(rows.size(), betas.size());
         for (int j = 0; j < tile.cols(); ++j)

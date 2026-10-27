@@ -1,3 +1,4 @@
+#include "core/index.hpp"
 #include "cuda/linalg/davidson.hpp"
 
 #include <algorithm>
@@ -104,13 +105,13 @@ struct DeviceBackend {
                      "cublasSetPointerMode");
     }
     void validate_diagonals(linalg::ConstMatrixView h, linalg::ConstMatrixView s) const {
-        if (!h.data || !s.data || h.rows <= 0 || h.rows > std::numeric_limits<int>::max() ||
-            h.cols != 1 || s.cols != 1 || s.rows != h.rows || h.ld < h.rows || s.ld < s.rows)
+        if (!h.data || !s.data || h.rows <= 0 || h.cols != 1 || s.cols != 1 || s.rows != h.rows ||
+            h.ld < h.rows || s.ld < s.rows)
             throw std::invalid_argument("invalid device Davidson diagonals");
         Buffer<int> valid(context, 1);
         const int initial = 1;
         context.copy_to_device(valid.data(), &initial, sizeof(int));
-        valid_diagonal_kernel<<<blas_int((h.rows + 255) / 256), 256, 0, context.stream()>>>(
+        valid_diagonal_kernel<<<((h.rows + 255) / 256), 256, 0, context.stream()>>>(
             h, s, valid.data());
         check_cuda(cudaGetLastError(), "validate device Davidson diagonals");
         int result = 0;
@@ -138,7 +139,8 @@ struct DeviceBackend {
         context.copy_to_device(finite.data(), &initial, sizeof(int));
         const std::int64_t count = source.rows * source.cols;
         constexpr int threads = 256;
-        const int blocks = blas_int((count + threads - 1) / threads);
+        const auto blocks = static_cast<unsigned>(
+            std::min<std::int64_t>(65535, count / threads + (count % threads != 0)));
         finite_matrix_kernel<<<blocks, threads, 0, context.stream()>>>(
             source.data, source.rows, source.cols, source.ld, finite.data());
         check_cuda(cudaGetLastError(), "Davidson initial finite kernel launch");
@@ -191,36 +193,36 @@ struct DeviceBackend {
             throw std::invalid_argument("CUDA Davidson AXPY dimensions");
         }
         for (std::int64_t column = 0; column < source.cols; ++column) {
-            check_cublas(cublasDaxpy(context.blas(),
-                                     blas_int(source.rows),
-                                     &factor,
-                                     source.column(column).data,
-                                     1,
-                                     destination.column(column).data,
-                                     1),
+            check_cublas(cublasDaxpy_64(context.blas(),
+                                        (source.rows),
+                                        &factor,
+                                        source.column(column).data,
+                                        1,
+                                        destination.column(column).data,
+                                        1),
                          "cublasDaxpy");
         }
     }
     void scal(linalg::MatrixView destination, double factor) const {
         for (std::int64_t column = 0; column < destination.cols; ++column) {
-            check_cublas(cublasDscal(context.blas(),
-                                     blas_int(destination.rows),
-                                     &factor,
-                                     destination.column(column).data,
-                                     1),
+            check_cublas(cublasDscal_64(context.blas(),
+                                        (destination.rows),
+                                        &factor,
+                                        destination.column(column).data,
+                                        1),
                          "cublasDscal");
         }
     }
     double dot(linalg::ConstMatrixView left, linalg::ConstMatrixView right) const {
         double result = 0.0;
         check_cublas(
-            cublasDdot(context.blas(), blas_int(left.rows), left.data, 1, right.data, 1, &result),
+            cublasDdot_64(context.blas(), (left.rows), left.data, 1, right.data, 1, &result),
             "cublasDdot");
         return result;
     }
     double norm(linalg::ConstMatrixView vector) const {
         double result = 0.0;
-        check_cublas(cublasDnrm2(context.blas(), blas_int(vector.rows), vector.data, 1, &result),
+        check_cublas(cublasDnrm2_64(context.blas(), (vector.rows), vector.data, 1, &result),
                      "cublasDnrm2");
         return result;
     }
@@ -245,18 +247,18 @@ struct DeviceBackend {
         Matrix device_coefficients = upload(coefficients);
         constexpr double minus_one = -1.0;
         constexpr double one = 1.0;
-        check_cublas(cublasDgemv(context.blas(),
-                                 CUBLAS_OP_N,
-                                 blas_int(basis.rows),
-                                 blas_int(basis.cols),
-                                 &minus_one,
-                                 basis.data,
-                                 blas_int(basis.ld),
-                                 device_coefficients.data(),
-                                 1,
-                                 &one,
-                                 destination.data,
-                                 1),
+        check_cublas(cublasDgemv_64(context.blas(),
+                                    CUBLAS_OP_N,
+                                    (basis.rows),
+                                    (basis.cols),
+                                    &minus_one,
+                                    basis.data,
+                                    (basis.ld),
+                                    device_coefficients.data(),
+                                    1,
+                                    &one,
+                                    destination.data,
+                                    1),
                      "cublasDgemv");
     }
     template <class H, class S>
@@ -269,14 +271,14 @@ struct DeviceBackend {
             inverse(residual, lambda, correction);
             constexpr double minus_one = -1.0;
             check_cublas(
-                cublasDscal(
-                    context.blas(), blas_int(correction.rows), &minus_one, correction.data, 1),
+                cublasDscal_64(context.blas(), (correction.rows), &minus_one, correction.data, 1),
                 "Davidson inverse sign");
             return;
         }
         const auto count = correction.rows;
         constexpr int threads = 256;
-        const int blocks = blas_int((count + threads - 1) / threads);
+        const auto blocks = static_cast<unsigned>(
+            std::min<std::int64_t>(65535, count / threads + (count % threads != 0)));
         jacobi_correction_kernel<<<blocks, threads, 0, context.stream()>>>(
             correction.data, residual.data, h_diagonal.data, s_diagonal.data, count, lambda);
         check_cuda(cudaGetLastError(), "Davidson Jacobi kernel launch");
@@ -317,7 +319,7 @@ linalg::DavidsonResult solve_davidson(Context& context,
                                       const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
                                       const linalg::DavidsonOptions& options,
                                       const DeviceEigenPreconditioner& preconditioner) {
-    const int dimension = static_cast<int>(hamiltonian_diagonal.size());
+    const Eigen::Index dimension = hamiltonian_diagonal.size();
     linalg::detail::validate_davidson_diagonals(hamiltonian_diagonal, overlap_diagonal);
     linalg::detail::validate_davidson_options(dimension, options);
     const int n_initial = std::min(options.max_subspace_dimension, 2 * options.n_roots);
@@ -335,8 +337,7 @@ linalg::DavidsonResult solve_davidson(Context& context,
                                       const linalg::DavidsonOptions& options,
                                       const DeviceEigenPreconditioner& preconditioner) {
     linalg::detail::validate_davidson_diagonals(hamiltonian_diagonal, overlap_diagonal);
-    linalg::detail::validate_davidson_options(static_cast<int>(hamiltonian_diagonal.size()),
-                                              options);
+    linalg::detail::validate_davidson_options(hamiltonian_diagonal.size(), options);
     if (initial_vectors.rows() != hamiltonian_diagonal.size() ||
         initial_vectors.cols() < options.n_roots ||
         initial_vectors.cols() > options.max_subspace_dimension || !initial_vectors.allFinite()) {
@@ -357,7 +358,7 @@ solve_device_davidson(Context& context,
                       const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
                       const linalg::DavidsonOptions& options,
                       const DeviceEigenPreconditioner& preconditioner) {
-    const int dimension = static_cast<int>(hamiltonian_diagonal.size());
+    const Eigen::Index dimension = hamiltonian_diagonal.size();
     linalg::detail::validate_davidson_diagonals(hamiltonian_diagonal, overlap_diagonal);
     linalg::detail::validate_davidson_options(dimension, options);
     const int n_initial = std::min(options.max_subspace_dimension, 2 * options.n_roots);

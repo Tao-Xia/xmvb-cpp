@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -222,7 +223,7 @@ int main(int argc, char** argv) {
                                load_result.nuclear_repulsion_energy);
 
         std::vector<PerStructureCache> structure_cache(raw_structure_data.n_structures);
-        for (int structure_index = 0; structure_index < raw_structure_data.n_structures;
+        for (std::int64_t structure_index = 0; structure_index < raw_structure_data.n_structures;
              ++structure_index) {
             auto& cache = structure_cache[structure_index];
             cache.active_pairs =
@@ -234,7 +235,7 @@ int main(int argc, char** argv) {
         xmvb::vb::UnionGraphRankPredictorOptions predictor_options;
         predictor_options.max_predicted_rank = options.max_rank_cap;
         xmvb::vb::DeterminantOverlapResolver overlap_resolver;
-        const int n_structures = raw_structure_data.n_structures;
+        const std::int64_t n_structures = raw_structure_data.n_structures;
         const std::size_t matrix_size = n_structures * n_structures;
         std::vector<double> raw_reference_exact_overlap_matrix(matrix_size, 0.0);
         std::vector<double> raw_reference_predicted_overlap_matrix(matrix_size, 0.0);
@@ -246,7 +247,7 @@ int main(int argc, char** argv) {
         int processed_pairs = 0;
         const int total_pairs = n_structures * (n_structures + 1) / 2;
 
-        for (int left_structure = 0; left_structure < n_structures; ++left_structure) {
+        for (std::int64_t left_structure = 0; left_structure < n_structures; ++left_structure) {
             const auto& left_cache = structure_cache[left_structure];
             for (int right_structure = 0; right_structure <= left_structure; ++right_structure) {
                 const auto pair_started_at = std::chrono::steady_clock::now();

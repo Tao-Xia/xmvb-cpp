@@ -112,7 +112,7 @@ StructureResponseSchurModel ExactHvpOperator::State::structure_response_schur_mo
     ++apply_timing_totals_.structure_response_schur_build_count;
     const auto& response = outer_response_context().selected_state_eigen_response_operator;
     const int n_states = static_cast<int>(response.selected_eigenvalues.size());
-    const int n_structures = accepted_point_context_->n_structures;
+    const Eigen::Index n_structures = accepted_point_context_->n_structures;
     const int n_orbital = nonredundant_space_->reduced_size();
     if (n_states <= 0 ||
         response.response_recycle_spaces.size() != static_cast<std::size_t>(n_states) ||

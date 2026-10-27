@@ -13,12 +13,12 @@
 namespace xmvb::vb {
 
 struct FullDeterminantStructureBuildResult {
-    int n_determinants = 0;
+    Eigen::Index n_determinants = 0;
     StructureAccumulationResult structure_matrices;
     std::vector<DeterminantPairEvaluation> pair_evaluations;
 
-    const DeterminantPairEvaluation& pair_evaluation(int determinant_index_left,
-                                                     int determinant_index_right) const;
+    const DeterminantPairEvaluation& pair_evaluation(Eigen::Index determinant_index_left,
+                                                     Eigen::Index determinant_index_right) const;
 };
 /**
  * @brief Builds full structure Hamiltonian and overlap matrices from full determinants.
@@ -74,7 +74,7 @@ class FullDeterminantStructureHamiltonianOverlapBuilder {
                                       const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
                                       int n_orbitals,
                                       const std::vector<double>& eri_act,
-                                      int n_structures) const;
+                                      Eigen::Index n_structures) const;
 
     /**
    * @brief Builds structure matrices from packed or RI active-space ERIs.
@@ -87,7 +87,7 @@ class FullDeterminantStructureHamiltonianOverlapBuilder {
           const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
           int n_orbitals,
           const xmvb::integrals::ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-          int n_structures) const;
+          Eigen::Index n_structures) const;
 
     /**
    * @brief Builds structure-level matrices while reusing a prebuilt same-spin cache.
@@ -103,7 +103,7 @@ class FullDeterminantStructureHamiltonianOverlapBuilder {
                                       const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
                                       int n_orbitals,
                                       const std::vector<double>& eri_act,
-                                      int n_structures,
+                                      Eigen::Index n_structures,
                                       const SameSpinPairCacheContext& same_spin_pair_cache) const;
 
     /**
@@ -123,7 +123,7 @@ class FullDeterminantStructureHamiltonianOverlapBuilder {
         const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
         int n_orbitals,
         const xmvb::integrals::ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-        int n_structures,
+        Eigen::Index n_structures,
         const SameSpinPairCacheContext& same_spin_pair_cache) const;
 
     /**
@@ -144,7 +144,7 @@ class FullDeterminantStructureHamiltonianOverlapBuilder {
         const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
         int n_orbitals,
         const xmvb::integrals::ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-        int n_structures,
+        Eigen::Index n_structures,
         const SameSpinPairCacheContext& same_spin_pair_cache) const;
 
     /**
@@ -160,7 +160,7 @@ class FullDeterminantStructureHamiltonianOverlapBuilder {
                                  StructureIncidence determinant_to_structure_terms,
                                  const std::vector<double>& active_overlap,
                                  int n_orbitals,
-                                 int n_structures,
+                                 Eigen::Index n_structures,
                                  const SameSpinPairCacheContext& same_spin_pair_cache) const;
 
     /**
@@ -174,7 +174,7 @@ class FullDeterminantStructureHamiltonianOverlapBuilder {
           const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
           int n_orbitals,
           const xmvb::integrals::ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-          int n_structures,
+          Eigen::Index n_structures,
           const SameSpinPairCacheContext& same_spin_pair_cache) const;
 
     /**
@@ -195,7 +195,7 @@ class FullDeterminantStructureHamiltonianOverlapBuilder {
                                 const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
                                 int n_orbitals,
                                 const std::vector<double>& eri_act,
-                                int n_structures) const;
+                                Eigen::Index n_structures) const;
 
   private:
     FullDeterminantStructureBuildResult
@@ -206,7 +206,7 @@ class FullDeterminantStructureHamiltonianOverlapBuilder {
                const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
                int n_orbitals,
                const std::vector<double>& eri_act,
-               int n_structures,
+               Eigen::Index n_structures,
                const SameSpinPairCacheContext* same_spin_pair_cache,
                bool store_pair_evaluations) const;
 
@@ -218,7 +218,7 @@ class FullDeterminantStructureHamiltonianOverlapBuilder {
         const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
         int n_orbitals,
         const xmvb::integrals::ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-        int n_structures,
+        Eigen::Index n_structures,
         const SameSpinPairCacheContext* same_spin_pair_cache,
         bool store_pair_evaluations) const;
 

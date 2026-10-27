@@ -1,5 +1,7 @@
 #pragma once
 
+#include "mcscf/ci/product_index.hpp"
+
 #include <cstdint>
 #include <bit>
 #include <cstddef>
@@ -34,14 +36,14 @@ class CovalentSupport {
    * bounded traversal stack and the caller's current tile row list. Persistent
    * storage is O(U_beta * n_orbitals * (n_alpha_electrons+1)), never U_alpha*U_beta.
    */
-    void append_column_rows(int beta,
-                            std::vector<int>& rows,
+    void append_column_rows(StringIndex beta,
+                            std::vector<StringIndex>& rows,
                             int depth = 0,
                             std::size_t upper = std::numeric_limits<std::size_t>::max()) const {
         columns_.append(beta, rows, depth, upper);
     }
 
-    bool contains(int alpha, int beta, int depth = 0) const noexcept {
+    bool contains(StringIndex alpha, StringIndex beta, int depth = 0) const noexcept {
         const auto* a = alpha_.data() + static_cast<std::size_t>(alpha) * chunks_;
         const auto* b = beta_.data() + static_cast<std::size_t>(beta) * chunks_;
         constexpr std::uint64_t high = 0x8080808080808080ULL;
@@ -61,11 +63,11 @@ class CovalentSupport {
    * A frontier node can be reached only by a raising replacement crossing
    * every deficient prefix. Byte-lane arithmetic shares contains()'s proof.
    */
-    std::pair<int, int> deficient_prefixes(int alpha, int beta) const noexcept {
+    std::pair<int, int> deficient_prefixes(StringIndex alpha, int beta) const noexcept {
         constexpr std::uint64_t high = 0x8080808080808080ULL;
         const auto* a = alpha_.data() + static_cast<std::size_t>(alpha) * chunks_;
         const auto* b = beta_.data() + static_cast<std::size_t>(beta) * chunks_;
-        int first = -1, last = -1;
+        std::int64_t first = -1, last = -1;
         for (int k = 0; k < chunks_; ++k) {
             const auto bad = ~(((a[k] + b[k]) | high) - lengths_[k]) & high;
             if (bad) {
@@ -81,7 +83,7 @@ class CovalentSupport {
    * Eight exact byte-lane equalities share the stored spin prefixes. Counts
    * stay below 128, so adding 127 cannot carry into an adjacent byte.
    */
-    std::uint64_t zero_prefixes(int alpha, int beta) const noexcept {
+    std::uint64_t zero_prefixes(StringIndex alpha, int beta) const noexcept {
         constexpr std::uint64_t high = 0x8080808080808080ULL;
         constexpr std::uint64_t bias = 0x7f7f7f7f7f7f7f7fULL;
         const auto* a = alpha_.data() + static_cast<std::size_t>(alpha) * chunks_;
@@ -106,7 +108,7 @@ class CovalentSupport {
         const int chunks = (n_orbitals + 7) / 8;
         std::vector<std::uint64_t> result(masks.size() * chunks, 0);
         for (std::size_t string = 0; string < masks.size(); ++string) {
-            int count = 0;
+            std::int64_t count = 0;
             for (int k = 0; k < n_orbitals; ++k) {
                 count += (masks[string] >> k) & 1ULL;
                 result[string * chunks + k / 8] |= static_cast<std::uint64_t>(count)

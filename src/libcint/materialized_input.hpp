@@ -19,8 +19,8 @@ namespace xmvb::libcint {
 struct MaterializedAoIntegralBuffers {
     int n_basis_functions = 0;
     Eigen::MatrixXd ao_core_hamiltonian_matrix;
-    std::vector<int> left_pair_indices;
-    std::vector<int> right_pair_indices;
+    std::vector<integrals::PairAddress> left_pair_indices;
+    std::vector<integrals::PairAddress> right_pair_indices;
     std::vector<double> two_electron_values;
     std::vector<integrals::AoIntegralChunk> chunks;
 };

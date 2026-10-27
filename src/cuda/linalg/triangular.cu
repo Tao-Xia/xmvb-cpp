@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "cuda/linalg/blas.hpp"
 #include <type_traits>
 

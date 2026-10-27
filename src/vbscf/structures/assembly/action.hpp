@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include <cstddef>
 #include <functional>
 #include <memory>
@@ -9,6 +11,7 @@
 
 #include <Eigen/Core>
 #include "mcscf/ci/product_index.hpp"
+#include "mcscf/ci/integrals.hpp"
 #include "core/workspace.hpp"
 
 #include "vbscf/determinants/pairs/same_spin_cache.hpp"
@@ -37,6 +40,7 @@ struct OrthogonalActiveIntegrals;
 class StructureMetricInverse;
 class SpinMetric;
 struct SpinSources;
+struct OperatorFirstState;
 
 /** @brief Davidson needs a diagonal model; fixed-state actions and adjoints do not. */
 enum class StructureActionMode { Davidson, ActionOnly };
@@ -92,6 +96,10 @@ struct StructureAdjointState {
     Eigen::MatrixXd structure_coefficients;
     /** Exact source representation; accepted orthogonal/residual arrays are absent. */
     bool source_factors = false;
+    /** Sparse canonical operator plan; accepted carrier tiles are not retained. */
+    bool operator_first = false;
+    /** Point-local canonical cotangents shared by every derivative direction. */
+    std::shared_ptr<const OperatorFirstState> operator_state;
     /** Shared, bounded accepted panels; never a full-carrier mandate. */
     std::shared_ptr<detail::ProductImages> product_images;
     std::vector<double> weights;
@@ -148,12 +156,14 @@ struct StructureActionStorage {
  * of the construction inputs. Derivative preparation has separate storage
  * contracts; bounded H/M application does not imply bounded derivative storage.
  */
+class OperatorFirstAction;
+
 class StructureAction {
   public:
     /** @brief One entry of the selected-structure to touched-product map. */
     struct StructureTerm {
-        int group = 0;
-        int structure = 0;
+        std::size_t group = 0;
+        Eigen::Index structure = 0;
         double coefficient = 0.0;
     };
 
@@ -170,14 +180,18 @@ class StructureAction {
         std::span<const StructureTerm> terms;
         int exchange_parity;
         const mcscf::ProductSupport* support;
+        std::span<const std::size_t> structure_offsets;
+        std::span<const std::size_t> structure_terms;
     };
 
     /** @brief Export the retained orthogonal representation without rebuilding it. */
     OrthogonalView orthogonal_view() const;
+    /** Immutable orthonormal physical integrals, without VB transformation metadata. */
+    const mcscf::ActiveIntegrals& orthogonal_integrals() const;
 
     StructureAction(
         StructureIncidence determinant_to_structure_terms,
-        int n_structures,
+        Eigen::Index n_structures,
         const SameSpinPairCacheContext& same_spin_pair_cache,
         const std::vector<double>& active_overlap,
         const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron,
@@ -330,9 +344,9 @@ class StructureAction {
    * `expand_structure_block()` used by the large-space factorized action.
    */
     Eigen::MatrixXd expand_structure_tile(const Eigen::Ref<const Eigen::MatrixXd>& vectors,
-                                          int alpha_begin,
+                                          std::int64_t alpha_begin,
                                           int alpha_size,
-                                          int beta_begin,
+                                          std::int64_t beta_begin,
                                           int beta_size) const;
 
     /**
@@ -428,19 +442,19 @@ class StructureAction {
    * `structure_images`; no full alpha-by-beta image is materialized.
    */
     void add_spin_product_tile(const Eigen::Ref<const Eigen::MatrixXd>& tile_images,
-                               int alpha_begin,
-                               int beta_begin,
+                               std::int64_t alpha_begin,
+                               std::int64_t beta_begin,
                                Eigen::MatrixXd* structure_images) const;
 
     /** @brief H/S preconditioning model; empty for an ActionOnly instance. */
     const StructureDiagonal& preconditioner_diagonal() const noexcept;
 
-    int n_determinants() const noexcept;
-    int n_structures() const noexcept;
-    int n_alpha_strings() const noexcept {
+    std::size_t n_determinants() const noexcept;
+    Eigen::Index n_structures() const noexcept;
+    Eigen::Index n_alpha_strings() const noexcept {
         return n_unique_alpha_;
     }
-    int n_beta_strings() const noexcept {
+    Eigen::Index n_beta_strings() const noexcept {
         return n_unique_beta_;
     }
 
@@ -524,6 +538,9 @@ class StructureAction {
                                               const Eigen::MatrixXd* output_generator,
                                               bool project_output = true,
                                               double residual_energy = 0.0) const;
+    /** @brief Exact scalar images from accepted adjoints, without exterior projection. */
+    StructureActionResult scalar_integral_action(const StructureAdjointState& state,
+                                                 const OrthogonalActiveIntegrals& direction) const;
     /** @brief Direction H/M images without accepted or directional product arrays. */
     StructureActionResult source_integral_action(const StructureAdjointState& state,
                                                  const Eigen::MatrixXd& generator,
@@ -599,11 +616,12 @@ class StructureAction {
     std::vector<std::size_t> structure_term_indices_;
 
     StructureDiagonal preconditioner_diagonal_;
-    int n_determinants_ = 0;
-    int n_structures_ = 0;
-    int n_unique_alpha_ = 0;
-    int n_unique_beta_ = 0;
+    std::size_t n_determinants_ = 0;
+    Eigen::Index n_structures_ = 0;
+    Eigen::Index n_unique_alpha_ = 0;
+    Eigen::Index n_unique_beta_ = 0;
     std::unique_ptr<OrthogonalDirectCiData> direct_ci_;
+    std::unique_ptr<OperatorFirstAction> operator_first_;
     std::unique_ptr<const mcscf::ProductSupport> product_support_;
     std::unique_ptr<TiledPairData> tiled_pairs_;
 };

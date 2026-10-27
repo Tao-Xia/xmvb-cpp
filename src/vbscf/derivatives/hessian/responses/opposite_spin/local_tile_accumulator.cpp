@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "vbscf/derivatives/hessian/responses/opposite_spin/local_tile_accumulator_internal.hpp"
 
 #include <algorithm>
@@ -35,19 +36,19 @@ void add_packed_outer_product(const OppositeSpinPackedPairProjection& primary,
 
 void add_partner_projection_tile(const SelectedStateDeterminantMatrices& selected_states,
                                  PrimarySpin primary_spin,
-                                 int primary_left_begin,
+                                 std::int64_t primary_left_begin,
                                  int primary_left_size,
-                                 int primary_right_begin,
+                                 std::int64_t primary_right_begin,
                                  int primary_right_size,
                                  const AcceptedSpinPairTile& partner_tile,
                                  Eigen::MatrixXd* raw_projection) {
     Eigen::MatrixXd coefficient_weight(primary_left_size, primary_right_size);
     for (int partner_left_local = 0; partner_left_local < partner_tile.left_size;
          ++partner_left_local) {
-        const int partner_left = partner_tile.left_begin + partner_left_local;
+        const Eigen::Index partner_left = partner_tile.left_begin + partner_left_local;
         for (int partner_right_local = 0; partner_right_local < partner_tile.right_size;
              ++partner_right_local) {
-            const int partner_right = partner_tile.right_begin + partner_right_local;
+            const Eigen::Index partner_right = partner_tile.right_begin + partner_right_local;
             coefficient_weight.setZero();
             for (const auto& state : selected_states.states) {
                 const auto& coefficients = state.coefficient_matrix;
@@ -141,7 +142,8 @@ void LocalOppositeSpinTileAccumulator::accumulate_primary(
     const DirectionalOppositeSpinPairTileView& tile,
     bool accumulate_packed_gradient) {
     const bool alpha = spin == PrimarySpin::Alpha;
-    const int n_partner = alpha ? selected_states_.n_unique_beta : selected_states_.n_unique_alpha;
+    const Eigen::Index n_partner =
+        alpha ? selected_states_.n_unique_beta : selected_states_.n_unique_alpha;
     const auto& primary_determinants =
         alpha ? accepted_pair_cache_.alpha_reuse_table.unique_determinants
               : accepted_pair_cache_.beta_reuse_table.unique_determinants;
@@ -152,11 +154,14 @@ void LocalOppositeSpinTileAccumulator::accumulate_primary(
     const int primary_pair_count = tile.left_size() * tile.right_size();
     Eigen::MatrixXd raw_projection = Eigen::MatrixXd::Zero(n_packed_pairs_, primary_pair_count);
     const int partner_extent =
-        std::min(n_partner, alpha ? tile_extents_.beta : tile_extents_.alpha);
-    for (int partner_left = 0; partner_left < n_partner; partner_left += partner_extent) {
-        const int partner_left_end = std::min(n_partner, partner_left + partner_extent);
-        for (int partner_right = 0; partner_right < n_partner; partner_right += partner_extent) {
-            const int partner_right_end = std::min(n_partner, partner_right + partner_extent);
+        std::min<std::int64_t>(n_partner, alpha ? tile_extents_.beta : tile_extents_.alpha);
+    for (Eigen::Index partner_left = 0; partner_left < n_partner; partner_left += partner_extent) {
+        const std::int64_t partner_left_end =
+            std::min<std::int64_t>(n_partner, partner_left + partner_extent);
+        for (Eigen::Index partner_right = 0; partner_right < n_partner;
+             partner_right += partner_extent) {
+            const std::int64_t partner_right_end =
+                std::min<std::int64_t>(n_partner, partner_right + partner_extent);
             const AcceptedSpinPairTile partner_tile = partner_provider.build(
                 partner_left,
                 partner_left_end,
@@ -181,12 +186,12 @@ void LocalOppositeSpinTileAccumulator::accumulate_primary(
         active_two_electron_, n_active_orbitals_, raw_projection);
     Eigen::MatrixXd accepted_weight(n_electrons, n_electrons);
     const Eigen::MatrixXd zero = Eigen::MatrixXd::Zero(n_electrons, n_electrons);
-    for (int left_local = 0; left_local < tile.left_size(); ++left_local) {
+    for (Eigen::Index left_local = 0; left_local < tile.left_size(); ++left_local) {
         const int left = tile.left_begin() + left_local;
-        for (int right_local = 0; right_local < tile.right_size(); ++right_local) {
+        for (Eigen::Index right_local = 0; right_local < tile.right_size(); ++right_local) {
             const int right = tile.right_begin() + right_local;
             tile.with_pair(left_local, right_local, [&](const auto& directional_pair) {
-                const int pair_index = left_local * tile.right_size() + right_local;
+                const Eigen::Index pair_index = left_local * tile.right_size() + right_local;
                 if (accumulate_packed_gradient) {
                     add_packed_outer_product(directional_pair.delta_first_order_cofactor_projection,
                                              raw_projection.col(pair_index),
@@ -197,7 +202,7 @@ void LocalOppositeSpinTileAccumulator::accumulate_primary(
                 const auto& occupied_right = primary_determinants[right];
                 for (int left_electron = 0; left_electron < n_electrons; ++left_electron) {
                     for (int right_electron = 0; right_electron < n_electrons; ++right_electron) {
-                        const int channel = xmvb::core::PairIndex::packed_pair_index(
+                        const auto channel = xmvb::core::PairIndex::packed_pair_index(
                             occupied_right[right_electron], occupied_left[left_electron]);
                         accepted_weight(left_electron, right_electron) =
                             projected(channel, pair_index);
@@ -221,7 +226,7 @@ void LocalOppositeSpinTileAccumulator::accumulate_primary(
 void LocalOppositeSpinTileAccumulator::accumulate_cross_response(
     PrimarySpin target_spin, const DirectionalOppositeSpinPairTileView& partner_tile) {
     const bool target_alpha = target_spin == PrimarySpin::Alpha;
-    const int n_primary =
+    const Eigen::Index n_primary =
         target_alpha ? selected_states_.n_unique_alpha : selected_states_.n_unique_beta;
     const AcceptedPairTileProvider& primary_provider =
         target_alpha ? accepted_pair_cache_.alpha_provider() : accepted_pair_cache_.beta_provider();
@@ -230,13 +235,14 @@ void LocalOppositeSpinTileAccumulator::accumulate_cross_response(
                      : accepted_pair_cache_.beta_reuse_table.unique_determinants;
     const int n_electrons =
         primary_determinants.empty() ? 0 : primary_determinants.electron_count();
-    const int extent = std::min(n_primary, target_alpha ? tile_extents_.alpha : tile_extents_.beta);
+    const int extent =
+        std::min<std::int64_t>(n_primary, target_alpha ? tile_extents_.alpha : tile_extents_.beta);
     const Eigen::MatrixXd zero = Eigen::MatrixXd::Zero(n_electrons, n_electrons);
 
-    for (int left_begin = 0; left_begin < n_primary; left_begin += extent) {
-        const int left_size = std::min(extent, n_primary - left_begin);
-        for (int right_begin = 0; right_begin < n_primary; right_begin += extent) {
-            const int right_size = std::min(extent, n_primary - right_begin);
+    for (std::int64_t left_begin = 0; left_begin < n_primary; left_begin += extent) {
+        const Eigen::Index left_size = std::min<std::int64_t>(extent, n_primary - left_begin);
+        for (std::int64_t right_begin = 0; right_begin < n_primary; right_begin += extent) {
+            const Eigen::Index right_size = std::min<std::int64_t>(extent, n_primary - right_begin);
             const AcceptedSpinPairTile accepted = primary_provider.build(
                 left_begin,
                 left_begin + left_size,
@@ -303,9 +309,9 @@ void LocalOppositeSpinTileAccumulator::accumulate_cross_response(
                         }
                     }
                 }
-                for (int left_local = 0; left_local < left_size; ++left_local) {
+                for (Eigen::Index left_local = 0; left_local < left_size; ++left_local) {
                     const auto& occupied_left = primary_determinants[left_begin + left_local];
-                    for (int right_local = 0; right_local < right_size; ++right_local) {
+                    for (Eigen::Index right_local = 0; right_local < right_size; ++right_local) {
                         const auto& occupied_right =
                             primary_determinants[right_begin + right_local];
                         const auto& accepted_projection =
@@ -344,10 +350,10 @@ void LocalOppositeSpinTileAccumulator::accumulate_cross_response(
                 }
             }
 
-            for (int left_local = 0; left_local < left_size; ++left_local) {
+            for (Eigen::Index left_local = 0; left_local < left_size; ++left_local) {
                 const int left = left_begin + left_local;
                 const auto& occupied_left = primary_determinants[left];
-                for (int right_local = 0; right_local < right_size; ++right_local) {
+                for (Eigen::Index right_local = 0; right_local < right_size; ++right_local) {
                     const int right = right_begin + right_local;
                     const auto& occupied_right = primary_determinants[right];
                     const auto& accepted_pair = accepted.pair(left_local, right_local);

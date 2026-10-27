@@ -1,3 +1,4 @@
+#include "core/index.hpp"
 #include "vbscf/structures/overlap/representation.hpp"
 
 #include <algorithm>
@@ -138,8 +139,10 @@ void add_pair_gradient(const Eigen::MatrixXd& k,
         }
 }
 
-Eigen::MatrixXd
-row_of(const StructureAction& action, const Eigen::MatrixXd& coeff, int alpha, int beta_size) {
+Eigen::MatrixXd row_of(const StructureAction& action,
+                       const Eigen::MatrixXd& coeff,
+                       Eigen::Index alpha,
+                       Eigen::Index beta_size) {
     return action.expand_structure_tile(coeff, alpha, 1, 0, beta_size);
 }
 
@@ -153,29 +156,29 @@ Eigen::MatrixXd apply_pair_kernel(const StructureAction& action,
                                   const Strings& beta,
                                   const Eigen::MatrixXd& kernel,
                                   const Eigen::Ref<const Eigen::MatrixXd>& coeff) {
-    const int na = static_cast<int>(alpha.size());
-    const int nb = static_cast<int>(beta.size());
+    const Eigen::Index na = core::checked_index<Eigen::Index>(alpha.size());
+    const Eigen::Index nb = core::checked_index<Eigen::Index>(beta.size());
     Eigen::MatrixXd result(action.n_structures(), coeff.cols());
     const std::size_t denominator =
-        sizeof(double) * static_cast<std::size_t>(std::max(1, 2 * nb + 1));
-    const int rows_per_tile =
-        std::max(1, std::min(na, static_cast<int>(kRowWorkspaceBytes / denominator)));
+        sizeof(double) * static_cast<std::size_t>(std::max<Eigen::Index>(1, 2 * nb + 1));
+    const Eigen::Index rows_per_tile = std::max<Eigen::Index>(
+        1, std::min<Eigen::Index>(na, static_cast<int>(kRowWorkspaceBytes / denominator)));
     for (int col = 0; col < coeff.cols(); ++col) {
         Eigen::MatrixXd one_coeff = coeff.col(col);
         Eigen::MatrixXd one_result = Eigen::MatrixXd::Zero(action.n_structures(), 1);
-        for (int begin = 0; begin < na; begin += rows_per_tile) {
-            const int rows = std::min(rows_per_tile, na - begin);
+        for (Eigen::Index begin = 0; begin < na; begin += rows_per_tile) {
+            const Eigen::Index rows = std::min<Eigen::Index>(rows_per_tile, na - begin);
             Eigen::MatrixXd projected = Eigen::MatrixXd::Zero(rows, nb);
-            for (int ar = 0; ar < na; ++ar) {
+            for (Eigen::Index ar = 0; ar < na; ++ar) {
                 const Eigen::MatrixXd source = row_of(action, one_coeff, ar, nb);
-                for (int ai = 0; ai < rows; ++ai)
+                for (Eigen::Index ai = 0; ai < rows; ++ai)
                     projected.row(ai).noalias() +=
                         pair_value(kernel, alpha[begin + ai], alpha[ar]) * source.row(0);
             }
             Eigen::MatrixXd tile(rows, nb);
-            for (int bl = 0; bl < nb; ++bl) {
+            for (Eigen::Index bl = 0; bl < nb; ++bl) {
                 Eigen::VectorXd overlap(nb);
-                for (int br = 0; br < nb; ++br)
+                for (Eigen::Index br = 0; br < nb; ++br)
                     overlap[br] = pair_value(kernel, beta[bl], beta[br]);
                 tile.col(bl).noalias() = projected * overlap;
             }
@@ -198,12 +201,12 @@ RepresentationOverlap::RepresentationOverlap(const StructureAction& action,
         throw std::invalid_argument("invalid orbital count for representation overlap");
     validate_strings(alpha_, n_active);
     validate_strings(beta_, n_active);
-    if (static_cast<int>(alpha_.size()) != action.n_alpha_strings() ||
-        static_cast<int>(beta_.size()) != action.n_beta_strings())
+    if (core::checked_index<Eigen::Index>(alpha_.size()) != action.n_alpha_strings() ||
+        core::checked_index<Eigen::Index>(beta_.size()) != action.n_beta_strings())
         throw std::invalid_argument("spin strings do not match action carrier");
 }
 
-bool RepresentationOverlap::PreparedMetric::fits_selected(int dimension) noexcept {
+bool RepresentationOverlap::PreparedMetric::fits_selected(Eigen::Index dimension) noexcept {
     const std::size_t n = dimension > 0 ? static_cast<std::size_t>(dimension) : 0;
     return n && n <= kRowWorkspaceBytes / (4 * sizeof(double)) / n;
 }
@@ -301,8 +304,8 @@ RepresentationOverlap::apply_direction(const Eigen::Ref<const Eigen::MatrixXd>& 
     validate_direction(delta_right_upper, n_active_);
     if (coeff.rows() != action_->n_structures() || coeff.cols() <= 0 || !coeff.allFinite())
         throw std::invalid_argument("invalid structure block");
-    const int na = static_cast<int>(alpha_.size());
-    const int nb = static_cast<int>(beta_.size());
+    const Eigen::Index na = core::checked_index<Eigen::Index>(alpha_.size());
+    const Eigen::Index nb = core::checked_index<Eigen::Index>(beta_.size());
     Eigen::MatrixXd result(action_->n_structures(), coeff.cols());
     if (complete_carrier_) {
         ExteriorOrbitalTransform la(alpha_, left_upper), lb(beta_, left_upper);
@@ -317,19 +320,19 @@ RepresentationOverlap::apply_direction(const Eigen::Ref<const Eigen::MatrixXd>& 
     const Eigen::MatrixXd dk =
         delta_left_upper.transpose() * right_upper + left_upper.transpose() * delta_right_upper;
     const std::size_t denominator =
-        sizeof(double) * static_cast<std::size_t>(std::max(1, 4 * nb + 1));
-    const int rows_per_tile =
-        std::max(1, std::min(na, static_cast<int>(kRowWorkspaceBytes / denominator)));
+        sizeof(double) * static_cast<std::size_t>(std::max<Eigen::Index>(1, 4 * nb + 1));
+    const Eigen::Index rows_per_tile = std::max<Eigen::Index>(
+        1, std::min<Eigen::Index>(na, static_cast<int>(kRowWorkspaceBytes / denominator)));
     for (int col = 0; col < coeff.cols(); ++col) {
         Eigen::MatrixXd one_coeff = coeff.col(col);
         Eigen::MatrixXd one_result = Eigen::MatrixXd::Zero(action_->n_structures(), 1);
-        for (int begin = 0; begin < na; begin += rows_per_tile) {
-            const int rows = std::min(rows_per_tile, na - begin);
+        for (Eigen::Index begin = 0; begin < na; begin += rows_per_tile) {
+            const Eigen::Index rows = std::min<Eigen::Index>(rows_per_tile, na - begin);
             Eigen::MatrixXd projected = Eigen::MatrixXd::Zero(rows, nb);
             Eigen::MatrixXd dprojected = Eigen::MatrixXd::Zero(rows, nb);
-            for (int ar = 0; ar < na; ++ar) {
+            for (Eigen::Index ar = 0; ar < na; ++ar) {
                 const Eigen::MatrixXd source = row_of(*action_, one_coeff, ar, nb);
-                for (int ai = 0; ai < rows; ++ai) {
+                for (Eigen::Index ai = 0; ai < rows; ++ai) {
                     const auto& left = alpha_[begin + ai];
                     const auto& right = alpha_[ar];
                     projected.row(ai).noalias() += pair_value(k, left, right) * source.row(0);
@@ -338,9 +341,9 @@ RepresentationOverlap::apply_direction(const Eigen::Ref<const Eigen::MatrixXd>& 
                 }
             }
             Eigen::MatrixXd tile(rows, nb);
-            for (int bl = 0; bl < nb; ++bl) {
+            for (Eigen::Index bl = 0; bl < nb; ++bl) {
                 Eigen::VectorXd overlap(nb), doverlap(nb);
-                for (int br = 0; br < nb; ++br) {
+                for (Eigen::Index br = 0; br < nb; ++br) {
                     overlap[br] = pair_value(k, beta_[bl], beta_[br]);
                     doverlap[br] = pair_direction(k, dk, beta_[bl], beta_[br]);
                 }
@@ -367,8 +370,8 @@ UpperPair RepresentationOverlap::adjoint(const Eigen::Ref<const Eigen::MatrixXd>
         throw std::invalid_argument("invalid structure coefficient vectors");
     const Eigen::MatrixXd left = left_coeff;
     const Eigen::MatrixXd right = right_coeff;
-    const int na = static_cast<int>(alpha_.size());
-    const int nb = static_cast<int>(beta_.size());
+    const Eigen::Index na = core::checked_index<Eigen::Index>(alpha_.size());
+    const Eigen::Index nb = core::checked_index<Eigen::Index>(beta_.size());
     if (complete_carrier_) {
         ExteriorOrbitalTransform la(alpha_, left_upper), lb(beta_, left_upper);
         ExteriorOrbitalTransform ra(alpha_, right_upper), rb(beta_, right_upper);
@@ -387,26 +390,26 @@ UpperPair RepresentationOverlap::adjoint(const Eigen::Ref<const Eigen::MatrixXd>
     Eigen::MatrixXd g = Eigen::MatrixXd::Zero(n_active_, n_active_);
     // Project one right-alpha row through the beta overlap, then contract all
     // left-alpha rows. This has no U_alpha^2 U_beta^2 traversal or pair cache.
-    for (int ar = 0; ar < na; ++ar) {
+    for (Eigen::Index ar = 0; ar < na; ++ar) {
         const Eigen::MatrixXd xr = row_of(*action_, right, ar, nb);
         Eigen::VectorXd projected = Eigen::VectorXd::Zero(nb);
-        for (int bl = 0; bl < nb; ++bl)
-            for (int br = 0; br < nb; ++br)
+        for (Eigen::Index bl = 0; bl < nb; ++bl)
+            for (Eigen::Index br = 0; br < nb; ++br)
                 projected[bl] += pair_value(k, beta_[bl], beta_[br]) * xr(0, br);
-        for (int al = 0; al < na; ++al) {
+        for (Eigen::Index al = 0; al < na; ++al) {
             const Eigen::MatrixXd xl = row_of(*action_, left, al, nb);
             const double weight = xl.row(0).dot(projected);
             add_pair_gradient(k, nullptr, alpha_[al], alpha_[ar], weight, 0.0, &g, nullptr);
         }
     }
     // The symmetric projection by alpha yields all beta-pair weights.
-    for (int br = 0; br < nb; ++br) {
+    for (Eigen::Index br = 0; br < nb; ++br) {
         const Eigen::MatrixXd xr = column_of(*action_, right, br, na);
         Eigen::VectorXd projected = Eigen::VectorXd::Zero(na);
-        for (int al = 0; al < na; ++al)
-            for (int ar = 0; ar < na; ++ar)
+        for (Eigen::Index al = 0; al < na; ++al)
+            for (Eigen::Index ar = 0; ar < na; ++ar)
                 projected[al] += pair_value(k, alpha_[al], alpha_[ar]) * xr(ar, 0);
-        for (int bl = 0; bl < nb; ++bl) {
+        for (Eigen::Index bl = 0; bl < nb; ++bl) {
             const Eigen::MatrixXd xl = column_of(*action_, left, bl, na);
             const double weight = xl.col(0).dot(projected);
             add_pair_gradient(k, nullptr, beta_[bl], beta_[br], weight, 0.0, &g, nullptr);
@@ -436,8 +439,8 @@ RepresentationOverlap::adjoint_direction(const Eigen::Ref<const Eigen::MatrixXd>
         throw std::invalid_argument("invalid structure coefficient vectors");
     const Eigen::MatrixXd left = left_coeff;
     const Eigen::MatrixXd right = right_coeff;
-    const int na = static_cast<int>(alpha_.size());
-    const int nb = static_cast<int>(beta_.size());
+    const Eigen::Index na = core::checked_index<Eigen::Index>(alpha_.size());
+    const Eigen::Index nb = core::checked_index<Eigen::Index>(beta_.size());
     if (complete_carrier_) {
         ExteriorOrbitalTransform la(alpha_, left_upper), lb(beta_, left_upper);
         ExteriorOrbitalTransform ra(alpha_, right_upper), rb(beta_, right_upper);
@@ -450,16 +453,16 @@ RepresentationOverlap::adjoint_direction(const Eigen::Ref<const Eigen::MatrixXd>
         delta_left_upper.transpose() * right_upper + left_upper.transpose() * delta_right_upper;
     Eigen::MatrixXd g = Eigen::MatrixXd::Zero(n_active_, n_active_);
     Eigen::MatrixXd dg = Eigen::MatrixXd::Zero(n_active_, n_active_);
-    for (int ar = 0; ar < na; ++ar) {
+    for (Eigen::Index ar = 0; ar < na; ++ar) {
         const Eigen::MatrixXd xr = row_of(*action_, right, ar, nb);
         Eigen::VectorXd projected = Eigen::VectorXd::Zero(nb);
         Eigen::VectorXd dprojected = Eigen::VectorXd::Zero(nb);
-        for (int bl = 0; bl < nb; ++bl)
-            for (int br = 0; br < nb; ++br) {
+        for (Eigen::Index bl = 0; bl < nb; ++bl)
+            for (Eigen::Index br = 0; br < nb; ++br) {
                 projected[bl] += pair_value(k, beta_[bl], beta_[br]) * xr(0, br);
                 dprojected[bl] += pair_direction(k, dk, beta_[bl], beta_[br]) * xr(0, br);
             }
-        for (int al = 0; al < na; ++al) {
+        for (Eigen::Index al = 0; al < na; ++al) {
             const Eigen::MatrixXd xl = row_of(*action_, left, al, nb);
             add_pair_gradient(k,
                               &dk,
@@ -471,16 +474,16 @@ RepresentationOverlap::adjoint_direction(const Eigen::Ref<const Eigen::MatrixXd>
                               &dg);
         }
     }
-    for (int br = 0; br < nb; ++br) {
+    for (Eigen::Index br = 0; br < nb; ++br) {
         const Eigen::MatrixXd xr = column_of(*action_, right, br, na);
         Eigen::VectorXd projected = Eigen::VectorXd::Zero(na);
         Eigen::VectorXd dprojected = Eigen::VectorXd::Zero(na);
-        for (int al = 0; al < na; ++al)
-            for (int ar = 0; ar < na; ++ar) {
+        for (Eigen::Index al = 0; al < na; ++al)
+            for (Eigen::Index ar = 0; ar < na; ++ar) {
                 projected[al] += pair_value(k, alpha_[al], alpha_[ar]) * xr(ar, 0);
                 dprojected[al] += pair_direction(k, dk, alpha_[al], alpha_[ar]) * xr(ar, 0);
             }
-        for (int bl = 0; bl < nb; ++bl) {
+        for (Eigen::Index bl = 0; bl < nb; ++bl) {
             const Eigen::MatrixXd xl = column_of(*action_, left, bl, na);
             add_pair_gradient(k,
                               &dk,

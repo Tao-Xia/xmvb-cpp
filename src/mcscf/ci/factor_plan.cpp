@@ -14,7 +14,8 @@ bool use_amplitude_map(const SpinFactorSource& source) {
                4.0L * (static_cast<long double>(source.n_alpha) + source.n_beta) * source.count;
 }
 
-std::size_t amplitude_workspace(const SpinFactorSource& source, int tile, int columns) {
+std::size_t
+amplitude_workspace(const SpinFactorSource& source, Eigen::Index tile, Eigen::Index columns) {
     if (use_amplitude_map(source))
         return source.contract_rows * columns;
     return (static_cast<std::size_t>(source.n_alpha) + source.n_beta + source.workspace_rows +
@@ -30,20 +31,20 @@ FactorPanels plan_factor_panels(const DirectCiSigmaAction& sigma,
     const bool integral = contraction == FactorContraction::Integral;
     const bool residual = contraction == FactorContraction::Residual;
     const bool mapped = use_amplitude_map(left);
-    const int d = sigma.channel_kernel().rows();
+    const Eigen::Index d = sigma.channel_kernel().rows();
     const long double rows = static_cast<long double>(left.n_alpha) + left.n_beta;
     const long double capacity = workspace_bytes / sizeof(double);
     const long double reductions =
         integral ? 0
                  : static_cast<long double>(effective_openmp_thread_count() + 1) *
                        sigma.n_orbitals() * sigma.n_orbitals();
-    const auto payload = [&](int l, int r, int p) {
+    const auto payload = [&](Eigen::Index l, Eigen::Index r, Eigen::Index p) {
         const long double loading =
             std::max(mapped ? 0.0L : static_cast<long double>(left.workspace_rows) * l,
                      static_cast<long double>(right.workspace_rows) * r);
         const long double amplitude =
-            mapped ? static_cast<long double>(left.contract_rows) * r * std::max(1, p)
-                   : rows * l + static_cast<long double>(l) * r * std::max(1, p);
+            mapped ? static_cast<long double>(left.contract_rows) * r * std::max<Eigen::Index>(1, p)
+                   : rows * l + static_cast<long double>(l) * r * std::max<Eigen::Index>(1, p);
         if (integral)
             return amplitude + rows * (2.0L * r + (p < d ? 3.0L : 2.0L) * r * p) + loading;
         const long double sweep = residual ? rows * r * (3.0L * p + 6) : 0;
@@ -55,32 +56,32 @@ FactorPanels plan_factor_panels(const DirectCiSigmaAction& sigma,
     const long double links = sigma.spin_link_count();
     // Leading channel GEMMs and source-pair moment arithmetic are invariant
     // across these schedules. Compare only work that actually repeats.
-    for (int p = integral || residual ? 1 : 0; p <= (integral || residual ? d : 0); ++p) {
+    for (Eigen::Index p = integral || residual ? 1 : 0; p <= (integral || residual ? d : 0); ++p) {
         if (payload(1, 1, p) > capacity)
             continue;
-        int low = 1, high = residual && p < d ? 1 : right.count;
+        Eigen::Index low = 1, high = residual && p < d ? 1 : right.count;
         // The shared forward sweep can stream partial channels at width one;
         // otherwise it independently chooses a larger channel width. Keep its
         // actual schedule identical to this parent's moment/slab bound.
         while (low < high) {
-            const int middle = low + (high - low + 1) / 2;
+            const Eigen::Index middle = low + (high - low + 1) / 2;
             if (payload(1, middle, p) <= capacity)
                 low = middle;
             else
                 high = middle - 1;
         }
-        const int maximum_right = low;
-        for (int r = 1; r <= maximum_right; ++r) {
+        const Eigen::Index maximum_right = low;
+        for (Eigen::Index r = 1; r <= maximum_right; ++r) {
             low = 1;
             high = mapped ? 1 : left.count;
             while (low < high) {
-                const int middle = low + (high - low + 1) / 2;
+                const Eigen::Index middle = low + (high - low + 1) / 2;
                 if (payload(middle, r, p) <= capacity)
                     low = middle;
                 else
                     high = middle - 1;
             }
-            const int l = low;
+            const Eigen::Index l = low;
             const long double nr = (right.count + r - 1) / r,
                               nl = mapped ? 1 : (left.count + l - 1) / l;
             const long double np = p ? (d + p - 1) / p : 0;

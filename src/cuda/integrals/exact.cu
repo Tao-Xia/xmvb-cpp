@@ -167,8 +167,8 @@ __global__ void generated_csr(linalg::ConstMatrixView c,
                               linalg::ConstMatrixView d,
                               const int* first,
                               const int* second,
-                              const int* offsets,
-                              const int* columns,
+                              const std::int64_t* offsets,
+                              const std::int64_t* columns,
                               const double* values,
                               std::int64_t begin,
                               PairPanel output,
@@ -183,7 +183,7 @@ __global__ void generated_csr(linalg::ConstMatrixView c,
         int a, b;
         decode_pair(p, a, b);
         double sum = 0.0, delta = 0.0;
-        for (int edge = offsets[begin + row]; edge < offsets[begin + row + 1]; ++edge) {
+        for (std::int64_t edge = offsets[begin + row]; edge < offsets[begin + row + 1]; ++edge) {
             const int source = columns[edge];
             const double integral = values[edge];
             if (!direction_only)
@@ -624,20 +624,20 @@ void multiply_pair_tile(Context& context,
                         int pairs,
                         double beta = 0.0) {
     const double alpha = 1.0;
-    check_cublas(cublasDgemm(context.blas(),
-                             CUBLAS_OP_T,
-                             CUBLAS_OP_N,
-                             pairs,
-                             blas_int(product.rows),
-                             pairs,
-                             &alpha,
-                             h,
-                             pairs,
-                             product.data,
-                             blas_int(product.ld),
-                             &beta,
-                             result.data,
-                             blas_int(result.ld)),
+    check_cublas(cublasDgemm_64(context.blas(),
+                                CUBLAS_OP_T,
+                                CUBLAS_OP_N,
+                                pairs,
+                                product.rows,
+                                pairs,
+                                &alpha,
+                                h,
+                                pairs,
+                                product.data,
+                                product.ld,
+                                &beta,
+                                result.data,
+                                result.ld),
                  "pair-adjoint tile GEMM");
 }
 
@@ -647,20 +647,20 @@ void contract_tile(Context& context,
                    ConstPairPanel right,
                    double beta) {
     const double alpha = 1.0;
-    check_cublas(cublasDgemm(context.blas(),
-                             CUBLAS_OP_N,
-                             CUBLAS_OP_T,
-                             blas_int(out.rows),
-                             blas_int(out.cols),
-                             blas_int(left.rows),
-                             &alpha,
-                             left.data,
-                             blas_int(left.ld),
-                             right.data,
-                             blas_int(right.ld),
-                             &beta,
-                             out.data,
-                             blas_int(out.ld)),
+    check_cublas(cublasDgemm_64(context.blas(),
+                                CUBLAS_OP_N,
+                                CUBLAS_OP_T,
+                                out.rows,
+                                out.cols,
+                                left.rows,
+                                &alpha,
+                                left.data,
+                                left.ld,
+                                right.data,
+                                right.ld,
+                                &beta,
+                                out.data,
+                                out.ld),
                  "active pair contraction GEMM");
 }
 
@@ -668,19 +668,19 @@ void complete_pair_direction(Context& context,
                              linalg::ConstMatrixView unsymmetric,
                              linalg::MatrixView symmetric) {
     constexpr double one = 1.0;
-    check_cublas(cublasDgeam(context.blas(),
-                             CUBLAS_OP_N,
-                             CUBLAS_OP_T,
-                             blas_int(symmetric.rows),
-                             blas_int(symmetric.cols),
-                             &one,
-                             unsymmetric.data,
-                             blas_int(unsymmetric.ld),
-                             &one,
-                             unsymmetric.data,
-                             blas_int(unsymmetric.ld),
-                             symmetric.data,
-                             blas_int(symmetric.ld)),
+    check_cublas(cublasDgeam_64(context.blas(),
+                                CUBLAS_OP_N,
+                                CUBLAS_OP_T,
+                                symmetric.rows,
+                                symmetric.cols,
+                                &one,
+                                unsymmetric.data,
+                                unsymmetric.ld,
+                                &one,
+                                unsymmetric.data,
+                                unsymmetric.ld,
+                                symmetric.data,
+                                symmetric.ld),
                  "complete active pair direction");
 }
 
@@ -798,7 +798,8 @@ ExactAoPairOperator::ExactAoPairOperator(Context& context,
                 directed += 1 + (rows[k] != columns[k]);
             }
         });
-        directed_bytes = directed * (sizeof(int) + sizeof(double)) + (n_pairs_ + 1) * sizeof(int);
+        directed_bytes =
+            directed * (sizeof(int) + sizeof(double)) + (n_pairs_ + 1) * sizeof(std::int64_t);
         staging_bytes = 2 * sizeof(int) + sizeof(double);
     } else {
         if (graph.row_offsets.size() != static_cast<std::size_t>(n_pairs_ + 1) ||
@@ -818,8 +819,8 @@ ExactAoPairOperator::ExactAoPairOperator(Context& context,
             if (column < 0 || column >= n_pairs_)
                 throw std::invalid_argument("CUDA AO-pair CSR column out of range");
         n_integrals_ = graph.columns.size();
-        directed_bytes = graph.columns.size() * (sizeof(int) + sizeof(double)) +
-                         graph.row_offsets.size() * sizeof(int);
+        directed_bytes = graph.columns.size() * (sizeof(std::int64_t) + sizeof(double)) +
+                         graph.row_offsets.size() * sizeof(std::int64_t);
         staging_bytes = largest_row * (sizeof(int) + sizeof(double)) + 2 * sizeof(int);
     }
     pair_first_ = Buffer<int>(context, n_pairs_);
@@ -839,19 +840,20 @@ ExactAoPairOperator::ExactAoPairOperator(Context& context,
     if (compact_) {
         upload_unique(graph);
     } else {
-        row_offsets_ = Buffer<int>(context, n_pairs_ + 1);
-        columns_ = Buffer<int>(context, n_integrals_);
+        row_offsets_ = Buffer<std::int64_t>(context, n_pairs_ + 1);
+        columns_ = Buffer<std::int64_t>(context, n_integrals_);
         values_ = Buffer<double>(context, n_integrals_);
         context.copy_to_device(
-            row_offsets_.data(), graph.row_offsets.data(), (n_pairs_ + 1) * sizeof(int));
-        context.copy_to_device(columns_.data(), graph.columns.data(), n_integrals_ * sizeof(int));
+            row_offsets_.data(), graph.row_offsets.data(), (n_pairs_ + 1) * sizeof(std::int64_t));
+        context.copy_to_device(
+            columns_.data(), graph.columns.data(), n_integrals_ * sizeof(std::int64_t));
         context.copy_to_device(values_.data(), graph.values.data(), n_integrals_ * sizeof(double));
     }
     if (n_integrals_ != 0) {
         check_sparse(cusparseCreate(&sparse_), "cusparseCreate");
         try {
             check_sparse(cusparseSetStream(sparse_, context.stream()), "cusparseSetStream");
-            const auto index_type = wide_ ? CUSPARSE_INDEX_64I : CUSPARSE_INDEX_32I;
+            const auto index_type = CUSPARSE_INDEX_64I;
             void* offsets = wide_ ? static_cast<void*>(wide_offsets_.data()) : row_offsets_.data();
             void* columns = wide_ ? static_cast<void*>(wide_columns_.data()) : columns_.data();
             check_sparse(cusparseCreateCsr(&csr_,

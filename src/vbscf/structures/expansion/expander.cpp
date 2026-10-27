@@ -72,54 +72,61 @@ class SpinInterner {
   public:
     explicit SpinInterner(mcscf::StringTable& strings) : strings_(strings) {}
 
-    int intern_fast(std::uint64_t mask) {
+    mcscf::StringIndex intern_fast(std::uint64_t mask) {
         const auto found = fast_ids_.find(mask);
         if (found != fast_ids_.end())
             return found->second;
-        const int id = next_id();
+        const auto id = next_id();
         fast_ids_.emplace(mask, id);
         strings_.push_mask(mask);
         return id;
     }
 
-    int intern_general(const std::vector<std::uint64_t>& words) {
+    mcscf::StringIndex intern_general(const std::vector<std::uint64_t>& words) {
         const auto found = general_ids_.find(words);
         if (found != general_ids_.end())
             return found->second;
-        const int id = next_id();
+        const auto id = next_id();
         general_ids_.emplace(words, id);
         strings_.push_words(words);
         return id;
     }
 
-    int lookup_fast(std::uint64_t mask) const {
+    mcscf::StringIndex lookup_fast(std::uint64_t mask) const {
         return fast_ids_.at(mask);
     }
-    int lookup_general(const std::vector<std::uint64_t>& words) const {
+    mcscf::StringIndex lookup_general(const std::vector<std::uint64_t>& words) const {
         return general_ids_.at(words);
     }
 
   private:
-    int next_id() const {
-        if (strings_.size() >= static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-            throw std::overflow_error("too many unique spin strings");
-        }
-        return static_cast<int>(strings_.size());
+    mcscf::StringIndex next_id() const {
+        return core::checked_index<mcscf::StringIndex>(strings_.size());
     }
 
     mcscf::StringTable& strings_;
-    std::unordered_map<std::uint64_t, int> fast_ids_;
-    std::unordered_map<std::vector<std::uint64_t>, int, MaskHash> general_ids_;
+    std::unordered_map<std::uint64_t, mcscf::StringIndex> fast_ids_;
+    std::unordered_map<std::vector<std::uint64_t>, mcscf::StringIndex, MaskHash> general_ids_;
 };
 
-std::uint64_t pair_key(int alpha_id, int beta_id) {
-    return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(alpha_id)) << 32) |
-           static_cast<std::uint32_t>(beta_id);
+struct SpinPairKey {
+    mcscf::StringIndex alpha, beta;
+    bool operator==(const SpinPairKey&) const = default;
+};
+struct SpinPairHash {
+    std::size_t operator()(const SpinPairKey& pair) const noexcept {
+        const auto a = std::hash<mcscf::StringIndex>{}(pair.alpha);
+        const auto b = std::hash<mcscf::StringIndex>{}(pair.beta);
+        return a ^ (b + 0x9e3779b97f4a7c15ULL + (a << 6) + (a >> 2));
+    }
+};
+SpinPairKey pair_key(mcscf::StringIndex alpha, mcscf::StringIndex beta) {
+    return {alpha, beta};
 }
 
 template <typename Emit>
 void enumerate_structure(const RawStructureData& raw,
-                         int structure_index,
+                         std::size_t structure_index,
                          int n_inactive,
                          int n_active_beta,
                          std::vector<int>& active,
@@ -190,7 +197,7 @@ struct PairFlip {
 
 template <typename Emit>
 void enumerate_structure_fast(const RawStructureData& raw,
-                              int structure_index,
+                              std::size_t structure_index,
                               int n_inactive,
                               int n_active_beta,
                               std::vector<int>& active,
@@ -301,7 +308,7 @@ StructureExpansion StructureExpander::expand(const RawStructureData& raw) const 
     StructureExpansion result;
     result.n_structures = raw.n_structures;
     int max_orbital = -1;
-    for (int structure = 0; structure < raw.n_structures; ++structure) {
+    for (std::size_t structure = 0; structure < raw.n_structures; ++structure) {
         const int* orbitals = raw.structure_orbitals_data(structure);
         for (int index = 2 * n_inactive; index < raw.n_total_electrons; ++index) {
             max_orbital = std::max(max_orbital, orbitals[index] - n_inactive - 1);
@@ -314,7 +321,8 @@ StructureExpansion StructureExpander::expand(const RawStructureData& raw) const 
     std::vector<std::uint64_t> alpha_words(word_count), beta_words(word_count);
     std::uint64_t alpha_mask = 0, beta_mask = 0;
     SpinInterner alpha_ids(result.alpha_strings), beta_ids(result.beta_strings);
-    std::unordered_map<std::uint64_t, int> pair_ids;
+    std::unordered_map<std::uint64_t, std::size_t> packed_ids;
+    std::unordered_map<SpinPairKey, std::size_t, SpinPairHash> pair_ids;
     std::vector<std::size_t> counts;
     std::vector<int> active(raw.n_active_electrons);
     std::vector<int> alpha, beta, variable_pairs;
@@ -326,14 +334,9 @@ StructureExpansion StructureExpander::expand(const RawStructureData& raw) const 
     flips.reserve(n_active_beta);
     choices.reserve(n_active_beta);
 
-    auto record_pair = [&](std::uint64_t key, auto&& identify) {
-        const auto [found, inserted] =
-            pair_ids.try_emplace(key, static_cast<int>(result.pair_alpha.size()));
+    auto record_pair = [&](auto& ids, auto key, auto&& identify) {
+        const auto [found, inserted] = ids.try_emplace(key, result.pair_alpha.size());
         if (inserted) {
-            if (result.pair_alpha.size() >=
-                static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-                throw std::overflow_error("too many unique spin-string pairs");
-            }
             const auto [alpha_id, beta_id] = identify();
             result.pair_alpha.push_back(alpha_id);
             result.pair_beta.push_back(beta_id);
@@ -343,7 +346,7 @@ StructureExpansion StructureExpander::expand(const RawStructureData& raw) const 
         }
     };
 
-    for (int structure = 0; structure < raw.n_structures; ++structure) {
+    for (std::size_t structure = 0; structure < raw.n_structures; ++structure) {
         if (packed_pairs) {
             enumerate_structure_fast(raw,
                                      structure,
@@ -355,7 +358,7 @@ StructureExpansion StructureExpander::expand(const RawStructureData& raw) const 
                                      flips,
                                      choices,
                                      [&](std::uint64_t a, std::uint64_t b, int) {
-                                         record_pair(a | (b << packed_width), [&] {
+                                         record_pair(packed_ids, a | (b << packed_width), [&] {
                                              return std::pair{alpha_ids.intern_fast(a),
                                                               beta_ids.intern_fast(b)};
                                          });
@@ -371,10 +374,11 @@ StructureExpansion StructureExpander::expand(const RawStructureData& raw) const 
                                      flips,
                                      choices,
                                      [&](std::uint64_t a, std::uint64_t b, int) {
-                                         const int alpha_id = alpha_ids.intern_fast(a);
-                                         const int beta_id = beta_ids.intern_fast(b);
-                                         record_pair(pair_key(alpha_id, beta_id),
-                                                     [&] { return std::pair{alpha_id, beta_id}; });
+                                         const auto alpha_id = alpha_ids.intern_fast(a);
+                                         const auto beta_id = beta_ids.intern_fast(b);
+                                         record_pair(pair_ids, pair_key(alpha_id, beta_id), [&] {
+                                             return std::pair{alpha_id, beta_id};
+                                         });
                                      });
         } else {
             enumerate_structure(raw,
@@ -389,10 +393,11 @@ StructureExpansion StructureExpander::expand(const RawStructureData& raw) const 
                                 [&](const std::vector<int>& a, const std::vector<int>& b) {
                                     encode_spin_string(a, false, alpha_mask, alpha_words);
                                     encode_spin_string(b, false, beta_mask, beta_words);
-                                    const int alpha_id = alpha_ids.intern_general(alpha_words);
-                                    const int beta_id = beta_ids.intern_general(beta_words);
-                                    record_pair(pair_key(alpha_id, beta_id),
-                                                [&] { return std::pair{alpha_id, beta_id}; });
+                                    const auto alpha_id = alpha_ids.intern_general(alpha_words);
+                                    const auto beta_id = beta_ids.intern_general(beta_words);
+                                    record_pair(pair_ids, pair_key(alpha_id, beta_id), [&] {
+                                        return std::pair{alpha_id, beta_id};
+                                    });
                                 });
         }
     }
@@ -409,22 +414,23 @@ StructureExpansion StructureExpander::expand(const RawStructureData& raw) const 
     // Reuse the count pass workspace as CSR write cursors.
     std::copy(result.offsets.begin(), result.offsets.end() - 1, counts.begin());
 
-    for (int structure = 0; structure < raw.n_structures; ++structure) {
+    for (std::size_t structure = 0; structure < raw.n_structures; ++structure) {
         if (packed_pairs) {
-            enumerate_structure_fast(raw,
-                                     structure,
-                                     n_inactive,
-                                     n_active_beta,
-                                     active,
-                                     alpha,
-                                     beta,
-                                     flips,
-                                     choices,
-                                     [&](std::uint64_t a, std::uint64_t b, int sign) {
-                                         const int pair_id = pair_ids.at(a | (b << packed_width));
-                                         result.terms[counts[pair_id]++] = {
-                                             structure, static_cast<double>(sign)};
-                                     });
+            enumerate_structure_fast(
+                raw,
+                structure,
+                n_inactive,
+                n_active_beta,
+                active,
+                alpha,
+                beta,
+                flips,
+                choices,
+                [&](std::uint64_t a, std::uint64_t b, int sign) {
+                    const std::size_t pair_id = packed_ids.at(a | (b << packed_width));
+                    result.terms[counts[pair_id]++] = {static_cast<Eigen::Index>(structure),
+                                                       static_cast<double>(sign)};
+                });
         } else if (fast_mask) {
             enumerate_structure_fast(
                 raw,
@@ -437,10 +443,11 @@ StructureExpansion StructureExpander::expand(const RawStructureData& raw) const 
                 flips,
                 choices,
                 [&](std::uint64_t a, std::uint64_t b, int sign) {
-                    const int alpha_id = alpha_ids.lookup_fast(a);
-                    const int beta_id = beta_ids.lookup_fast(b);
-                    const int pair_id = pair_ids.at(pair_key(alpha_id, beta_id));
-                    result.terms[counts[pair_id]++] = {structure, static_cast<double>(sign)};
+                    const auto alpha_id = alpha_ids.lookup_fast(a);
+                    const auto beta_id = beta_ids.lookup_fast(b);
+                    const std::size_t pair_id = pair_ids.at(pair_key(alpha_id, beta_id));
+                    result.terms[counts[pair_id]++] = {static_cast<Eigen::Index>(structure),
+                                                       static_cast<double>(sign)};
                 });
         } else {
             enumerate_structure(
@@ -456,10 +463,10 @@ StructureExpansion StructureExpander::expand(const RawStructureData& raw) const 
                 [&](const std::vector<int>& a, const std::vector<int>& b) {
                     const int alpha_sign = encode_spin_string(a, false, alpha_mask, alpha_words);
                     const int beta_sign = encode_spin_string(b, false, beta_mask, beta_words);
-                    const int alpha_id = alpha_ids.lookup_general(alpha_words);
-                    const int beta_id = beta_ids.lookup_general(beta_words);
-                    const int pair_id = pair_ids.at(pair_key(alpha_id, beta_id));
-                    result.terms[counts[pair_id]++] = {structure,
+                    const auto alpha_id = alpha_ids.lookup_general(alpha_words);
+                    const auto beta_id = beta_ids.lookup_general(beta_words);
+                    const std::size_t pair_id = pair_ids.at(pair_key(alpha_id, beta_id));
+                    result.terms[counts[pair_id]++] = {static_cast<Eigen::Index>(structure),
                                                        static_cast<double>(alpha_sign * beta_sign)};
                 });
         }
@@ -478,7 +485,7 @@ StructureExpansion StructureExpander::expand(const RawStructureData& raw) const 
 
 StructureExpansion
 StructureExpander::expand_subset(const RawStructureData& raw,
-                                 const std::vector<int>& selected_structure_indices) const {
+                                 const std::vector<std::size_t>& selected_structure_indices) const {
     return expand(build_raw_structure_subset(raw, selected_structure_indices));
 }
 

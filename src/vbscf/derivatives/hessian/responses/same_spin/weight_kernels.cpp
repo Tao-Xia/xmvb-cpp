@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "vbscf/derivatives/hessian/responses/same_spin/tile_weights_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin/tile_policy_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin/weight_kernels_internal.hpp"
@@ -105,8 +106,8 @@ bool selected_state_has_local_support(
 
 bool selected_state_has_close_shell_diagonal(
     const SelectedStateDeterminantCoefficients& state_coefficients,
-    int n_unique_alpha,
-    int n_unique_beta) {
+    std::int64_t n_unique_alpha,
+    std::int64_t n_unique_beta) {
     return state_coefficients.close_shell_diagonal && n_unique_alpha == n_unique_beta &&
            state_coefficients.diagonal_coefficients.size() ==
                static_cast<std::size_t>(n_unique_alpha);
@@ -186,8 +187,8 @@ void accumulate_directional_diagonal_kernel_image_global(
 
 void validate_state_coefficient_matrix(
     const SelectedStateDeterminantCoefficients& state_coefficients,
-    int n_unique_alpha,
-    int n_unique_beta) {
+    std::int64_t n_unique_alpha,
+    std::int64_t n_unique_beta) {
     if (state_coefficients.coefficient_matrix.rows() != n_unique_alpha ||
         state_coefficients.coefficient_matrix.cols() != n_unique_beta) {
         throw std::invalid_argument(
@@ -212,7 +213,7 @@ void validate_local_state_coefficient_matrix(
 
 SameSpinPairScalarMatrices
 build_pair_scalar_matrices(const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
-                           int n_unique_determinants) {
+                           std::int64_t n_unique_determinants) {
     const std::size_t expected_size = square_storage_size(n_unique_determinants);
     if (ordered_pair_cache.size() != expected_size) {
         throw std::invalid_argument(
@@ -227,8 +228,8 @@ build_pair_scalar_matrices(const std::vector<SpinDeterminantPairEvaluation>& ord
     matrices.singular_total_hamiltonian_matrix =
         Eigen::MatrixXd::Zero(n_unique_determinants, n_unique_determinants);
 
-    for (int left_id = 0; left_id < n_unique_determinants; ++left_id) {
-        for (int right_id = left_id; right_id < n_unique_determinants; ++right_id) {
+    for (Eigen::Index left_id = 0; left_id < n_unique_determinants; ++left_id) {
+        for (Eigen::Index right_id = left_id; right_id < n_unique_determinants; ++right_id) {
             const auto& pair_evaluation = ordered_pair_cache[ordered_spin_pair_storage_index(
                 left_id, right_id, n_unique_determinants)];
             set_symmetric_matrix_entry(&matrices.overlap_determinant_matrix,

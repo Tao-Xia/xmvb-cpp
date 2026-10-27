@@ -440,7 +440,7 @@ int main(int argc, char** argv) {
         // unique determinant terms entering the exact structure-pair overlap
         // expansion for that single raw structure.
         std::vector<PerStructureCache> structure_cache(raw_structure_data.n_structures);
-        for (int structure_index = 0; structure_index < raw_structure_data.n_structures;
+        for (std::int64_t structure_index = 0; structure_index < raw_structure_data.n_structures;
              ++structure_index) {
             auto& cache = structure_cache[structure_index];
             cache.active_pairs =
@@ -736,7 +736,7 @@ int main(int argc, char** argv) {
         std::cout << "elapsed_wall_time_seconds = " << elapsed_seconds << '\n';
 
         const int n_examples_to_print =
-            std::min(options.top_examples, static_cast<int>(examples.size()));
+            std::min<std::int64_t>(options.top_examples, static_cast<int>(examples.size()));
         std::cout << "top_examples\n";
         for (int example_index = 0; example_index < n_examples_to_print; ++example_index) {
             const auto& example = examples[example_index];

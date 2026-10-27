@@ -133,12 +133,12 @@ struct DeterminantPairInput {
     /**
    * @brief Zero-based determinant index on the left.
    */
-    int determinant_index_left = 0;
+    Eigen::Index determinant_index_left = 0;
 
     /**
    * @brief Zero-based determinant index on the right.
    */
-    int determinant_index_right = 0;
+    Eigen::Index determinant_index_right = 0;
 
     /**
    * @brief Zero-based occupied orbitals of the left determinant.

@@ -230,7 +230,7 @@ DensityDiagonals contract_diagonal_densities(const VbScfInput& input,
     Eigen::MatrixXd sources = Eigen::MatrixXd::Zero(n_pairs, n_sources);
     for (int w = 0; w < n; ++w)
         for (int z = 0; z <= w; ++z) {
-            const int pair = xmvb::core::PairIndex::packed_pair_index(w, z);
+            const auto pair = xmvb::core::PairIndex::packed_pair_index(w, z);
             for (int a = 0; a < n; ++a) {
                 sources(pair, a) = w == z ? (w == a ? dm1(a, w) : 0.0)
                                           : (w == a ? dm1(a, z) : 0.0) + (z == a ? dm1(a, w) : 0.0);
@@ -251,7 +251,7 @@ DensityDiagonals contract_diagonal_densities(const VbScfInput& input,
         Eigen::Map<Eigen::MatrixXd> matrix(weights.col(j).data(), n, n);
         for (int w = 0; w < n; ++w)
             for (int z = 0; z <= w; ++z) {
-                const int pair = xmvb::core::PairIndex::packed_pair_index(w, z);
+                const auto pair = xmvb::core::PairIndex::packed_pair_index(w, z);
                 matrix(w, z) = matrix(z, w) = basis(pair, j) * (w == z ? 1.0 : 0.5);
             }
     }

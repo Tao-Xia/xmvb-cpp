@@ -25,21 +25,22 @@ struct SigmaTileBudget {
 /** Exact target boundary for the same support, links and source layout.
  * Callers certify that the replayed tile fits their current storage budget. */
 struct SigmaTileBoundary {
-    int targets;
+    StringIndex targets;
     std::size_t payload;
     bool full_alpha, full_beta;
 };
 
 struct SigmaTargetGroup {
-    int beta, begin, end, column = 0;
+    StringIndex beta, begin, end, column = 0;
 };
 
 /** Current bounded tile only; contains no cursors or borrowed support objects. */
 struct SigmaTile {
     std::vector<SigmaTargetGroup> groups;
-    std::vector<int> active, group_index, halo, columns, halo_index, column_index, released;
+    std::vector<StringIndex> active, group_index, halo, columns, halo_index, column_index, released;
     std::vector<unsigned char> active_support;
-    std::vector<int> channel_groups, diagonal_rows;
+    std::vector<int> channel_groups;
+    std::vector<StringIndex> diagonal_rows;
     std::size_t unsupported_targets = 0, bulk_targets = 0;
 };
 
@@ -69,12 +70,12 @@ class SigmaTilePlan : public SigmaTile {
 
   private:
     struct Node {
-        int alpha, beta;
+        StringIndex alpha, beta;
         bool supported;
         int group, channels;
     };
     bool prepare_column();
-    Node column_node(int row) const;
+    Node column_node(StringIndex row) const;
     bool pull(Node& node);
     void reset_tile();
     void append_node(const Node& node, bool new_group, bool expand_alpha);
@@ -85,18 +86,19 @@ class SigmaTilePlan : public SigmaTile {
     const ProductSupport* support_;
     int parity_;
     SigmaTileBudget budget_;
-    std::vector<int> beta_targets_, seen_alpha_, new_alpha_, new_beta_, last_use_, release_order_;
-    std::vector<int> column_rows_;
+    std::vector<StringIndex> beta_targets_, seen_alpha_, new_alpha_, new_beta_, last_use_,
+        release_order_;
+    std::vector<StringIndex> column_rows_;
     std::vector<unsigned char> column_support_;
     bool column_ready_ = false, byte_limited_ = false;
     std::vector<unsigned char> alpha_seen_;
     std::optional<Node> pending_;
     std::size_t next_beta_ = 0, next_release_ = 0;
     // Byte admission is integer arithmetic. A rejected candidate may exceed
-    // size_t; 128 bits cover the products of the int-bounded tile dimensions.
+    // size_t; 128 bits cover the admitted native row extents and bounded RHS/channel counts.
     using Bytes = __uint128_t;
     Bytes row_bytes_ = 0, entry_bytes_ = 0, column_bytes_ = 0, group_bytes_ = 0, payload_ = 0;
-    int next_alpha_ = 0;
+    StringIndex next_alpha_ = 0;
 };
 
 } // namespace xmvb::mcscf::detail

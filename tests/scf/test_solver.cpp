@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <array>
 #include <cmath>
 #include <functional>
@@ -115,7 +116,7 @@ RiAoFactorization make_ri() {
 AoIntegralInput make_exact_from_ri(const RiAoFactorization& ri) {
     const int n = ri.n_basis_functions;
     const int npair = ri.n_packed_ao_pairs;
-    std::vector<int> left, right;
+    std::vector<std::int64_t> left, right;
     std::vector<double> values;
     const Matrix pair_eri =
         ri.metric_whitened_ao_pair_factors.transpose() * ri.metric_whitened_ao_pair_factors;

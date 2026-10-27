@@ -41,8 +41,8 @@ void accumulate_ordered_packed_gradient_from_pair_graph(
     const SelectedStatePairGraph& pair_graph,
     int n_packed_active_pairs,
     std::vector<double>* packed_active_two_electron_gradient) {
-    const int n_threads =
-        std::min(xmvb::effective_openmp_thread_count(), selected_states.n_unique_alpha);
+    const int n_threads = std::min<Eigen::Index>(xmvb::effective_openmp_thread_count(),
+                                                 selected_states.n_unique_alpha);
 #pragma omp parallel if (n_threads > 1) num_threads(n_threads)
     {
         std::vector<double> beta_image(n_packed_active_pairs, 0.0);
@@ -50,8 +50,10 @@ void accumulate_ordered_packed_gradient_from_pair_graph(
         touched_beta_channels.reserve(n_packed_active_pairs);
         std::vector<unsigned char> beta_channel_touched(n_packed_active_pairs, 0u);
 #pragma omp for schedule(static)
-        for (int alpha_right = 0; alpha_right < selected_states.n_unique_alpha; ++alpha_right) {
-            for (int alpha_left = 0; alpha_left < selected_states.n_unique_alpha; ++alpha_left) {
+        for (Eigen::Index alpha_right = 0; alpha_right < selected_states.n_unique_alpha;
+             ++alpha_right) {
+            for (Eigen::Index alpha_left = 0; alpha_left < selected_states.n_unique_alpha;
+                 ++alpha_left) {
                 const auto& alpha_projection =
                     packed_projection(primary_pairs[ordered_spin_pair_storage_index(
                         alpha_left, alpha_right, selected_states.n_unique_alpha)]);
@@ -77,7 +79,7 @@ void accumulate_ordered_packed_gradient_from_pair_graph(
                         if (std::abs(contribution) <= kContributionTolerance) {
                             continue;
                         }
-                        const int packed_index = xmvb::core::PairIndex::packed_pair_of_pairs_index(
+                        const auto packed_index = xmvb::core::PairIndex::packed_pair_of_pairs_index(
                             beta_channel, alpha_channel);
 #pragma omp atomic update
                         (*packed_active_two_electron_gradient)[packed_index] += contribution;

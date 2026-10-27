@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/index.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -20,12 +22,18 @@ namespace xmvb::cuda {
 /** Device counterpart of the CPU column callbacks. Packing is
  * (alpha_rows, beta_local*width+rhs); callbacks borrow the current tile only.
  */
-using CiTileReader =
-    std::function<void(std::span<const int>, std::span<const int>, linalg::MatrixView)>;
+using CiTileReader = std::function<void(
+    std::span<const std::int64_t>, std::span<const std::int64_t>, linalg::MatrixView)>;
 /** One left carrier contributes to one caller-owned orbital output. */
 struct CiStreamedGeneratorTerm {
     linalg::ConstMatrixView left;
     std::size_t output;
+};
+/** @brief Full oriented single-spin bilinear; no product reader is needed. */
+struct CiSpinGeneratorTerm {
+    linalg::ConstMatrixView left, right;
+    std::size_t output = 0;
+    double scale = 1;
 };
 /** Terms sharing this reader consume each target and beta-neighbor tile once. */
 struct CiStreamedGeneratorBatch {
@@ -41,22 +49,22 @@ struct CiStreamedGeneratorBatch {
  * Numerical columns can be views into the same packed allocation.
  */
 struct CiTileColumn {
-    int source;
-    const int* rows;
+    std::int64_t source;
+    const std::int64_t* rows;
     linalg::MatrixView values;
     bool full_rows = false;
 };
 /** Exact device-resident support of a compact column, shared by every lane. */
 struct CiColumnMap {
-    const int* rows;
-    int size;
+    const std::int64_t* rows;
+    std::int64_t size;
     std::int64_t offset;
 };
 /** Borrowed compact output panel. source_begin/count select consecutive
  * columns in the current, sorted tile beta list; maps start at first_beta.
  * lane is the first of width consecutive RHS slots in values. */
 struct CiTilePanel {
-    int first_beta, source_begin, count, lane, max_rows;
+    std::int64_t first_beta, source_begin, count, lane, max_rows;
     const CiColumnMap* maps;
     linalg::MatrixView values;
 };
@@ -68,9 +76,9 @@ struct CiTileGather {
    * obtained from the shared beta index; absent columns are not touched. */
     std::function<void(const CiTilePanel&)> panel;
 };
-using CiTileWriter =
-    std::function<void(std::span<const int>, std::span<const int>, const CiTileGather&)>;
-using CiColumnRelease = std::function<void(std::span<const int>)>;
+using CiTileWriter = std::function<void(
+    std::span<const std::int64_t>, std::span<const std::int64_t>, const CiTileGather&)>;
+using CiColumnRelease = std::function<void(std::span<const std::int64_t>)>;
 
 class DirectCiSigma;
 struct CiTileRequest {
@@ -249,8 +257,9 @@ class DirectCiSigma {
    * columns and all alpha rows. Outputs are overwritten unless add is true;
    * only the upper triangle is produced. symmetric_sum adds the transpose.
    * Exchange reduction requires full same-parity carriers across all panels.
-   * One right tile and beta event schedule serve each batch's terms; dense
-   * numerical storage is one carrier panel plus orbital-space reductions.
+   * Up to two readers share link decoding and beta event kernels. Numerical
+   * storage is at most two bounded panels plus orbital-space reductions; the
+   * second reader is admitted from tracked headroom, without a device query.
    */
     void generator_adjoint_streamed(int first,
                                     std::span<const CiStreamedGeneratorBatch> batches,
@@ -258,6 +267,12 @@ class DirectCiSigma {
                                     bool symmetric_sum = false,
                                     bool spin_exchange_reduced = false,
                                     bool add = false) const;
+
+    /** Accumulate full single-spin moments with one shared link schedule. */
+    void spin_generator_adjoints(bool beta,
+                                 std::span<const CiSpinGeneratorTerm> terms,
+                                 std::span<const linalg::MatrixView> outputs,
+                                 bool add = false) const;
 
     /** One-body generator image for a beta panel, with a device reader for
    * target and spectator columns. The image is overwritten. */
@@ -280,10 +295,10 @@ class DirectCiSigma {
    */
     void reset_workspace() const;
 
-    int n_alpha_strings() const noexcept {
+    std::int64_t n_alpha_strings() const noexcept {
         return n_alpha_;
     }
-    int n_beta_strings() const noexcept {
+    std::int64_t n_beta_strings() const noexcept {
         return n_beta_;
     }
     int n_orbitals() const noexcept {
@@ -313,21 +328,25 @@ class DirectCiSigma {
     }
 
   private:
-    std::int64_t contraction_rows(int width) const noexcept {
-        return (exchange_parity_ ? static_cast<std::int64_t>(n_alpha_) * (n_alpha_ + 1) / 2
-                                 : static_cast<std::int64_t>(n_alpha_) * n_beta_) *
-               width;
+    std::int64_t contraction_rows(std::int64_t width) const {
+        const auto alpha = core::checked_index<std::size_t>(n_alpha_);
+        const auto rows =
+            exchange_parity_
+                ? core::triangular_count(alpha)
+                : core::checked_multiply(alpha, core::checked_index<std::size_t>(n_beta_));
+        return core::checked_index<std::int64_t>(
+            core::checked_multiply(rows, core::checked_index<std::size_t>(width)));
     }
     void complete_exchange(linalg::MatrixView, bool average) const;
     std::size_t tile_resident_bytes() const noexcept;
     struct SpinGraph {
         mcscf::SpinConnections topology;
         /** Zero means absent; signed (source+1) encodes the exact fermionic sign. */
-        Buffer<int> sources;
+        Buffer<std::int64_t> sources;
         SpinGraph() = default;
         SpinGraph(Context& context, const mcscf::SpinConnections& source, int channels);
         std::size_t resident_bytes() const noexcept {
-            return sources.size() * sizeof(int);
+            return sources.size() * sizeof(std::int64_t);
         }
     };
 
@@ -350,7 +369,8 @@ class DirectCiSigma {
                                  linalg::MatrixView pair_kernel_adjoint,
                                  double* scratch) const;
     Context* context_;
-    int n_alpha_, n_beta_, n_orbitals_, n_electrons_, n_channels_, channel_capacity_;
+    std::int64_t n_alpha_, n_beta_;
+    int n_orbitals_, n_electrons_, n_channels_, channel_capacity_;
     int exchange_parity_;
     bool shared_spin_graph_;
     Buffer<double> kernel_;

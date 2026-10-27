@@ -34,14 +34,14 @@ struct SelectedStateDeterminantCoefficients {
     Eigen::MatrixXd coefficient_matrix;
     bool close_shell_diagonal = false;
     std::vector<double> diagonal_coefficients;
-    std::vector<int> alpha_support;
-    std::vector<int> beta_support;
+    std::vector<Eigen::Index> alpha_support;
+    std::vector<Eigen::Index> beta_support;
     /** @brief Row-major sparse local coefficient matrix for string contractions. */
-    Eigen::SparseMatrix<double, Eigen::RowMajor, int> local_sparse_coefficient_matrix;
+    Eigen::SparseMatrix<double, Eigen::RowMajor, Eigen::Index> local_sparse_coefficient_matrix;
     /** @brief Row-major sparse transpose for beta-oriented contractions. */
-    Eigen::SparseMatrix<double, Eigen::RowMajor, int> local_sparse_coefficient_transpose;
+    Eigen::SparseMatrix<double, Eigen::RowMajor, Eigen::Index> local_sparse_coefficient_transpose;
     std::vector<double> local_diagonal_coefficients;
-    int nonzero_coefficient_count = 0;
+    std::size_t nonzero_coefficient_count = 0;
 };
 
 /**
@@ -51,16 +51,16 @@ struct SelectedStateDeterminantCoefficients {
  * unique `(alpha_id, beta_id)` coordinates.
  */
 struct SelectedStateDeterminantMatrices {
-    int n_structures = 0;
-    int n_determinants = 0;
-    int n_unique_alpha = 0;
-    int n_unique_beta = 0;
+    Eigen::Index n_structures = 0;
+    Eigen::Index n_determinants = 0;
+    Eigen::Index n_unique_alpha = 0;
+    Eigen::Index n_unique_beta = 0;
 
     std::vector<int> selected_state_indices;
     std::vector<double> normalized_state_weights;
 
-    std::vector<int> determinant_to_unique_alpha_id;
-    std::vector<int> determinant_to_unique_beta_id;
+    std::vector<Eigen::Index> determinant_to_unique_alpha_id;
+    std::vector<Eigen::Index> determinant_to_unique_beta_id;
 
     std::vector<SelectedStateDeterminantCoefficients> states;
 };

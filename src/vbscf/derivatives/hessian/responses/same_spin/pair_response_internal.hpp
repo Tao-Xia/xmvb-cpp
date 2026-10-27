@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include "mcscf/ci/string_table.hpp"
 
 #include <vector>
@@ -23,22 +25,23 @@ class SameSpinDirectionalPairTileView;
  * `n_unique x n_unique` directional object is required by this representation.
  */
 struct SameSpinDirectionalPairTile {
-    int left_begin = 0;
-    int right_begin = 0;
+    std::int64_t left_begin = 0;
+    std::int64_t right_begin = 0;
     Eigen::MatrixXd delta_overlap;
     Eigen::MatrixXd delta_regular_hamiltonian;
     Eigen::MatrixXd delta_singular_hamiltonian;
     std::vector<SameSpinPolynomialDirectionalPairData> pairs;
 
-    int left_size() const noexcept {
+    Eigen::Index left_size() const noexcept {
         return static_cast<int>(delta_overlap.rows());
     }
 
-    int right_size() const noexcept {
+    Eigen::Index right_size() const noexcept {
         return static_cast<int>(delta_overlap.cols());
     }
 
-    const SameSpinPolynomialDirectionalPairData& pair(int left_local, int right_local) const;
+    const SameSpinPolynomialDirectionalPairData& pair(Eigen::Index left_local,
+                                                      Eigen::Index right_local) const;
 
     SameSpinDirectionalPairTileView view(bool transposed = false) const;
 };
@@ -53,10 +56,10 @@ class SameSpinDirectionalPairTileView {
                                     bool transposed) noexcept
         : storage_(&storage), transposed_(transposed) {}
 
-    int left_begin() const noexcept;
-    int right_begin() const noexcept;
-    int left_size() const noexcept;
-    int right_size() const noexcept;
+    std::int64_t left_begin() const noexcept;
+    std::int64_t right_begin() const noexcept;
+    Eigen::Index left_size() const noexcept;
+    Eigen::Index right_size() const noexcept;
     bool transposed() const noexcept {
         return transposed_;
     }
@@ -66,7 +69,7 @@ class SameSpinDirectionalPairTileView {
     ConstMatrixMap delta_singular_hamiltonian() const;
 
     template <typename Consumer>
-    void with_pair(int left_local, int right_local, Consumer&& consume) const {
+    void with_pair(Eigen::Index left_local, Eigen::Index right_local, Consumer&& consume) const {
         if (!transposed_) {
             consume(storage_->pair(left_local, right_local));
             return;
@@ -87,13 +90,13 @@ class SameSpinDirectionalPairTileView {
 SameSpinDirectionalPairTile
 build_directional_pair_tile(const xmvb::mcscf::StringTable& unique_determinants,
                             const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
-                            int n_unique_determinants,
+                            std::int64_t n_unique_determinants,
                             int n_active_orbitals,
                             const ActiveSpaceIntegralDirectionView& direction,
-                            int left_begin,
-                            int left_end,
-                            int right_begin,
-                            int right_end,
+                            std::int64_t left_begin,
+                            std::int64_t left_end,
+                            std::int64_t right_begin,
+                            std::int64_t right_end,
                             const Eigen::MatrixXd* accepted_active_one_electron,
                             const Eigen::MatrixXd* accepted_ri_active_pair_factors,
                             const Eigen::MatrixXd* directional_ri_active_pair_factors);

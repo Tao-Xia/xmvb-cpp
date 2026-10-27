@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include <vector>
 
 #include <Eigen/Core>
@@ -24,22 +26,22 @@ void accumulate_alpha_accepted_tile_weights(
     const SelectedStateDeterminantMatrices& selected_states,
     const std::vector<double>& selected_state_energies,
     const std::vector<SpinDeterminantPairEvaluation>& partner_pair_cache,
-    int n_unique_partner,
-    int left_begin,
-    int left_end,
-    int right_begin,
-    int right_end,
+    std::int64_t n_unique_partner,
+    std::int64_t left_begin,
+    std::int64_t left_end,
+    std::int64_t right_begin,
+    std::int64_t right_end,
     SameSpinAcceptedTileWeights* weights);
 
 void accumulate_beta_accepted_tile_weights(
     const SelectedStateDeterminantMatrices& selected_states,
     const std::vector<double>& selected_state_energies,
     const std::vector<SpinDeterminantPairEvaluation>& partner_pair_cache,
-    int n_unique_partner,
-    int left_begin,
-    int left_end,
-    int right_begin,
-    int right_end,
+    std::int64_t n_unique_partner,
+    std::int64_t left_begin,
+    std::int64_t left_end,
+    std::int64_t right_begin,
+    std::int64_t right_end,
     SameSpinAcceptedTileWeights* weights);
 
 void accumulate_alpha_directional_tile_weights(
@@ -48,11 +50,11 @@ void accumulate_alpha_directional_tile_weights(
     const std::vector<double>& selected_state_energies,
     const std::vector<double>& directional_selected_state_energies,
     const std::vector<SpinDeterminantPairEvaluation>& partner_pair_cache,
-    int n_unique_partner,
-    int left_begin,
-    int left_end,
-    int right_begin,
-    int right_end,
+    std::int64_t n_unique_partner,
+    std::int64_t left_begin,
+    std::int64_t left_end,
+    std::int64_t right_begin,
+    std::int64_t right_end,
     SameSpinAcceptedTileWeights* weights);
 
 void accumulate_beta_directional_tile_weights(
@@ -61,11 +63,11 @@ void accumulate_beta_directional_tile_weights(
     const std::vector<double>& selected_state_energies,
     const std::vector<double>& directional_selected_state_energies,
     const std::vector<SpinDeterminantPairEvaluation>& partner_pair_cache,
-    int n_unique_partner,
-    int left_begin,
-    int left_end,
-    int right_begin,
-    int right_end,
+    std::int64_t n_unique_partner,
+    std::int64_t left_begin,
+    std::int64_t left_end,
+    std::int64_t right_begin,
+    std::int64_t right_end,
     SameSpinAcceptedTileWeights* weights);
 
 } // namespace xmvb::vb::detail

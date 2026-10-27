@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/index.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -27,7 +29,7 @@ struct ProjectedEigenpairs {
 inline ProjectedEigenpairs
 solve_lowest_projected_eigenpairs(const Eigen::Ref<const Eigen::MatrixXd>& hamiltonian,
                                   int n_roots) {
-    const int dimension = static_cast<int>(hamiltonian.rows());
+    const lapack_int dimension = core::checked_index<lapack_int>(hamiltonian.rows());
     Eigen::MatrixXd matrix = hamiltonian;
     ProjectedEigenpairs result{Eigen::VectorXd(n_roots), Eigen::MatrixXd(dimension, n_roots)};
     std::vector<lapack_int> support(2 * n_roots);
@@ -56,12 +58,12 @@ solve_lowest_projected_eigenpairs(const Eigen::Ref<const Eigen::MatrixXd>& hamil
     return result;
 }
 
-inline void validate_davidson_options(int dimension, const DavidsonOptions& options) {
+inline void validate_davidson_options(Eigen::Index dimension, const DavidsonOptions& options) {
     if (dimension <= 0 || options.n_roots <= 0 || options.n_roots > dimension) {
         throw std::invalid_argument("invalid Davidson eigenproblem dimensions");
     }
     if (options.max_iterations <= 0 ||
-        options.max_subspace_dimension < std::min(dimension, 2 * options.n_roots) ||
+        options.max_subspace_dimension < std::min<Eigen::Index>(dimension, 2LL * options.n_roots) ||
         options.max_subspace_dimension > dimension) {
         throw std::invalid_argument("invalid Davidson iteration or subspace budget");
     }
@@ -234,7 +236,7 @@ template <class Backend>
 void validate_images(Backend& backend,
                      ConstMatrixView h,
                      ConstMatrixView s,
-                     int dimension,
+                     Eigen::Index dimension,
                      int width,
                      bool identity_overlap) {
     if (h.rows != dimension || h.cols != width ||
@@ -261,13 +263,13 @@ Result solve_davidson(Backend& backend,
                       const OverlapDiagonal& overlap_diagonal,
                       const InitialVectors& initial_vectors,
                       const DavidsonOptions& options) {
-    const int dimension = [&] {
+    const Eigen::Index dimension = [&] {
         if constexpr (std::is_same_v<HamiltonianDiagonal, ConstMatrixView>) {
             backend.validate_diagonals(hamiltonian_diagonal, overlap_diagonal);
-            return static_cast<int>(hamiltonian_diagonal.rows);
+            return hamiltonian_diagonal.rows;
         } else {
             validate_davidson_diagonals(hamiltonian_diagonal, overlap_diagonal);
-            return static_cast<int>(hamiltonian_diagonal.size());
+            return hamiltonian_diagonal.size();
         }
     }();
     validate_davidson_options(dimension, options);
@@ -352,7 +354,7 @@ Result solve_davidson(Backend& backend,
                                  projected_hamiltonian);
     Eigen::VectorXd previous_eigenvalues;
 
-    for (int iteration = 1; iteration <= options.max_iterations; ++iteration) {
+    for (Eigen::Index iteration = 1; iteration <= options.max_iterations; ++iteration) {
         result.iterations = iteration;
         result.peak_subspace_dimension = std::max(result.peak_subspace_dimension, active_dimension);
         const Eigen::MatrixXd active_projected_hamiltonian =

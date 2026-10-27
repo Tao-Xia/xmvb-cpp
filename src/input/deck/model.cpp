@@ -362,10 +362,11 @@ void apply_ctrl_flag(const std::string& raw_token, InputDeckMetadata* metadata) 
         throw std::invalid_argument("metadata must not be null");
     }
     const std::string token = to_ascii_upper(raw_token);
-    if (token == "VBSCF" || token == "CASSCF" || token == "DFT") {
-        const ElectronicMethod requested = token == "DFT"      ? ElectronicMethod::Dft
-                                           : token == "CASSCF" ? ElectronicMethod::Casscf
-                                                               : ElectronicMethod::Vbscf;
+    if (token == "VBSCF" || token == "CUVBSCF" || token == "CASSCF" || token == "DFT") {
+        const ElectronicMethod requested = token == "DFT"       ? ElectronicMethod::Dft
+                                           : token == "CASSCF"  ? ElectronicMethod::Casscf
+                                           : token == "CUVBSCF" ? ElectronicMethod::CuVbscf
+                                                                : ElectronicMethod::Vbscf;
         if (metadata->electronic_method_explicit && metadata->electronic_method != requested)
             throw std::invalid_argument("$CTRL must select only one electronic method");
         metadata->electronic_method = requested;

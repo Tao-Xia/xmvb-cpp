@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "cuda/optimization/coarse.hpp"
 
 #include <algorithm>
@@ -33,7 +34,7 @@ __global__ void finite_vectors(linalg::ConstMatrixView first,
 struct CompactView {
     const double* basis;
     const double* metric;
-    int begin, length;
+    std::int64_t begin, length;
 };
 
 __global__ void projection_magnitudes(const CompactView* columns,
@@ -83,7 +84,7 @@ class DeviceScalars {
 };
 
 std::size_t reduction_size(int capacity) {
-    const auto n = static_cast<std::size_t>(std::max(0, capacity));
+    const auto n = static_cast<std::size_t>(std::max<std::int64_t>(0, capacity));
     return std::max({n * n, 5 * n + 4, n + 3});
 }
 
@@ -98,20 +99,25 @@ unsigned int grid(std::int64_t count) {
 } // namespace
 
 DeviceCoarsePreconditioner::DeviceCoarsePreconditioner(Context& context,
-                                                       int dimension,
+                                                       std::int64_t dimension,
                                                        int capacity,
                                                        double lindep,
                                                        double action_accuracy,
                                                        std::vector<SupportRange> supports)
-    : context_(&context), dimension_(dimension), capacity_(std::min(dimension, capacity)),
-      lindep_(lindep), action_accuracy_(action_accuracy),
-      images_(context, dimension, std::max(0, capacity_)), sample_v_(context, dimension, 1),
-      sample_h_(context, dimension, 1), sample_m_(context, dimension, 1),
-      coefficients_(context, std::max(1, capacity_), 1),
+    : context_(&context), dimension_(dimension),
+      capacity_(std::min<std::int64_t>(dimension, capacity)), lindep_(lindep),
+      action_accuracy_(action_accuracy),
+      images_(context, dimension, std::max<std::int64_t>(0, capacity_)),
+      sample_v_(context, dimension, 1), sample_h_(context, dimension, 1),
+      sample_m_(context, dimension, 1),
+      coefficients_(context, std::max<std::int64_t>(1, capacity_), 1),
       reductions_(context, reduction_size(capacity_)), finite_(context, 1),
-      hessian_projection_(Eigen::MatrixXd::Zero(std::max(0, capacity_), std::max(0, capacity_))),
-      metric_projection_(Eigen::MatrixXd::Zero(std::max(0, capacity_), std::max(0, capacity_))),
-      sample_factor_(Eigen::MatrixXd::Zero(std::max(0, capacity_), std::max(0, capacity_))) {
+      hessian_projection_(Eigen::MatrixXd::Zero(std::max<std::int64_t>(0, capacity_),
+                                                std::max<std::int64_t>(0, capacity_))),
+      metric_projection_(Eigen::MatrixXd::Zero(std::max<std::int64_t>(0, capacity_),
+                                               std::max<std::int64_t>(0, capacity_))),
+      sample_factor_(Eigen::MatrixXd::Zero(std::max<std::int64_t>(0, capacity_),
+                                           std::max<std::int64_t>(0, capacity_))) {
     if (dimension <= 0 || capacity < 0 || !(lindep > 0.0) || !std::isfinite(action_accuracy) ||
         action_accuracy < 0.0)
         throw std::invalid_argument("invalid CUDA coarse preconditioner dimensions");
@@ -257,7 +263,7 @@ void DeviceCoarsePreconditioner::copy(linalg::MatrixView out, linalg::ConstMatri
 }
 
 void DeviceCoarsePreconditioner::scale(linalg::MatrixView out, double coefficient) const {
-    check_cublas(cublasDscal(context_->blas(), dimension_, &coefficient, out.data, 1),
+    check_cublas(cublasDscal_64(context_->blas(), dimension_, &coefficient, out.data, 1),
                  "CUDA coarse scale");
 }
 
@@ -295,7 +301,7 @@ void DeviceCoarsePreconditioner::observe(linalg::ConstMatrixView direction,
 void DeviceCoarsePreconditioner::observe_range(linalg::ConstMatrixView direction,
                                                linalg::ConstMatrixView image,
                                                linalg::ConstMatrixView metric_image,
-                                               int begin) {
+                                               std::int64_t begin) {
     const nvtx3::scoped_range range{"coarse.observe"};
     if (begin < 0 || begin >= dimension_ || direction.rows <= 0 ||
         direction.rows > dimension_ - begin || direction.cols != 1 ||
@@ -346,7 +352,7 @@ void DeviceCoarsePreconditioner::observe_range(linalg::ConstMatrixView direction
     {
         DeviceScalars mode(context_->blas());
         check_cublas(
-            cublasDnrm2(context_->blas(), length, sample_v_.data() + begin, 1, scalars + size_),
+            cublasDnrm2_64(context_->blas(), length, sample_v_.data() + begin, 1, scalars + size_),
             "CUDA coarse initial norm");
         for (int pass = 0; pass < 2; ++pass)
             for (int i = 0; i < size_; ++i) {
@@ -354,43 +360,44 @@ void DeviceCoarsePreconditioner::observe_range(linalg::ConstMatrixView direction
                 if (column.begin != begin || column.length != length)
                     continue;
                 double* const coefficient = scalars + size_ + 2;
-                check_cublas(cublasDdot(context_->blas(),
-                                        length,
-                                        basis_data(column),
-                                        1,
-                                        sample_v_.data() + begin,
-                                        1,
-                                        coefficient),
+                check_cublas(cublasDdot_64(context_->blas(),
+                                           length,
+                                           basis_data(column),
+                                           1,
+                                           sample_v_.data() + begin,
+                                           1,
+                                           coefficient),
                              "CUDA coarse device dot");
                 accumulate_coefficient<<<1, 1, 0, context_->stream()>>>(coefficient, scalars + i);
                 check_cuda(cudaGetLastError(), "CUDA coarse coefficient accumulation");
-                check_cublas(cublasDaxpy(context_->blas(),
-                                         length,
-                                         coefficient,
-                                         basis_data(column),
-                                         1,
-                                         sample_v_.data() + begin,
-                                         1),
+                check_cublas(cublasDaxpy_64(context_->blas(),
+                                            length,
+                                            coefficient,
+                                            basis_data(column),
+                                            1,
+                                            sample_v_.data() + begin,
+                                            1),
                              "CUDA coarse compact basis axpy");
-                check_cublas(cublasDaxpy(context_->blas(),
-                                         dimension_,
-                                         coefficient,
-                                         images_.view().column(i).data,
-                                         1,
-                                         sample_h_.data(),
-                                         1),
+                check_cublas(cublasDaxpy_64(context_->blas(),
+                                            dimension_,
+                                            coefficient,
+                                            images_.view().column(i).data,
+                                            1,
+                                            sample_h_.data(),
+                                            1),
                              "CUDA coarse image axpy");
-                check_cublas(cublasDaxpy(context_->blas(),
-                                         length,
-                                         coefficient,
-                                         metric_data(column),
-                                         1,
-                                         sample_m_.data() + begin,
-                                         1),
+                check_cublas(cublasDaxpy_64(context_->blas(),
+                                            length,
+                                            coefficient,
+                                            metric_data(column),
+                                            1,
+                                            sample_m_.data() + begin,
+                                            1),
                              "CUDA coarse compact metric axpy");
             }
         check_cublas(
-            cublasDnrm2(context_->blas(), length, sample_v_.data() + begin, 1, scalars + size_ + 1),
+            cublasDnrm2_64(
+                context_->blas(), length, sample_v_.data() + begin, 1, scalars + size_ + 1),
             "CUDA coarse remaining norm");
     }
     Eigen::VectorXd samples(size_ + 2);
@@ -447,9 +454,9 @@ void DeviceCoarsePreconditioner::observe_range(linalg::ConstMatrixView direction
                                    cudaMemcpyDeviceToDevice,
                                    context_->stream()),
                    "CUDA coarse compact metric copy");
-        check_cublas(cublasDscal(context_->blas(), length, &inverse, basis, 1),
+        check_cublas(cublasDscal_64(context_->blas(), length, &inverse, basis, 1),
                      "CUDA coarse compact basis scale");
-        check_cublas(cublasDscal(context_->blas(), length, &inverse, metric, 1),
+        check_cublas(cublasDscal_64(context_->blas(), length, &inverse, metric, 1),
                      "CUDA coarse compact metric scale");
         columns_.push_back({begin, length, panel_index, slot});
         ++panel.used;
@@ -522,17 +529,18 @@ void DeviceCoarsePreconditioner::observe_range(linalg::ConstMatrixView direction
                     const auto& current = panels_[p];
                     if (!current.used)
                         continue;
-                    check_cublas(cublasDnrm2(context_->blas(),
-                                             blas_int(static_cast<std::int64_t>(current.length) *
-                                                      current.used),
-                                             current.basis.data(),
-                                             1,
-                                             scalars + offset++),
-                                 "CUDA coarse compact panel norm");
+                    check_cublas(
+                        cublasDnrm2_64(context_->blas(),
+                                       (static_cast<std::int64_t>(current.length) * current.used),
+                                       current.basis.data(),
+                                       1,
+                                       scalars + offset++),
+                        "CUDA coarse compact panel norm");
                 }
-                const int count = blas_int(static_cast<std::int64_t>(dimension_) * (candidate + 1));
+                const std::int64_t count =
+                    (static_cast<std::int64_t>(dimension_) * (candidate + 1));
                 check_cublas(
-                    cublasDnrm2(context_->blas(), count, images_.data(), 1, scalars + offset),
+                    cublasDnrm2_64(context_->blas(), count, images_.data(), 1, scalars + offset),
                     "CUDA coarse image norm");
                 ++offset;
             }

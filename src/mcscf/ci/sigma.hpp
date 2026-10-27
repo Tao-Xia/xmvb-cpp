@@ -31,7 +31,8 @@ class DirectCiSigmaAction;
  * Disjoint ranges may run concurrently; the callback must complete before
  * the batch is released.
  */
-using DirectCiColumnAccumulator = std::function<void(int, int, int, int, double*, const int*, int)>;
+using DirectCiColumnAccumulator = std::function<void(
+    StringIndex, StringIndex, StringIndex, StringIndex, double*, const StringIndex*, StringIndex)>;
 
 /** @brief Dense consumers require explicit zeros; Supported consumers promise
  * not to read outside the producer's exact structural source support.
@@ -39,16 +40,19 @@ using DirectCiColumnAccumulator = std::function<void(int, int, int, int, double*
  * the rectangular workspace or introducing compact-index lookups.
  */
 enum class DirectCiRead { Dense, Supported };
-using DirectCiTileReader = std::function<void(
-    const std::vector<int>&, const std::vector<int>&, Eigen::Ref<Eigen::MatrixXd>, DirectCiRead)>;
-using DirectCiTileWriter = std::function<void(
-    const std::vector<int>&, const std::vector<int>&, const DirectCiColumnAccumulator&)>;
+using DirectCiTileReader = std::function<void(const std::vector<StringIndex>&,
+                                              const std::vector<StringIndex>&,
+                                              Eigen::Ref<Eigen::MatrixXd>,
+                                              DirectCiRead)>;
+using DirectCiTileWriter = std::function<void(const std::vector<StringIndex>&,
+                                              const std::vector<StringIndex>&,
+                                              const DirectCiColumnAccumulator&)>;
 
 /** @brief Release columns after their last one-generator consumer has finished.
  * Indices will not be read or written again in this action. Called by the
  * coordinator after all workers have consumed the batch; views are borrowed.
  */
-using DirectCiColumnRelease = std::function<void(std::span<const int>)>;
+using DirectCiColumnRelease = std::function<void(std::span<const StringIndex>)>;
 
 /** @brief One temporal response on a common accepted state and generated graph.
  * Image receives H*response, plus direction*state when direction is supplied.
@@ -69,10 +73,10 @@ struct DirectCiTileRequest {
  */
 struct DirectCiColumnView {
     const double* values;
-    const int* rows;
-    int count;
+    const StringIndex* rows;
+    StringIndex count;
 };
-using DirectCiColumnReader = std::function<DirectCiColumnView(int)>;
+using DirectCiColumnReader = std::function<DirectCiColumnView(StringIndex)>;
 
 /** @brief Integral adjoint of one orthonormal direct-CI bilinear form. */
 struct DirectCiIntegralAdjoint {
@@ -169,10 +173,10 @@ class DirectCiSigmaAction {
     bool shared_spin_connections() const noexcept {
         return !distinct_beta_;
     }
-    int n_alpha_strings() const noexcept {
+    StringIndex n_alpha_strings() const noexcept {
         return n_alpha_;
     }
-    int n_beta_strings() const noexcept {
+    StringIndex n_beta_strings() const noexcept {
         return n_beta_;
     }
     int n_orbitals() const noexcept {
@@ -340,7 +344,7 @@ class DirectCiSigmaAction {
    * beta links; a caller may reconstruct them by a complete exchange-parity
    * projection, but an isolated output panel is not a complete spin action.
    */
-    void apply_one_body_generator_columns(int beta_begin,
+    void apply_one_body_generator_columns(StringIndex beta_begin,
                                           const DirectCiColumnReader& columns,
                                           const Eigen::Ref<const Eigen::MatrixXd>& generator,
                                           Eigen::Ref<Eigen::MatrixXd> result,
@@ -389,8 +393,8 @@ class DirectCiSigmaAction {
    * upper_only restricts the final cotangent, after each requested transpose.
    */
     Eigen::MatrixXd
-    generator_adjoint_columns(int beta_begin,
-                              int beta_count,
+    generator_adjoint_columns(StringIndex beta_begin,
+                              std::int64_t beta_count,
                               const Eigen::Ref<const Eigen::MatrixXd>& left,
                               std::initializer_list<DirectCiGeneratorAdjointRequest> requests,
                               bool upper_only = false) const;
@@ -410,7 +414,7 @@ class DirectCiSigmaAction {
    * An individual panel need not have that parity or equal its unreduced image.
    */
     Eigen::MatrixXd
-    generator_adjoint_streamed(int beta_begin,
+    generator_adjoint_streamed(StringIndex beta_begin,
                                const Eigen::Ref<const Eigen::MatrixXd>& left,
                                std::initializer_list<DirectCiStreamedGeneratorRequest> requests,
                                bool symmetric_sum = false,
@@ -422,7 +426,7 @@ class DirectCiSigmaAction {
    * small orbital reductions scale with the number of left panels.
    */
     std::vector<Eigen::MatrixXd>
-    generator_adjoint_streamed(int beta_begin,
+    generator_adjoint_streamed(StringIndex beta_begin,
                                std::span<const Eigen::Ref<const Eigen::MatrixXd>> lefts,
                                std::initializer_list<DirectCiStreamedGeneratorRequest> requests,
                                bool symmetric_sum = false,
@@ -437,9 +441,9 @@ class DirectCiSigmaAction {
                                                   int n_electrons) const;
     /** @brief Scatter into (block_width * alpha_count, orbital_pairs), strings contiguous. */
     void scatter_one_body_intermediate(const Eigen::Ref<const Eigen::MatrixXd>& coefficients,
-                                       int alpha_begin,
-                                       int alpha_count,
-                                       int beta_target,
+                                       StringIndex alpha_begin,
+                                       std::int64_t alpha_count,
+                                       std::int64_t beta_target,
                                        Eigen::Ref<Eigen::MatrixXd> intermediate) const;
     const SpinConnections& beta_connections() const noexcept;
 
@@ -468,20 +472,20 @@ class DirectCiSigmaAction {
     /** @brief Cooperative sigma contraction inside the current OpenMP team.
    * Each output beta column has one owner. All workers must call this method.
    */
-    void apply_sigma_tile(int alpha_begin,
-                          int alpha_count,
+    void apply_sigma_tile(StringIndex alpha_begin,
+                          std::int64_t alpha_count,
                           int block_begin,
                           int block_count,
-                          int beta_begin,
-                          int beta_count,
+                          StringIndex beta_begin,
+                          std::int64_t beta_count,
                           int exchange_parity,
                           const Eigen::Ref<const Eigen::MatrixXd>& scattered,
                           Eigen::Ref<Eigen::MatrixXd> workspace,
                           Eigen::Ref<Eigen::MatrixXd> sigma) const;
 
     int n_orbitals_ = 0;
-    int n_alpha_ = 0;
-    int n_beta_ = 0;
+    StringIndex n_alpha_ = 0;
+    StringIndex n_beta_ = 0;
     Eigen::MatrixXd pair_kernel_;
     Eigen::MatrixXd hamiltonian_pair_kernel_;
     std::shared_ptr<const SpinConnections> alpha_;

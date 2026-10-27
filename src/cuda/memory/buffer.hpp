@@ -11,6 +11,7 @@
 
 #include "cuda/memory/context.hpp"
 #include "linalg/views.hpp"
+#include "core/index.hpp"
 
 namespace xmvb::cuda {
 

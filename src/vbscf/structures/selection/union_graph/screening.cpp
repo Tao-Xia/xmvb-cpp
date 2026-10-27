@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "vbscf/structures/selection/union_graph/screening.hpp"
 
 #include <algorithm>
@@ -49,7 +50,8 @@ Eigen::MatrixXd truncate_block_rank(const Eigen::MatrixXd& block, int rank_cap) 
     }
 
     const Eigen::JacobiSVD<Eigen::MatrixXd> svd(block, Eigen::ComputeThinU | Eigen::ComputeThinV);
-    const int retained_rank = std::min(rank_cap, static_cast<int>(svd.singularValues().size()));
+    const int retained_rank =
+        std::min<std::int64_t>(rank_cap, static_cast<int>(svd.singularValues().size()));
     if (retained_rank <= 0) {
         return Eigen::MatrixXd::Zero(block.rows(), block.cols());
     }
@@ -127,7 +129,7 @@ UnionGraphCrossBlockSummary summarize_cross_block(const Eigen::MatrixXd& support
                 ++directed_rank;
             }
         }
-        *numerical_rank = std::max(*numerical_rank, directed_rank);
+        *numerical_rank = std::max<std::int64_t>(*numerical_rank, directed_rank);
     };
 
     accumulate_singular_values(
@@ -244,9 +246,9 @@ MetricAwareSeparatorCandidate summarize_articulation_candidate(
     candidate.resulting_component_count = static_cast<int>(connected_components.size());
     for (const auto& connected_component : connected_components) {
         candidate.largest_piece_node_count =
-            std::max(candidate.largest_piece_node_count,
-                     static_cast<int>(connected_component.graph_nodes.size()));
-        candidate.largest_piece_covalent_labels = std::max(
+            std::max<std::int64_t>(candidate.largest_piece_node_count,
+                                   static_cast<int>(connected_component.graph_nodes.size()));
+        candidate.largest_piece_covalent_labels = std::max<std::int64_t>(
             candidate.largest_piece_covalent_labels, connected_component.total_covalent_labels);
     }
     return candidate;
@@ -296,7 +298,7 @@ build_weighted_min_degree_order(const MetricAwareComponentGraph& graph) {
             throw std::runtime_error("failed to select a node for weighted min-degree elimination");
         }
 
-        width_upper_bound = std::max(width_upper_bound, best_weighted_degree);
+        width_upper_bound = std::max<std::int64_t>(width_upper_bound, best_weighted_degree);
         elimination_order.push_back(best_node);
 
         std::vector<int> live_neighbors;
@@ -330,7 +332,7 @@ build_weighted_min_degree_order(const MetricAwareComponentGraph& graph) {
 } // namespace
 
 std::vector<OrbitalPair> extract_active_pairs(const RawStructureData& raw_structure_data,
-                                              int structure_index) {
+                                              std::int64_t structure_index) {
     const int n_inactive_doubly_occupied_orbitals =
         (raw_structure_data.n_total_electrons - raw_structure_data.n_active_electrons) / 2;
     const int n_open_shell_electrons = raw_structure_data.spin_multiplicity - 1;
@@ -567,8 +569,8 @@ summarize_union_graph_screening(const Eigen::MatrixXd& support_overlap,
     summary.component_signature = build_component_signature(components);
 
     for (const auto& component : components) {
-        summary.max_component_size = std::max(summary.max_component_size,
-                                              static_cast<int>(component.active_orbitals.size()));
+        summary.max_component_size = std::max<std::int64_t>(
+            summary.max_component_size, static_cast<int>(component.active_orbitals.size()));
         if (component.type == "single_vertex") {
             ++summary.n_single_vertex_components;
         } else if (component.type == "doubled_edge") {
@@ -582,7 +584,7 @@ summarize_union_graph_screening(const Eigen::MatrixXd& support_overlap,
 
     for (const auto& cross_block : cross_blocks) {
         summary.max_numerical_rank =
-            std::max(summary.max_numerical_rank, cross_block.numerical_rank);
+            std::max<std::int64_t>(summary.max_numerical_rank, cross_block.numerical_rank);
         summary.max_cross_block_frobenius =
             std::max(summary.max_cross_block_frobenius, cross_block.frobenius_norm);
         summary.max_cross_block_spectral =
@@ -724,17 +726,18 @@ summarize_metric_aware_component_graph(const MetricAwareComponentGraph& graph,
     summary.node_count = graph.node_count;
     summary.edge_count = static_cast<int>(graph.edges.size());
     for (const auto& neighbors : graph.adjacency) {
-        summary.max_degree = std::max(summary.max_degree, static_cast<int>(neighbors.size()));
+        summary.max_degree =
+            std::max<std::int64_t>(summary.max_degree, static_cast<int>(neighbors.size()));
     }
 
     summary.connected_components = build_metric_connected_components(graph, components, -1);
     summary.connected_component_count = static_cast<int>(summary.connected_components.size());
     for (const auto& connected_component : summary.connected_components) {
         summary.max_component_node_count =
-            std::max(summary.max_component_node_count,
-                     static_cast<int>(connected_component.graph_nodes.size()));
-        summary.max_component_covalent_labels = std::max(summary.max_component_covalent_labels,
-                                                         connected_component.total_covalent_labels);
+            std::max<std::int64_t>(summary.max_component_node_count,
+                                   static_cast<int>(connected_component.graph_nodes.size()));
+        summary.max_component_covalent_labels = std::max<std::int64_t>(
+            summary.max_component_covalent_labels, connected_component.total_covalent_labels);
     }
 
     const auto width_and_order = build_weighted_min_degree_order(graph);

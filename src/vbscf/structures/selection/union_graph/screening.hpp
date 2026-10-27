@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include <map>
 #include <string>
 #include <utility>
@@ -116,7 +118,7 @@ struct MetricAwareGraphSummary {
 };
 
 std::vector<OrbitalPair> extract_active_pairs(const RawStructureData& raw_structure_data,
-                                              int structure_index);
+                                              std::int64_t structure_index);
 
 std::vector<int> build_support_orbitals(const std::vector<OrbitalPair>& left_pairs,
                                         const std::vector<OrbitalPair>& right_pairs);

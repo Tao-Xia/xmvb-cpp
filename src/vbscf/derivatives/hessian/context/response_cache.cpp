@@ -57,7 +57,7 @@ bool weights_are_equal(const std::vector<double>& weights) {
 AcceptedSelectedStateGeneralizedEigenResponseOperator
 build_accepted_selected_state_generalized_eigen_response_operator(
     const AcceptedPointContext& accepted_point_context, bool complete_space) {
-    const int n_structures = accepted_point_context.n_structures;
+    const Eigen::Index n_structures = accepted_point_context.n_structures;
     const int n_selected_states =
         static_cast<int>(accepted_point_context.selected_state_indices.size());
     if (n_structures <= 0 || n_selected_states <= 0) {
@@ -191,7 +191,7 @@ AcceptedSelectedStateGeneralizedEigenResponseOperator::apply_direction_block(
         throw std::invalid_argument(
             "accepted selected-state eigen-response operator has no structure action");
     }
-    const int n_structures = structure_action->n_structures();
+    const Eigen::Index n_structures = structure_action->n_structures();
     const int n_selected_states = static_cast<int>(selected_eigenvalues.size());
     if (n_selected_states <= 0 || selected_eigenvectors.rows() != n_structures ||
         selected_eigenvectors.cols() != n_selected_states) {

@@ -263,8 +263,8 @@ class ExactAoPairOperator {
     std::unique_ptr<PackedAoPairMatrix> packed_;
     Buffer<int> pair_first_;
     Buffer<int> pair_second_;
-    Buffer<int> row_offsets_;
-    Buffer<int> columns_;
+    Buffer<std::int64_t> row_offsets_;
+    Buffer<std::int64_t> columns_;
     Buffer<double> values_;
     Buffer<std::int64_t> wide_offsets_, wide_columns_;
     Buffer<double> diagonal_;

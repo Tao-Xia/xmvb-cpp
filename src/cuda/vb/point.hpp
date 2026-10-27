@@ -5,6 +5,7 @@
 #include "cuda/vb/action.hpp"
 #include "cuda/vb/orbitals.hpp"
 #include "cuda/vb/product.hpp"
+#include "cuda/vb/operator_first.hpp"
 
 namespace xmvb::cuda {
 
@@ -110,6 +111,7 @@ class VbPoint {
     mutable DirectCiSigma sigma_, direction_sigma_;
     Matrix<double> effective_, one_, one_image_, pair_;
     mutable ProductEndpoint endpoint_;
+    std::unique_ptr<OperatorFirstAction> operator_first_;
     std::unique_ptr<ProductContraction> products_;
     Matrix<double> selected_h_, selected_m_, selected_gradient_;
     mutable Matrix<double> normalization_;
