@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -62,7 +63,8 @@ void audit_orbital_step(const OrbitalPreparationInput& input,
     std::ofstream origin_file, trial_file;
     std::filesystem::path origin_path, trial_path;
     const char* folder = std::getenv("XMVB_CIAH_ORBITAL_PATH");
-    if (folder && *folder && std::strncmp(stage, "micro_", 6) != 0) {
+    if (folder && *folder &&
+        (std::strncmp(stage, "micro_", 6) != 0 || std::strcmp(stage, "micro_increment") == 0)) {
         static int sequence = 0;
         ++sequence;
         std::filesystem::create_directories(folder);
@@ -134,6 +136,42 @@ void audit_orbital_step(const OrbitalPreparationInput& input,
             origin_path.c_str(),
             trial_path.c_str());
     }
+}
+
+void audit_ciah_state(const OrbitalPreparationInput& input,
+                      const Eigen::Ref<const Eigen::MatrixXd>& coefficients,
+                      const char* stage,
+                      double energy) {
+    const char* folder = std::getenv("XMVB_CIAH_ORBITAL_PATH");
+    if (!orbital_step_audit_enabled() || !folder || !*folder)
+        return;
+    static std::size_t sequence = 0;
+    std::filesystem::create_directories(folder);
+    std::ostringstream name;
+    name << "state-" << std::setw(3) << std::setfill('0')
+         << mcscf::diagnostics::ciah_trace_context.keyframe << '-' << stage << '-' << ++sequence
+         << ".bin";
+    const auto path = std::filesystem::path(folder) / name.str();
+    std::ofstream file(path, std::ios::binary);
+    const std::uint64_t dimensions[] = {input.n_basis_functions,
+                                        input.n_orbitals,
+                                        static_cast<std::uint64_t>(coefficients.rows()),
+                                        static_cast<std::uint64_t>(coefficients.cols())};
+    file.write(reinterpret_cast<const char*>(dimensions), sizeof(dimensions));
+    Eigen::MatrixXd orbitals = Eigen::MatrixXd::Zero(input.n_basis_functions, input.n_orbitals);
+    for (std::size_t i = 0; i < input.n_orbitals; ++i)
+        for (int j = 0; j < stored_sparse_orbital_coefficient_count(input, i); ++j) {
+            const auto slot = i * input.n_basis_functions + j;
+            orbitals(input.orbital_basis_index_table[slot] - 1, i) =
+                input.orbital_value_table[slot];
+        }
+    file.write(reinterpret_cast<const char*>(orbitals.data()), orbitals.size() * sizeof(double));
+    file.write(reinterpret_cast<const char*>(coefficients.data()),
+               coefficients.size() * sizeof(double));
+    if (!file)
+        throw std::runtime_error("cannot write CIAH state snapshot");
+    mcscf::diagnostics::ciah_trace(
+        "ciah_state_snapshot", "stage=%s,energy=%.17g,path=%s", stage, energy, path.c_str());
 }
 
 } // namespace xmvb::vb::diagnostics
