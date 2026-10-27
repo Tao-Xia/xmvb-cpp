@@ -71,8 +71,15 @@ void OrbitalChart::build_rotation_inverse(const OrbitalPreparationInput& input,
             // L=||b|| Q_ext E for an S-horizontal lift. Recover E^{-1} from the
             // shared AO-metric Gram and existing frame map, without another AO
             // multiplication, factorization or explicit whitening.
-            orbital.ah_frame_inverse.noalias() =
-                norm * norm * orbital.inverse_raw_tangent_gram * forward.transpose();
+            if (!core && !active_subspace_gauge_) {
+                // The selected active map is rectangular. Solve its right
+                // inverse directly, without squaring its condition number.
+                const Eigen::HouseholderQR<Eigen::MatrixXd> factor(forward);
+                orbital.ah_frame_inverse = factor.solve(Eigen::MatrixXd::Identity(width, width));
+            } else {
+                orbital.ah_frame_inverse.noalias() =
+                    norm * norm * orbital.inverse_raw_tangent_gram * forward.transpose();
+            }
             const Eigen::MatrixXd error = orbital.ah_frame_inverse * forward -
                                           Eigen::MatrixXd::Identity(tangent_width, tangent_width);
             const double bound = 512.0 * std::numeric_limits<double>::epsilon() *

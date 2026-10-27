@@ -1731,6 +1731,10 @@ int main() {
         check_analytic_block_pullback(frozen, false);
         check_analytic_block_pullback(oeo, true);
         check_analytic_block_pullback(oeo, false);
+        auto three_active = make_input(
+            c, {{0, 1, 2, 3, 4, 5}, {0, 1, 2, 3, 4, 5}, {0, 1, 2, 3, 4, 5}, {0, 1, 2, 3, 4, 5}}, 1);
+        three_active.orbital_type = kOrbitalTypeOeo;
+        check_analytic_block_pullback(three_active, false);
         check_preconditioner_geometry(partial);
         check_preconditioner_geometry(full);
         check_preconditioner_geometry(oeo, true);
