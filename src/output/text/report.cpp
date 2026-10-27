@@ -240,6 +240,14 @@ void print_summary(const vb::VbScfOptimizerOptions& options,
     std::cout << "\n\n                 ===============================================\n"
               << "                       XMVB-CPP RUN DIAGNOSTICS\n"
               << "                 ===============================================\n";
+    if (options.backend == vb::VbScfOptimizerBackend::Ciah) {
+        int actions = result.ciah_terminal_probe_hvp_actions;
+        for (const auto& step : result.ciah_iteration_trace)
+            actions += step.orbital_hvp_actions;
+        print_log_field("CIAH total orbital HVP actions", std::to_string(actions));
+        print_log_field("Terminal curvature HVP actions",
+                        std::to_string(result.ciah_terminal_probe_hvp_actions));
+    }
     print_log_field("Termination reason", result.termination_reason);
     print_log_field("Start time", format_timestamp(command_start_time));
     print_log_field("Finish time", format_timestamp(command_finish_time));

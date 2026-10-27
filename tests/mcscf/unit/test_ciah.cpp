@@ -12,6 +12,8 @@
 #include <Eigen/LU>
 
 #include "mcscf/optimization/ciah/solver.hpp"
+#include "mcscf/optimization/ciah/driver.hpp"
+#include "mcscf/optimization/ciah/macro.hpp"
 #include "mcscf/optimization/preconditioners/coarse.hpp"
 
 namespace {
@@ -185,14 +187,15 @@ void check_indefinite_root_selection() {
     xmvb::mcscf::CiahResult result;
     do {
         result = workspace.next(gradient);
-    } while (!result.converged && (!result.exhaustion || result.new_hvp_actions != 0));
-    if (!result.converged)
-        result = workspace.next(gradient);
-    require(result.converged, "indefinite CIAH root did not converge");
-    check_full_space_root(hessian, metric, gradient, result);
-    require(result.eigenvalue > -1.0,
-            "CIAH selected a Hessian-only root with zero reference weight");
-    check_images_and_residual(hessian, metric, gradient, result);
+    } while (!result.converged && !result.negative_curvature &&
+             (!result.exhaustion || result.new_hvp_actions != 0));
+    require(result.negative_curvature && result.eigenvalue <= -1.0 &&
+                result.step.dot(result.hessian_step) < 0.0,
+            "CIAH discarded a gradient-independent negative mode");
+    require_close(result.hessian_step,
+                  hessian * result.step,
+                  2e-12,
+                  "pure curvature ray has an inconsistent image");
 }
 
 void check_origin_ray_residual(const xmvb::mcscf::CiahOriginRay& ray,
@@ -249,8 +252,8 @@ void check_cached_origin_ray() {
                 "origin ray did not select the lowest AH eigenvalue");
         check_origin_ray_residual(*ray, hessian, metric, gradient);
         if (curvature < 0.0) {
-            require(usual.eigenvalue > 0.0 && ray->eigenvalue < -99.0 &&
-                        ray->reference_component < 0.1,
+            require(usual.negative_curvature && usual.eigenvalue < -99.0 &&
+                        ray->eigenvalue < -99.0 && ray->reference_component < 0.1,
                     "weakly coupled negative mode did not bypass the usual root filter");
         }
     }
@@ -264,7 +267,7 @@ void check_cached_origin_ray() {
         dense_problem(hessian, two_metric, gradient, &h_calls, &g_calls, &full_norm_calls);
     xmvb::mcscf::CiahWorkspace workspace(problem, Eigen::VectorXd::Unit(2, 0));
     const xmvb::mcscf::CiahResult usual = workspace.next(gradient);
-    require(usual.basis_size == 1 && usual.eigenvalue == 0.0,
+    require(usual.basis_size == 1 && usual.negative_curvature && usual.eigenvalue < 0.0,
             "zero-reference fixture unexpectedly captured the full gradient");
     const auto ray = workspace.origin_ray(gradient);
     require(ray && ray->reference_component < 1.0e-14 && gradient.dot(ray->step) == 0.0 &&
@@ -1110,10 +1113,116 @@ void check_small_gradient_expansion() {
             "nonzero small AH residual failed to extend the normalized subspace");
 }
 
+void check_gradient_independent_curvature() {
+    Eigen::Matrix3d h = Eigen::Vector3d(2.0, -1.0, 4.0).asDiagonal();
+    Eigen::Matrix3d metric = Eigen::Vector3d(1.0, 3.0, 2.0).asDiagonal();
+    const Eigen::Vector3d g(1e-7, 0.0, 0.0);
+    int actions = 0;
+    auto problem = dense_problem(h, metric, g);
+    CiahOptions options;
+    options.max_cycle = 3;
+    options.apply_images = [&](const Eigen::VectorXd& x) {
+        ++actions;
+        return std::make_pair(Eigen::VectorXd(h * x), Eigen::VectorXd(metric * x));
+    };
+    CiahWorkspace workspace(problem, options);
+    auto ray = workspace.find_negative_curvature(g);
+    require(ray.has_value() && ray->reference_component == 0.0 && actions <= 3,
+            "independent CIAH probe missed a gradient-orthogonal unstable mode");
+    require(ray->step.dot(h * ray->step) < 0.0 &&
+                (ray->hessian_step - h * ray->step).norm() < 1e-12,
+            "negative witness is inconsistent with its cached physical image");
+    require(ray->step.allFinite() && ray->step.norm() > 0,
+            "pure curvature ray was divided by a zero reference component");
+    h(1, 1) = 1.0;
+    auto positive = dense_problem(h, metric, g);
+    CiahWorkspace stable(positive, options);
+    require(!stable.find_negative_curvature(g), "positive Hessian generated negative curvature");
+}
+
+void check_curvature_microstep() {
+    using namespace xmvb::mcscf;
+    const Eigen::Matrix2d h = Eigen::Vector2d(-2.0, 1.0).asDiagonal();
+    const Eigen::Matrix2d metric = Eigen::Matrix2d::Identity();
+    const Eigen::Vector2d g(0.0, 1e-7);
+    int actions = 0;
+    auto problem = dense_problem(h, metric, g, &actions);
+    CiahWorkspace workspace(problem, Eigen::VectorXd::Unit(2, 0));
+    CiahMicroCallbacks callbacks;
+    callbacks.coordinate_norm = [](const Eigen::VectorXd& v) { return v.norm(); };
+    callbacks.metric_action = [](const Eigen::VectorXd& v) { return v; };
+    callbacks.maximum_component = [](const Eigen::VectorXd& v) { return v.cwiseAbs().maxCoeff(); };
+    callbacks.evaluate_keyframe = [&](const Eigen::VectorXd& p) {
+        return CiahKeyframe{g + h * p, g.dot(p) + .5 * p.dot(h * p), 0.0};
+    };
+    const auto micro = run_ciah_microsteps(workspace, g, 0.0, 1e-3, callbacks);
+    require(micro.candidate.negative_curvature && !micro.candidate.resolved(1.0, 1.0) &&
+                micro.micro_steps == 1 && actions == 1,
+            "pure curvature mode entered Newton preconditioning or repeated the action");
+    require(micro.displacement.allFinite() && micro.displacement.norm() > 0.0 &&
+                micro.energy_model.energy() < 0.0,
+            "gradient-orthogonal descent was discarded by microstep gradient-growth logic");
+    require_close(micro.hessian_displacement,
+                  h * micro.displacement,
+                  1e-12,
+                  "curvature microstep lost its cached image");
+}
+
+void check_curvature_macro_candidate() {
+    using namespace xmvb::mcscf;
+    using Ops = detail::HostCiahVectorOps;
+    const Eigen::Matrix2d h = Eigen::Vector2d(2.0, -1.0).asDiagonal();
+    const Eigen::Matrix2d metric = Eigen::Matrix2d::Identity();
+    const Eigen::Vector2d g(1e-8, 0.0);
+    for (bool reject : {false, true}) {
+        int actions = 0;
+        auto problem = dense_problem(h, metric, g, &actions);
+        CiahOptions options;
+        options.max_cycle = 2;
+        CiahWorkspace workspace(problem, options);
+        require(workspace.find_negative_curvature(g).has_value(),
+                "macro fixture lacks curvature ray");
+        CiahMicroResult micro(0.0, g);
+        micro.candidate = workspace.next(g);
+        micro.displacement =
+            .03 * micro.candidate.step / micro.candidate.step.cwiseAbs().maxCoeff();
+        micro.hessian_displacement = h * micro.displacement;
+        micro.last_step = micro.displacement;
+        micro.energy_model.add(micro.displacement, micro.hessian_displacement);
+        struct Trial {
+            double energy;
+            Eigen::VectorXd step;
+        };
+        CiahMacroCallbacks<Ops, Trial> callbacks;
+        callbacks.evaluate = [&](const Eigen::VectorXd& p, double scale) {
+            const Eigen::VectorXd x = scale * p;
+            const double energy =
+                g.dot(x) + .5 * x.dot(h * x) + (reject ? 1e7 : .25) * std::pow(x[1], 4);
+            return Trial{energy, x};
+        };
+        callbacks.energy = [](const Trial& t) { return t.energy; };
+        callbacks.terminal = [](Trial&) { return false; };
+        callbacks.step_norm = [](const Eigen::VectorXd& x) { return x.norm(); };
+        callbacks.maximum_component = [](const Eigen::VectorXd& x) {
+            return x.cwiseAbs().maxCoeff();
+        };
+        callbacks.changes_parameters = [](const Eigen::VectorXd& x) { return !x.isZero(0.0); };
+        const int before = actions;
+        const auto result = run_ciah_macro(workspace, micro, g, 0.0, 1e-7, 1e-12, Ops{}, callbacks);
+        require(result.trial.has_value() && result.trial->energy < 0 && actions == before,
+                "curvature macro added an action or accepted non-descent");
+        require(std::abs(result.trial->step[1]) > 0.0 && (!reject || result.rejected_trials > 0),
+                "curvature ray lost true-energy backtracking");
+    }
+}
+
 } // namespace
 
 int main() {
     try {
+        check_curvature_microstep();
+        check_curvature_macro_candidate();
+        check_gradient_independent_curvature();
         check_anisotropic_spd();
         check_small_gradient_expansion();
         check_indefinite_root_selection();

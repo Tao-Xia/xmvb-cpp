@@ -1,6 +1,7 @@
 #include "mcscf/optimization/ciah/solver.hpp"
 
 #include <cmath>
+#include <random>
 #include <stdexcept>
 #include <utility>
 
@@ -132,6 +133,7 @@ CiahResult CiahWorkspace::next(const Eigen::VectorXd& current_gradient) {
     result.residual_norm = value.residual_norm;
     result.model_gradient_norm = value.model_gradient_norm;
     result.converged = value.converged;
+    result.negative_curvature = value.negative_curvature;
     result.basis_size = value.basis_size;
     result.new_hvp_actions = value.new_hvp_actions;
     result.exhaustion = value.exhaustion;
@@ -151,6 +153,26 @@ CiahWorkspace::origin_ray(const Eigen::VectorXd& origin_gradient) const {
     ray.step = std::move(value->step);
     ray.hessian_step = std::move(value->hessian_step);
     ray.reference_component = value->reference_component;
+    ray.eigenvalue = value->eigenvalue;
+    ray.residual_norm = value->residual_norm;
+    return ray;
+}
+
+std::optional<CiahOriginRay>
+CiahWorkspace::find_negative_curvature(const Eigen::VectorXd& gradient) {
+    // Reproducible dense probe: independent of the gradient and orbital symmetry.
+    std::mt19937_64 engine(0);
+    std::normal_distribution<double> normal;
+    Eigen::VectorXd probe(gradient.size());
+    for (auto& entry : probe)
+        entry = normal(engine);
+    auto value = impl_->core.find_negative_curvature(std::move(probe), gradient);
+    if (!value)
+        return std::nullopt;
+    CiahOriginRay ray;
+    ray.step = std::move(value->step);
+    ray.hessian_step = std::move(value->hessian_step);
+    ray.reference_component = 0.0;
     ray.eigenvalue = value->eigenvalue;
     ray.residual_norm = value->residual_norm;
     return ray;

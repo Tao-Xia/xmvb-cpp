@@ -325,6 +325,8 @@ struct VbScfOptimizerResult {
 
     /** Lightweight per-accepted-step diagnostics for the CIAH backend. */
     std::vector<CiahIterationRecord> ciah_iteration_trace;
+    /** Final near-stationary probe with no accepted update; excluded from outer steps. */
+    int ciah_terminal_probe_hvp_actions = 0;
 
     /**
    * @brief Explicitly requested accepted-iterate trace.

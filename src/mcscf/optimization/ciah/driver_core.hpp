@@ -65,6 +65,24 @@ auto run_ciah_microsteps_core(Backend backend,
             candidate = backend.next(workspace, predicted_gradient);
             ++result.micro_iterations;
         }
+        if (!replayed && candidate.negative_curvature) {
+            const double largest = backend.maximum_component(candidate.step);
+            if (!(largest > 0.0))
+                throw std::runtime_error("CIAH curvature ray is empty");
+            const double scale = ciah_step_max_component / largest;
+            Vector step = backend.clone(candidate.step);
+            Vector image = backend.clone(candidate.hessian_step);
+            backend.scal(step, scale);
+            backend.scal(image, scale);
+            backend.axpy(displacement, 1.0, step);
+            backend.axpy(hessian_displacement, 1.0, image);
+            backend.axpy(predicted_gradient, 1.0, image);
+            energy_model.add(step, image);
+            last_step = std::move(step);
+            ++result.micro_steps;
+            result.stop_reason = "negative_curvature";
+            break;
+        }
         const bool forcing_resolved =
             replayed || ciah_result_resolved(candidate, rhs_norm, 1.0 / ciah_gradient_trust);
         const bool ready = replayed || candidate.converged || candidate.exhaustion ||

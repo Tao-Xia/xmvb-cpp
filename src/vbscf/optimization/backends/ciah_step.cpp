@@ -86,7 +86,8 @@ bool build_ciah_macro_step(VbScfObjective* objective,
                            double* trust_radius,
                            CiahIterationRecord* record,
                            VbScfOptimizerResult* result,
-                           CiahMacroStep* accepted) {
+                           CiahMacroStep* accepted,
+                           bool seek_curvature) {
     xmvb::profiling::ScopedPhase macro_phase(xmvb::profiling::Phase::CiahMacro, true);
     xmvb::profiling::ScopedPhase setup_phase(xmvb::profiling::Phase::CiahSetup);
     const auto context = objective->second_order_context();
@@ -449,8 +450,39 @@ bool build_ciah_macro_step(VbScfObjective* objective,
         };
     }
     setup_phase.stop();
-    auto micro = mcscf::run_ciah_microsteps(
-        workspace, initial_gradient, energy, options.gradient_tolerance, callbacks);
+    std::optional<mcscf::CiahOriginRay> curvature_ray;
+    if (seek_curvature) {
+        curvature_ray = workspace.find_negative_curvature(initial_gradient);
+        mcscf::diagnostics::ciah_trace("ciah_terminal_curvature",
+                                       "actions=%d,negative=%d",
+                                       record->orbital_hvp_actions,
+                                       static_cast<int>(curvature_ray.has_value()));
+        if (!curvature_ray) {
+            result->converged = true;
+            result->termination_reason = "ciah_projected_gradient_tolerance";
+            return false;
+        }
+    }
+    auto micro = [&]() {
+        if (!curvature_ray)
+            return mcscf::run_ciah_microsteps(
+                workspace, initial_gradient, energy, options.gradient_tolerance, callbacks);
+        mcscf::CiahMicroResult path(energy, initial_gradient);
+        // Use the existing bounded AH scale; a curvature witness need not be
+        // a converged eigenvector and does not justify a full-radius raw step.
+        const double scale = mcscf::ciah_max_component / curvature_ray->step.cwiseAbs().maxCoeff();
+        path.displacement = scale * curvature_ray->step;
+        path.hessian_displacement = scale * curvature_ray->hessian_step;
+        path.last_step = path.displacement;
+        path.energy_model.add(path.displacement, path.hessian_displacement);
+        path.candidate.negative_curvature = true;
+        path.candidate.eigenvalue = curvature_ray->eigenvalue;
+        path.candidate.residual_norm = curvature_ray->residual_norm;
+        path.candidate.basis_size = workspace.basis_size();
+        path.micro_steps = 1;
+        path.micro_iterations = workspace.basis_size();
+        return path;
+    }();
     record->micro_iterations += micro.micro_iterations;
     record->rejected_trial_count += micro.rejected_trial_count;
     auto& displacement = micro.displacement;
@@ -459,7 +491,7 @@ bool build_ciah_macro_step(VbScfObjective* objective,
     auto& candidate = micro.candidate;
     const int micro_steps = micro.micro_steps;
     const bool energy_model_stopped = micro.energy_model_stopped;
-    if (mcscf::diagnostics::ciah_trace_enabled()) {
+    if (mcscf::diagnostics::ciah_trace_enabled() && !candidate.negative_curvature) {
         // A diagnostic of the actual coupled trial space, not just its A block.
         // Neither inverse callback evaluates an HVP or changes the retained space.
         const auto base =
@@ -547,6 +579,9 @@ bool build_ciah_macro_step(VbScfObjective* objective,
     };
     macro_callbacks.energy = [](const Trial& trial) { return trial.energy; };
     macro_callbacks.terminal = [&](Trial& trial) {
+        // A witnessed unstable point requires actual descent, not a tiny non-descent.
+        if (seek_curvature)
+            return false;
         objective->complete_trial(&trial);
         accepted->trial = std::move(trial);
         const bool converged = accepted->check_convergence(
