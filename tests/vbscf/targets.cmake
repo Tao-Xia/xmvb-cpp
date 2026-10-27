@@ -54,6 +54,11 @@ foreach(target_name IN LISTS _xmvb_vbscf_unit_targets)
   target_link_libraries(${target_name} PRIVATE xmvb_vbscf)
 endforeach()
 
+# Same-orbital molecular reference: direct-CI versus nonorthogonal cofactors.
+add_executable(test_action_parity EXCLUDE_FROM_ALL
+  ${CMAKE_SOURCE_DIR}/tests/vbscf/diagnostics/action_parity.cpp)
+target_link_libraries(test_action_parity PRIVATE xmvb_input xmvb_vbscf)
+
 # Independent symbolic schedule census; does not alter a numerical backend.
 add_executable(test_metric_order EXCLUDE_FROM_ALL
   ${CMAKE_SOURCE_DIR}/tests/vbscf/diagnostics/metric_order.cpp)
