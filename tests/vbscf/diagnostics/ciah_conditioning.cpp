@@ -8,6 +8,9 @@
 #include <vector>
 
 #include "core/memory.hpp"
+#include "mcscf/optimization/ciah/macro.hpp"
+#include "vbscf/orbitals/charts/chart.hpp"
+#include "vbscf/optimization/preconditioners/hessian_diagonal.hpp"
 #include "input/loading/loader.hpp"
 #include "vbscf/derivatives/gradient/orbital/evaluator.hpp"
 #include "vbscf/orbitals/gauge/support_preserving.hpp"
@@ -35,9 +38,12 @@ void set_orbitals(OrbitalPreparationInput& o, const Eigen::MatrixXd& b) {
 /** @brief Postprocess recorded CIAH points; no optimizer or HVP is executed. */
 int main(int argc, char** argv) {
     try {
-        if (argc != 2 && argc != 4 && !(argc == 5 && std::string(argv[4]) == "--endpoints"))
-            throw std::runtime_error(
-                "usage: check_ciah_conditioning INPUT.xmi [ORIGIN.bin TRIAL.bin]");
+        if (argc != 2 && argc != 4 &&
+            !(argc == 5 &&
+              (std::string(argv[4]) == "--endpoints" || std::string(argv[4]) == "--refine" ||
+               std::string(argv[4]) == "--inverse")))
+            throw std::runtime_error("usage: check_ciah_conditioning INPUT.xmi [ORIGIN.bin "
+                                     "TRIAL.bin [--endpoints|--refine|--inverse]]");
         xmvb::memory::configure({});
         auto loaded = load_vbscf_input_with_timings(argv[1]);
         auto& input = loaded.input;
@@ -75,9 +81,65 @@ int main(int argc, char** argv) {
         const Eigen::MatrixXd origin = read_orbitals(argv[2], o), trial = read_orbitals(argv[3], o);
         const OrbitalGradientEvaluator evaluator;
         std::cout << std::setprecision(17);
-        const auto fractions =
+        if (argc == 5 && std::string(argv[4]) == "--inverse") {
+            set_orbitals(o, origin);
+            const auto accepted = evaluator.evaluate_without_reference_energy_gradient(
+                input,
+                {0},
+                {1.0},
+                loaded.nuclear_repulsion_energy,
+                StructureEigensolver::Davidson,
+                StructureSolveAccuracy{},
+                Eigen::MatrixXd{});
+            const auto& prep = accepted.orbital_preparation_result;
+            const SparseParameterLayout layout(o);
+            OrbitalChart chart(o,
+                               layout,
+                               prep.auxiliary_orbital_matrix.leftCols(o.n_orbitals),
+                               prep.physical_orbital_frame.normalized_orbital_matrix,
+                               nullptr,
+                               false,
+                               input.complete_active_space,
+                               nullptr,
+                               OrbitalChart::Coordinates::Unwhitened);
+            const auto model =
+                build_analytic_orbital_diagonal(input, *accepted.second_order_context);
+            const Eigen::MatrixXd gram =
+                model.mo_coefficients.transpose() * o.ao_overlap_matrix * model.mo_coefficients;
+            std::cout << "INVERSE,mo_metric_error="
+                      << (gram - Eigen::MatrixXd::Identity(gram.rows(), gram.cols())).norm()
+                      << std::endl;
+            chart.set_curvature(o, nullptr, &model, OrbitalChart::CurvatureUse::AugmentedHessian);
+            std::cout << "INVERSE,certificate=PASS" << std::endl;
+            return 0;
+        }
+        const bool refine = argc == 5 && std::string(argv[4]) == "--refine";
+        auto fractions =
             argc == 5 ? std::vector<double>{0.0, 1.0} : std::vector<double>{0.25, 0.5, 0.75};
-        for (double fraction : fractions) {
+        double source_energy = 0.0, slope = 0.0;
+        if (refine) {
+            set_orbitals(o, origin);
+            const auto source = evaluator.evaluate_without_reference_energy_gradient(
+                input,
+                {0},
+                {1.0},
+                loaded.nuclear_repulsion_energy,
+                StructureEigensolver::Davidson,
+                StructureSolveAccuracy{},
+                Eigen::MatrixXd{});
+            source_energy = source.scf_result.total_energy;
+            for (std::size_t i = 0; i < o.n_orbitals; ++i)
+                for (int j = 0; j < stored_sparse_orbital_coefficient_count(o, i); ++j) {
+                    const auto slot = i * o.n_basis_functions + j;
+                    const auto ao = o.orbital_basis_index_table[slot] - 1;
+                    slope += source.sparse_orbital_energy_gradient[slot] *
+                             (trial(ao, i) - origin(ao, i));
+                }
+            fractions = {1.0};
+            std::cout << "REFINE,source_energy=" << source_energy << ",slope=" << slope << '\n';
+        }
+        for (std::size_t sample = 0; sample < fractions.size(); ++sample) {
+            const double fraction = fractions[sample];
             set_orbitals(o, origin + fraction * (trial - origin));
             apply_support_preserving_inactive_gauge(&o);
             balance_active_gauge(&o);
@@ -94,6 +156,15 @@ int main(int argc, char** argv) {
                                                           StructureEigensolver::Davidson,
                                                           StructureSolveAccuracy{},
                                                           Eigen::MatrixXd{});
+            if (refine && sample == 0) {
+                const auto shorter = xmvb::mcscf::detail::ciah_ray_fraction(
+                    source_energy,
+                    value.total_energy(),
+                    slope,
+                    StructureSolveAccuracy{}.energy_tolerance);
+                if (shorter)
+                    fractions.push_back(*shorter);
+            }
             std::cout << "RAY,fraction=" << fraction << ",energy=" << value.total_energy()
                       << ",condition="
                       << spectrum.eigenvalues().tail(1)[0] / spectrum.eigenvalues()[0]

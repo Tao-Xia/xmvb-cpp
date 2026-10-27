@@ -1168,6 +1168,68 @@ void check_curvature_microstep() {
                   "curvature microstep lost its cached image");
 }
 
+/** @brief Refine a descending but overshot relaxed ray; CI seeds are not its slope. */
+void check_relaxed_macro_interpolation() {
+    using namespace xmvb::mcscf;
+    using Ops = detail::HostCiahVectorOps;
+    require(!detail::ciah_ray_fraction(0.0, -0.5e-8, -2.0e-8, 1e-7),
+            "macro interpolation spent CI work on sub-resolution energy gain");
+    const Eigen::Matrix2d h = Eigen::Matrix2d::Identity();
+    const Eigen::Vector2d g(-2.0, 100.0);
+    for (int scenario = 0; scenario < 4; ++scenario) {
+        int actions = 0, evaluations = 0;
+        auto problem = dense_problem(h, h, g, &actions);
+        CiahWorkspace workspace(problem);
+        CiahMicroResult micro(0.0, g);
+        micro.displacement = Eigen::Vector2d::Ones();
+        micro.hessian_displacement = h * micro.displacement;
+        micro.last_step = micro.displacement;
+        micro.energy_model.add(micro.displacement, micro.hessian_displacement);
+        struct Trial {
+            double energy;
+            double orbital;
+        };
+        CiahMacroCallbacks<Ops, Trial> callbacks;
+        callbacks.evaluate = [&](const Eigen::VectorXd& p, double scale) {
+            ++evaluations;
+            const double x = scale * p[0];
+            // A nonlinear bump can invalidate interpolation; retain the true
+            // lower-energy full trial instead of accepting the fitted minimum.
+            const double bump = scenario == 1 ? 40.0 * x * x * (1.0 - x) * (1.0 - x) : 0.0;
+            const double quadratic = scenario == 2 ? 0.5 : 1.5;
+            return Trial{quadratic * x * x - 2.0 * x + bump, x};
+        };
+        callbacks.energy = [](const Trial& trial) { return trial.energy; };
+        callbacks.relaxed_slope = [](const Eigen::VectorXd& p) { return -2.0 * p[0]; };
+        callbacks.terminal = [](Trial&) { return false; };
+        callbacks.step_norm = [](const Eigen::VectorXd& p) { return p.norm(); };
+        callbacks.maximum_component = [](const Eigen::VectorXd& p) {
+            return p.cwiseAbs().maxCoeff();
+        };
+        callbacks.changes_parameters = [](const Eigen::VectorXd& p) { return !p.isZero(0.0); };
+        if (scenario == 3) {
+            // A finite negative curvature direction can have zero origin slope.
+            callbacks.relaxed_slope = [](const Eigen::VectorXd&) { return 0.0; };
+        }
+        const int before = actions;
+        auto result = run_ciah_macro(workspace, micro, g, 0.0, 1e-7, 1e-12, Ops{}, callbacks);
+        require(result.trial.has_value() && actions == before,
+                "relaxed interpolation lost descent or added an HVP");
+        const double expected = scenario == 0 ? 2.0 / 3.0 : 1.0;
+        require(std::abs(result.scale - expected) < 1e-14 &&
+                    std::abs(result.trial->orbital - expected) < 1e-14 &&
+                    (micro.displacement - expected * Eigen::Vector2d::Ones()).norm() < 1e-14 &&
+                    (micro.last_step - micro.displacement).norm() < 1e-14 &&
+                    (micro.hessian_displacement - h * micro.displacement).norm() < 1e-14,
+                "relaxed interpolation selected an inconsistent point, image, or recycled step");
+        require(evaluations == (scenario < 2 ? 2 : 1),
+                "macro refinement repeated a CI evaluation or shortened a monotonic ray");
+        if (scenario == 0)
+            require(std::abs(result.trial->energy + 2.0 / 3.0) < 1e-14,
+                    "energy-lowering full step hid the interior ray minimum");
+    }
+}
+
 void check_curvature_macro_candidate() {
     using namespace xmvb::mcscf;
     using Ops = detail::HostCiahVectorOps;
@@ -1201,6 +1263,7 @@ void check_curvature_macro_candidate() {
             return Trial{energy, x};
         };
         callbacks.energy = [](const Trial& t) { return t.energy; };
+        callbacks.relaxed_slope = [&](const Eigen::VectorXd& p) { return g.dot(p); };
         callbacks.terminal = [](Trial&) { return false; };
         callbacks.step_norm = [](const Eigen::VectorXd& x) { return x.norm(); };
         callbacks.maximum_component = [](const Eigen::VectorXd& x) {
@@ -1220,6 +1283,7 @@ void check_curvature_macro_candidate() {
 
 int main() {
     try {
+        check_relaxed_macro_interpolation();
         check_curvature_microstep();
         check_curvature_macro_candidate();
         check_gradient_independent_curvature();
