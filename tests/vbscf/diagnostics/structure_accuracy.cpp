@@ -10,12 +10,14 @@
 #include <Eigen/Cholesky>
 #include <Eigen/Eigenvalues>
 #include <Eigen/LU>
+#include <Eigen/QR>
 #include <Eigen/SVD>
 
 #include "core/memory.hpp"
 #include "core/pair_index.hpp"
 #include "input/loading/loader.hpp"
 #include "mcscf/ci/similarity.hpp"
+#include "mcscf/ci/sigma.hpp"
 #include "vbscf/derivatives/gradient/orbital/evaluator.hpp"
 #include "vbscf/derivatives/hessian/context/accepted_point.hpp"
 #include "vbscf/structures/assembly/action.hpp"
@@ -72,6 +74,46 @@ void state(const char* name,
         std::cout << "STATE,order=" << name << ",root=" << i << ",norm=" << norm
                   << ",energy=" << energy << '\n';
     }
+}
+
+/** @brief Bounded independent QR oracle; never used by a production action. */
+void physical_reference(const xmvb::vb::StructureAction& action,
+                        const xmvb::vb::SelectedMetric* metric,
+                        double accepted_energy) {
+    const auto& view = action.orthogonal_view();
+    const Eigen::Index n = action.n_structures(), na = view.alpha.dimension(),
+                       nb = view.beta.dimension();
+    if (n > 8 || na > 4096 / nb)
+        return;
+    Eigen::MatrixXd carrier = action.expand_structure_block(Eigen::MatrixXd::Identity(n, n));
+    view.alpha.apply_left(&carrier);
+    for (Eigen::Index i = 0; i < n; ++i) {
+        auto block = carrier.middleCols(i * nb, nb);
+        view.beta.apply_right_block(block);
+    }
+    const Eigen::Map<const Eigen::MatrixXd> b(carrier.data(), na * nb, n);
+    const Eigen::HouseholderQR<Eigen::MatrixXd> qr(b);
+    const Eigen::MatrixXd r = qr.matrixQR().topLeftCorner(n, n).triangularView<Eigen::Upper>();
+    const Eigen::MatrixXd q = qr.householderQ() * Eigen::MatrixXd::Identity(na * nb, n);
+    const Eigen::Map<const Eigen::MatrixXd> panel(q.data(), na, nb * n);
+    const Eigen::MatrixXd image = view.sigma.apply(panel);
+    const Eigen::Map<const Eigen::MatrixXd> hq(image.data(), na * nb, n);
+    const Eigen::MatrixXd h = q.transpose() * hq;
+    const Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> roots(h);
+    if (roots.info() != Eigen::Success)
+        throw std::runtime_error("physical QR reference diagonalization failed");
+    std::cout << "PHYSICAL_QR,energy=" << roots.eigenvalues()[0]
+              << ",accepted_energy=" << accepted_energy
+              << ",energy_error=" << accepted_energy - roots.eigenvalues()[0]
+              << ",orthogonality=" << (q.transpose() * q - Eigen::MatrixXd::Identity(n, n)).norm();
+    if (metric) {
+        const Eigen::MatrixXd inverse =
+            r.triangularView<Eigen::Upper>().solve(Eigen::MatrixXd::Identity(n, n));
+        const Eigen::MatrixXd factor = metric->factor.matrixU() * inverse;
+        std::cout << ",metric_error="
+                  << (factor.transpose() * factor - Eigen::MatrixXd::Identity(n, n)).norm();
+    }
+    std::cout << '\n';
 }
 
 } // namespace
@@ -152,6 +194,8 @@ int main(int argc, char** argv) {
               c,
               {reference.hamiltonian.rightCols(c.cols()), reference.overlap.rightCols(c.cols())});
         integrals(action);
+        physical_reference(
+            action, context.selected_metric.get(), context.selected_state_energies[0]);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
