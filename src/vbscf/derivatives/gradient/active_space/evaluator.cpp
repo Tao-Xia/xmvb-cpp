@@ -344,13 +344,28 @@ solve_factored_structure_roots(const StructureAction& action,
  */
 std::shared_ptr<const SelectedMetric> selected_ci_metric(const StructureAction& action,
                                                          const SameSpinPairCacheContext& topology,
-                                                         const Eigen::MatrixXd& upper,
-                                                         int n) {
+                                                         const PreparedActiveSpaceContext& prepared,
+                                                         const OrbitalPreparationInput& orbitals) {
+    const int n = orbitals.n_active_orbitals;
     if (!RepresentationOverlap::PreparedMetric::fits_selected(action.n_structures()))
         return {};
     const auto& alpha = topology.alpha_reuse_table.unique_determinants;
     const auto& beta = topology.beta_reuse_table.unique_determinants;
-    const auto metric = RepresentationOverlap(action, alpha, beta, n).prepare_metric(upper);
+    if (!alpha.basis(n).complete() || !beta.basis(n).complete())
+        return {};
+    const auto& integral_frame = prepared.active_space_two_electron_result.orbital_transform;
+    Eigen::MatrixXd raw_frame;
+    if (integral_frame.size() == 0) {
+        raw_frame =
+            active_frame(prepared.orbital_result.auxiliary_orbital_matrix.middleCols(
+                             prepared.n_inactive_doubly_occupied_orbitals, n),
+                         orbitals.ao_overlap_matrix,
+                         Eigen::Map<const Eigen::MatrixXd>(
+                             prepared.orbital_result.active_orbital_overlap_matrix.data(), n, n))
+                .upper;
+    }
+    const auto metric = RepresentationOverlap(action, alpha, beta, n)
+                            .prepare_metric(integral_frame.size() ? integral_frame : raw_frame);
     if (!metric.selected_matrix().size())
         return {};
     if (mcscf::diagnostics::ciah_event_trace_enabled()) {
@@ -555,13 +570,10 @@ void solve_structure_problem(
                 context);
         } else {
             profiling::ScopedPhase preconditioner_phase(profiling::Phase::CiPreconditioner, true);
-            auto metric = structure_action.storage().orthogonal_direct_ci
-                              ? selected_ci_metric(
-                                    structure_action,
-                                    context->same_spin_pair_cache,
-                                    prepared.active_space_two_electron_result.orbital_transform,
-                                    input.orbital_preparation_input.n_active_orbitals)
-                              : std::shared_ptr<const SelectedMetric>{};
+            auto metric = selected_ci_metric(structure_action,
+                                             context->same_spin_pair_cache,
+                                             prepared,
+                                             input.orbital_preparation_input);
             context->selected_metric = metric;
             std::function<Eigen::VectorXd(const Eigen::VectorXd&, double)> preconditioner;
             if (!metric && structure_action.storage().orthogonal_direct_ci) {

@@ -9,6 +9,9 @@
 #include <Eigen/QR>
 #include "vbscf/determinants/algebra/cofactor_differential.hpp"
 #include "vbscf/determinants/algebra/overlap.hpp"
+#include "vbscf/determinants/algebra/hamiltonian.hpp"
+#include "vbscf/determinants/pairs/contractions.hpp"
+#include "core/pair_index.hpp"
 
 namespace {
 int pair_index(int first, int second) {
@@ -373,9 +376,66 @@ void check(const Eigen::MatrixXd& a,
 }
 } // namespace
 
+/** @brief Energy must use the exact low-degree cofactor, even for tiny det X. */
+void check_small_pair_hamiltonian() {
+    Eigen::Matrix3d a, b;
+    a << 1.0, 0.7, -0.2, -0.4, 1.3, 0.5, 0.3, -0.6, 1.1;
+    b << 0.8, -0.3, 0.9, 0.2, 1.4, -0.5, -0.7, 0.6, 1.2;
+    const Eigen::Matrix3d u = a.householderQr().householderQ();
+    const Eigen::Matrix3d v = b.householderQr().householderQ();
+    const Eigen::Matrix3d x =
+        u * Eigen::Vector3d(1.0, 1.0e-4, 1.0e-10).asDiagonal() * v.transpose();
+    const auto overlap = xmvb::vb::DeterminantOverlapResolver{}.resolve_matrix(x);
+    if (overlap.nullity != 0)
+        throw std::runtime_error("small-pair test requires a numerically full-rank overlap");
+    std::vector<double> eri(21);
+    for (std::size_t i = 0; i < eri.size(); ++i)
+        eri[i] = std::cos(static_cast<double>(i + 1));
+    const std::vector<int> occupied{0, 1, 2};
+    const auto result = xmvb::vb::DeterminantHamiltonianResolver{}.resolve(
+        occupied, occupied, overlap, Eigen::Matrix3d::Zero(), 3, eri);
+    const auto second = second_reference(x);
+    double expected = 0.0, scale = 0.0;
+    for (int j = 1; j < 3; ++j)
+        for (int i = 0; i < j; ++i)
+            for (int l = 1; l < 3; ++l)
+                for (int k = 0; k < l; ++k) {
+                    const auto index = xmvb::core::PairIndex::two_electron_storage_index;
+                    const double g = eri[index(i, k, j, l)] - eri[index(i, l, j, k)];
+                    expected += g * second(pair_index(i, j), pair_index(k, l));
+                    scale += std::abs(g * second(pair_index(i, j), pair_index(k, l)));
+                }
+    const double bound = 128.0 * std::numeric_limits<double>::epsilon() * std::max(1.0, scale);
+    if (std::abs(result.total_hamiltonian - expected) > bound) {
+        std::ostringstream message;
+        message << "small-pair Hamiltonian divides cancelling cofactors by det X: error="
+                << std::abs(result.total_hamiltonian - expected) << ", bound=" << bound;
+        throw std::runtime_error(message.str());
+    }
+}
+
 int main() {
     try {
+        check_small_pair_hamiltonian();
         const xmvb::vb::DeterminantOverlapResolver overlap_resolver;
+        // Every entry and deleted minor is exactly representable. The matrix
+        // is full rank, but det(X) is much smaller than its first cofactors.
+        const double a = std::ldexp(1.0, -15), b = std::ldexp(1.0, -30);
+        Eigen::Matrix3d small;
+        small << 1.0, 1.0, 1.0, 1.0, 1.0 + a, 1.0, 1.0, 1.0, 1.0 + b;
+        Eigen::Matrix3d expected;
+        expected << a + b + a * b, -b, -a, -b, b, 0.0, -a, 0.0, a;
+        for (bool permuted : {false, true}) {
+            Eigen::Matrix3d x = small, c = expected;
+            if (permuted) {
+                x.row(0).swap(x.row(2));
+                c.row(0).swap(c.row(2));
+                c = -c;
+            }
+            const auto actual = xmvb::vb::calc_cofactor_1st(overlap_resolver.resolve_matrix(x));
+            if ((actual.array() != c.array()).any())
+                throw std::runtime_error("small first cofactors lost exact deleted-minor values");
+        }
         // Row permutations exercise determinant sign; the last fixture enters
         // SVD via relative LU rank but remains above the absolute singular cutoff.
         for (const double scale : {1.0, 1.0e-8, 1.0e12}) {

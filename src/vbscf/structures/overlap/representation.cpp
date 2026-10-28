@@ -24,10 +24,10 @@ namespace {
 using Strings = mcscf::StringTable;
 constexpr std::size_t kRowWorkspaceBytes = 8 * 1024 * 1024;
 
-void validate_strings(const Strings& strings, int orbitals) {
+bool validate_strings(const Strings& strings, int orbitals) {
     if (strings.empty())
         throw std::invalid_argument("empty spin-string carrier");
-    (void)strings.basis(orbitals); // validates occupations and uniqueness without decoding
+    return strings.basis(orbitals).complete(); // validates without decoding
 }
 
 void validate_chart(const Eigen::Ref<const Eigen::MatrixXd>& r, int n) {
@@ -198,11 +198,15 @@ RepresentationOverlap::RepresentationOverlap(const StructureAction& action,
                                              const Strings& beta_strings,
                                              int n_active)
     : action_(&action), alpha_(alpha_strings), beta_(beta_strings), n_active_(n_active),
-      complete_carrier_(action.supports_integral_direction()) {
-    if (n_active <= 0 || (complete_carrier_ && n_active > 63))
+      complete_carrier_(false) {
+    if (n_active <= 0)
         throw std::invalid_argument("invalid orbital count for representation overlap");
-    validate_strings(alpha_, n_active);
-    validate_strings(beta_, n_active);
+    // The physical metric depends on spin topology, not on the H backend.
+    const bool complete_alpha = validate_strings(alpha_, n_active);
+    const bool complete_beta = validate_strings(beta_, n_active);
+    complete_carrier_ = complete_alpha && complete_beta;
+    if (complete_carrier_ && n_active > 63)
+        throw std::invalid_argument("invalid orbital count for representation overlap");
     if (core::checked_index<Eigen::Index>(alpha_.size()) != action.n_alpha_strings() ||
         core::checked_index<Eigen::Index>(beta_.size()) != action.n_beta_strings())
         throw std::invalid_argument("spin strings do not match action carrier");

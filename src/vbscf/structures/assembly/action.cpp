@@ -642,6 +642,12 @@ StructureAction::StructureAction(
         }
     }
 
+    if (!direct_ci_ && direct_ci_plan.carrier_complete()) {
+        // Transport and metric factors share this topology with every H backend.
+        // No CI sigma, transformed integrals, or physical product arrays are built.
+        sources_ = std::make_unique<SpinSources>(spin_products_, n_unique_alpha_, n_unique_beta_);
+    }
+
     if (mode == StructureActionMode::ActionOnly)
         return;
 
