@@ -143,6 +143,7 @@ int main(int argc, char** argv) {
                   << ",energy=" << accepted.scf_result.total_energy
                   << ",ci_residual=" << zero.ci_residual
                   << ",origin_gradient_error=" << norm(zero.model.gradient - origin)
+                  << ",origin_energy_error=" << zero.model.energy - accepted.scf_result.total_energy
                   << ",active_gram_min=" << spectrum.eigenvalues()[0]
                   << ",active_gram_max=" << spectrum.eigenvalues().tail(1)[0] << std::endl;
         auto make_orbital = [&](const Eigen::MatrixXd& tangent) {

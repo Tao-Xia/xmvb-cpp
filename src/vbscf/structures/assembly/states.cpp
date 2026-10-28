@@ -25,31 +25,43 @@ FixedStructureStates evaluate_fixed_states(const StructureAction& action,
     // Normalization must precede the adjoint, but needs only M C, not sigma.
     // E = w Tr[G^-1 C^T H C], G = C^T M C. No closure of C's VB span is assumed.
     StructureActionResult images;
-    if (action.supports_integral_direction())
-        images.overlap = metric ? Eigen::MatrixXd(metric->overlap * coefficients)
-                                : action.apply_overlap(coefficients);
+    Eigen::MatrixXd coordinates;
+    if (action.supports_integral_direction() && metric) {
+        coordinates = metric->factor.matrixU() * coefficients;
+        images.overlap = metric->factor.matrixL() * coordinates;
+    } else if (action.supports_integral_direction())
+        images.overlap = action.apply_overlap(coefficients);
     else
         images = action.apply(coefficients);
-    const Eigen::MatrixXd gram = coefficients.transpose() * images.overlap;
+    const Eigen::MatrixXd gram = metric && coordinates.size()
+                                     ? Eigen::MatrixXd(coordinates.transpose() * coordinates)
+                                     : Eigen::MatrixXd(coefficients.transpose() * images.overlap);
     const Eigen::LLT<Eigen::MatrixXd> factor(gram);
     if (factor.info() != Eigen::Success)
         throw std::runtime_error("fixed structure keyframe has a singular state Gram matrix");
     const Eigen::MatrixXd white = factor.matrixU().solve(Eigen::MatrixXd::Identity(count, count));
     const Eigen::MatrixXd normalized = coefficients * white;
+    if (coordinates.size())
+        coordinates = (coordinates * white).eval();
     std::optional<StructureAdjointState> adjoint;
     if (action.supports_integral_direction()) {
         // Accumulate unshifted integral/generator cotangents along with H C.
         // The full state-space multiplier is known only after this same sweep.
         // Linearity: M*(C*white)=(M*C)*white, with exactly the same state gauge.
         // No second orbital transform or overlap projection is needed.
-        const Eigen::MatrixXd normalized_overlap = images.overlap * white;
+        const Eigen::MatrixXd normalized_overlap =
+            coordinates.size() ? Eigen::MatrixXd(metric->factor.matrixL() * coordinates)
+                               : Eigen::MatrixXd(images.overlap * white);
         adjoint = action.prepare_active_adjoint(
             normalized, weights, std::vector<double>(count, 0.0), &images, &normalized_overlap);
     } else {
         images.hamiltonian = (images.hamiltonian * white).eval();
         images.overlap = (images.overlap * white).eval();
     }
-    const Eigen::MatrixXd projected_h = normalized.transpose() * images.hamiltonian;
+    const Eigen::MatrixXd projected_h =
+        coordinates.size() ? Eigen::MatrixXd(coordinates.transpose() *
+                                             metric->factor.matrixL().solve(images.hamiltonian))
+                           : Eigen::MatrixXd(normalized.transpose() * images.hamiltonian);
     const Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> spectrum(projected_h);
     if (spectrum.info() != Eigen::Success)
         throw std::runtime_error("fixed structure keyframe state diagonalization failed");
@@ -70,7 +82,7 @@ FixedStructureStates evaluate_fixed_states(const StructureAction& action,
     images.overlap = (images.overlap * spectrum.eigenvectors()).eval();
     result.energies.resize(count);
     for (Eigen::Index state = 0; state < count; ++state)
-        result.energies[state] = result.coefficients.col(state).dot(images.hamiltonian.col(state));
+        result.energies[state] = spectrum.eigenvalues()[state];
     result.residuals = std::move(images.hamiltonian);
     result.residuals.noalias() -=
         images.overlap *

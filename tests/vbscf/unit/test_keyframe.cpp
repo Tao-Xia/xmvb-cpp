@@ -15,6 +15,7 @@
 #include "vbscf/orbitals/charts/chart.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
 #include "vbscf/structures/expansion/expander.hpp"
+#include "vbscf/structures/overlap/metric.hpp"
 #include "vbscf/optimization/backends/ciah_step.hpp"
 #include "vbscf/optimization/driver/options.hpp"
 #include "vbscf/orbitals/preparation/preparer.hpp"
@@ -153,7 +154,7 @@ void benchmark_accepted_state16(bool check_hvp = false) {
     ao.ao_core_hamiltonian_matrix = Eigen::MatrixXd::Zero(n, n);
     for (int i = 0; i < n; ++i)
         ao.ao_core_hamiltonian_matrix(i, i) = -0.9 + 0.03 * i;
-    std::vector<int> left, right;
+    std::vector<xmvb::integrals::PairAddress> left, right;
     std::vector<double> values;
     for (int p = 0; p < n * (n + 1) / 2; ++p)
         for (int q = 0; q <= p; ++q) {
@@ -360,7 +361,7 @@ void check_keyframe(bool complete_carrier) {
     ao.n_basis_functions = 3;
     ao.ao_core_hamiltonian_matrix.resize(3, 3);
     ao.ao_core_hamiltonian_matrix << -1.1, 0.13, 0.04, 0.13, -0.6, -0.08, 0.04, -0.08, 0.2;
-    std::vector<int> left, right;
+    std::vector<xmvb::integrals::PairAddress> left, right;
     std::vector<double> values;
     for (int p = 0; p < 6; ++p) {
         for (int q = 0; q <= p; ++q) {
@@ -412,6 +413,33 @@ void check_keyframe(bool complete_carrier) {
         return evaluator.evaluate_fixed_structure(input, states, weights, 0.4, coefficients);
     };
     const auto fixed = evaluate(c);
+    const xmvb::vb::SelectedMetric selected_metric(accepted.structure_action->apply_overlap(
+        Eigen::MatrixXd::Identity(data.n_structures, data.n_structures)));
+    // The reused-factor path must differentiate the same physical Rayleigh
+    // functional for both single-state and equal-weight nonstationary spans.
+    for (int roots : {1, 2}) {
+        const std::vector<int> indices(states.begin(), states.begin() + roots);
+        const std::vector<double> equal_weights(roots, 1.0 / roots);
+        Eigen::MatrixXd coefficients = c.leftCols(roots);
+        const auto factored = [&](const Eigen::MatrixXd& values) {
+            return evaluator.evaluate_fixed_structure(
+                input, indices, equal_weights, 0.4, values, &selected_metric);
+        };
+        const auto value = factored(coefficients);
+        constexpr double step = 1e-5;
+        for (int root = 0; root < roots; ++root)
+            for (Eigen::Index row = 0; row < coefficients.rows(); ++row) {
+                const double original = coefficients(row, root);
+                coefficients(row, root) = original + step;
+                const double plus = factored(coefficients).gradient.scf_result.total_energy;
+                coefficients(row, root) = original - step;
+                const double minus = factored(coefficients).gradient.scf_result.total_energy;
+                coefficients(row, root) = original;
+                require(std::abs((plus - minus) / (2 * step) -
+                                 value.coefficient_gradient(row, root)) < 2e-7,
+                        "factored keyframe coefficient gradient differs from energy differences");
+            }
+    }
     require(fixed.gradient.scf_result.eigenvector_matrix.empty() &&
                 fixed.gradient.scf_result.structure_overlap_diagonal.empty(),
             "fixed-state gradient constructed eigensolver output");
