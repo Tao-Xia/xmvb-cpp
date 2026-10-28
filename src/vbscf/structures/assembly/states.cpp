@@ -27,8 +27,8 @@ FixedStructureStates evaluate_fixed_states(const StructureAction& action,
     StructureActionResult images;
     Eigen::MatrixXd coordinates;
     if (action.supports_integral_direction() && metric) {
-        coordinates = metric->factor.matrixU() * coefficients;
-        images.overlap = metric->factor.matrixL() * coordinates;
+        coordinates = metric->upper.triangularView<Eigen::Upper>() * coefficients;
+        images.overlap = metric->upper.transpose().triangularView<Eigen::Lower>() * coordinates;
     } else if (action.supports_integral_direction())
         images.overlap = action.apply_overlap(coefficients);
     else
@@ -50,8 +50,10 @@ FixedStructureStates evaluate_fixed_states(const StructureAction& action,
         // Linearity: M*(C*white)=(M*C)*white, with exactly the same state gauge.
         // No second orbital transform or overlap projection is needed.
         const Eigen::MatrixXd normalized_overlap =
-            coordinates.size() ? Eigen::MatrixXd(metric->factor.matrixL() * coordinates)
-                               : Eigen::MatrixXd(images.overlap * white);
+            coordinates.size()
+                ? Eigen::MatrixXd(metric->upper.transpose().triangularView<Eigen::Lower>() *
+                                  coordinates)
+                : Eigen::MatrixXd(images.overlap * white);
         adjoint = action.prepare_active_adjoint(
             normalized, weights, std::vector<double>(count, 0.0), &images, &normalized_overlap);
     } else {
@@ -59,9 +61,11 @@ FixedStructureStates evaluate_fixed_states(const StructureAction& action,
         images.overlap = (images.overlap * white).eval();
     }
     const Eigen::MatrixXd projected_h =
-        coordinates.size() ? Eigen::MatrixXd(coordinates.transpose() *
-                                             metric->factor.matrixL().solve(images.hamiltonian))
-                           : Eigen::MatrixXd(normalized.transpose() * images.hamiltonian);
+        coordinates.size()
+            ? Eigen::MatrixXd(coordinates.transpose() *
+                              metric->upper.transpose().triangularView<Eigen::Lower>().solve(
+                                  images.hamiltonian))
+            : Eigen::MatrixXd(normalized.transpose() * images.hamiltonian);
     const Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> spectrum(projected_h);
     if (spectrum.info() != Eigen::Success)
         throw std::runtime_error("fixed structure keyframe state diagonalization failed");

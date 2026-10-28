@@ -12,6 +12,8 @@
 #include <Eigen/LU>
 
 #include "core/timing.hpp"
+#include "core/workspace.hpp"
+#include "parallel/openmp.hpp"
 #include "vbscf/structures/assembly/action.hpp"
 #include "vbscf/structures/overlap/metric.hpp"
 #include "vbscf/structures/orthogonal_ci/exterior_transform.hpp"
@@ -225,23 +227,27 @@ RepresentationOverlap::PreparedMetric::PreparedMetric(
         } else {
             beta_transform_ = std::make_shared<ExteriorOrbitalTransform>(beta, upper);
         }
-        // M = W^T (T_alpha^T T_alpha tensor T_beta^T T_beta) W is
-        // immutable at this chart. Reapplying its exterior maps in every CG
-        // iteration is unnecessary for a small selected space. Reserve half the
-        // existing budget for construction and quarters for identity/result.
-        const std::size_t n = action.n_structures();
+        // F=Q R, M=R^T R. Factoring F avoids the squared conditioning and
+        // rounding loss of forming M before its factor. Only R is retained.
         if (fits_selected(action.n_structures())) {
-            selected_metric_ = std::make_shared<SelectedMetric>(
-                action.cross_overlap(Eigen::MatrixXd::Identity(n, n),
-                                     *alpha_transform_,
-                                     *beta_transform_,
-                                     *alpha_transform_,
-                                     *beta_transform_,
-                                     nullptr,
-                                     nullptr,
-                                     nullptr,
-                                     nullptr,
-                                     kRowWorkspaceBytes / 2));
+            const auto n = static_cast<std::size_t>(action.n_structures());
+            // Request only enough shared workspace to consume a complete
+            // alpha panel once per beta row. A small selected-Gram admission
+            // budget must not force repeated exterior transforms over alpha
+            // row slices. If less is available, the same QR tiles the rows.
+            const auto panel =
+                core::checked_multiply(static_cast<std::size_t>(action.n_alpha_strings()), n);
+            const auto elements = core::checked_multiply(
+                4,
+                core::checked_add(core::checked_add(core::checked_multiply(n, n), panel),
+                                  static_cast<std::size_t>(action.n_beta_strings())));
+            const auto workers = static_cast<std::size_t>(coarse_openmp_thread_count(
+                effective_openmp_thread_count(), core::checked_multiply(n, n)));
+            const auto bytes = std::min(
+                workspace::available(),
+                core::checked_multiply(core::checked_multiply(elements, workers), sizeof(double)));
+            selected_metric_ = std::make_shared<SelectedMetric>(SelectedMetric::from_upper(
+                action.selected_overlap_factor(*alpha_transform_, *beta_transform_, bytes)));
             alpha_transform_.reset();
             beta_transform_.reset();
         }
@@ -255,7 +261,7 @@ Eigen::MatrixXd RepresentationOverlap::PreparedMetric::operator()(
     if (coeff.rows() != action_->n_structures() || coeff.cols() <= 0 || !coeff.allFinite())
         throw std::invalid_argument("invalid structure block");
     if (selected_metric_)
-        return selected_metric_->overlap * coeff;
+        return selected_metric_->apply(coeff);
     if (!alpha_transform_)
         return apply_pair_kernel(*action_, alpha_, beta_, kernel_, coeff);
 

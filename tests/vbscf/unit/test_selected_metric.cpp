@@ -216,7 +216,7 @@ void check_retained_ill_conditioned_metric() {
         const auto prepared = representation.prepare_metric(fixture.upper);
         retained = prepared.selected_metric();
     }
-    require(retained != nullptr && retained->factor.info() == Eigen::Success,
+    require(retained != nullptr && retained->upper.allFinite(),
             "selected factor did not survive its prepared action");
     const Eigen::MatrixXd& metric = retained->overlap;
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> spectrum(metric);
@@ -230,15 +230,63 @@ void check_retained_ill_conditioned_metric() {
         [&](const Eigen::VectorXd& vector) {
             return Eigen::VectorXd(action.apply_overlap(vector).col(0));
         },
-        [&](const Eigen::VectorXd& residual) {
-            return Eigen::VectorXd(retained->factor.solve(residual));
-        },
+        [&](const Eigen::VectorXd& residual) { return Eigen::VectorXd(retained->solve(residual)); },
         &stats);
     const double relative_residual =
         (rhs - action.apply_overlap(solution).col(0)).norm() / rhs.norm();
     require(stats.certifications >= 1 &&
                 relative_residual <= std::sqrt(std::numeric_limits<double>::epsilon()),
             "retained factor lost the original metric residual certificate");
+}
+
+/** @brief Resolve a finite physical state without squaring source conditioning. */
+void check_physical_qr_factor() {
+    constexpr double delta = 1e-6;
+    Eigen::MatrixXd selected = Eigen::MatrixXd::Zero(9, 3);
+    selected(0, 0) = selected(0, 1) = selected(8, 2) = 1.0;
+    selected(4, 1) = delta;
+    Fixture fixture(3, 1, 1, selected);
+    const auto action = fixture.action();
+    const auto& view = action.orthogonal_view();
+    const Eigen::Vector3d c(-1.0 / delta, 1.0 / delta, 0.0);
+    // W*c is exactly the (alpha=1,beta=1) unit product. Its exterior
+    // image is R(:,1) R(:,1)^T; no near-equal Gram entries are subtracted.
+    const double expected = std::pow(fixture.upper.col(1).squaredNorm(), 2);
+    const double bound = 64 * std::numeric_limits<double>::epsilon() / delta * expected;
+    for (std::size_t bytes : {512UL, 8192UL}) {
+        const auto metric = xmvb::vb::SelectedMetric::from_upper(
+            action.selected_overlap_factor(view.alpha, view.beta, bytes));
+        require(std::abs((metric.upper * c).squaredNorm() - expected) < bound,
+                "physical QR lost a necessary direction through normal equations or tiling");
+    }
+}
+
+/** @brief Different row partitions keep the same near-dependent selected span. */
+void check_parallel_qr_factor() {
+    constexpr double delta = 1e-6;
+    Eigen::MatrixXd selected = Eigen::MatrixXd::Identity(36, 34);
+    selected.col(1).setZero();
+    selected(0, 1) = 1.0;
+    selected(1, 1) = delta;
+    Fixture fixture(4, 2, 2, selected);
+    const auto action = fixture.action();
+    const auto& view = action.orthogonal_view();
+    Eigen::VectorXd c = Eigen::VectorXd::Zero(34);
+    c[0] = -1.0 / delta;
+    c[1] = 1.0 / delta;
+    const Eigen::MatrixXd s = fixture.upper.transpose() * fixture.upper;
+    // W*c is the product (alpha={0,1}, beta={0,2}). Its norm is the
+    // product of the two occupied 2x2 Gram determinants.
+    const double expected =
+        (s(0, 0) * s(1, 1) - s(0, 1) * s(1, 0)) * (s(0, 0) * s(2, 2) - s(0, 2) * s(2, 0));
+    const double bound = 64 * std::numeric_limits<double>::epsilon() / delta * expected;
+    const std::size_t bytes = 4 * 34 * 34 * sizeof(double);
+    for (auto budget : {bytes, 6 * bytes}) {
+        const auto metric = xmvb::vb::SelectedMetric::from_upper(
+            action.selected_overlap_factor(view.alpha, view.beta, budget));
+        require(std::abs((metric.upper * c).squaredNorm() - expected) < bound,
+                "TSQR partitions changed the physical norm of a selected direction");
+    }
 }
 
 void check_selected_spin_metric() {
@@ -413,6 +461,8 @@ void doublet_case() {
 } // namespace
 
 int main() {
+    check_physical_qr_factor();
+    check_parallel_qr_factor();
     check_selected_spin_metric();
     check_retained_ill_conditioned_metric();
     singlet_case();

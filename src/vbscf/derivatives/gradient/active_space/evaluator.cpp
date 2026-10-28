@@ -307,13 +307,15 @@ solve_factored_structure_roots(const StructureAction& action,
                                             diagonal.hamiltonian,
                                             diagonal.overlap,
                                             std::min(options.max_subspace_dimension, 2 * n_roots));
-    const Eigen::MatrixXd guess = metric.factor.matrixU() * seeds;
+    const Eigen::MatrixXd guess = metric.upper.triangularView<Eigen::Upper>() * seeds;
     auto result = solve_selected_structure_roots(
         [&action, &metric](const Eigen::Ref<const Eigen::MatrixXd>& y) {
             profiling::ScopedPhase phase(profiling::Phase::CiSigma, true);
-            const Eigen::MatrixXd c = metric.factor.matrixU().solve(y);
+            const Eigen::MatrixXd c = metric.upper.triangularView<Eigen::Upper>().solve(y);
             return linalg::GeneralizedEigenActionResult{
-                metric.factor.matrixL().solve(action.apply_hamiltonian(c)), {}};
+                metric.upper.transpose().triangularView<Eigen::Lower>().solve(
+                    action.apply_hamiltonian(c)),
+                {}};
         },
         diagonal.hamiltonian,
         diagonal.overlap,
@@ -327,9 +329,10 @@ solve_factored_structure_roots(const StructureAction& action,
         true);
     const Eigen::Map<const Eigen::MatrixXd> y(
         result.eigenpairs.eigenvector_matrix.data(), n, n_roots);
-    const Eigen::MatrixXd coefficients = metric.factor.matrixU().solve(y);
-    result.hamiltonian_eigenvectors = metric.factor.matrixL() * result.hamiltonian_eigenvectors;
-    result.overlap_eigenvectors = metric.factor.matrixL() * y;
+    const Eigen::MatrixXd coefficients = metric.upper.triangularView<Eigen::Upper>().solve(y);
+    result.hamiltonian_eigenvectors =
+        metric.upper.transpose().triangularView<Eigen::Lower>() * result.hamiltonian_eigenvectors;
+    result.overlap_eigenvectors = metric.upper.transpose().triangularView<Eigen::Lower>() * y;
     result.eigenpairs.eigenvector_matrix.assign(coefficients.data(),
                                                 coefficients.data() + coefficients.size());
     return result;

@@ -352,6 +352,20 @@ template <class Backend> class CiahCore {
         const double curvature_error = (numerics_.operator_relative_accuracy +
                                         256 * std::numeric_limits<double>::epsilon() * m) *
                                        projected_hessian.norm() * first_tail.squaredNorm();
+        if (trace)
+            diagnostics::ciah_trace(
+                "ciah_curvature_gate",
+                "basis=%d,lowest=%.17g,reference=%.17g,curvature=%.17g,error=%.17g,"
+                "hessian_norm=%.17g,tail_squared=%.17g,metric_min=%.17g,metric_max=%.17g",
+                basis_size(),
+                spectrum.eigenvalues()[0],
+                first_alpha,
+                first_curvature,
+                curvature_error,
+                projected_hessian.norm(),
+                first_tail.squaredNorm(),
+                metric_spectrum.eigenvalues()[0],
+                metric_spectrum.eigenvalues().tail(1)[0]);
         if (std::abs(first_alpha) <= 0.1 && first_curvature < -curvature_error) {
             // This is a curvature ray, not a quotient tail/alpha. It must not
             // enter Newton residual preconditioning or the gradient-growth test.

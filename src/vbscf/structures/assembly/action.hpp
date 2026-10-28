@@ -406,6 +406,11 @@ class StructureAction {
                                   const ExteriorTransformDirection* delta_right_beta = nullptr,
                                   std::size_t workspace_bytes = 64ULL * 1024ULL * 1024ULL) const;
 
+    /** @brief Streaming QR of physical selected-structure images, without normal equations. */
+    Eigen::MatrixXd selected_overlap_factor(const ExteriorOrbitalTransform& alpha,
+                                            const ExteriorOrbitalTransform& beta,
+                                            std::size_t workspace_bytes) const;
+
     /** @brief Bounded pullback of left^T F(left_chart)^T F(right_chart) right.
    * Broad-support common spatial charts use direct one-body generator moments.
    * Optional chart directions request the derivative of the pullback.

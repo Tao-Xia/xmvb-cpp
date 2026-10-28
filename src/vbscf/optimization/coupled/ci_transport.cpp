@@ -112,7 +112,7 @@ Eigen::MatrixXd CiTransport::solve(const Eigen::MatrixXd& upper,
                 [&](const Eigen::VectorXd& x) {
                     const auto action_start = timed ? Clock::now() : Clock::time_point{};
                     Eigen::VectorXd image = selected_metric_
-                                                ? Eigen::VectorXd(selected_metric_->overlap * x)
+                                                ? Eigen::VectorXd(selected_metric_->apply(x))
                                                 : Eigen::VectorXd((*prepared_metric_)(x).col(0));
                     if (timed)
                         action_seconds +=
@@ -121,7 +121,7 @@ Eigen::MatrixXd CiTransport::solve(const Eigen::MatrixXd& upper,
                 },
                 [&](const Eigen::VectorXd& x) {
                     if (selected_metric_)
-                        return Eigen::VectorXd(selected_metric_->factor.solve(x));
+                        return Eigen::VectorXd(selected_metric_->solve(x));
                     if (origin_.spin_metric)
                         return origin_.spin_metric->precondition(x, diagonal_);
                     return Eigen::VectorXd(x.cwiseQuotient(diagonal_));

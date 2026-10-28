@@ -109,7 +109,7 @@ void physical_reference(const xmvb::vb::StructureAction& action,
     if (metric) {
         const Eigen::MatrixXd inverse =
             r.triangularView<Eigen::Upper>().solve(Eigen::MatrixXd::Identity(n, n));
-        const Eigen::MatrixXd factor = metric->factor.matrixU() * inverse;
+        const Eigen::MatrixXd factor = metric->upper.triangularView<Eigen::Upper>() * inverse;
         std::cout << ",metric_error="
                   << (factor.transpose() * factor - Eigen::MatrixXd::Identity(n, n)).norm();
     }
@@ -175,9 +175,11 @@ int main(int argc, char** argv) {
             const Eigen::MatrixXd cached =
                 context.selected_metric->overlap.topLeftCorner(count, count);
             std::cout << "METRIC,cache_physical_difference=" << whiten(cached - m1).norm() << '\n';
-            const Eigen::MatrixXd coordinates = context.selected_metric->factor.matrixU() * c;
+            const Eigen::MatrixXd coordinates =
+                context.selected_metric->upper.triangularView<Eigen::Upper>() * c;
             const Eigen::MatrixXd factored_image =
-                context.selected_metric->factor.matrixL() * coordinates;
+                context.selected_metric->upper.transpose().triangularView<Eigen::Lower>() *
+                coordinates;
             std::cout << "NORMALIZATION,factored=" << coordinates.squaredNorm()
                       << ",factored_image=" << pairing(c.col(0), factored_image.col(0))
                       << ",cached_image="

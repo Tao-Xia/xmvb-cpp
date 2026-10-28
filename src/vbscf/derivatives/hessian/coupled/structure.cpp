@@ -415,8 +415,7 @@ StructureTangentOperator::apply_metric_coordinates(const Eigen::VectorXd& coordi
     // replaying F and F^T just to apply the same structure tangent metric.
     const Eigen::MatrixXd overlap =
         accepted_point_->selected_metric
-            ? Eigen::MatrixXd(accepted_point_->selected_metric->overlap *
-                              horizontal.scaled_coefficients)
+            ? accepted_point_->selected_metric->apply(horizontal.scaled_coefficients)
             : action_->apply_overlap(horizontal.scaled_coefficients);
     validate_shape(overlap);
     return project_coordinates(overlap);
@@ -470,7 +469,7 @@ StructureTangentOperator::apply_inverse_metric_model(const Eigen::VectorXd& cove
     if (metric_inverse_)
         image = metric_inverse_->apply(rhs);
     else
-        image = selected_metric->factor.solve(rhs);
+        image = selected_metric->solve(rhs);
     // Z spans ker[(M C)^T]. The exact horizontal inverse is
     // Z^T [M^-1 - C (C^T M C)^-1 C^T] Z, not Z^T M^-1 Z.
     image.noalias() -= selected_ * (selected_metric_inverse_ * (selected_.transpose() * rhs));
