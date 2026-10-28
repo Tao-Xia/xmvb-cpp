@@ -1368,6 +1368,48 @@ void check_curvature_microstep() {
                   "curvature microstep lost its cached image");
 }
 
+void check_invalid_model_checkpoint() {
+    using namespace xmvb::mcscf;
+    using Ops = detail::HostCiahVectorOps;
+    const Eigen::MatrixXd h = Eigen::MatrixXd::Identity(1, 1);
+    const Eigen::VectorXd g = Eigen::VectorXd::Constant(1, -1.0);
+    int actions = 0;
+    auto problem = dense_problem(h, h, g, &actions);
+    CiahWorkspace workspace(problem);
+    CiahMicroResult micro(0.0, g);
+    micro.displacement = Eigen::VectorXd::Constant(1, 1.9);
+    micro.hessian_displacement = h * micro.displacement;
+    micro.last_step = micro.displacement;
+    micro.energy_model.add(micro.displacement, micro.hessian_displacement);
+    micro.energy_model_stopped = true;
+    const Eigen::VectorXd checkpoint = Eigen::VectorXd::Ones(1);
+    micro.keyframes.save(-0.5, checkpoint, h * checkpoint, checkpoint, micro.candidate);
+    struct Trial {
+        double energy;
+        Eigen::VectorXd step;
+    };
+    CiahMacroCallbacks<Ops, Trial> callbacks;
+    int evaluations = 0;
+    callbacks.evaluate = [&](const Eigen::VectorXd& p, double scale) {
+        ++evaluations;
+        const Eigen::VectorXd x = scale * p;
+        return Trial{g.dot(x) + 0.5 * x.dot(h * x), x};
+    };
+    callbacks.energy = [](const Trial& t) { return t.energy; };
+    callbacks.terminal = [](Trial&) { return false; };
+    callbacks.step_norm = [](const Eigen::VectorXd& x) { return x.norm(); };
+    callbacks.maximum_component = [](const Eigen::VectorXd& x) { return x.cwiseAbs().maxCoeff(); };
+    callbacks.changes_parameters = [](const Eigen::VectorXd& x) { return !x.isZero(0.0); };
+    const int before = actions;
+    const auto result = run_ciah_macro(workspace, micro, g, 0.0, 1e-7, 1e-12, Ops{}, callbacks);
+    require(result.trial && result.keyframe_backtracked && evaluations == 1 && actions == before,
+            "invalid model checkpoint added trials or HVPs");
+    require_close(result.trial->step, checkpoint, 1e-14,
+                  "invalid extrapolation displaced a better true keyframe");
+    require_close(micro.hessian_displacement, h * checkpoint, 1e-14,
+                  "checkpoint restored coordinates without their Hessian image");
+}
+
 void check_curvature_macro_candidate() {
     using namespace xmvb::mcscf;
     using Ops = detail::HostCiahVectorOps;
@@ -1423,6 +1465,7 @@ int main() {
         check_coarse_physical_scaling();
         check_coarse_shift_pole();
         check_curvature_microstep();
+        check_invalid_model_checkpoint();
         check_curvature_macro_candidate();
         check_gradient_independent_curvature();
         check_anisotropic_spd();

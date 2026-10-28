@@ -61,6 +61,26 @@ CiahMacroResult<Trial> run_ciah_macro(Workspace& workspace,
     result.residual_norm = micro.candidate.residual_norm;
     result.eigenvalue = micro.candidate.eigenvalue;
     result.ritz_converged = micro.candidate.converged;
+    const auto restore_keyframe = [&]() {
+        auto point = micro.keyframes.take();
+        displacement = std::move(point.displacement);
+        image = std::move(point.image);
+        last_step = std::move(point.last_step);
+        result.residual_norm = point.residual_norm;
+        result.eigenvalue = point.eigenvalue;
+        result.ritz_converged = point.converged;
+        final_reduction = source_energy - point.energy;
+        linear = ops.dot(initial_gradient, displacement);
+        quadratic = ops.dot(displacement, image);
+        result.scale = 1.0;
+        result.keyframe_backtracked = true;
+    };
+    // A true keyframe has contradicted the model's descent. Discard that
+    // extrapolation before macro acceptance, rather than accepting any tiny
+    // decrease and losing the already evaluated descending checkpoint.
+    // Its physical CI-relaxed energy is still checked below.
+    if (micro.energy_model_stopped && micro.keyframes.available())
+        restore_keyframe();
     const auto restart_origin = [&]() {
         if (result.origin_restarted)
             return false;
@@ -127,18 +147,7 @@ CiahMacroResult<Trial> run_ciah_macro(Workspace& workspace,
         }
         ++result.rejected_trials;
         if (micro.keyframes.available()) {
-            auto point = micro.keyframes.take();
-            displacement = std::move(point.displacement);
-            image = std::move(point.image);
-            last_step = std::move(point.last_step);
-            result.residual_norm = point.residual_norm;
-            result.eigenvalue = point.eigenvalue;
-            result.ritz_converged = point.converged;
-            final_reduction = source_energy - point.energy;
-            linear = ops.dot(initial_gradient, displacement);
-            quadratic = ops.dot(displacement, image);
-            result.scale = 1.0;
-            result.keyframe_backtracked = true;
+            restore_keyframe();
             continue;
         }
         if ((micro.energy_model_stopped || linear >= 0.0) && restart_origin())
