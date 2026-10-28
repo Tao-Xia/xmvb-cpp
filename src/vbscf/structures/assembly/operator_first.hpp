@@ -42,6 +42,8 @@ class OperatorFirstAction {
                         const mcscf::ActiveIntegrals& integrals,
                         const Eigen::Ref<const Eigen::MatrixXd>& orbital_map);
     ~OperatorFirstAction();
+    /** @brief Certify the inverse-dependent contraction before any consumer uses it. */
+    bool preserves_physical_operator() const;
     OperatorFirstAction(const OperatorFirstAction&) = delete;
     OperatorFirstAction& operator=(const OperatorFirstAction&) = delete;
 

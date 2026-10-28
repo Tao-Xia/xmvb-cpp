@@ -21,6 +21,10 @@ OperatorFirstAction::OperatorFirstAction(StructureAction::OrthogonalView view,
 
 OperatorFirstAction::~OperatorFirstAction() = default;
 
+bool OperatorFirstAction::preserves_physical_operator() const {
+    return data_->hamiltonian.preserves_physical_operator();
+}
+
 OperatorFirstImages OperatorFirstAction::apply(const Eigen::Ref<const Eigen::MatrixXd>& vectors,
                                                std::size_t workspace_bytes,
                                                bool collect_overlap,

@@ -1,3 +1,4 @@
+#include "orbital_snapshot.hpp"
 #include <algorithm>
 #include <limits>
 #include <optional>
@@ -36,21 +37,8 @@ ray_fraction(double source, double trial, double slope, double energy_resolution
     return std::nullopt;
 }
 
-Eigen::MatrixXd read_orbitals(const char* path, const OrbitalPreparationInput& o) {
-    Eigen::MatrixXd b(o.n_basis_functions, o.n_orbitals);
-    std::ifstream file(path, std::ios::binary);
-    file.read(reinterpret_cast<char*>(b.data()), b.size() * sizeof(double));
-    if (!file)
-        throw std::runtime_error("invalid orbital ray snapshot");
-    return b;
-}
-void set_orbitals(OrbitalPreparationInput& o, const Eigen::MatrixXd& b) {
-    for (std::size_t i = 0; i < o.n_orbitals; ++i)
-        for (int j = 0; j < stored_sparse_orbital_coefficient_count(o, i); ++j) {
-            const auto slot = i * o.n_basis_functions + j;
-            o.orbital_value_table[slot] = b(o.orbital_basis_index_table[slot] - 1, i);
-        }
-}
+using xmvb::test::read_orbitals;
+using xmvb::test::set_orbitals;
 } // namespace
 
 /** @brief Postprocess recorded CIAH points; no optimizer or HVP is executed. */

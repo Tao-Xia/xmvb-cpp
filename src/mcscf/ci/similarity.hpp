@@ -67,6 +67,10 @@ class SimilarityHamiltonian {
     double g(int p, int q, int r, int s) const noexcept {
         return g_(p * n_ + q, r * n_ + s);
     }
+    /** @brief Whether reversing the similarity preserves the physical integrals to roundoff.
+     * Failed certification changes contraction order, never the variational space.
+     */
+    bool preserves_physical_operator() const;
     /** @brief General real canonical Slater--Condon element, without Hermiticity assumptions. */
     double
     element(OccupationMask ta, OccupationMask tb, OccupationMask sa, OccupationMask sb) const;

@@ -442,3 +442,7 @@ target_link_libraries(check_ciah_derivatives PRIVATE xmvb_input xmvb_vbscf)
 add_executable(check_ciah_conditioning EXCLUDE_FROM_ALL
   ${PROJECT_SOURCE_DIR}/tests/vbscf/diagnostics/ciah_conditioning.cpp)
 target_link_libraries(check_ciah_conditioning PRIVATE xmvb_input xmvb_vbscf)
+
+add_executable(check_structure_accuracy EXCLUDE_FROM_ALL
+  ${PROJECT_SOURCE_DIR}/tests/vbscf/diagnostics/structure_accuracy.cpp)
+target_link_libraries(check_structure_accuracy PRIVATE xmvb_input xmvb_vbscf)
