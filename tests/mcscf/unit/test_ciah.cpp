@@ -198,6 +198,33 @@ void check_indefinite_root_selection() {
                   "pure curvature ray has an inconsistent image");
 }
 
+/** @brief A CI-response error budget must not hide a resolved sampled saddle. */
+void check_stiff_spectator_curvature() {
+    Eigen::Matrix2d h = Eigen::Vector2d(-1e-4, 1e8).asDiagonal();
+    const Eigen::Matrix2d metric = Eigen::Matrix2d::Identity();
+    const Eigen::Vector2d g(0.0, 1e-4);
+    int actions = 0;
+    const auto problem = dense_problem(h, metric, g, &actions);
+    CiahOptions options;
+    options.operator_relative_accuracy = 1e-4;
+    options.max_cycle = 2;
+    CiahWorkspace workspace(problem, Eigen::VectorXd::Ones(2), options);
+    auto candidate = workspace.next(g);
+    require(!candidate.negative_curvature, "mixed one-dimensional fixture is already unstable");
+    candidate = workspace.next(g);
+    require(candidate.negative_curvature && candidate.basis_size == 2 && actions == 2,
+            "unrelated stiff curvature or response budget hid a resolved negative direction");
+    require(candidate.step.dot(h * candidate.step) < -9e-5 &&
+                (candidate.hessian_step - h * candidate.step).norm() < 1e-7,
+            "stiff-spectator curvature has no independently checked negative physical image");
+    h(0, 0) = 1e-4;
+    actions = 0;
+    const auto positive = dense_problem(h, metric, g, &actions);
+    CiahWorkspace stable(positive, Eigen::VectorXd::Ones(2), options);
+    stable.next(g);
+    require(!stable.next(g).negative_curvature, "positive soft curvature was misclassified");
+}
+
 void check_origin_ray_residual(const xmvb::mcscf::CiahOriginRay& ray,
                                const Eigen::MatrixXd& hessian,
                                const Eigen::MatrixXd& metric,
@@ -1300,6 +1327,7 @@ int main() {
         check_anisotropic_spd();
         check_small_gradient_expansion();
         check_indefinite_root_selection();
+        check_stiff_spectator_curvature();
         check_cached_origin_ray();
         check_origin_ray_macro_energy();
         check_gradient_refresh_and_preconditioner();

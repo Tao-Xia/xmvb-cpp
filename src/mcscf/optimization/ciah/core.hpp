@@ -73,6 +73,32 @@ inline void check_ciah_projected_symmetry(Eigen::Index dimension,
     }
 }
 
+/** @brief Roundoff bound for a sampled Rayleigh quadratic, not a response-solve tolerance.
+ * Each projected entry is a physical-vector dot product. Bound its rounding
+ * with its cached absolute-product sum, then bound the two small contractions.
+ * A stiff direction absent from the ray contributes no uncertainty. The
+ * declared action accuracy remains in symmetry checks; it is not uncertainty
+ * in the sign of the already evaluated finite-CI model's quadratic form.
+ */
+inline double ciah_curvature_roundoff(Eigen::Index dimension,
+                                      const Eigen::VectorXd& coefficients,
+                                      const Eigen::MatrixXd& magnitude,
+                                      const Eigen::MatrixXd& projection) {
+    const double u = .5 * std::numeric_limits<double>::epsilon();
+    const auto gamma = [u](Eigen::Index n) {
+        const double nu = static_cast<double>(n) * u;
+        return nu / (1.0 - nu);
+    };
+    const double vector_gamma = gamma(dimension);
+    const double small_gamma = gamma(2 * coefficients.size() + 2);
+    const Eigen::VectorXd a = coefficients.cwiseAbs();
+    const double products = a.dot(magnitude * a);
+    const double quadratic = a.dot(projection.cwiseAbs() * a);
+    // Divide out the rounding in the nonnegative sums used for the bound.
+    return (vector_gamma / (1.0 - vector_gamma) * products + small_gamma * quadratic) /
+           (1.0 - small_gamma);
+}
+
 /** The sole CIAH Davidson iteration. Backend vectors may live on host or device. */
 template <class Backend> class CiahCore {
   public:
@@ -236,13 +262,9 @@ template <class Backend> class CiahCore {
             Vector residual = backend_.clone(ray.hessian_step);
             backend_.axpy(residual, -ray.eigenvalue, metric_step);
             ray.residual_norm = backend_.stable_norm(residual);
-            const double scale =
-                backend_.stable_norm(ray.step) * backend_.stable_norm(ray.hessian_step);
-            const double uncertainty =
-                (numerics_.operator_relative_accuracy +
-                 256 * std::numeric_limits<double>::epsilon() * backend_.size()) *
-                scale;
-            if (backend_.dot(ray.step, ray.hessian_step) < -uncertainty) {
+            const double uncertainty = ciah_curvature_roundoff(
+                backend_.size(), coefficients, hessian_magnitude_.topLeftCorner(m, m), raw);
+            if (coefficients.dot(h * coefficients) < -uncertainty) {
                 if (backend_.dot(gradient, ray.step) > 0) {
                     backend_.scal(ray.step, -1);
                     backend_.scal(ray.hessian_step, -1);
@@ -349,9 +371,8 @@ template <class Backend> class CiahCore {
         const double first_alpha = spectrum.eigenvectors()(0, 0);
         const Eigen::VectorXd first_tail = spectrum.eigenvectors().col(0).tail(m);
         const double first_curvature = first_tail.dot(projected_hessian * first_tail);
-        const double curvature_error = (numerics_.operator_relative_accuracy +
-                                        256 * std::numeric_limits<double>::epsilon() * m) *
-                                       projected_hessian.norm() * first_tail.squaredNorm();
+        const double curvature_error = ciah_curvature_roundoff(
+            backend_.size(), first_tail, hessian_magnitude_.topLeftCorner(m, m), projected_hessian);
         if (trace)
             diagnostics::ciah_trace(
                 "ciah_curvature_gate",
