@@ -53,10 +53,11 @@ int main(int argc, char** argv) {
               (std::string_view(argv[2]).starts_with("--path=") ||
                std::string(argv[2]) == "--refine" || std::string(argv[2]) == "--identity" ||
                std::string(argv[2]) == "--repeat" || std::string(argv[2]) == "--soft-mesh" ||
-               std::string(argv[2]) == "--dense-ah" || std::string(argv[2]) == "--joint-geometry")))
+               std::string(argv[2]) == "--dense-ah" || std::string(argv[2]) == "--joint-geometry" ||
+               std::string(argv[2]) == "--selected-curvature")))
             throw std::runtime_error("usage: check_ciah_derivatives INPUT.xmi "
                                      "[--refine|--identity|--repeat|--soft-mesh|--dense-ah|--joint-"
-                                     "geometry|--path=DIR]");
+                                     "geometry|--selected-curvature|--path=DIR]");
         const bool soft_mesh = argc == 3 && std::string(argv[2]) == "--soft-mesh";
         const bool refine = argc == 3 && (std::string(argv[2]) == "--refine" || soft_mesh);
         const bool identity_audit = argc == 3 && std::string(argv[2]) == "--identity";
@@ -177,7 +178,8 @@ int main(int argc, char** argv) {
                   << ",origin_energy_error=" << zero.model.energy - accepted.scf_result.total_energy
                   << ",active_gram_min=" << spectrum.eigenvalues()[0]
                   << ",active_gram_max=" << spectrum.eigenvalues().tail(1)[0] << std::endl;
-        if (argc == 3 && std::string(argv[2]) == "--joint-geometry") {
+        if (argc == 3 && (std::string(argv[2]) == "--joint-geometry" ||
+                          std::string(argv[2]) == "--selected-curvature")) {
             const auto diagonal = build_analytic_orbital_diagonal(input, context);
             chart.set_curvature(
                 o, nullptr, &diagonal, OrbitalChart::CurvatureUse::AugmentedHessian);
@@ -194,7 +196,8 @@ int main(int argc, char** argv) {
                 origin,
                 action,
                 [&](const Eigen::VectorXd& x) { return model(x).model.gradient; },
-                [&](const Eigen::VectorXd& x) { return model(x).model.energy; });
+                [&](const Eigen::VectorXd& x) { return model(x).model.energy; },
+                std::string(argv[2]) == "--selected-curvature");
             return 0;
         }
         if (argc == 3 && std::string(argv[2]) == "--dense-ah") {

@@ -20,6 +20,8 @@ struct InternalStateDirection {
 struct InternalStateCurvature {
     Eigen::MatrixXd hessian;
     Eigen::VectorXd gradient;
+    Eigen::MatrixXd tangent_curvature;
+    Eigen::MatrixXd residual_curvature;
 };
 
 /** @brief Exact fixed-span Rayleigh curvature using only accepted active integrals.
@@ -64,6 +66,9 @@ internal_state_curvature(const mcscf::DirectCiSigmaAction& sigma,
     InternalStateCurvature result;
     result.gradient =
         2 * first.transpose() * Eigen::Map<const Eigen::VectorXd>(residual.data(), residual.size());
+    result.tangent_curvature =
+        2 * first.transpose() * (images - energy * first) -
+        (result.gradient * parallel.transpose() + parallel * result.gradient.transpose());
     result.hessian =
         2 * first.transpose() * (images - energy * first) -
         2 * (result.gradient * parallel.transpose() + parallel * result.gradient.transpose());
@@ -92,6 +97,7 @@ internal_state_curvature(const mcscf::DirectCiSigmaAction& sigma,
             if (a != b)
                 result.hessian(b, a) += 2 * second;
         }
+    result.residual_curvature = result.hessian - result.tangent_curvature;
     return result;
 }
 } // namespace xmvb::test

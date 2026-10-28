@@ -16,6 +16,7 @@
 #include "ciah_state_metric.hpp"
 #include "ciah_precision.hpp"
 #include "ciah_restricted.hpp"
+#include "ciah_selected.hpp"
 #include "mcscf/ci/sigma.hpp"
 #include "vbscf/derivatives/hessian/coupled/structure.hpp"
 #include "vbscf/derivatives/hessian/responses/orbital/preparation.hpp"
@@ -44,7 +45,8 @@ void audit_joint_geometry(const vb::OrbitalPreparationInput& input,
                           const Eigen::VectorXd& gradient,
                           Action&& hessian,
                           Gradient&& keyframe_gradient,
-                          Energy&& keyframe_energy) {
+                          Energy&& keyframe_energy,
+                          bool selected_audit = false) {
     const auto view = action.orthogonal_view();
     const Eigen::Index na = input.n_active_orbitals;
     const Eigen::Index nc = (input.n_total_electrons - input.n_active_electrons) / 2;
@@ -146,6 +148,31 @@ void audit_joint_geometry(const vb::OrbitalPreparationInput& input,
     const Eigen::MatrixXd curvature =
         .5 * (basis.transpose() * images + images.transpose() * basis);
     const Eigen::MatrixXd quantum = 2 * jacobian.transpose() * jacobian;
+    if (selected_audit) {
+        const auto reference = internal_state_curvature(view.sigma,
+                                                        state,
+                                                        view.sigma.apply(state),
+                                                        r,
+                                                        inverse,
+                                                        input.ao_overlap_matrix,
+                                                        internal_jets);
+        audit_selected_curvature(input,
+                                 prepared,
+                                 context,
+                                 layout,
+                                 chart,
+                                 structure,
+                                 action,
+                                 coefficients,
+                                 state,
+                                 basis,
+                                 jacobian,
+                                 mass,
+                                 curvature,
+                                 reference,
+                                 keyframe_gradient);
+        return;
+    }
     Eigen::MatrixXd inverse_model(internal, internal);
     for (Eigen::Index j = 0; j < internal; ++j)
         inverse_model.col(j) =
