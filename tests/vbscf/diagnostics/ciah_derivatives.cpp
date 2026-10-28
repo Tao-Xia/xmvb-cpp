@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "ciah_response.hpp"
+#include "ciah_geometry.hpp"
 #include "core/memory.hpp"
 #include "linalg/eigensolver.hpp"
 #include "mcscf/optimization/preconditioners/coarse.hpp"
@@ -50,9 +51,10 @@ int main(int argc, char** argv) {
             !(argc == 3 &&
               (std::string(argv[2]) == "--refine" || std::string(argv[2]) == "--identity" ||
                std::string(argv[2]) == "--repeat" || std::string(argv[2]) == "--soft-mesh" ||
-               std::string(argv[2]) == "--dense-ah")))
-            throw std::runtime_error("usage: check_ciah_derivatives INPUT.xmi "
-                                     "[--refine|--identity|--repeat|--soft-mesh|--dense-ah]");
+               std::string(argv[2]) == "--dense-ah" || std::string(argv[2]) == "--joint-geometry")))
+            throw std::runtime_error(
+                "usage: check_ciah_derivatives INPUT.xmi "
+                "[--refine|--identity|--repeat|--soft-mesh|--dense-ah|--joint-geometry]");
         const bool soft_mesh = argc == 3 && std::string(argv[2]) == "--soft-mesh";
         const bool refine = argc == 3 && (std::string(argv[2]) == "--refine" || soft_mesh);
         const bool identity_audit = argc == 3 && std::string(argv[2]) == "--identity";
@@ -169,6 +171,25 @@ int main(int argc, char** argv) {
                   << ",origin_energy_error=" << zero.model.energy - accepted.scf_result.total_energy
                   << ",active_gram_min=" << spectrum.eigenvalues()[0]
                   << ",active_gram_max=" << spectrum.eigenvalues().tail(1)[0] << std::endl;
+        if (argc == 3 && std::string(argv[2]) == "--joint-geometry") {
+            const auto diagonal = build_analytic_orbital_diagonal(input, context);
+            chart.set_curvature(
+                o, nullptr, &diagonal, OrbitalChart::CurvatureUse::AugmentedHessian);
+            xmvb::test::audit_joint_geometry(
+                o,
+                prep,
+                layout,
+                chart,
+                structure,
+                hvp.structure_action(),
+                context.selected_state_eigenvectors,
+                metric,
+                origin,
+                action,
+                [&](const Eigen::VectorXd& x) { return model(x).model.gradient; },
+                [&](const Eigen::VectorXd& x) { return model(x).model.energy; });
+            return 0;
+        }
         if (argc == 3 && std::string(argv[2]) == "--dense-ah") {
             // Strictly bounded independent diagnostic. Production remains matrix-free.
             if (dimension > 2048 || context.n_structures > 8)

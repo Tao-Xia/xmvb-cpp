@@ -12,6 +12,7 @@
 #include <Eigen/LU>
 
 #include "mcscf/optimization/ciah/solver.hpp"
+#include "mcscf/optimization/ciah/bounded.hpp"
 #include "mcscf/optimization/ciah/driver.hpp"
 #include "mcscf/optimization/ciah/macro.hpp"
 #include "mcscf/optimization/preconditioners/coarse.hpp"
@@ -223,6 +224,49 @@ void check_stiff_spectator_curvature() {
     CiahWorkspace stable(positive, Eigen::VectorXd::Ones(2), options);
     stable.next(g);
     require(!stable.next(g).negative_curvature, "positive soft curvature was misclassified");
+}
+
+/** @brief Independent exact KKT checks for bounded and hard-case sampled steps. */
+void check_bounded_ciah_model() {
+    const Eigen::Vector2d positive(2, 4), g(.1, .2);
+    const Eigen::Matrix2d identity = Eigen::Matrix2d::Identity();
+    const auto norm = [](const Eigen::VectorXd& x) { return x.norm(); };
+    const auto full = xmvb::mcscf::bound_ciah_step(positive, identity, g, norm, 1);
+    require_close(full.coefficients,
+                  -g.cwiseQuotient(positive),
+                  2e-12,
+                  "feasible bounded model lost its exact Newton solution");
+    const auto limited = xmvb::mcscf::bound_ciah_step(positive, identity, g, norm, .01);
+    require(std::abs(limited.coefficients.norm() - .01) < 2e-14 && limited.shift > 0 &&
+                ((positive.array() + limited.shift).matrix().cwiseProduct(limited.coefficients) + g)
+                        .norm() < 2e-12,
+            "bounded model violates its boundary or complete sampled KKT equation");
+    const auto shifted = xmvb::mcscf::bound_ciah_step(positive, identity, g, norm, 1, 5);
+    require(shifted.shift >= 5 &&
+                ((positive.array() + 5).matrix().cwiseProduct(shifted.coefficients) + g).norm() <
+                    2e-12,
+            "restriction weakened the supplied AH regularization");
+    const Eigen::Vector2d negative(-2, 1), forcing(0, 1);
+    const auto hard = xmvb::mcscf::bound_ciah_step(negative, identity, forcing, norm, 1);
+    require(hard.hard_case && std::abs(hard.coefficients.norm() - 1) < 2e-14 &&
+                std::abs(hard.shift - 2) < 2e-12 &&
+                ((negative.array() + hard.shift).matrix().cwiseProduct(hard.coefficients) + forcing)
+                        .norm() < 2e-12 &&
+                std::abs(forcing.dot(hard.coefficients) +
+                         .5 * hard.coefficients.dot(negative.cwiseProduct(hard.coefficients)) +
+                         7.0 / 6) < 2e-12,
+            "gradient-orthogonal negative mode failed the independent hard-case minimum");
+    const Eigen::Matrix2d vectors = Eigen::Vector2d(.5, 2).asDiagonal();
+    const Eigen::Matrix2d mass = Eigen::Vector2d(4, .25).asDiagonal();
+    const Eigen::Vector2d raw_forcing(0, .5);
+    const auto physical_norm = [&](const Eigen::VectorXd& x) { return std::sqrt(x.dot(mass * x)); };
+    const auto transformed =
+        xmvb::mcscf::bound_ciah_step(negative, vectors, raw_forcing, physical_norm, 1);
+    const Eigen::Matrix2d raw_hessian = Eigen::Vector2d(-8, .25).asDiagonal();
+    require(std::abs(physical_norm(transformed.coefficients) - 1) < 2e-14 &&
+                ((raw_hessian + transformed.shift * mass) * transformed.coefficients + raw_forcing)
+                        .norm() < 2e-12,
+            "bounded hard case changed under independent coordinate units");
 }
 
 void check_origin_ray_residual(const xmvb::mcscf::CiahOriginRay& ray,
@@ -1328,6 +1372,7 @@ int main() {
         check_small_gradient_expansion();
         check_indefinite_root_selection();
         check_stiff_spectator_curvature();
+        check_bounded_ciah_model();
         check_cached_origin_ray();
         check_origin_ray_macro_energy();
         check_gradient_refresh_and_preconditioner();
