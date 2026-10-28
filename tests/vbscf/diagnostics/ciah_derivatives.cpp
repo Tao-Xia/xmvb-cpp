@@ -12,6 +12,7 @@
 #include "ciah_response.hpp"
 #include "core/memory.hpp"
 #include "linalg/eigensolver.hpp"
+#include "mcscf/optimization/preconditioners/coarse.hpp"
 #include "vbscf/optimization/preconditioners/hessian_diagonal.hpp"
 #include "vbscf/diagnostics/orbitals/step_geometry.hpp"
 #include "input/loading/loader.hpp"
@@ -239,9 +240,53 @@ int main(int argc, char** argv) {
                     .5 * (h.bottomRightCorner(ns, ns) + h.bottomRightCorner(ns, ns).transpose());
                 const Eigen::MatrixXd raw_m = .5 * (mass.bottomRightCorner(ns, ns) +
                                                     mass.bottomRightCorner(ns, ns).transpose());
+                std::cout << "RESPONSE_MODEL,frame=diagonal" << std::endl;
                 xmvb::test::audit_coupling_response(
                     raw_a, raw_b, raw_c, raw_m, no, [&](const Eigen::VectorXd& rhs) {
                         return chart.apply_inverse_augmented_hessian_diagonal(rhs, 0.0);
+                    });
+            }
+            if (orbital_eigenvalues.front() > 0) {
+                const Eigen::Index count = na * (na - 1);
+                Eigen::MatrixXd sources(no, count);
+                const auto& physical = prep.physical_orbital_frame.normalized_orbital_matrix;
+                Eigen::Index column = 0;
+                for (Eigen::Index i = 0; i < na; ++i)
+                    for (Eigen::Index j = 0; j < na; ++j) {
+                        if (i == j)
+                            continue;
+                        std::vector<double> full(o.orbital_value_table.size(), 0.0);
+                        for (int k = 0; k < stored_sparse_orbital_coefficient_count(o, nc + i);
+                             ++k) {
+                            const auto slot = (nc + i) * o.n_basis_functions + k;
+                            full[slot] = physical(o.orbital_basis_index_table[slot] - 1, nc + j);
+                        }
+                        sources.col(column++) =
+                            chart.project_vector(layout.gather_from_full(full)).reduced_gradient;
+                    }
+                const Eigen::HouseholderQR<Eigen::MatrixXd> qr(sources);
+                const Eigen::MatrixXd basis =
+                    qr.householderQ() * Eigen::MatrixXd::Identity(no, count);
+                const Eigen::MatrixXd raw_a =
+                    .5 * (h.topLeftCorner(no, no) + h.topLeftCorner(no, no).transpose());
+                const Eigen::MatrixXd raw_b =
+                    .5 * (h.bottomLeftCorner(ns, no) + h.topRightCorner(no, ns).transpose());
+                const Eigen::MatrixXd raw_c =
+                    .5 * (h.bottomRightCorner(ns, ns) + h.bottomRightCorner(ns, ns).transpose());
+                const Eigen::MatrixXd raw_m = .5 * (mass.bottomRightCorner(ns, ns) +
+                                                    mass.bottomRightCorner(ns, ns).transpose());
+                xmvb::mcscf::CoarsePreconditioner internal(no, static_cast<int>(count), 1e-14);
+                for (Eigen::Index j = 0; j < count; ++j)
+                    internal.observe(basis.col(j),
+                                     raw_a * basis.col(j),
+                                     mass.topLeftCorner(no, no) * basis.col(j));
+                std::cout << "RESPONSE_MODEL,frame=exact_internal,setup_orbital_actions=" << count
+                          << ",retained=" << internal.size() << std::endl;
+                xmvb::test::audit_coupling_response(
+                    raw_a, raw_b, raw_c, raw_m, no, [&](const Eigen::VectorXd& rhs) {
+                        return internal.apply(rhs, 0.0, [&](const Eigen::VectorXd& v) {
+                            return chart.apply_inverse_augmented_hessian_diagonal(v, 0.0);
+                        });
                     });
             }
             Eigen::MatrixXd ah = Eigen::MatrixXd::Zero(dimension + 1, dimension + 1);
