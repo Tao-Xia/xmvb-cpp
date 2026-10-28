@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "vbscf/determinants/pairs/contractions.hpp"
 #include "vbscf/determinants/algebra/cofactor_differential.hpp"
 #include <Eigen/LU>
@@ -159,7 +160,7 @@ void build_inverse_overlap_gradient_from_projected_pair_values(
         const int orbital_index_left = occ_L[left_column];
         for (int right_row = 0; right_row < n_electrons; ++right_row) {
             const int orbital_index_right = occ_R[right_row];
-            const int packed_pair_index =
+            const auto packed_pair_index =
                 xmvb::core::PairIndex::packed_pair_index(orbital_index_right, orbital_index_left);
             (*inverse_overlap_gradient)(left_column, right_row) =
                 projected_pair_values[packed_pair_index];
@@ -247,18 +248,18 @@ compute_same_spin_original_phi_impl(const std::vector<int>& occ_L,
         const int orbital_index_left_first = occ_L[left_first];
         for (int right_first = 0; right_first < n_electrons - 1; ++right_first) {
             const int orbital_index_right_first = occ_R[right_first];
-            const int direct_left_pair_index = xmvb::core::PairIndex::packed_pair_index(
+            const auto direct_left_pair_index = xmvb::core::PairIndex::packed_pair_index(
                 orbital_index_right_first, orbital_index_left_first);
             for (int left_second = left_first + 1; left_second < n_electrons; ++left_second) {
                 const int orbital_index_left_second = occ_L[left_second];
-                const int exchange_left_pair_index = xmvb::core::PairIndex::packed_pair_index(
+                const auto exchange_left_pair_index = xmvb::core::PairIndex::packed_pair_index(
                     orbital_index_right_first, orbital_index_left_second);
                 for (int right_second = right_first + 1; right_second < n_electrons;
                      ++right_second) {
                     const int orbital_index_right_second = occ_R[right_second];
-                    const int direct_right_pair_index = xmvb::core::PairIndex::packed_pair_index(
+                    const auto direct_right_pair_index = xmvb::core::PairIndex::packed_pair_index(
                         orbital_index_right_second, orbital_index_left_second);
-                    const int exchange_right_pair_index = xmvb::core::PairIndex::packed_pair_index(
+                    const auto exchange_right_pair_index = xmvb::core::PairIndex::packed_pair_index(
                         orbital_index_right_second, orbital_index_left_first);
                     const double interaction_value =
                         lookup_interaction(direct_left_pair_index, direct_right_pair_index) -
@@ -333,7 +334,7 @@ double compute_opposite_spin_original_phi_impl(const std::vector<int>& alpha_occ
             const int alpha_orbital_right = alpha_occ_R[alpha_right_row];
             const double alpha_inverse_value =
                 alpha_inverse_overlap_submatrix(alpha_left_column, alpha_right_row);
-            const int alpha_packed_pair_index =
+            const auto alpha_packed_pair_index =
                 xmvb::core::PairIndex::packed_pair_index(alpha_orbital_right, alpha_orbital_left);
             for (int beta_left_column = 0; beta_left_column < n_beta_electrons;
                  ++beta_left_column) {
@@ -342,7 +343,7 @@ double compute_opposite_spin_original_phi_impl(const std::vector<int>& alpha_occ
                     const int beta_orbital_right = beta_occ_R[beta_right_row];
                     const double beta_inverse_value =
                         beta_inverse_overlap_submatrix(beta_left_column, beta_right_row);
-                    const int beta_packed_pair_index = xmvb::core::PairIndex::packed_pair_index(
+                    const auto beta_packed_pair_index = xmvb::core::PairIndex::packed_pair_index(
                         beta_orbital_right, beta_orbital_left);
                     const double interaction_value =
                         lookup_interaction(beta_packed_pair_index, alpha_packed_pair_index);
@@ -854,7 +855,7 @@ Eigen::MatrixXd build_deleted_minor_matrix(const Eigen::MatrixXd& overlap_block,
     Eigen::MatrixXd deleted_minor(overlap_block.rows() - static_cast<int>(deleted_rows.size()),
                                   overlap_block.cols() - static_cast<int>(deleted_cols.size()));
     int minor_row = 0;
-    for (int row = 0; row < overlap_block.rows(); ++row) {
+    for (std::int64_t row = 0; row < overlap_block.rows(); ++row) {
         if (std::find(deleted_rows.begin(), deleted_rows.end(), row) != deleted_rows.end()) {
             continue;
         }
@@ -974,7 +975,7 @@ double calc_directional_second_order_cofactor(const Eigen::MatrixXd& overlap_blo
     Eigen::MatrixXd deleted_minor(minor_dimension, minor_dimension);
     Eigen::MatrixXd delta_minor(minor_dimension, minor_dimension);
     int minor_row = 0;
-    for (int row = 0; row < n_electrons; ++row) {
+    for (std::int64_t row = 0; row < n_electrons; ++row) {
         if (row == right_first || row == right_second) {
             continue;
         }
@@ -1086,7 +1087,7 @@ compute_same_spin_original_phi(const std::vector<int>& occ_L,
         inverse_overlap_gradient,
         [&packed_active_two_electron_integrals](int row_packed_pair_index,
                                                 int column_packed_pair_index) {
-            const int packed_pair_of_pairs_index =
+            const auto packed_pair_of_pairs_index =
                 xmvb::core::PairIndex::packed_pair_of_pairs_index(row_packed_pair_index,
                                                                   column_packed_pair_index);
             return packed_active_two_electron_integrals[packed_pair_of_pairs_index];
@@ -1168,7 +1169,7 @@ compute_opposite_spin_original_phi(const std::vector<int>& alpha_occ_L,
         beta_inverse_overlap_gradient,
         [&packed_active_two_electron_integrals](int row_packed_pair_index,
                                                 int column_packed_pair_index) {
-            const int packed_pair_of_pairs_index =
+            const auto packed_pair_of_pairs_index =
                 xmvb::core::PairIndex::packed_pair_of_pairs_index(row_packed_pair_index,
                                                                   column_packed_pair_index);
             return packed_active_two_electron_integrals[packed_pair_of_pairs_index];

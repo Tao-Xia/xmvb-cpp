@@ -13,10 +13,10 @@ namespace xmvb::mcscf {
 /** @brief One exact single replacement, in packed-pair order.
  * The current contract has at most63 orbitals, so pair/orbital indices fit
  * uint16/uint8. Keep the numerical sign in double: node-wise kernels consume
- * it directly. String addresses retain int; no floating precision is narrowed.
+ * it directly. String addresses retain native 64-bit indices; no floating precision is narrowed.
  */
 struct SpinLink {
-    int source;
+    StringIndex source;
     std::uint16_t pair;
     /** Source-to-row operator c†_created c_annihilated, not the reverse. */
     std::uint8_t created, annihilated;
@@ -47,7 +47,8 @@ struct DensityConnections {
  * Sigma directions and identical alpha/beta sectors share this immutable data.
  */
 struct SpinConnections {
-    int strings = 0, degree = 0;
+    StringIndex strings = 0;
+    int degree = 0;
     std::vector<SpinLink> links;
     /** Occupation bit strings and packed-link prefix per highest orbital.
    * Both are single-spin metadata, shared by every action at this point.
@@ -57,7 +58,7 @@ struct SpinConnections {
     std::vector<std::uint16_t> orbital_offsets;
     int orbitals = 0;
 
-    int n_strings() const noexcept {
+    StringIndex n_strings() const noexcept {
         return strings;
     }
     int n_occupied() const noexcept {
@@ -67,18 +68,18 @@ struct SpinConnections {
         return degree;
     }
 
-    DensityConnections singles(int string) const noexcept {
+    DensityConnections singles(StringIndex string) const noexcept {
         return {degree ? links.data() + static_cast<std::size_t>(degree) * string : nullptr,
                 degree};
     }
-    OccupiedOrbitals occupied(int string) const noexcept {
+    OccupiedOrbitals occupied(StringIndex string) const noexcept {
         return basis.occupied(string);
     }
     /** @brief Count links before a packed channel, using its high orbital and
    * low-orbital prefix mask. Links already follow high/low packed order.
    * Only opposite occupations connect; addresses/signs remain precomputed.
    */
-    int link_prefix(int string, int high, std::uint64_t low_mask) const noexcept {
+    int link_prefix(StringIndex string, int high, std::uint64_t low_mask) const noexcept {
         if (high == orbitals)
             return degree;
         const auto mask = basis.masks()[string];
@@ -93,14 +94,14 @@ struct SpinConnections {
    * needed. Callback arguments are link index and local envelope channel.
    */
     template <class Function>
-    void visit_lower_sources(int string, int first, int last, Function&& consume) const {
+    void visit_lower_sources(StringIndex string, int first, int last, Function&& consume) const {
         const auto occupied = basis.masks()[string];
         auto holes = ~occupied & ((std::uint64_t{1} << (first + 1)) - 1);
         auto high = occupied & ~((std::uint64_t{1} << (last + 1)) - 1);
         if (!holes || !high)
             return;
         std::array<int, 63> low;
-        int count = 0;
+        std::int64_t count = 0;
         while (holes) {
             low[count++] = std::countr_zero(holes);
             holes &= holes - 1;
@@ -109,7 +110,7 @@ struct SpinConnections {
             orbital_offsets.data() + static_cast<std::size_t>(string) * (orbitals + 1);
         while (high) {
             const int q = std::countr_zero(high), channel = (q - last - 1) * (first + 1);
-            const int begin = offsets[q];
+            const std::int64_t begin = offsets[q];
             for (int i = 0; i < count; ++i)
                 consume(begin + i, channel + low[i]);
             high &= high - 1;
@@ -122,12 +123,12 @@ struct SpinConnections {
    * survives. Existing source addresses and phases are borrowed unchanged.
    */
     template <class Function>
-    void visit_supported_sources(int string, std::uint64_t zero, Function&& consume) const {
+    void visit_supported_sources(StringIndex string, std::uint64_t zero, Function&& consume) const {
         const auto occupied = basis.masks()[string];
         const auto row = singles(string);
         const auto internal = zero & ((std::uint64_t{1} << (orbitals - 1)) - 1);
         if (!internal) {
-            for (int link = 0; link < row.size(); ++link)
+            for (std::int64_t link = 0; link < row.size(); ++link)
                 consume(link, row[link].pair);
             return;
         }
@@ -135,7 +136,7 @@ struct SpinConnections {
             orbital_offsets.data() + static_cast<std::size_t>(string) * (orbitals + 1);
         int excluded = 0;
         for (int high = 0; high < orbitals; ++high) {
-            const int begin =
+            const std::int64_t begin =
                 offsets[high] + ((occupied & (std::uint64_t{1} << high)) ? 0 : excluded);
             for (int link = begin; link < offsets[high + 1]; ++link)
                 consume(link, row[link].pair);

@@ -663,7 +663,7 @@ void check_action(int count,
     if (sparse_three) {
         require(cpu.orthogonal_view().support && !cpu.orthogonal_view().support->full(),
                 "three-seed fixture unexpectedly has complete product support");
-        std::vector<int> empty;
+        std::vector<Eigen::Index> empty;
         cpu.orthogonal_view().support->append_column_rows(2, empty);
         require(empty.empty(), "three-seed fixture lost its empty beta column");
     }
@@ -702,13 +702,15 @@ void check_action(int count,
             "GPU structure H/S block differs from the CPU action");
     const auto captures = context.counters().graph_captures;
     const auto launches = context.counters().graph_launches;
-    require(captures > 0, "fixed tile CI action did not build a CUDA graph");
+    const bool channel_order = !gpu.uses_operator_first();
+    if (channel_order)
+        require(captures > 0, "fixed tile CI action did not build a CUDA graph");
     const Eigen::MatrixXd half_vectors = 0.5 * vectors;
     const auto half = gpu.apply(half_vectors);
-    require(context.counters().graph_captures == captures &&
-                context.counters().graph_launches ==
-                    launches + static_cast<std::size_t>(vectors.cols()) *
-                                   (cpu.orthogonal_view().support ? 3 : 1),
+    require(!channel_order || (context.counters().graph_captures == captures &&
+                               context.counters().graph_launches ==
+                                   launches + static_cast<std::size_t>(vectors.cols()) *
+                                                  (cpu.orthogonal_view().support ? 3 : 1)),
             "CI action rebuilt its fixed plan for new numerical coefficients");
     require((half.hamiltonian - 0.5 * expected.hamiltonian).norm() < 2e-10 &&
                 (half.overlap - 0.5 * expected.overlap).norm() < 2e-10,
@@ -770,10 +772,11 @@ void check_action(int count,
         const auto recovered_captures = context.counters().graph_captures;
         const auto recovered_launches = context.counters().graph_launches;
         const auto reused = gpu.apply(vectors);
-        require(context.counters().graph_captures == recovered_captures &&
-                    context.counters().graph_launches ==
-                        recovered_launches + static_cast<std::size_t>(vectors.cols()) *
-                                                 (cpu.orthogonal_view().support ? 3 : 1),
+        require(!channel_order ||
+                    (context.counters().graph_captures == recovered_captures &&
+                     context.counters().graph_launches ==
+                         recovered_launches + static_cast<std::size_t>(vectors.cols()) *
+                                                  (cpu.orthogonal_view().support ? 3 : 1)),
                 "prepared support did not restore a reusable numerical graph lease");
         require((reused.hamiltonian - expected.hamiltonian).norm() < 2e-10,
                 "restored numerical graph lease changed H");

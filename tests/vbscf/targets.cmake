@@ -5,6 +5,7 @@
 # production build file from accumulating test-specific wiring.
 
 set(_xmvb_vbscf_unit_targets
+  test_exterior_transform
   test_spinor_strings
   test_spinor_projection
   test_active_two_electron_sparse
@@ -53,6 +54,11 @@ foreach(target_name IN LISTS _xmvb_vbscf_unit_targets)
   target_link_libraries(${target_name} PRIVATE xmvb_vbscf)
 endforeach()
 
+# Independent symbolic schedule census; does not alter a numerical backend.
+add_executable(test_metric_order EXCLUDE_FROM_ALL
+  ${CMAKE_SOURCE_DIR}/tests/vbscf/diagnostics/metric_order.cpp)
+target_link_libraries(test_metric_order PRIVATE xmvb_input xmvb_vbscf)
+
 add_executable(test_metric_point EXCLUDE_FROM_ALL
   ${CMAKE_SOURCE_DIR}/tests/vbscf/diagnostics/metric_point.cpp)
 target_link_libraries(test_metric_point PRIVATE xmvb_input xmvb_vbscf)
@@ -61,11 +67,34 @@ add_executable(test_initial_ci EXCLUDE_FROM_ALL
   ${CMAKE_SOURCE_DIR}/tests/vbscf/diagnostics/initial_ci.cpp)
 target_link_libraries(test_initial_ci PRIVATE xmvb_input xmvb_vbscf)
 
+add_executable(test_contraction_order EXCLUDE_FROM_ALL
+  ${CMAKE_SOURCE_DIR}/tests/vbscf/diagnostics/contraction_order.cpp)
+target_link_libraries(test_contraction_order PRIVATE xmvb_input xmvb_vbscf)
+
+add_executable(test_similarity_order EXCLUDE_FROM_ALL
+  ${CMAKE_SOURCE_DIR}/tests/vbscf/diagnostics/similarity_order.cpp)
+target_link_libraries(test_similarity_order PRIVATE xmvb_vbscf)
+
+add_executable(test_conditional_sampling EXCLUDE_FROM_ALL
+  ${CMAKE_SOURCE_DIR}/tests/vbscf/diagnostics/conditional_sampling.cpp)
+target_link_libraries(test_conditional_sampling PRIVATE xmvb_input xmvb_vbscf)
+
+add_executable(test_sampling EXCLUDE_FROM_ALL
+  ${CMAKE_SOURCE_DIR}/tests/vbscf/diagnostics/sampling.cpp)
+target_link_libraries(test_sampling PRIVATE xmvb_input xmvb_vbscf)
+
+add_executable(test_operator_point EXCLUDE_FROM_ALL
+  ${CMAKE_SOURCE_DIR}/tests/vbscf/diagnostics/operator_point.cpp)
+target_link_libraries(test_operator_point PRIVATE xmvb_input xmvb_vbscf)
+
 add_executable(test_selected_metric_point EXCLUDE_FROM_ALL
   ${CMAKE_SOURCE_DIR}/tests/vbscf/diagnostics/selected_metric_point.cpp)
 target_link_libraries(test_selected_metric_point PRIVATE xmvb_input xmvb_vbscf)
 
 if (BUILD_TESTING)
+  add_test(NAME exterior_transform COMMAND test_exterior_transform)
+  set_tests_properties(exterior_transform PROPERTIES
+    ENVIRONMENT "OMP_NUM_THREADS=4;OPENBLAS_NUM_THREADS=1")
   add_test(NAME ci_transport COMMAND test_ci_transport)
   add_test(NAME representation_overlap COMMAND test_representation_overlap)
   add_test(NAME selected_metric COMMAND test_selected_metric)

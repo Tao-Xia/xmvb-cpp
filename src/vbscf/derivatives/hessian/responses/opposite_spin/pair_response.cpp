@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "vbscf/derivatives/hessian/responses/opposite_spin/pair_response_internal.hpp"
 
 #include "mcscf/ci/string_table.hpp"
@@ -39,7 +40,7 @@ build_sparse_packed_pair_projection(const std::vector<int>& left_occupations,
         const int orbital_index_left = left_occupations[left_column];
         for (int right_row = 0; right_row < static_cast<int>(right_occupations.size());
              ++right_row) {
-            const int packed_pair_index = xmvb::core::PairIndex::packed_pair_index(
+            const auto packed_pair_index = xmvb::core::PairIndex::packed_pair_index(
                 right_occupations[right_row], orbital_index_left);
             if (touched_mask[packed_pair_index] == 0) {
                 touched_mask[packed_pair_index] = 1;
@@ -72,8 +73,8 @@ void scatter_sparse_projection(const OppositeSpinPackedPairProjection& projectio
 }
 
 void fill_exact_kernel_rows(const std::vector<double>& packed_kernel,
-                            int row_begin,
-                            int row_end,
+                            Eigen::Index row_begin,
+                            Eigen::Index row_end,
                             int n_packed_pairs,
                             Eigen::MatrixXd* rows) {
     rows->resize(row_end - row_begin, n_packed_pairs);
@@ -102,7 +103,7 @@ std::size_t accepted_tile_byte_bound(const xmvb::mcscf::StringTable& unique_dete
 } // namespace
 
 const DirectionalOppositeSpinPairData&
-DirectionalOppositeSpinPairTile::pair(int left_local, int right_local) const {
+DirectionalOppositeSpinPairTile::pair(Eigen::Index left_local, Eigen::Index right_local) const {
     if (left_local < 0 || left_local >= left_size || right_local < 0 || right_local >= right_size) {
         throw std::out_of_range("directional opposite-spin tile index out of range");
     }
@@ -113,19 +114,19 @@ DirectionalOppositeSpinPairTileView DirectionalOppositeSpinPairTile::view(bool t
     return DirectionalOppositeSpinPairTileView(*this, transposed);
 }
 
-int DirectionalOppositeSpinPairTileView::left_begin() const noexcept {
+std::int64_t DirectionalOppositeSpinPairTileView::left_begin() const noexcept {
     return transposed_ ? storage_->right_begin : storage_->left_begin;
 }
 
-int DirectionalOppositeSpinPairTileView::right_begin() const noexcept {
+std::int64_t DirectionalOppositeSpinPairTileView::right_begin() const noexcept {
     return transposed_ ? storage_->left_begin : storage_->right_begin;
 }
 
-int DirectionalOppositeSpinPairTileView::left_size() const noexcept {
+Eigen::Index DirectionalOppositeSpinPairTileView::left_size() const noexcept {
     return transposed_ ? storage_->right_size : storage_->left_size;
 }
 
-int DirectionalOppositeSpinPairTileView::right_size() const noexcept {
+Eigen::Index DirectionalOppositeSpinPairTileView::right_size() const noexcept {
     return transposed_ ? storage_->left_size : storage_->right_size;
 }
 
@@ -160,7 +161,7 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile_impl(
     const xmvb::mcscf::StringTable& unique_determinants,
     const std::vector<SpinDeterminantPairEvaluation>* ordered_pair_cache,
     const AcceptedSpinPairTile* accepted_pair_tile,
-    int n_unique_determinants,
+    std::int64_t n_unique_determinants,
     int n_active_orbitals,
     const xmvb::integrals::ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     const ActiveSpaceIntegralDirectionView& direction,
@@ -211,8 +212,8 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile_impl(
     const int n_threads = xmvb::effective_openmp_thread_count();
 #pragma omp parallel for schedule(static) if (n_threads > 1) num_threads(n_threads)
     for (int work = 0; work < work_items; ++work) {
-        const int left_local = work % result.left_size;
-        const int right_local = work / result.left_size;
+        const Eigen::Index left_local = work % result.left_size;
+        const Eigen::Index right_local = work / result.left_size;
         const int left = result.left_begin + left_local;
         const int right = result.right_begin + right_local;
         auto& entry =
@@ -251,24 +252,26 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile_impl(
         const Eigen::Index resident_tile_values =
             accepted_tile_values + 2 * static_cast<Eigen::Index>(n_packed_pairs) * work_items;
         const Eigen::Index available_workspace_values = std::max<Eigen::Index>(
-            1, workspace_value_cap - std::min(workspace_value_cap - 1, resident_tile_values));
+            1,
+            workspace_value_cap -
+                std::min<std::int64_t>(workspace_value_cap - 1, resident_tile_values));
         const int column_block = std::max<int>(
             1,
             std::min<Eigen::Index>(work_items,
                                    available_workspace_values / workspace_values_per_column));
         for (int begin = 0; begin < work_items; begin += column_block) {
-            const int end = std::min(work_items, begin + column_block);
+            const int end = std::min<std::int64_t>(work_items, begin + column_block);
             const int width = end - begin;
             Eigen::MatrixXd accepted_projection = Eigen::MatrixXd::Zero(n_packed_pairs, width);
             Eigen::MatrixXd directional_projection =
                 result.raw_channel_values.middleRows(begin, width).transpose();
             for (int work = begin; work < end; ++work) {
-                const int left_local = work % result.left_size;
-                const int right_local = work / result.left_size;
+                const Eigen::Index left_local = work % result.left_size;
+                const Eigen::Index right_local = work / result.left_size;
                 const int left = result.left_begin + left_local;
                 const int right = result.right_begin + right_local;
-                const int canonical_left = std::min(left, right);
-                const int canonical_right = std::max(left, right);
+                const int canonical_left = std::min<std::int64_t>(left, right);
+                const int canonical_right = std::max<std::int64_t>(left, right);
                 const auto& accepted =
                     (accepted_pair_tile != nullptr
                          ? accepted_pair_tile->pair(canonical_left - accepted_pair_tile->left_begin,
@@ -309,12 +312,12 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile_impl(
 
     Eigen::MatrixXd accepted_projection_block = Eigen::MatrixXd::Zero(n_packed_pairs, work_items);
     for (int work = 0; work < work_items; ++work) {
-        const int left_local = work % result.left_size;
-        const int right_local = work / result.left_size;
+        const Eigen::Index left_local = work % result.left_size;
+        const Eigen::Index right_local = work / result.left_size;
         const int left = result.left_begin + left_local;
         const int right = result.right_begin + right_local;
-        const int canonical_left = std::min(left, right);
-        const int canonical_right = std::max(left, right);
+        const int canonical_left = std::min<std::int64_t>(left, right);
+        const int canonical_right = std::max<std::int64_t>(left, right);
         const auto& accepted_pair_projection =
             (accepted_pair_tile != nullptr
                  ? accepted_pair_tile->pair(canonical_left - accepted_pair_tile->left_begin,
@@ -332,8 +335,10 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile_impl(
         sizeof(double));
     const Eigen::Index resident_tile_values =
         accepted_tile_values + 3 * static_cast<Eigen::Index>(n_packed_pairs) * work_items;
-    const Eigen::Index available_workspace_values = std::max<Eigen::Index>(
-        1, workspace_value_cap - std::min(workspace_value_cap - 1, resident_tile_values));
+    const Eigen::Index available_workspace_values =
+        std::max<Eigen::Index>(1,
+                               workspace_value_cap - std::min<std::int64_t>(workspace_value_cap - 1,
+                                                                            resident_tile_values));
     const int row_block = std::max<int>(
         1,
         std::min<Eigen::Index>(n_packed_pairs,
@@ -341,8 +346,8 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile_impl(
                                    std::max<Eigen::Index>(1, 2 * n_packed_pairs + work_items)));
     Eigen::MatrixXd accepted_rows;
     Eigen::MatrixXd directional_rows;
-    for (int row_begin = 0; row_begin < n_packed_pairs; row_begin += row_block) {
-        const int row_end = std::min(n_packed_pairs, row_begin + row_block);
+    for (Eigen::Index row_begin = 0; row_begin < n_packed_pairs; row_begin += row_block) {
+        const Eigen::Index row_end = std::min<std::int64_t>(n_packed_pairs, row_begin + row_block);
         fill_exact_kernel_rows(accepted_kernel, row_begin, row_end, n_packed_pairs, &accepted_rows);
         Eigen::MatrixXd projected = accepted_rows * result.raw_channel_values.transpose();
         if (!directional_kernel.empty()) {
@@ -361,7 +366,7 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile_impl(
 DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
     const xmvb::mcscf::StringTable& unique_determinants,
     const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
-    int n_unique_determinants,
+    std::int64_t n_unique_determinants,
     int n_active_orbitals,
     const xmvb::integrals::ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     const ActiveSpaceIntegralDirectionView& direction,

@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "vbscf/derivatives/hessian/responses/same_spin/pair_response_internal.hpp"
 
 #include "mcscf/ci/string_table.hpp"
@@ -26,7 +27,7 @@ std::size_t square_storage_size(int dimension) {
 } // namespace
 
 const SameSpinPolynomialDirectionalPairData&
-SameSpinDirectionalPairTile::pair(int left_local, int right_local) const {
+SameSpinDirectionalPairTile::pair(Eigen::Index left_local, Eigen::Index right_local) const {
     if (left_local < 0 || left_local >= left_size() || right_local < 0 ||
         right_local >= right_size()) {
         throw std::out_of_range("directional same-spin tile index out of range");
@@ -38,19 +39,19 @@ SameSpinDirectionalPairTileView SameSpinDirectionalPairTile::view(bool transpose
     return SameSpinDirectionalPairTileView(*this, transposed);
 }
 
-int SameSpinDirectionalPairTileView::left_begin() const noexcept {
+std::int64_t SameSpinDirectionalPairTileView::left_begin() const noexcept {
     return transposed_ ? storage_->right_begin : storage_->left_begin;
 }
 
-int SameSpinDirectionalPairTileView::right_begin() const noexcept {
+std::int64_t SameSpinDirectionalPairTileView::right_begin() const noexcept {
     return transposed_ ? storage_->left_begin : storage_->right_begin;
 }
 
-int SameSpinDirectionalPairTileView::left_size() const noexcept {
+Eigen::Index SameSpinDirectionalPairTileView::left_size() const noexcept {
     return transposed_ ? storage_->right_size() : storage_->left_size();
 }
 
-int SameSpinDirectionalPairTileView::right_size() const noexcept {
+Eigen::Index SameSpinDirectionalPairTileView::right_size() const noexcept {
     return transposed_ ? storage_->left_size() : storage_->right_size();
 }
 
@@ -171,12 +172,12 @@ void accumulate_deleted_minor_same_spin_two_electron_gradient_contribution_local
                         continue;
                     }
 
-                    const int direct_index = xmvb::core::PairIndex::two_electron_storage_index(
+                    const auto direct_index = xmvb::core::PairIndex::two_electron_storage_index(
                         orbital_index_right_first,
                         orbital_index_left_first,
                         orbital_index_right_second,
                         orbital_index_left_second);
-                    const int exchange_index = xmvb::core::PairIndex::two_electron_storage_index(
+                    const auto exchange_index = xmvb::core::PairIndex::two_electron_storage_index(
                         orbital_index_right_first,
                         orbital_index_left_second,
                         orbital_index_right_second,
@@ -303,13 +304,13 @@ SameSpinDirectionalPairTile build_directional_pair_tile_impl(
     const xmvb::mcscf::StringTable& unique_determinants,
     const std::vector<SpinDeterminantPairEvaluation>* ordered_pair_cache,
     const AcceptedSpinPairTile* accepted_pair_tile,
-    int n_unique_determinants,
+    std::int64_t n_unique_determinants,
     int n_active_orbitals,
     const ActiveSpaceIntegralDirectionView& direction,
-    int left_begin,
-    int left_end,
-    int right_begin,
-    int right_end,
+    std::int64_t left_begin,
+    std::int64_t left_end,
+    std::int64_t right_begin,
+    std::int64_t right_end,
     const Eigen::MatrixXd* accepted_active_one_electron,
     const Eigen::MatrixXd* accepted_ri_active_pair_factors,
     const Eigen::MatrixXd* directional_ri_active_pair_factors) {
@@ -340,8 +341,8 @@ SameSpinDirectionalPairTile build_directional_pair_tile_impl(
     SameSpinDirectionalPairTile tile;
     tile.left_begin = left_begin;
     tile.right_begin = right_begin;
-    const int left_size = left_end - left_begin;
-    const int right_size = right_end - right_begin;
+    const Eigen::Index left_size = left_end - left_begin;
+    const Eigen::Index right_size = right_end - right_begin;
     tile.delta_overlap = Eigen::MatrixXd::Zero(left_size, right_size);
     tile.delta_regular_hamiltonian = Eigen::MatrixXd::Zero(left_size, right_size);
     tile.delta_singular_hamiltonian = Eigen::MatrixXd::Zero(left_size, right_size);
@@ -351,18 +352,19 @@ SameSpinDirectionalPairTile build_directional_pair_tile_impl(
         direction.one_electron.data(), n_active_orbitals, n_active_orbitals);
     const bool diagonal_tile = left_begin == right_begin && left_size == right_size;
     const int work_items = left_size * right_size;
-    const int n_threads = std::max(1, std::min(xmvb::effective_openmp_thread_count(), work_items));
+    const int n_threads = std::max<std::int64_t>(
+        1, std::min<std::int64_t>(xmvb::effective_openmp_thread_count(), work_items));
 #pragma omp parallel for schedule(static) if (n_threads > 1) num_threads(n_threads)
     for (int work = 0; work < work_items; ++work) {
-        const int left_local = work / right_size;
-        const int right_local = work % right_size;
+        const Eigen::Index left_local = work / right_size;
+        const Eigen::Index right_local = work % right_size;
         const int left_id = left_begin + left_local;
         const int right_id = right_begin + right_local;
         if (diagonal_tile && left_id > right_id) {
             continue;
         }
-        const int canonical_left = std::min(left_id, right_id);
-        const int canonical_right = std::max(left_id, right_id);
+        const int canonical_left = std::min<std::int64_t>(left_id, right_id);
+        const int canonical_right = std::max<std::int64_t>(left_id, right_id);
         const auto& pair_evaluation =
             accepted_pair_tile != nullptr
                 ? accepted_pair_tile->pair(canonical_left - left_begin,
@@ -437,8 +439,8 @@ SameSpinDirectionalPairTile build_directional_pair_tile_impl(
         hamiltonian(left_local, right_local) = stored.delta_total_hamiltonian;
     }
     if (diagonal_tile) {
-        for (int left_local = 1; left_local < left_size; ++left_local) {
-            for (int right_local = 0; right_local < left_local; ++right_local) {
+        for (Eigen::Index left_local = 1; left_local < left_size; ++left_local) {
+            for (Eigen::Index right_local = 0; right_local < left_local; ++right_local) {
                 const auto& source = tile.pair(right_local, left_local);
                 auto reverse = source;
                 reverse.delta_cofactor_1st.transposeInPlace();
@@ -462,13 +464,13 @@ SameSpinDirectionalPairTile build_directional_pair_tile_impl(
 SameSpinDirectionalPairTile
 build_directional_pair_tile(const xmvb::mcscf::StringTable& unique_determinants,
                             const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
-                            int n_unique_determinants,
+                            std::int64_t n_unique_determinants,
                             int n_active_orbitals,
                             const ActiveSpaceIntegralDirectionView& direction,
-                            int left_begin,
-                            int left_end,
-                            int right_begin,
-                            int right_end,
+                            std::int64_t left_begin,
+                            std::int64_t left_end,
+                            std::int64_t right_begin,
+                            std::int64_t right_end,
                             const Eigen::MatrixXd* accepted_active_one_electron,
                             const Eigen::MatrixXd* accepted_ri_active_pair_factors,
                             const Eigen::MatrixXd* directional_ri_active_pair_factors) {
@@ -587,12 +589,12 @@ void accumulate_directional_deleted_minor_same_spin_two_electron_gradient_contri
                         continue;
                     }
 
-                    const int direct_index = xmvb::core::PairIndex::two_electron_storage_index(
+                    const auto direct_index = xmvb::core::PairIndex::two_electron_storage_index(
                         orbital_index_right_first,
                         orbital_index_left_first,
                         orbital_index_right_second,
                         orbital_index_left_second);
-                    const int exchange_index = xmvb::core::PairIndex::two_electron_storage_index(
+                    const auto exchange_index = xmvb::core::PairIndex::two_electron_storage_index(
                         orbital_index_right_first,
                         orbital_index_left_second,
                         orbital_index_right_second,

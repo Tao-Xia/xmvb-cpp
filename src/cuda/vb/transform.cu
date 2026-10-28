@@ -1,3 +1,4 @@
+#include "core/index.hpp"
 #include "cuda/vb/transform.hpp"
 
 #include <cstdint>
@@ -9,7 +10,8 @@
 
 #include "cuda/linalg/blas.hpp"
 #include "cuda/memory/upload.hpp"
-#include "cuda/vb/panel.hpp"
+#include "cuda/vb/exterior.cuh"
+#include "mcscf/ci/combinations.hpp"
 
 namespace xmvb::cuda {
 namespace {
@@ -17,9 +19,11 @@ namespace {
 using Edge = vb::ExteriorOrbitalTransform::ShearEdge;
 
 template <bool Consecutive>
-__global__ void
-selected_identity(const int* rows, int first, int count, linalg::MatrixView output) {
-    const int row = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void selected_identity(const std::int64_t* rows,
+                                  std::int64_t first,
+                                  std::int64_t count,
+                                  linalg::MatrixView output) {
+    const std::int64_t row = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (row < count)
         output.data[(Consecutive ? first + row : rows[row]) + output.ld * row] = 1.0;
 }
@@ -71,10 +75,10 @@ __global__ void update_scales(linalg::ConstMatrixView upper,
                               const std::uint64_t* occupations,
                               double* scales,
                               double* inverse,
-                              int dimension,
+                              std::int64_t dimension,
                               linalg::ConstMatrixView delta = {},
                               double* delta_scales = nullptr) {
-    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t i = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i >= dimension)
         return;
     double value = 1.0, logarithmic = 0.0;
@@ -93,7 +97,7 @@ __global__ void update_scales(linalg::ConstMatrixView upper,
 }
 
 __global__ void inverse_scale(const double* scales, double* inverse, int n) {
-    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t i = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i < n)
         inverse[i] = 1.0 / scales[i];
 }
@@ -112,77 +116,16 @@ unsigned int tile_grid(std::int64_t tiles) {
     return static_cast<unsigned int>(tiles);
 }
 
-int left_tile_lanes(std::int64_t rhs, int dimension, int shared_values) {
-    return static_cast<int>(std::min<std::int64_t>({32, rhs, shared_values / dimension}));
+int left_tile_lanes(std::int64_t rhs, std::int64_t dimension, int shared_values) {
+    return static_cast<int>(
+        std::min<std::int64_t>({32, rhs, std::max<std::int64_t>(1, shared_values / dimension)}));
 }
 
-int right_tile_lanes(int dimension, int shared_values, int arrays = 1) {
+int right_tile_lanes(std::int64_t dimension, int shared_values, int arrays = 1) {
     int lanes = 1;
     while (lanes < 32 && 2 * lanes <= shared_values / (arrays * dimension))
         lanes *= 2;
     return lanes;
-}
-
-// An elementary orbital shear has disjoint determinant source/target pairs.
-// Thus each updated element has one owner, while the complete ordered product
-// still follows the CPU factorization exactly.
-__global__ void shear_left(linalg::MatrixView coefficients,
-                           const Edge* edges,
-                           int edge_count,
-                           const double* coefficient,
-                           double orientation,
-                           bool adjoint,
-                           std::int64_t elements,
-                           const std::uint64_t* allowed = nullptr,
-                           int support_columns = 0,
-                           int words = 0,
-                           linalg::MatrixView tangent = {},
-                           const double* dc = nullptr) {
-    const std::int64_t index = blockIdx.x * static_cast<std::int64_t>(blockDim.x) + threadIdx.x;
-    if (index >= elements)
-        return;
-    const Edge edge = edges[index % edge_count];
-    const std::int64_t column = index / edge_count;
-    const int source = adjoint ? edge.target : edge.source;
-    const int target = adjoint ? edge.source : edge.target;
-    if (allowed) {
-        const auto* mask = allowed + (column % support_columns) * words;
-        if (!(mask[source / 64] & (std::uint64_t{1} << (source % 64))) ||
-            !(mask[target / 64] & (std::uint64_t{1} << (target % 64))))
-            return;
-    }
-    if (tangent.data)
-        tangent.data[target + tangent.ld * column] +=
-            edge.sign * ((*dc) * coefficients.data[source + coefficients.ld * column] +
-                         (*coefficient) * tangent.data[source + tangent.ld * column]);
-    coefficients.data[target + coefficients.ld * column] +=
-        orientation * (*coefficient) * edge.sign *
-        coefficients.data[source + coefficients.ld * column];
-}
-
-__global__ void shear_right(linalg::MatrixView coefficients,
-                            const Edge* edges,
-                            int edge_count,
-                            const double* coefficient,
-                            double orientation,
-                            bool adjoint,
-                            int spin_dimension,
-                            std::int64_t elements) {
-    const std::int64_t index = blockIdx.x * static_cast<std::int64_t>(blockDim.x) + threadIdx.x;
-    if (index >= elements)
-        return;
-    // Adjacent lanes update adjacent rows in one column, not strided columns.
-    const std::int64_t row = index % coefficients.rows;
-    const std::int64_t side = index / coefficients.rows;
-    const Edge edge = edges[side % edge_count];
-    const std::int64_t rhs = side / edge_count;
-    const int source = adjoint ? edge.target : edge.source;
-    const int target = adjoint ? edge.source : edge.target;
-    const std::int64_t source_column = rhs * spin_dimension + source;
-    const std::int64_t target_column = rhs * spin_dimension + target;
-    coefficients.data[row + coefficients.ld * target_column] +=
-        orientation * (*coefficient) * edge.sign *
-        coefficients.data[row + coefficients.ld * source_column];
 }
 
 // Each spin column/row tile is independent. Retain it in block-local memory
@@ -196,7 +139,7 @@ __global__ void exterior_tile(linalg::MatrixView panel,
                               int steps,
                               const double* coefficients,
                               const double* scales,
-                              int dimension,
+                              std::int64_t dimension,
                               int lanes,
                               bool adjoint,
                               bool inverse,
@@ -226,7 +169,7 @@ __global__ void exterior_tile(linalg::MatrixView panel,
     const int left_stride = support_columns ? support_columns : 1;
     const int work = dimension * lanes;
     for (int k = threadIdx.x; k < work; k += blockDim.x) {
-        const int spin = k / lanes, lane = k % lanes;
+        const std::int64_t spin = k / lanes, lane = k % lanes;
         const auto row = Right ? row_begin + lane : spin;
         const auto col =
             Right ? column + spin : left_begin + static_cast<std::int64_t>(lane) * left_stride;
@@ -259,13 +202,13 @@ __global__ void exterior_tile(linalg::MatrixView panel,
     }
     __syncthreads();
     for (int step = 0; step < steps; ++step) {
-        const int index = adjoint != inverse ? steps - 1 - step : step;
+        const std::int64_t index = adjoint != inverse ? steps - 1 - step : step;
         const auto shear = schedule[index];
         for (int k = threadIdx.x; k < shear.count * lanes; k += blockDim.x) {
             const auto edge = edges[shear.offset + k / lanes];
             const int lane = k % lanes;
-            const int source = adjoint ? edge.target : edge.source;
-            const int target = adjoint ? edge.source : edge.target;
+            const std::int64_t source = adjoint ? edge.target : edge.source;
+            const std::int64_t target = adjoint ? edge.source : edge.target;
             if (allowed) {
                 const auto* mask = allowed + (column % support_columns) * words;
                 if (!(mask[source / 64] & (std::uint64_t{1} << (source % 64))) ||
@@ -282,7 +225,7 @@ __global__ void exterior_tile(linalg::MatrixView panel,
         __syncthreads();
     }
     for (int k = threadIdx.x; k < work; k += blockDim.x) {
-        const int spin = k / lanes, lane = k % lanes;
+        const std::int64_t spin = k / lanes, lane = k % lanes;
         const auto row = Right ? row_begin + lane : spin;
         const auto col =
             Right ? column + spin : left_begin + static_cast<std::int64_t>(lane) * left_stride;
@@ -333,60 +276,9 @@ restrict_columns(linalg::MatrixView panel, const std::uint64_t* allowed, int col
         panel.data[row + panel.ld * column] = 0.0;
 }
 
-__global__ void transpose_tile_stripe(double* const* columns,
-                                      linalg::MatrixView stripe,
-                                      std::int64_t first_row,
-                                      bool gather) {
-    const auto index = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-    if (index >= stripe.rows * stripe.cols)
-        return;
-    const auto beta = index % stripe.rows, row = index / stripe.rows;
-    double* const value = columns[beta] + first_row + row;
-    double* const transposed = stripe.data + beta + stripe.ld * row;
-    if (gather)
-        *transposed = *value;
-    else
-        *value = *transposed;
-}
-
-// A one-row tile family has no smaller transposed row stripe. Replay the same
-// ordered factors directly through its beta-column pointers instead.
-__global__ void scale_one_row_tiles(double* const* columns,
-                                    int dimension,
-                                    const double* scales,
-                                    double* const* tangent = nullptr,
-                                    const double* delta_scales = nullptr) {
-    const int beta = blockIdx.x * blockDim.x + threadIdx.x;
-    if (beta >= dimension)
-        return;
-    const double value = *columns[beta];
-    if (tangent)
-        *tangent[beta] = scales[beta] * (*tangent[beta]) + delta_scales[beta] * value;
-    *columns[beta] = scales[beta] * value;
-}
-
-__global__ void shear_one_row_tiles(double* const* columns,
-                                    const Edge* edges,
-                                    int count,
-                                    const double* coefficient,
-                                    bool adjoint,
-                                    bool inverse,
-                                    double* const* tangent = nullptr,
-                                    const double* delta_coefficient = nullptr) {
-    const int index = blockIdx.x * blockDim.x + threadIdx.x;
-    if (index >= count)
-        return;
-    const Edge edge = edges[index];
-    const int source = adjoint ? edge.target : edge.source;
-    const int target = adjoint ? edge.source : edge.target;
-    if (tangent)
-        *tangent[target] += edge.sign * ((*delta_coefficient) * (*columns[source]) +
-                                         (*coefficient) * (*tangent[source]));
-    *columns[target] += (inverse ? -1.0 : 1.0) * (*coefficient) * edge.sign * (*columns[source]);
-}
-
-std::vector<double*>
-tile_columns(std::span<const linalg::MatrixView> tiles, int dimension, std::int64_t* rows) {
+std::vector<double*> tile_columns(std::span<const linalg::MatrixView> tiles,
+                                  std::int64_t dimension,
+                                  std::int64_t* rows) {
     if (tiles.empty())
         throw std::invalid_argument("empty CUDA exterior right tiles");
     *rows = tiles.front().rows;
@@ -397,7 +289,7 @@ tile_columns(std::span<const linalg::MatrixView> tiles, int dimension, std::int6
     for (const auto tile : tiles) {
         if (tile.rows != *rows || tile.cols <= 0 || tile.cols > dimension ||
             (dimension > 1 && tile.cols == dimension) || tile.ld < tile.rows || !tile.data ||
-            tile.cols > dimension - static_cast<int>(columns.size()))
+            tile.cols > dimension - core::checked_index<std::int64_t>(columns.size()))
             throw std::invalid_argument("invalid CUDA exterior right tile layout");
         for (std::int64_t beta = 0; beta < tile.cols; ++beta)
             columns.push_back(tile.data + beta * tile.ld);
@@ -407,21 +299,11 @@ tile_columns(std::span<const linalg::MatrixView> tiles, int dimension, std::int6
     return columns;
 }
 
-int right_stripe_rows(Context& context, int dimension, std::int64_t alpha_rows, int scratch_count) {
-    const auto row_bytes = static_cast<std::size_t>(dimension) * sizeof(double) * scratch_count;
-    const auto available = context.available_device_bytes();
-    const auto maximum =
-        std::min<std::size_t>({static_cast<std::size_t>(product_panel_width()),
-                               static_cast<std::size_t>(alpha_rows > 1 ? alpha_rows - 1 : 1),
-                               available / row_bytes});
-    if (!maximum)
-        throw std::length_error("CUDA exterior right tiles cannot hold one row stripe");
-    return static_cast<int>(maximum);
-}
-
 } // namespace
 
-ExteriorTransform::ExteriorTransform(Context& context, const vb::ExteriorOrbitalTransform& source)
+ExteriorTransform::ExteriorTransform(Context& context,
+                                     const vb::ExteriorOrbitalTransform& source,
+                                     std::size_t shared_memory_bytes)
     : context_(&context), dimension_(source.dimension()), n_orbitals_(source.n_orbitals()),
       scales_(context, static_cast<std::size_t>(source.dimension())),
       inverse_scales_(context, static_cast<std::size_t>(source.dimension())),
@@ -434,7 +316,43 @@ ExteriorTransform::ExteriorTransform(Context& context, const vb::ExteriorOrbital
     check_cuda(cudaGetDevice(&device), "query exterior device");
     check_cuda(cudaDeviceGetAttribute(&shared_bytes, cudaDevAttrMaxSharedMemoryPerBlock, device),
                "query exterior block capacity");
-    shared_values_ = shared_bytes / sizeof(double);
+    int optin_bytes = 0;
+    check_cuda(
+        cudaDeviceGetAttribute(&optin_bytes, cudaDevAttrMaxSharedMemoryPerBlockOptin, device),
+        "query exterior opt-in block capacity");
+    const int capacity = std::max<std::int64_t>(shared_bytes, optin_bytes);
+    shared_values_ = std::min<std::size_t>(shared_memory_bytes, capacity) / sizeof(double);
+    tile_values_ = std::min<std::size_t>(shared_memory_bytes, shared_bytes) / sizeof(double);
+    if (capacity > shared_bytes) {
+        const auto enable = [capacity](const void* kernel) {
+            check_cuda(
+                cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, capacity),
+                "enable exterior shared capacity");
+        };
+        enable(reinterpret_cast<const void*>(exterior_tile<false>));
+        enable(reinterpret_cast<const void*>(exterior_tile<false, true>));
+        enable(reinterpret_cast<const void*>(exterior_tile<true>));
+        enable(reinterpret_cast<const void*>(exterior_tile<true, false, true>));
+        enable(reinterpret_cast<const void*>(exterior_tile<true, true, true>));
+    }
+    std::vector<std::uint64_t> choose((n_orbitals_ + 1) * (n_orbitals_ + 1));
+    for (int n = 0; n <= n_orbitals_; ++n)
+        for (int k = 0; k <= n_orbitals_; ++k)
+            choose[n * (n_orbitals_ + 1) + k] = mcscf::detail::spin_choose(n, k);
+    topology_->choose = Buffer<std::uint64_t>(context, choose.size());
+    context.copy_to_device(
+        topology_->choose.data(), choose.data(), choose.size() * sizeof(std::uint64_t));
+    std::vector<std::int64_t> order(dimension_);
+    bool canonical = true;
+    for (int rank = 0; rank < dimension_; ++rank) {
+        order[rank] = source.strings().index_from_rank(rank);
+        canonical = canonical && order[rank] == rank;
+    }
+    if (!canonical) {
+        topology_->order = Buffer<std::int64_t>(context, order.size());
+        context.copy_to_device(
+            topology_->order.data(), order.data(), order.size() * sizeof(std::int64_t));
+    }
     context.copy_to_device(
         scales_.data(), source.determinant_scales().data(), scales_.size() * sizeof(double));
     inverse_scale<<<grid_size(dimension_), 256, 0, context.stream()>>>(
@@ -448,7 +366,8 @@ ExteriorTransform::ExteriorTransform(Context& context, const vb::ExteriorOrbital
         const auto edges = source.shear_edges(i);
         if (edges.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
             throw std::overflow_error("CUDA exterior shear is too large");
-        topology_->shears.push_back({all_edges.size(), static_cast<int>(edges.size())});
+        topology_->shears.push_back(
+            {all_edges.size(), core::checked_index<std::int64_t>(edges.size())});
         coefficients.push_back(source.shear_coefficient(i));
         all_edges.insert(all_edges.end(), edges.begin(), edges.end());
     }
@@ -468,7 +387,8 @@ ExteriorTransform::ExteriorTransform(Context& context, const vb::ExteriorOrbital
 
 ExteriorTransform::ExteriorTransform(Context& context, const ExteriorTransform& reference)
     : context_(&context), dimension_(reference.dimension_), n_orbitals_(reference.n_orbitals_),
-      shared_values_(reference.shared_values_), scales_(context, reference.scales_.size()),
+      shared_values_(reference.shared_values_), tile_values_(reference.tile_values_),
+      scales_(context, reference.scales_.size()),
       inverse_scales_(context, reference.inverse_scales_.size()),
       shear_coefficients_(context, reference.shear_coefficients_.size()),
       topology_(reference.topology_),
@@ -545,36 +465,34 @@ void ExteriorTransform::apply_left(linalg::MatrixView coefficients,
     }
     const auto scale = [&] {
         // cuBLAS permits in-place dgmm when lda == ldc, as here.
-        check_cublas(cublasDdgmm(context_->blas(),
-                                 CUBLAS_SIDE_LEFT,
-                                 blas_int(coefficients.rows),
-                                 blas_int(coefficients.cols),
-                                 coefficients.data,
-                                 blas_int(coefficients.ld),
-                                 inverse ? inverse_scales_.data() : scales_.data(),
-                                 1,
-                                 coefficients.data,
-                                 blas_int(coefficients.ld)),
+        check_cublas(cublasDdgmm_64(context_->blas(),
+                                    CUBLAS_SIDE_LEFT,
+                                    coefficients.rows,
+                                    coefficients.cols,
+                                    coefficients.data,
+                                    coefficients.ld,
+                                    inverse ? inverse_scales_.data() : scales_.data(),
+                                    1,
+                                    coefficients.data,
+                                    coefficients.ld),
                      "cublasDdgmm exterior left scaling");
     };
     if (adjoint == inverse) {
         scale();
     }
-    for (std::size_t step = 0; step < topology_->shears.size(); ++step) {
-        const auto index = adjoint != inverse ? topology_->shears.size() - 1 - step : step;
-        const Shear& shear = topology_->shears[index];
-        if (shear.count == 0)
-            continue;
-        const std::int64_t work = static_cast<std::int64_t>(shear.count) * coefficients.cols;
-        shear_left<<<grid_size(work), 256, 0, context_->stream()>>>(
-            coefficients,
-            topology_->edges.data() + shear.offset,
-            shear.count,
-            shear_coefficients_.data() + index,
-            inverse ? -1.0 : 1.0,
-            adjoint,
-            work);
-        check_cuda(cudaGetLastError(), "CUDA exterior left shear");
+    for (int step = 0; dimension_ > 1 && step < n_orbitals_ - 1; ++step) {
+        const int q = (adjoint != inverse) ? n_orbitals_ - 1 - step : step + 1;
+        detail::exterior_column<false>
+            <<<grid_size(coefficients.rows * coefficients.cols), 256, 0, context_->stream()>>>(
+                coefficients,
+                {},
+                index_view(),
+                dimension_,
+                q,
+                shear_coefficients_.data(),
+                nullptr,
+                adjoint,
+                inverse);
     }
     if (adjoint != inverse) {
         scale();
@@ -591,7 +509,7 @@ void ExteriorTransform::apply_supported_left(linalg::MatrixView panel,
     const int words = (dimension_ + 63) / 64;
     if (dimension_ <= shared_values_) {
         const auto rhs = panel.cols / columns;
-        const int lanes = left_tile_lanes(rhs, dimension_, shared_values_);
+        const int lanes = left_tile_lanes(rhs, dimension_, tile_values_);
         const auto tiles = static_cast<std::int64_t>(columns) * ((rhs - 1) / lanes + 1);
         exterior_tile<false><<<tile_grid(tiles),
                                256,
@@ -613,32 +531,33 @@ void ExteriorTransform::apply_supported_left(linalg::MatrixView panel,
         restrict_columns<<<grid_size(panel.rows * panel.cols), 256, 0, context_->stream()>>>(
             panel, allowed, columns, words);
         const auto scale = [&] {
-            check_cublas(cublasDdgmm(context_->blas(),
-                                     CUBLAS_SIDE_LEFT,
-                                     blas_int(panel.rows),
-                                     blas_int(panel.cols),
-                                     panel.data,
-                                     blas_int(panel.ld),
-                                     scales_.data(),
-                                     1,
-                                     panel.data,
-                                     blas_int(panel.ld)),
+            check_cublas(cublasDdgmm_64(context_->blas(),
+                                        CUBLAS_SIDE_LEFT,
+                                        panel.rows,
+                                        panel.cols,
+                                        panel.data,
+                                        panel.ld,
+                                        scales_.data(),
+                                        1,
+                                        panel.data,
+                                        panel.ld),
                          "supported exterior scaling");
         };
         if (!adjoint)
             scale();
-        for (std::size_t step = 0; step < topology_->shears.size(); ++step) {
-            const auto index = adjoint ? topology_->shears.size() - 1 - step : step;
-            const auto& shear = topology_->shears[index];
-            if (shear.count)
-                shear_left<<<grid_size(shear.count * panel.cols), 256, 0, context_->stream()>>>(
+        for (int step = 0; dimension_ > 1 && step < n_orbitals_ - 1; ++step) {
+            const int q = (adjoint) ? n_orbitals_ - 1 - step : step + 1;
+            detail::exterior_column<false>
+                <<<grid_size(panel.rows * panel.cols), 256, 0, context_->stream()>>>(
                     panel,
-                    topology_->edges.data() + shear.offset,
-                    shear.count,
-                    shear_coefficients_.data() + index,
-                    1.0,
+                    {},
+                    index_view(),
+                    dimension_,
+                    q,
+                    shear_coefficients_.data(),
+                    nullptr,
                     adjoint,
-                    shear.count * panel.cols,
+                    false,
                     allowed,
                     columns,
                     words);
@@ -709,25 +628,19 @@ void ExteriorTransform::apply_directional_left(const ExteriorDirection& directio
         };
         if (!adjoint)
             scale();
-        for (std::size_t step = 0; step < topology_->shears.size(); ++step) {
-            const auto index = adjoint ? topology_->shears.size() - 1 - step : step;
-            const auto& shear = topology_->shears[index];
-            if (!shear.count)
-                continue;
-            const auto work = static_cast<std::int64_t>(shear.count) * primal.cols;
-            shear_left<<<grid_size(work), 256, 0, c.stream()>>>(primal,
-                                                                topology_->edges.data() +
-                                                                    shear.offset,
-                                                                shear.count,
-                                                                shear_coefficients_.data() + index,
-                                                                1.0,
-                                                                adjoint,
-                                                                work,
-                                                                nullptr,
-                                                                0,
-                                                                0,
-                                                                tangent,
-                                                                direction.shears.data() + index);
+        for (int step = 0; dimension_ > 1 && step < n_orbitals_ - 1; ++step) {
+            const int q = (adjoint) ? n_orbitals_ - 1 - step : step + 1;
+            detail::exterior_column<false, false, true>
+                <<<grid_size(primal.rows * primal.cols), 256, 0, context_->stream()>>>(
+                    primal,
+                    tangent,
+                    index_view(),
+                    dimension_,
+                    q,
+                    shear_coefficients_.data(),
+                    direction.shears.data(),
+                    adjoint,
+                    false);
         }
         if (adjoint)
             scale();
@@ -743,7 +656,7 @@ void ExteriorTransform::apply_right(linalg::MatrixView coefficients,
         throw std::invalid_argument("invalid CUDA exterior right panel");
     const std::int64_t rhs = coefficients.cols / dimension_;
     if (!topology_->shears.empty() && dimension_ <= shared_values_) {
-        const int lanes = right_tile_lanes(dimension_, shared_values_);
+        const int lanes = right_tile_lanes(dimension_, tile_values_);
         const auto tiles = ((coefficients.rows + lanes - 1) / lanes) * rhs;
         exterior_tile<true>
             <<<grid_size(tiles * 256),
@@ -765,38 +678,35 @@ void ExteriorTransform::apply_right(linalg::MatrixView coefficients,
     const auto scale = [&] {
         for (std::int64_t block = 0; block < rhs; ++block) {
             const auto panel = coefficients.columns(block * dimension_, dimension_);
-            check_cublas(cublasDdgmm(context_->blas(),
-                                     CUBLAS_SIDE_RIGHT,
-                                     blas_int(panel.rows),
-                                     blas_int(panel.cols),
-                                     panel.data,
-                                     blas_int(panel.ld),
-                                     inverse ? inverse_scales_.data() : scales_.data(),
-                                     1,
-                                     panel.data,
-                                     blas_int(panel.ld)),
+            check_cublas(cublasDdgmm_64(context_->blas(),
+                                        CUBLAS_SIDE_RIGHT,
+                                        panel.rows,
+                                        panel.cols,
+                                        panel.data,
+                                        panel.ld,
+                                        inverse ? inverse_scales_.data() : scales_.data(),
+                                        1,
+                                        panel.data,
+                                        panel.ld),
                          "cublasDdgmm exterior right scaling");
         }
     };
     if (adjoint == inverse) {
         scale();
     }
-    for (std::size_t step = 0; step < topology_->shears.size(); ++step) {
-        const auto index = adjoint != inverse ? topology_->shears.size() - 1 - step : step;
-        const Shear& shear = topology_->shears[index];
-        if (shear.count == 0)
-            continue;
-        const std::int64_t work = static_cast<std::int64_t>(shear.count) * coefficients.rows * rhs;
-        shear_right<<<grid_size(work), 256, 0, context_->stream()>>>(
-            coefficients,
-            topology_->edges.data() + shear.offset,
-            shear.count,
-            shear_coefficients_.data() + index,
-            inverse ? -1.0 : 1.0,
-            adjoint,
-            dimension_,
-            work);
-        check_cuda(cudaGetLastError(), "CUDA exterior right shear");
+    for (int step = 0; dimension_ > 1 && step < n_orbitals_ - 1; ++step) {
+        const int q = (adjoint != inverse) ? n_orbitals_ - 1 - step : step + 1;
+        detail::exterior_column<true>
+            <<<grid_size(coefficients.rows * coefficients.cols), 256, 0, context_->stream()>>>(
+                coefficients,
+                {},
+                index_view(),
+                dimension_,
+                q,
+                shear_coefficients_.data(),
+                nullptr,
+                adjoint,
+                inverse);
     }
     if (adjoint != inverse) {
         scale();
@@ -810,22 +720,15 @@ void ExteriorTransform::apply_right_tiles(std::span<const linalg::MatrixView> ti
     std::int64_t rows = 0;
     const auto host_columns = tile_columns(tiles, dimension_, &rows);
     auto* const columns = upload_right_columns(host_columns);
-    apply_right_columns(columns, rows, {}, adjoint, inverse);
-}
-
-int ExteriorTransform::right_workspace_extent(std::int64_t rows) const {
-    return dimension_ <= shared_values_ || rows == 1
-               ? 0
-               : right_stripe_rows(*context_, dimension_, rows, 1);
+    apply_right_columns(columns, rows, adjoint, inverse);
 }
 
 void ExteriorTransform::apply_right_columns(double* const* columns,
                                             std::int64_t rows,
-                                            linalg::MatrixView stripe,
                                             bool adjoint,
                                             bool inverse) const {
     if (dimension_ <= shared_values_) {
-        const int lanes = right_tile_lanes(dimension_, shared_values_);
+        const int lanes = right_tile_lanes(dimension_, tile_values_);
         const auto row_tiles = (rows + lanes - 1) / lanes;
         exterior_tile<true, false, true>
             <<<tile_grid(row_tiles),
@@ -851,57 +754,33 @@ void ExteriorTransform::apply_right_columns(double* const* columns,
         check_cuda(cudaGetLastError(), "CUDA fused exterior right tiles");
         return;
     }
-    if (rows == 1) {
-        const auto scale = [&] {
-            scale_one_row_tiles<<<grid_size(dimension_), 256, 0, context_->stream()>>>(
-                columns, dimension_, inverse ? inverse_scales_.data() : scales_.data());
-            check_cuda(cudaGetLastError(), "scale one-row CUDA exterior tiles");
-        };
-        if (adjoint == inverse)
-            scale();
-        for (std::size_t step = 0; step < topology_->shears.size(); ++step) {
-            const auto index = adjoint != inverse ? topology_->shears.size() - 1 - step : step;
-            const auto& shear = topology_->shears[index];
-            if (!shear.count)
-                continue;
-            shear_one_row_tiles<<<grid_size(shear.count), 256, 0, context_->stream()>>>(
-                columns,
-                topology_->edges.data() + shear.offset,
-                shear.count,
-                shear_coefficients_.data() + index,
+    const auto scale = [&] {
+        detail::scale_exterior_tiles<<<grid_size(rows * dimension_), 256, 0, context_->stream()>>>(
+            columns, nullptr, rows, dimension_, inverse ? inverse_scales_.data() : scales_.data());
+    };
+    if (adjoint == inverse)
+        scale();
+    for (int step = 0; dimension_ > 1 && step < n_orbitals_ - 1; ++step) {
+        const int q = adjoint != inverse ? n_orbitals_ - 1 - step : step + 1;
+        detail::exterior_column<true, true>
+            <<<grid_size(rows * dimension_), 256, 0, context_->stream()>>>(
+                {nullptr, rows, dimension_, 0},
+                {},
+                index_view(),
+                dimension_,
+                q,
+                shear_coefficients_.data(),
+                nullptr,
                 adjoint,
-                inverse);
-            check_cuda(cudaGetLastError(), "shear one-row CUDA exterior tiles");
-        }
-        if (adjoint != inverse)
-            scale();
-        return;
+                inverse,
+                nullptr,
+                0,
+                0,
+                columns);
     }
-    Matrix<double> owned;
-    if (!stripe.data) {
-        owned = Matrix<double>(
-            *context_, dimension_, right_stripe_rows(*context_, dimension_, rows, 1));
-        stripe = owned.view();
-    }
-    const int extent = static_cast<int>(stripe.cols);
-    if (stripe.rows != dimension_ || extent <= 0)
-        throw std::invalid_argument("invalid right-transform stripe workspace");
-    for (std::int64_t first = 0; first < rows; first += extent) {
-        const nvtx3::scoped_range stripe_range{"exterior.right_stripe"};
-        const int count = static_cast<int>(std::min<std::int64_t>(extent, rows - first));
-        auto work = stripe.columns(0, count);
-        transpose_tile_stripe<<<grid_size(static_cast<std::int64_t>(dimension_) * count),
-                                256,
-                                0,
-                                context_->stream()>>>(columns, work, first, true);
-        check_cuda(cudaGetLastError(), "gather CUDA exterior right tile stripe");
-        apply_left(work, adjoint, inverse);
-        transpose_tile_stripe<<<grid_size(static_cast<std::int64_t>(dimension_) * count),
-                                256,
-                                0,
-                                context_->stream()>>>(columns, work, first, false);
-        check_cuda(cudaGetLastError(), "scatter CUDA exterior right tile stripe");
-    }
+    if (adjoint != inverse)
+        scale();
+    check_cuda(cudaGetLastError(), "CUDA exterior right column groups");
 }
 
 void ExteriorTransform::apply_directional_right_tiles(const ExteriorDirection& direction,
@@ -924,7 +803,7 @@ void ExteriorTransform::apply_directional_right_tiles(const ExteriorDirection& d
     host_columns.insert(host_columns.end(), tangent_columns.begin(), tangent_columns.end());
     auto* const columns = upload_right_columns(host_columns);
     if (!topology_->shears.empty() && dimension_ <= shared_values_ / 2) {
-        const int lanes = right_tile_lanes(dimension_, shared_values_, 2);
+        const int lanes = right_tile_lanes(dimension_, tile_values_, 2);
         const auto row_tiles = (rows + lanes - 1) / lanes;
         exterior_tile<true, true, true><<<tile_grid(row_tiles),
                                           256,
@@ -950,70 +829,51 @@ void ExteriorTransform::apply_directional_right_tiles(const ExteriorDirection& d
         check_cuda(cudaGetLastError(), "CUDA fused directional exterior right tiles");
         return;
     }
-    if (rows == 1) {
-        auto* const derivatives = columns + dimension_;
-        const auto scale = [&] {
-            scale_one_row_tiles<<<grid_size(dimension_), 256, 0, context_->stream()>>>(
-                columns, dimension_, scales_.data(), derivatives, direction.scales.data());
-            check_cuda(cudaGetLastError(), "scale one-row CUDA directional tiles");
-        };
-        if (!adjoint)
-            scale();
-        for (std::size_t step = 0; step < topology_->shears.size(); ++step) {
-            const auto index = adjoint ? topology_->shears.size() - 1 - step : step;
-            const auto& shear = topology_->shears[index];
-            if (!shear.count)
-                continue;
-            shear_one_row_tiles<<<grid_size(shear.count), 256, 0, context_->stream()>>>(
-                columns,
-                topology_->edges.data() + shear.offset,
-                shear.count,
-                shear_coefficients_.data() + index,
+    auto* const derivatives = columns + dimension_;
+    const auto scale = [&] {
+        detail::scale_exterior_tiles<true>
+            <<<grid_size(rows * dimension_), 256, 0, context_->stream()>>>(
+                columns, derivatives, rows, dimension_, scales_.data(), direction.scales.data());
+    };
+    if (!adjoint)
+        scale();
+    for (int step = 0; dimension_ > 1 && step < n_orbitals_ - 1; ++step) {
+        const int q = adjoint ? n_orbitals_ - 1 - step : step + 1;
+        detail::exterior_column<true, true, true>
+            <<<grid_size(rows * dimension_), 256, 0, context_->stream()>>>(
+                {nullptr, rows, dimension_, 0},
+                {nullptr, rows, dimension_, 0},
+                index_view(),
+                dimension_,
+                q,
+                shear_coefficients_.data(),
+                direction.shears.data(),
                 adjoint,
                 false,
-                derivatives,
-                direction.shears.data() + index);
-            check_cuda(cudaGetLastError(), "shear one-row CUDA directional tiles");
-        }
-        if (adjoint)
-            scale();
-        return;
+                nullptr,
+                0,
+                0,
+                columns,
+                derivatives);
     }
-    const int extent = right_stripe_rows(*context_, dimension_, rows, 2);
-    Matrix<double> primal_stripe(*context_, dimension_, extent);
-    Matrix<double> tangent_stripe(*context_, dimension_, extent);
-    for (std::int64_t first = 0; first < rows; first += extent) {
-        const nvtx3::scoped_range stripe_range{"exterior.directional_right_stripe"};
-        const int count = static_cast<int>(std::min<std::int64_t>(extent, rows - first));
-        auto p = primal_stripe.view().columns(0, count);
-        auto t = tangent_stripe.view().columns(0, count);
-        const auto work = static_cast<std::int64_t>(dimension_) * count;
-        transpose_tile_stripe<<<grid_size(work), 256, 0, context_->stream()>>>(
-            columns, p, first, true);
-        transpose_tile_stripe<<<grid_size(work), 256, 0, context_->stream()>>>(
-            columns + dimension_, t, first, true);
-        check_cuda(cudaGetLastError(), "gather CUDA directional right tile stripes");
-        apply_directional_left(direction, p, t, adjoint);
-        transpose_tile_stripe<<<grid_size(work), 256, 0, context_->stream()>>>(
-            columns, p, first, false);
-        transpose_tile_stripe<<<grid_size(work), 256, 0, context_->stream()>>>(
-            columns + dimension_, t, first, false);
-        check_cuda(cudaGetLastError(), "scatter CUDA directional right tile stripes");
-    }
+    if (adjoint)
+        scale();
+    check_cuda(cudaGetLastError(), "CUDA directional right column groups");
 }
 
-void ExteriorTransform::sample_rows(std::span<const int> rows, linalg::MatrixView output) const {
+void ExteriorTransform::sample_rows(std::span<const std::int64_t> rows,
+                                    linalg::MatrixView output) const {
     if (output.rows != dimension_ || output.cols != static_cast<std::int64_t>(rows.size()) ||
         output.ld < output.rows)
         throw std::invalid_argument("requested exterior-row dimensions");
     if (rows.empty())
         return;
-    if (!output.data || std::any_of(rows.begin(), rows.end(), [&](int row) {
+    if (!output.data || std::any_of(rows.begin(), rows.end(), [&](std::int64_t row) {
             return row < 0 || row >= dimension_;
         }))
         throw std::invalid_argument("invalid requested exterior rows");
     auto& c = *context_;
-    Buffer<int> selected(c, rows.size());
+    Buffer<std::int64_t> selected(c, rows.size());
     c.copy_to_device(selected.data(), rows.data(), rows.size_bytes());
     check_cuda(cudaMemset2DAsync(output.data,
                                  output.ld * sizeof(double),
@@ -1051,7 +911,7 @@ void ExteriorTransform::sample_rows(int first, linalg::MatrixView output) const 
 }
 
 void ExteriorTransform::sample_directional_rows(const ExteriorDirection& direction,
-                                                std::span<const int> rows,
+                                                std::span<const std::int64_t> rows,
                                                 linalg::MatrixView primal,
                                                 linalg::MatrixView tangent) const {
     if (primal.rows != dimension_ || primal.cols != static_cast<std::int64_t>(rows.size()) ||
@@ -1060,12 +920,13 @@ void ExteriorTransform::sample_directional_rows(const ExteriorDirection& directi
         throw std::invalid_argument("requested directional exterior-row dimensions");
     if (rows.empty())
         return;
-    if (!primal.data || !tangent.data || std::any_of(rows.begin(), rows.end(), [&](int row) {
+    if (!primal.data || !tangent.data ||
+        std::any_of(rows.begin(), rows.end(), [&](std::int64_t row) {
             return row < 0 || row >= dimension_;
         }))
         throw std::invalid_argument("invalid requested directional exterior rows");
     auto& c = *context_;
-    Buffer<int> selected(c, rows.size());
+    Buffer<std::int64_t> selected(c, rows.size());
     c.copy_to_device(selected.data(), rows.data(), rows.size_bytes());
     check_cuda(cudaMemset2DAsync(primal.data,
                                  primal.ld * sizeof(double),

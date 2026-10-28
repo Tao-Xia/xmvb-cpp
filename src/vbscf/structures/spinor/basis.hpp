@@ -22,8 +22,8 @@ class Basis {
     Basis(std::shared_ptr<const Strings> strings,
           Eigen::SparseMatrix<std::complex<double>> mapping);
 
-    int size() const noexcept {
-        return static_cast<int>(mapping_.cols());
+    Eigen::Index size() const noexcept {
+        return static_cast<Eigen::Index>(mapping_.cols());
     }
     const std::shared_ptr<const Strings>& strings() const noexcept {
         return strings_;

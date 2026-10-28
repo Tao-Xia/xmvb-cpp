@@ -19,8 +19,9 @@ void validate_raw_structure_data(const RawStructureData& raw_structure_data) {
     }
 }
 
-std::vector<int> build_structure_index_remap(int n_structures,
-                                             const std::vector<int>& selected_structure_indices) {
+std::vector<std::ptrdiff_t>
+build_structure_index_remap(std::size_t n_structures,
+                            const std::vector<std::size_t>& selected_structure_indices) {
     if (n_structures <= 0) {
         throw std::invalid_argument("n_structures must be positive");
     }
@@ -28,22 +29,23 @@ std::vector<int> build_structure_index_remap(int n_structures,
         throw std::invalid_argument("selected_structure_indices must not be empty");
     }
 
-    std::vector<int> structure_index_remap(n_structures, -1);
+    std::vector<std::ptrdiff_t> structure_index_remap(n_structures, -1);
     for (std::size_t selected_offset = 0; selected_offset < selected_structure_indices.size();
          ++selected_offset) {
-        const int structure_index = selected_structure_indices[selected_offset];
+        const auto structure_index = selected_structure_indices[selected_offset];
         if (structure_index < 0 || structure_index >= n_structures) {
             throw std::out_of_range("selected structure index is out of range");
         }
         if (structure_index_remap[structure_index] >= 0) {
             throw std::invalid_argument("selected_structure_indices must be unique");
         }
-        structure_index_remap[structure_index] = static_cast<int>(selected_offset);
+        structure_index_remap[structure_index] = static_cast<std::ptrdiff_t>(selected_offset);
     }
     return structure_index_remap;
 }
 
-bool is_covalent_structure(const RawStructureData& raw_structure_data, int structure_index) {
+bool is_covalent_structure(const RawStructureData& raw_structure_data,
+                           std::size_t structure_index) {
     const int n_inactive_doubly_occupied_orbitals =
         (raw_structure_data.n_total_electrons - raw_structure_data.n_active_electrons) / 2;
     const int active_start = 2 * n_inactive_doubly_occupied_orbitals;
@@ -76,14 +78,14 @@ const char* raw_structure_selection_mode_name(RawStructureSelectionMode mode) {
     return "unknown";
 }
 
-std::vector<int> select_raw_structure_indices(const RawStructureData& raw_structure_data,
-                                              RawStructureSelectionMode mode) {
+std::vector<std::size_t> select_raw_structure_indices(const RawStructureData& raw_structure_data,
+                                                      RawStructureSelectionMode mode) {
     validate_raw_structure_data(raw_structure_data);
 
-    std::vector<int> selected_structure_indices;
+    std::vector<std::size_t> selected_structure_indices;
     selected_structure_indices.reserve(raw_structure_data.n_structures);
     if (mode == RawStructureSelectionMode::Full) {
-        for (int structure_index = 0; structure_index < raw_structure_data.n_structures;
+        for (std::size_t structure_index = 0; structure_index < raw_structure_data.n_structures;
              ++structure_index) {
             selected_structure_indices.push_back(structure_index);
         }
@@ -91,7 +93,7 @@ std::vector<int> select_raw_structure_indices(const RawStructureData& raw_struct
     }
 
     if (mode == RawStructureSelectionMode::Covalent) {
-        for (int structure_index = 0; structure_index < raw_structure_data.n_structures;
+        for (std::size_t structure_index = 0; structure_index < raw_structure_data.n_structures;
              ++structure_index) {
             if (is_covalent_structure(raw_structure_data, structure_index)) {
                 selected_structure_indices.push_back(structure_index);
@@ -106,18 +108,19 @@ std::vector<int> select_raw_structure_indices(const RawStructureData& raw_struct
     throw std::invalid_argument("unsupported raw structure selection mode");
 }
 
-RawStructureData build_raw_structure_subset(const RawStructureData& raw_structure_data,
-                                            const std::vector<int>& selected_structure_indices) {
+RawStructureData
+build_raw_structure_subset(const RawStructureData& raw_structure_data,
+                           const std::vector<std::size_t>& selected_structure_indices) {
     validate_raw_structure_data(raw_structure_data);
     const auto structure_index_remap =
         build_structure_index_remap(raw_structure_data.n_structures, selected_structure_indices);
     (void)structure_index_remap;
 
     RawStructureData subset_data = raw_structure_data;
-    subset_data.n_structures = static_cast<int>(selected_structure_indices.size());
+    subset_data.n_structures = selected_structure_indices.size();
     subset_data.raw_structure_orbitals.clear();
     subset_data.raw_structure_orbitals.reserve(subset_data.flat_orbital_count());
-    for (const int structure_index : selected_structure_indices) {
+    for (const auto structure_index : selected_structure_indices) {
         const int* structure_orbitals = raw_structure_data.structure_orbitals_data(structure_index);
         subset_data.raw_structure_orbitals.insert(subset_data.raw_structure_orbitals.end(),
                                                   structure_orbitals,

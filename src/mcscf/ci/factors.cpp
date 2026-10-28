@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "mcscf/ci/factors.hpp"
 #include "mcscf/ci/factors_internal.hpp"
 
@@ -21,7 +22,7 @@ void mix_channels(const Eigen::Ref<const Eigen::MatrixXd>& channels,
                   const Eigen::MatrixXd& kernel,
                   int p,
                   int q,
-                  int width,
+                  Eigen::Index width,
                   Eigen::Ref<Eigen::MatrixXd> image) {
     const int rows = channels.rows() * width;
     const int np = image.cols() / width, nq = channels.cols() / width;
@@ -31,7 +32,7 @@ void mix_channels(const Eigen::Ref<const Eigen::MatrixXd>& channels,
                                                    static_cast<std::size_t>(rows) * np * nq);
 #pragma omp parallel for schedule(static) if (workers > 1) num_threads(workers)
     for (int part = 0; part < workers; ++part) {
-        const int first = rows * part / workers, last = rows * (part + 1) / workers;
+        const Eigen::Index first = rows * part / workers, last = rows * (part + 1) / workers;
         if (last > first)
             output.middleRows(first, last - first).noalias() +=
                 input.middleRows(first, last - first) * kernel.block(p, q, np, nq).transpose();
@@ -43,17 +44,17 @@ void add_channel_gram(const Eigen::Ref<const Eigen::MatrixXd>& ca,
                       const Eigen::Ref<const Eigen::MatrixXd>& cb,
                       const Eigen::Ref<const Eigen::MatrixXd>& qa,
                       const Eigen::Ref<const Eigen::MatrixXd>& qb,
-                      int width,
+                      Eigen::Index width,
                       Eigen::Ref<Eigen::MatrixXd> result) {
     const int np = result.rows(), nq = result.cols();
-    const int na = ca.rows() * width, nb = cb.rows() * width;
+    const std::int64_t na = ca.rows() * width, nb = cb.rows() * width;
     const Eigen::Map<const Eigen::MatrixXd> a(ca.data(), na, np), b(cb.data(), nb, np);
     const Eigen::Map<const Eigen::MatrixXd> x(qa.data(), na, nq), y(qb.data(), nb, nq);
     const int workers = coarse_openmp_thread_count(effective_openmp_thread_count(),
                                                    static_cast<std::size_t>(na + nb) * np * nq);
 #pragma omp parallel for schedule(static) if (workers > 1) num_threads(workers)
     for (int part = 0; part < workers; ++part) {
-        const int first = np * part / workers, last = np * (part + 1) / workers;
+        const Eigen::Index first = np * part / workers, last = np * (part + 1) / workers;
         if (last == first)
             continue;
         result.middleRows(first, last - first).noalias() +=
@@ -80,8 +81,8 @@ void add_product(const Eigen::Ref<const Eigen::MatrixXd>& left,
                                                        result.cols() * left.cols());
 #pragma omp parallel for schedule(static) if (workers > 1) num_threads(workers)
     for (int part = 0; part < workers; ++part) {
-        const int first = result.rows() * part / workers,
-                  last = result.rows() * (part + 1) / workers;
+        const Eigen::Index first = result.rows() * part / workers,
+                           last = result.rows() * (part + 1) / workers;
         if (last > first)
             result.middleRows(first, last - first).noalias() +=
                 left.middleRows(first, last - first) * right;
@@ -99,7 +100,7 @@ void transpose_product(const Eigen::Ref<const Eigen::MatrixXd>& channels,
                                                        channels.cols() * ket.cols());
 #pragma omp parallel for schedule(static) if (workers > 1) num_threads(workers)
     for (int part = 0; part < workers; ++part) {
-        const int first = extent * part / workers, last = extent * (part + 1) / workers;
+        const Eigen::Index first = extent * part / workers, last = extent * (part + 1) / workers;
         if (last == first)
             continue;
         if (by_rows)
@@ -127,24 +128,25 @@ SpinFactorSource sum_factors(std::vector<SpinFactorSource> sources) {
             source.count < 0 || !source.load)
             throw std::invalid_argument("incompatible factor sum");
         result.count += source.count;
-        result.workspace_rows = std::max(result.workspace_rows, source.workspace_rows);
+        result.workspace_rows =
+            std::max<Eigen::Index>(result.workspace_rows, source.workspace_rows);
         result.load_work +=
             source.count *
             std::max(source.load_work, static_cast<long double>(source.n_alpha) + source.n_beta);
     }
     if (result.count)
         result.load_work /= result.count;
-    result.load = [sources = std::move(sources)](int first,
-                                                 int width,
+    result.load = [sources = std::move(sources)](Eigen::Index first,
+                                                 Eigen::Index width,
                                                  Eigen::Ref<Eigen::MatrixXd> a,
                                                  Eigen::Ref<Eigen::MatrixXd> b) {
-        int offset = 0;
+        std::int64_t offset = 0;
         for (const auto& source : sources) {
             if (first >= source.count) {
                 first -= source.count;
                 continue;
             }
-            const int count = std::min(width - offset, source.count - first);
+            const Eigen::Index count = std::min<Eigen::Index>(width - offset, source.count - first);
             source.load(first, count, a.middleCols(offset, count), b.middleCols(offset, count));
             offset += count;
             first = 0;
@@ -159,33 +161,36 @@ SpinFactorSource generator_factors(const DirectCiSigmaAction& sigma,
                                    const SpinFactorSource& source,
                                    const Eigen::Ref<const Eigen::MatrixXd>& generator) {
     validate_source(sigma, source);
-    return {
-        source.n_alpha,
-        source.n_beta,
-        2 * source.count,
-        [&sigma, source, generator](
-            int first, int width, Eigen::Ref<Eigen::MatrixXd> a, Eigen::Ref<Eigen::MatrixXd> b) {
-            int offset = 0;
-            while (offset < width) {
-                const bool beta = first >= source.count;
-                const int local = beta ? first - source.count : first;
-                const int count = std::min(width - offset, source.count - local);
-                auto aa = a.middleCols(offset, count), bb = b.middleCols(offset, count);
-                source.load(local, count, aa, bb);
-                Eigen::MatrixXd image(beta ? source.n_beta : source.n_alpha, count);
-                sigma.apply_spin_generator(beta, beta ? bb : aa, generator, image);
-                if (beta)
-                    bb = image;
-                else
-                    aa = image;
-                first += count;
-                offset += count;
-            }
-        },
-        std::max(source.workspace_rows,
-                 static_cast<std::size_t>(std::max(source.n_alpha, source.n_beta))),
-        std::max(source.load_work, static_cast<long double>(source.n_alpha) + source.n_beta) +
-            sigma.spin_link_count() + 0.5L * (source.n_alpha + source.n_beta)};
+    return {source.n_alpha,
+            source.n_beta,
+            2 * source.count,
+            [&sigma, source, generator](Eigen::Index first,
+                                        Eigen::Index width,
+                                        Eigen::Ref<Eigen::MatrixXd> a,
+                                        Eigen::Ref<Eigen::MatrixXd> b) {
+                std::int64_t offset = 0;
+                while (offset < width) {
+                    const bool beta = first >= source.count;
+                    const int local = beta ? first - source.count : first;
+                    const Eigen::Index count =
+                        std::min<Eigen::Index>(width - offset, source.count - local);
+                    auto aa = a.middleCols(offset, count), bb = b.middleCols(offset, count);
+                    source.load(local, count, aa, bb);
+                    Eigen::MatrixXd image(beta ? source.n_beta : source.n_alpha, count);
+                    sigma.apply_spin_generator(beta, beta ? bb : aa, generator, image);
+                    if (beta)
+                        bb = image;
+                    else
+                        aa = image;
+                    first += count;
+                    offset += count;
+                }
+            },
+            std::max<Eigen::Index>(
+                source.workspace_rows,
+                static_cast<std::size_t>(std::max<Eigen::Index>(source.n_alpha, source.n_beta))),
+            std::max(source.load_work, static_cast<long double>(source.n_alpha) + source.n_beta) +
+                sigma.spin_link_count() + 0.5L * (source.n_alpha + source.n_beta)};
 }
 
 FactorActionWorkspace::FactorActionWorkspace(const SpinFactorSource& source,
@@ -252,17 +257,17 @@ FactorActionWork FactorActionWorkspace::apply(const DirectCiSigmaAction& sigma,
         return std::chrono::duration<double>(b - a).count();
     };
     const auto& kernel = sigma.channel_kernel();
-    for (int first = 0; first < source.count; first += source_tile_) {
-        const int width = std::min(source_tile_, source.count - first);
+    for (Eigen::Index first = 0; first < source.count; first += source_tile_) {
+        const Eigen::Index width = std::min<Eigen::Index>(source_tile_, source.count - first);
         ++work.panels;
         work.sources += width;
-        work.workspace_bound =
-            std::max(work.workspace_bound,
-                     sizeof(double) *
-                         ((static_cast<std::size_t>(n_alpha_) + n_beta_) * width *
-                              (overlap_only_ ? 2 + reserved_channel_panels_
-                                             : (3 + reserved_channel_panels_) * channel_tile_ + 6) +
-                          source.workspace_rows * width));
+        work.workspace_bound = std::max<Eigen::Index>(
+            work.workspace_bound,
+            sizeof(double) *
+                ((static_cast<std::size_t>(n_alpha_) + n_beta_) * width *
+                     (overlap_only_ ? 2 + reserved_channel_panels_
+                                    : (3 + reserved_channel_panels_) * channel_tile_ + 6) +
+                 source.workspace_rows * width));
         auto a = alpha_.leftCols(width), b = beta_.leftCols(width);
         auto ha = ha_.leftCols(overlap_only_ ? 0 : width);
         auto hb = hb_.leftCols(overlap_only_ ? 0 : width);
@@ -271,7 +276,7 @@ FactorActionWork FactorActionWorkspace::apply(const DirectCiSigmaAction& sigma,
         hb.setZero();
         if (!overlap_only_) {
             for (int p = 0; p < channels_; p += channel_tile_) {
-                const int np = std::min(channel_tile_, channels_ - p);
+                const int np = std::min<Eigen::Index>(channel_tile_, channels_ - p);
                 auto ap = ap_.leftCols(np * width), bp = bp_.leftCols(np * width);
                 auto va = va_.leftCols(np * width), vb = vb_.leftCols(np * width);
                 const auto scattered = tick();
@@ -282,7 +287,7 @@ FactorActionWork FactorActionWorkspace::apply(const DirectCiSigmaAction& sigma,
                 vb.setZero();
                 for (int q = 0; q < channels_; q += channel_tile_) {
                     ++work.channel_blocks;
-                    const int nq = std::min(channel_tile_, channels_ - q);
+                    const int nq = std::min<Eigen::Index>(channel_tile_, channels_ - q);
                     if (q == p) {
                         const auto start = tick();
                         mix_channels(ap, kernel, p, q, width, va);
@@ -349,7 +354,7 @@ DirectCiIntegralAdjoint factor_integral_adjoint(const DirectCiSigmaAction& sigma
         static_cast<std::size_t>(ra.size() + rb.size() + wa.size() + wb.size() + rp_a.size() +
                                  rp_b.size() + rq_a.size() + rq_b.size() + ca.size() + cb.size()));
     for (int r = 0; r < ket.count; r += nr) {
-        const int wr = std::min(nr, ket.count - r);
+        const int wr = std::min<Eigen::Index>(nr, ket.count - r);
         auto a = ra.leftCols(wr), b = rb.leftCols(wr);
         const auto load_start = tick();
         ket.load(r, wr, a, b);
@@ -363,8 +368,8 @@ DirectCiIntegralAdjoint factor_integral_adjoint(const DirectCiSigmaAction& sigma
         const auto weighted_start = tick();
         moments.add(a, b, weighted_a, weighted_b);
         covector_time += seconds(weighted_start, tick());
-        for (int first = 0; first < d; first += p) {
-            const int np = std::min(p, d - first);
+        for (Eigen::Index first = 0; first < d; first += p) {
+            const int np = std::min<Eigen::Index>(p, d - first);
             auto bar_a = ca.leftCols(wr * np), bar_b = cb.leftCols(wr * np);
             auto pa = rp_a.leftCols(wr * np), pb = rp_b.leftCols(wr * np);
             const auto scattered = tick();
@@ -379,7 +384,7 @@ DirectCiIntegralAdjoint factor_integral_adjoint(const DirectCiSigmaAction& sigma
             moments.add(pa, pb, bar_a, bar_b);
             covector_time += seconds(covectors, tick());
             for (int second = 0; second < d; second += p) {
-                const int nq = std::min(p, d - second);
+                const int nq = std::min<Eigen::Index>(p, d - second);
                 if (second == first) {
                     const auto start = tick();
                     add_channel_gram(

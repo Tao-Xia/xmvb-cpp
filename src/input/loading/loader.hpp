@@ -59,7 +59,7 @@ struct VbScfInputLoadResult {
     /** @brief Number of consecutive lowest roots in the equal-weight objective. */
     int state_average_count = 1;
     bool request_molden_output = false;
-    int source_raw_structure_count = 0;
+    std::size_t source_raw_structure_count = 0;
     double ao_integral_provider_seconds = 0.0;
     double ao_integral_setup_seconds = 0, ao_integral_generation_seconds = 0,
            ao_integral_merge_seconds = 0;

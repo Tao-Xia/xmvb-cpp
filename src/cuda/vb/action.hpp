@@ -15,6 +15,7 @@ namespace xmvb::cuda {
 class DirectCiSigma;
 class ExteriorTransform;
 class ProductContraction;
+class OperatorFirstAction;
 
 /** Exact W^T op W maps, evaluated with bounded spin-factor panels. */
 enum class ProductMap {
@@ -49,8 +50,9 @@ class StructureAction {
     /** @brief Overlap alone; never evaluate sigma to prepare a metric. */
     void apply_overlap(linalg::ConstMatrixView vectors, linalg::MatrixView overlap) const;
     vb::StructureActionResult apply(const Eigen::Ref<const Eigen::MatrixXd>& vectors) const;
-    int size() const noexcept;
-    int n_structures() const noexcept {
+    std::int64_t size() const noexcept;
+    bool uses_operator_first() const noexcept;
+    std::int64_t n_structures() const noexcept {
         return size();
     }
     /** Frozen source-point CPU diagnostic only; dynamic device solvers use
@@ -90,13 +92,18 @@ class StructureAction {
     const vb::StructureAction::OrthogonalView& orthogonal_view() const noexcept;
     /** Independent numerical executor reusing this action's uploaded exact support. */
     std::unique_ptr<ProductContraction> make_product_contraction() const;
+    /** Sparse source order uses the same work planner as the CPU executor. */
+    std::unique_ptr<OperatorFirstAction> make_operator_first() const;
+    /** Original sparse source incidence B or its adjoint; no orbital transform. */
+    void source_map(bool transpose, linalg::ConstMatrixView input, linalg::MatrixView output) const;
+
     const std::int64_t* product_indices_data() const noexcept;
     const std::int64_t* term_offsets_data() const noexcept;
     const std::int64_t* term_structures_data() const noexcept;
     const double* term_weights_data() const noexcept;
     std::int64_t n_product_groups() const noexcept;
-    int n_alpha_strings() const noexcept;
-    int n_beta_strings() const noexcept;
+    std::int64_t n_alpha_strings() const noexcept;
+    std::int64_t n_beta_strings() const noexcept;
     /** Maximum orthogonal-carrier amplitude of a structure response.
    * Matches direct-CI CIAH clipping using bounded source-factor panels.
    * Caller must select the intended orbital frame first.

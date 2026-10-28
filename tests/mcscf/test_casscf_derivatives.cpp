@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <algorithm>
 #include <cmath>
 #include <iostream>
@@ -74,7 +75,7 @@ xmvb::integrals::AoIntegralInput make_ao(int n) {
             factors(k, p) = 0.14 * std::sin(0.31 * (k + 1) * (p + 2)) +
                             0.07 * std::cos(0.53 * (k + 2) * (p + 1));
     const Eigen::MatrixXd kernel = factors.transpose() * factors;
-    std::vector<int> left, right;
+    std::vector<std::int64_t> left, right;
     std::vector<double> values;
     for (int p = 0; p < pairs; ++p)
         for (int q = 0; q <= p; ++q) {

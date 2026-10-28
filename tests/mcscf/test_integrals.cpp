@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
@@ -69,7 +70,7 @@ int main() {
             ri.metric_whitened_ao_pair_factors.data()[i] = std::sin(0.7 * (i + 1));
         const Eigen::MatrixXd kernel =
             ri.metric_whitened_ao_pair_factors.transpose() * ri.metric_whitened_ao_pair_factors;
-        std::vector<int> left, right;
+        std::vector<std::int64_t> left, right;
         std::vector<double> values;
         for (int i = 0; i < pairs; ++i)
             for (int j = 0; j <= i; ++j) {
@@ -80,7 +81,8 @@ int main() {
         AoIntegralInput ao;
         ao.n_basis_functions = n_bf;
         ao.pair_graph = build_ao_pair_graph(left, right, values, n_bf);
-        std::vector<int> offsets{0, 2, 4, 6}, indices{0, 1, 0, 1, 0, 1};
+        std::vector<std::size_t> offsets{0, 2, 4, 6};
+        std::vector<int> indices{0, 1, 0, 1, 0, 1};
         std::vector<double> coefficients{0.8, 0.2, -0.1, 0.7, 0.4, -0.3};
         auto transform = [&](const Eigen::MatrixXd& c) {
             std::vector<double> rows;

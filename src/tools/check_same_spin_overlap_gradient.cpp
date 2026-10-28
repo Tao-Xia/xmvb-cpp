@@ -168,7 +168,7 @@ double evaluate_opposite_spin_hamiltonian(
                     const int beta_orbital_right = beta_occ_R[beta_right_row];
                     const double beta_cofactor =
                         beta_cofactor_1st(beta_right_row, beta_left_column);
-                    const int two_electron_index =
+                    const auto two_electron_index =
                         xmvb::core::PairIndex::two_electron_storage_index(beta_orbital_right,
                                                                           beta_orbital_left,
                                                                           alpha_orbital_right,

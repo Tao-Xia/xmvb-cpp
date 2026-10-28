@@ -247,7 +247,7 @@ calc_same_spin_hamiltonian(const std::vector<int>& occ_L,
         n_orb_act,
         eri_act.data(),
         [&eri_act](int row_packed_pair_index, int column_packed_pair_index) {
-            const int packed_pair_of_pairs_index =
+            const auto packed_pair_of_pairs_index =
                 xmvb::core::PairIndex::packed_pair_of_pairs_index(row_packed_pair_index,
                                                                   column_packed_pair_index);
             return eri_act[packed_pair_of_pairs_index];

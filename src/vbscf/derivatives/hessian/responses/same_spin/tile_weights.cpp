@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "vbscf/derivatives/hessian/responses/same_spin/tile_weights_internal.hpp"
 
 #include <algorithm>
@@ -19,11 +20,11 @@ namespace {
 
 double
 same_spin_pair_overlap_scalar(const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
-                              int n_unique_determinants,
+                              std::int64_t n_unique_determinants,
                               int row,
                               int column) {
-    const int left_id = std::min(row, column);
-    const int right_id = std::max(row, column);
+    const int left_id = std::min<std::int64_t>(row, column);
+    const int right_id = std::max<std::int64_t>(row, column);
     const auto& pair_evaluation = ordered_pair_cache[ordered_spin_pair_storage_index(
         left_id, right_id, n_unique_determinants)];
     return pair_evaluation.overlap_result.overlap_determinant;
@@ -31,11 +32,11 @@ same_spin_pair_overlap_scalar(const std::vector<SpinDeterminantPairEvaluation>& 
 
 double
 same_spin_pair_total_scalar(const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
-                            int n_unique_determinants,
+                            std::int64_t n_unique_determinants,
                             int row,
                             int column) {
-    const int left_id = std::min(row, column);
-    const int right_id = std::max(row, column);
+    const int left_id = std::min<std::int64_t>(row, column);
+    const int right_id = std::max<std::int64_t>(row, column);
     const auto& pair_evaluation = ordered_pair_cache[ordered_spin_pair_storage_index(
         left_id, right_id, n_unique_determinants)];
     return pair_evaluation.total_hamiltonian;
@@ -47,11 +48,11 @@ void accumulate_alpha_accepted_tile_weights(
     const SelectedStateDeterminantMatrices& selected_states,
     const std::vector<double>& selected_state_energies,
     const std::vector<SpinDeterminantPairEvaluation>& partner_pair_cache,
-    int n_unique_partner,
-    int left_begin,
-    int left_end,
-    int right_begin,
-    int right_end,
+    std::int64_t n_unique_partner,
+    std::int64_t left_begin,
+    std::int64_t left_end,
+    std::int64_t right_begin,
+    std::int64_t right_end,
     SameSpinAcceptedTileWeights* weights) {
     weights->reset(left_end - left_begin, right_end - right_begin);
 
@@ -78,8 +79,8 @@ void accumulate_alpha_accepted_tile_weights(
             right_end,
             [&](int row,
                 int column,
-                int partner_left,
-                int partner_right,
+                Eigen::Index partner_left,
+                Eigen::Index partner_right,
                 double coefficient_product) {
                 const double overlap = same_spin_pair_overlap_scalar(
                     partner_pair_cache, n_unique_partner, partner_left, partner_right);
@@ -96,11 +97,11 @@ void accumulate_beta_accepted_tile_weights(
     const SelectedStateDeterminantMatrices& selected_states,
     const std::vector<double>& selected_state_energies,
     const std::vector<SpinDeterminantPairEvaluation>& partner_pair_cache,
-    int n_unique_partner,
-    int left_begin,
-    int left_end,
-    int right_begin,
-    int right_end,
+    std::int64_t n_unique_partner,
+    std::int64_t left_begin,
+    std::int64_t left_end,
+    std::int64_t right_begin,
+    std::int64_t right_end,
     SameSpinAcceptedTileWeights* weights) {
     weights->reset(left_end - left_begin, right_end - right_begin);
 
@@ -127,8 +128,8 @@ void accumulate_beta_accepted_tile_weights(
             right_end,
             [&](int row,
                 int column,
-                int partner_left,
-                int partner_right,
+                Eigen::Index partner_left,
+                Eigen::Index partner_right,
                 double coefficient_product) {
                 const double overlap = same_spin_pair_overlap_scalar(
                     partner_pair_cache, n_unique_partner, partner_left, partner_right);
@@ -147,11 +148,11 @@ void accumulate_alpha_directional_tile_weights(
     const std::vector<double>& selected_state_energies,
     const std::vector<double>& directional_selected_state_energies,
     const std::vector<SpinDeterminantPairEvaluation>& partner_pair_cache,
-    int n_unique_partner,
-    int left_begin,
-    int left_end,
-    int right_begin,
-    int right_end,
+    std::int64_t n_unique_partner,
+    std::int64_t left_begin,
+    std::int64_t left_end,
+    std::int64_t right_begin,
+    std::int64_t right_end,
     SameSpinAcceptedTileWeights* weights) {
     weights->reset(left_end - left_begin, right_end - right_begin);
 
@@ -181,8 +182,8 @@ void accumulate_alpha_directional_tile_weights(
             right_end,
             [&](int row,
                 int column,
-                int partner_left,
-                int partner_right,
+                Eigen::Index partner_left,
+                Eigen::Index partner_right,
                 double coefficient_product) {
                 weights->overlap(row, column) -=
                     state_weight * directional_state_energy * coefficient_product *
@@ -195,11 +196,11 @@ void accumulate_alpha_directional_tile_weights(
         }
         validate_local_state_coefficient_matrix(directional_state_coefficients);
         const auto accumulate_mixed = [&](const SparseLocalCoefficientMatrix& left_coefficients,
-                                          const std::vector<int>& left_alpha_support,
-                                          const std::vector<int>& left_beta_support,
+                                          const std::vector<Eigen::Index>& left_alpha_support,
+                                          const std::vector<Eigen::Index>& left_beta_support,
                                           const SparseLocalCoefficientMatrix& right_coefficients,
-                                          const std::vector<int>& right_alpha_support,
-                                          const std::vector<int>& right_beta_support) {
+                                          const std::vector<Eigen::Index>& right_alpha_support,
+                                          const std::vector<Eigen::Index>& right_beta_support) {
             for_each_sparse_coefficient_pair_in_tile(
                 left_coefficients,
                 left_alpha_support,
@@ -213,8 +214,8 @@ void accumulate_alpha_directional_tile_weights(
                 right_end,
                 [&](int row,
                     int column,
-                    int partner_left,
-                    int partner_right,
+                    Eigen::Index partner_left,
+                    Eigen::Index partner_right,
                     double coefficient_product) {
                     const double overlap = same_spin_pair_overlap_scalar(
                         partner_pair_cache, n_unique_partner, partner_left, partner_right);
@@ -249,11 +250,11 @@ void accumulate_beta_directional_tile_weights(
     const std::vector<double>& selected_state_energies,
     const std::vector<double>& directional_selected_state_energies,
     const std::vector<SpinDeterminantPairEvaluation>& partner_pair_cache,
-    int n_unique_partner,
-    int left_begin,
-    int left_end,
-    int right_begin,
-    int right_end,
+    std::int64_t n_unique_partner,
+    std::int64_t left_begin,
+    std::int64_t left_end,
+    std::int64_t right_begin,
+    std::int64_t right_end,
     SameSpinAcceptedTileWeights* weights) {
     weights->reset(left_end - left_begin, right_end - right_begin);
 
@@ -283,8 +284,8 @@ void accumulate_beta_directional_tile_weights(
             right_end,
             [&](int row,
                 int column,
-                int partner_left,
-                int partner_right,
+                Eigen::Index partner_left,
+                Eigen::Index partner_right,
                 double coefficient_product) {
                 weights->overlap(row, column) -=
                     state_weight * directional_state_energy * coefficient_product *
@@ -297,11 +298,11 @@ void accumulate_beta_directional_tile_weights(
         }
         validate_local_state_coefficient_matrix(directional_state_coefficients);
         const auto accumulate_mixed = [&](const SparseLocalCoefficientMatrix& left_coefficients,
-                                          const std::vector<int>& left_beta_support,
-                                          const std::vector<int>& left_alpha_support,
+                                          const std::vector<Eigen::Index>& left_beta_support,
+                                          const std::vector<Eigen::Index>& left_alpha_support,
                                           const SparseLocalCoefficientMatrix& right_coefficients,
-                                          const std::vector<int>& right_beta_support,
-                                          const std::vector<int>& right_alpha_support) {
+                                          const std::vector<Eigen::Index>& right_beta_support,
+                                          const std::vector<Eigen::Index>& right_alpha_support) {
             for_each_sparse_coefficient_pair_in_tile(
                 left_coefficients,
                 left_beta_support,
@@ -315,8 +316,8 @@ void accumulate_beta_directional_tile_weights(
                 right_end,
                 [&](int row,
                     int column,
-                    int partner_left,
-                    int partner_right,
+                    Eigen::Index partner_left,
+                    Eigen::Index partner_right,
                     double coefficient_product) {
                     const double overlap = same_spin_pair_overlap_scalar(
                         partner_pair_cache, n_unique_partner, partner_left, partner_right);

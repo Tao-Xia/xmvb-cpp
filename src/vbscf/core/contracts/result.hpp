@@ -52,7 +52,7 @@ struct VbScfResult {
     /**
    * @brief Number of VB structures.
    */
-    int n_structures = 0;
+    Eigen::Index n_structures = 0;
 
     /**
    * @brief Nuclear repulsion energy supplied by the caller.

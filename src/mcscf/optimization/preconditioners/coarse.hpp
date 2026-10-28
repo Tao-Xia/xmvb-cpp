@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/index.hpp"
+
 #include <functional>
 #include <Eigen/Core>
 
@@ -7,7 +9,7 @@ namespace xmvb::mcscf {
 
 /** @brief Sampled orbital spectra; diagnostic only, never a stopping rule. */
 struct CoarseSpectrum {
-    int dimension = 0;
+    Eigen::Index dimension = 0;
     bool positive_curvature = false;
     double curvature_min = 0.0, curvature_max = 0.0;
     double preconditioned_min = 0.0, preconditioned_max = 0.0;
@@ -15,7 +17,7 @@ struct CoarseSpectrum {
 
 /** @brief Sampled Schur curvature; never used to change the optimizer policy. */
 struct SchurSpectrum {
-    int orbital_dimension = 0, structure_dimension = 0;
+    Eigen::Index orbital_dimension = 0, structure_dimension = 0;
     bool structure_positive = false, orbital_positive = false;
     double orbital_min = 0.0, orbital_max = 0.0;
     double structure_min = 0.0, structure_max = 0.0;
@@ -29,7 +31,10 @@ struct SchurSpectrum {
  */
 class CoarsePreconditioner {
   public:
-    CoarsePreconditioner(int dimension, int capacity, double lindep, double action_accuracy = 0.0);
+    CoarsePreconditioner(Eigen::Index dimension,
+                         int capacity,
+                         double lindep,
+                         double action_accuracy = 0.0);
     /** @brief Admit a rank-resolved sample only if both image projections certify symmetry. */
     void observe(const Eigen::VectorXd& direction,
                  const Eigen::VectorXd& image,
@@ -47,13 +52,13 @@ class CoarsePreconditioner {
    * The inverse callback receives full-size vectors with zero structure tail.
    */
     CoarseSpectrum
-    orbital_spectrum(int orbital_dimension,
+    orbital_spectrum(Eigen::Index orbital_dimension,
                      const std::function<Eigen::VectorXd(const Eigen::VectorXd&)>& inverse) const;
     /** @brief Eliminate cached structure samples without new operator actions.
    * Spectra use the sampled physical metric; no complete-space certificate
    * or complete structure-response inverse is inferred from these samples.
    */
-    SchurSpectrum schur_spectrum(int orbital_dimension) const;
+    SchurSpectrum schur_spectrum(Eigen::Index orbital_dimension) const;
 
   private:
     int size_ = 0;

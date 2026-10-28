@@ -2,12 +2,93 @@
 
 #include <cmath>
 #include <stdexcept>
+#include <sstream>
+#include <iomanip>
+
+#include "output/text/sections.hpp"
 
 namespace {
 
 void require(bool condition, const char* message) {
     if (!condition)
         throw std::runtime_error(message);
+}
+
+void check_cached_structure_weights() {
+    const Eigen::Vector2d coefficients(1.0, -0.2);
+    Eigen::Matrix2d metric;
+    metric << 1.0, 0.5, 0.5, 1.0;
+    const Eigen::Vector2d overlap_product = metric * coefficients;
+    const auto weights = xmvb::output::coulson_chirgwin_weights(coefficients, overlap_product);
+    require((weights - Eigen::Vector2d(15.0 / 14.0, -1.0 / 14.0)).norm() < 1e-14,
+            "CC weights must use the off-diagonal overlap and allow negative entries");
+    require(std::abs(weights.sum() - 1.0) < 1e-14, "CC weights do not sum to unity");
+    require(
+        (xmvb::output::coulson_chirgwin_weights(-3 * coefficients, -3 * overlap_product) - weights)
+                .norm() < 1e-14,
+        "CC weights depend on the CI normalization or phase");
+    const Eigen::Vector2d scale(2.0, 3.0);
+    require((xmvb::output::coulson_chirgwin_weights(
+                 (scale.array() * coefficients.array()).matrix(),
+                 (overlap_product.array() / scale.array()).matrix()) -
+             weights)
+                    .norm() < 1e-14,
+            "CC weights depend on individual structure normalization");
+    xmvb::vb::RawStructureData structures;
+    structures.n_structures = 2;
+    structures.n_total_electrons = structures.n_active_electrons = 4;
+    structures.spin_multiplicity = 1;
+    structures.raw_structure_orbitals = {1, 2, 3, 4, 1, 3, 2, 4};
+    std::ostringstream text;
+    text << std::scientific << std::unitbuf << std::setprecision(16);
+    const auto flags = text.flags();
+    xmvb::output::print_coulson_chirgwin_weights(text, coefficients, overlap_product, structures);
+    require(text.flags() == flags && text.precision() == 16,
+            "weight output changed subsequent energy precision or buffering");
+    require(text.str().find("WEIGHTS OF STRUCTURES") != std::string::npos &&
+                text.str().find("Coulson-Chirgwin Weights") != std::string::npos &&
+                text.str().find("1.07142857") != std::string::npos &&
+                text.str().find("-0.07142857") != std::string::npos &&
+                text.str().find("1-3") != std::string::npos &&
+                text.str().find("1-2") != std::string::npos,
+            "GPU/CPU shared weight output lost values or structure topology");
+    xmvb::output::print_structure_coefficients(text, coefficients, structures);
+    require(text.str().find("COEFFICIENTS OF STRUCTURES") != std::string::npos &&
+                text.str().find("-0.20000000") != std::string::npos,
+            "common coefficient table changed the supplied CI representative");
+}
+
+void check_common_report_layout() {
+    std::ostringstream output;
+    output << std::scientific << std::setprecision(16);
+    const auto flags = output.flags();
+    xmvb::output::print_iteration_header(output);
+    xmvb::output::print_iteration_row(output, 0, -198.75, 0.0, 0.002);
+    xmvb::output::print_iteration_row(output, 1, -198.751, -0.001, 0.0001);
+    xmvb::output::print_scf_status(output, true, 1, -198.751);
+    require(output.flags() == flags && output.precision() == 16,
+            "common scalar report changed subsequent diagnostic precision");
+    const auto text = output.str();
+    require(text.find("ITER           ENERGY          DELTA_E") != std::string::npos &&
+                text.find("-198.7500000000") != std::string::npos &&
+                text.find("-0.0010000000") != std::string::npos &&
+                text.find("2.00000000e-03") != std::string::npos &&
+                text.find("VBSCF converged in     1 iterations") != std::string::npos &&
+                text.find("Total Energy:   -198.7510000000") != std::string::npos,
+            "CPU/GPU scalar report lost the common XMVB layout");
+    xmvb::output::print_scf_status(output, false, 2, -198.751);
+    require(output.str().find("VBSCF did not converge in     2 iterations") != std::string::npos,
+            "nonconverged calculation was reported as converged");
+    std::ostringstream fixed;
+    fixed << std::scientific << std::setprecision(16);
+    const auto fixed_flags = fixed.flags();
+    xmvb::output::print_scf_status(fixed, false, 0, -198.751, true);
+    require(fixed.str().find("Fixed-orbital ENERGY completed in     0 iterations") !=
+                    std::string::npos &&
+                fixed.str().find("VBSCF converged") == std::string::npos &&
+                fixed.str().find("did not converge") == std::string::npos &&
+                fixed.flags() == fixed_flags && fixed.precision() == 16,
+            "fixed-orbital completion changed convergence claims or diagnostic formatting");
 }
 
 void check_available_norms() {
@@ -90,6 +171,8 @@ void check_selected_open_shell() {
 } // namespace
 
 int main() {
+    check_cached_structure_weights();
+    check_common_report_layout();
     check_available_norms();
     check_selected_open_shell();
 }

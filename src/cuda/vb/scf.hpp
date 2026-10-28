@@ -18,6 +18,8 @@ struct ScfIteration {
 
 struct ScfResult {
     Matrix<double> orbitals, coefficients;
+    /** Cached raw-structure M*C, moved from the final converged physical point. */
+    Matrix<double> overlap_coefficients;
     bool converged = false;
     std::string reason;
     double energy = 0.0, gradient_inf = 0.0, seconds = 0.0;

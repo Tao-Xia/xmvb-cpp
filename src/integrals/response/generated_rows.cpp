@@ -72,7 +72,7 @@ void apply_generated_ao_pair_rows(const AoIntegralInput& ao,
         // Disjoint target rows: no private pair images and no scatter races.
 #pragma omp parallel for schedule(dynamic, 1)
         for (Eigen::Index row = 0; row < count; ++row)
-            for (int edge = graph.row_offsets[begin + row];
+            for (PairAddress edge = graph.row_offsets[begin + row];
                  edge < graph.row_offsets[begin + row + 1];
                  ++edge)
                 accumulate(row, graph.columns[edge], graph.values[edge]);

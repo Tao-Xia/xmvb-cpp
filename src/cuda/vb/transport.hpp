@@ -1,5 +1,8 @@
 #pragma once
 
+#include "core/index.hpp"
+#include <cstdint>
+
 #include <array>
 #include <functional>
 #include <memory>
@@ -23,10 +26,10 @@ class ExteriorTransform;
 class StructureSourceFactors {
   public:
     StructureSourceFactors(Context& context, const StructureAction& action);
-    int source_count() const noexcept {
-        return static_cast<int>(source_columns_.size());
+    std::int64_t source_count() const noexcept {
+        return core::checked_index<std::int64_t>(source_columns_.size());
     }
-    int source_column(int index) const {
+    std::int64_t source_column(std::int64_t index) const {
         return source_columns_.at(index);
     }
     /** Conservative transport workspace width, strictly below beta dimension
@@ -34,7 +37,7 @@ class StructureSourceFactors {
    */
     int source_extent() const;
     /** Form W C as alpha coefficients times raw beta identity columns. */
-    void load(int begin,
+    void load(std::int64_t begin,
               int count,
               linalg::ConstMatrixView coefficients,
               linalg::MatrixView alpha,
@@ -42,7 +45,7 @@ class StructureSourceFactors {
     /** Form three source panels in one group traversal. The middle beta identity
    * is omitted because the finite transport pullback does not consume it.
    */
-    void load_three(int begin,
+    void load_three(std::int64_t begin,
                     int count,
                     linalg::ConstMatrixView coefficients0,
                     linalg::ConstMatrixView coefficients1,
@@ -59,16 +62,17 @@ class StructureSourceFactors {
     /** Add W^T with the raw beta identity columns loaded from [begin,begin+count).
    * Only groups at those beta sources are visited.
    */
-    void
-    contract_raw_sources(int begin, linalg::ConstMatrixView alpha, linalg::MatrixView image) const;
+    void contract_raw_sources(std::int64_t begin,
+                              linalg::ConstMatrixView alpha,
+                              linalg::MatrixView image) const;
 
   private:
     friend class SelectedCrossOverlap;
     Context* context_;
     const StructureAction* action_;
-    int structures_, alpha_, beta_, groups_;
-    std::vector<int> source_columns_, source_group_counts_;
-    Buffer<int> source_groups_, source_columns_device_, source_offsets_device_,
+    std::int64_t structures_, alpha_, beta_, groups_;
+    std::vector<std::int64_t> source_columns_, source_group_counts_;
+    Buffer<std::int64_t> source_groups_, source_columns_device_, source_offsets_device_,
         alpha_offsets_device_;
 };
 
@@ -90,13 +94,13 @@ class SelectedCrossOverlap {
     SelectedCrossOverlap(const SelectedCrossOverlap&) = delete;
     SelectedCrossOverlap& operator=(const SelectedCrossOverlap&) = delete;
 
-    int size() const noexcept {
+    std::int64_t size() const noexcept {
         return structures_;
     }
     int active_orbitals() const noexcept {
         return active_;
     }
-    int source_count() const noexcept {
+    std::int64_t source_count() const noexcept {
         return sources_.source_count();
     }
     /** Refreshed before each matrix-free solve; valid until the next solve. */
@@ -204,7 +208,7 @@ class SelectedCrossOverlap {
     int source_extent() const {
         return sources_.source_extent();
     }
-    void load_sources(int begin,
+    void load_sources(std::int64_t begin,
                       int count,
                       linalg::ConstMatrixView coefficients,
                       linalg::MatrixView alpha,
@@ -219,7 +223,8 @@ class SelectedCrossOverlap {
 
     Context* context_;
     StructureAction* action_;
-    int structures_, alpha_, beta_, active_;
+    std::int64_t structures_, alpha_, beta_;
+    int active_;
     StructureSourceFactors sources_;
     mutable Buffer<double> diagonal_;
     mutable Matrix<double> diagonal_h_scratch_;
@@ -296,7 +301,8 @@ class SingleStateCiTransport {
   private:
     Context* context_;
     SelectedCrossOverlap* overlap_;
-    int structures_, active_;
+    std::int64_t structures_;
+    int active_;
     double coordinate_scale_;
     Matrix<double> origin_frame_, origin_gradient_, origin_coefficients_;
 };

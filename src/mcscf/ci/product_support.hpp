@@ -89,7 +89,7 @@ class ProductSupport {
         Cursor(const ProductSupport& support, ProductPaths::Cursor paths)
             : support_(&support), paths_(std::move(paths)) {}
 
-        bool next(int& alpha, int& beta, bool& in_support) {
+        bool next(StringIndex& alpha, StringIndex& beta, bool& in_support) {
             Mask a, b;
             if (!paths_.next(a, b, in_support))
                 return false;
@@ -101,7 +101,7 @@ class ProductSupport {
         /** @brief Emit each reachable beta index without generating alpha products.
      * This traversal requires its own cursor, separate from next().
      */
-        bool next_column(int& beta) {
+        bool next_column(StringIndex& beta) {
             Mask b;
             if (!paths_.next_column(b))
                 return false;
@@ -114,7 +114,7 @@ class ProductSupport {
         }
 
       private:
-        int beta_index(Mask mask) {
+        StringIndex beta_index(Mask mask) {
             if (!cached_beta_ || *cached_beta_ != mask) {
                 cached_beta_ = mask;
                 cached_beta_index_ = support_->beta_.index_from_rank(paths_.beta_rank());
@@ -125,14 +125,14 @@ class ProductSupport {
         const ProductSupport* support_;
         ProductPaths::Cursor paths_;
         std::optional<Mask> cached_beta_;
-        int cached_beta_index_ = -1;
+        StringIndex cached_beta_index_ = -1;
     };
 
     Cursor cursor(int depth) const {
         return Cursor(*this, paths_->cursor(depth));
     }
 
-    Cursor column(int beta_index, int depth) const {
+    Cursor column(StringIndex beta_index, int depth) const {
         if (beta_index < 0 || static_cast<std::size_t>(beta_index) >= beta_.size())
             throw std::invalid_argument("product support beta index is outside the spin space");
         return Cursor(*this, paths_->column(beta_.masks()[beta_index], depth));
@@ -145,7 +145,7 @@ class ProductSupport {
     /** @brief Reachable depth-zero beta columns in caller index order.
    * Built once with the immutable support, shared by CI and derivative tiles.
    */
-    const std::vector<int>& columns() const noexcept {
+    const std::vector<StringIndex>& columns() const noexcept {
         return columns_;
     }
 
@@ -153,8 +153,8 @@ class ProductSupport {
    * Complete covalent support uses its shared prefix DAG. General selections
    * use their maximal-generator paths; neither stores a product-space table.
    */
-    void append_column_rows(int beta,
-                            std::vector<int>& rows,
+    void append_column_rows(StringIndex beta,
+                            std::vector<StringIndex>& rows,
                             int depth = 0,
                             std::size_t upper = std::numeric_limits<std::size_t>::max()) const {
         if (beta < 0 || static_cast<std::size_t>(beta) >= beta_.size())
@@ -165,7 +165,7 @@ class ProductSupport {
         }
         const auto begin = rows.size();
         auto cursor = column(beta, depth);
-        int a, b;
+        StringIndex a, b;
         bool label;
         while (cursor.next(a, b, label))
             if (static_cast<std::size_t>(a) < upper)
@@ -178,14 +178,14 @@ class ProductSupport {
    * seed family, not to arbitrary selected structures. Other families retain
    * all channels; no unsupported closure assumption is made.
    */
-    std::pair<int, int> channel_envelope(int alpha, int beta) const noexcept {
+    std::pair<int, int> channel_envelope(StringIndex alpha, int beta) const noexcept {
         return covalent_ ? covalent_->deficient_prefixes(alpha, beta) : std::pair{-1, -1};
     }
     bool has_channel_envelopes() const noexcept {
         return covalent_.has_value();
     }
     /** Zero-surplus certificate; valid only for a complete-covalent support. */
-    Mask zero_prefixes(int alpha, int beta) const noexcept {
+    Mask zero_prefixes(StringIndex alpha, int beta) const noexcept {
         return covalent_->zero_prefixes(alpha, beta);
     }
     int n_orbitals() const noexcept {
@@ -198,7 +198,7 @@ class ProductSupport {
     }
 
     /** @brief Small-query membership test; traversal should use cursor/column. */
-    bool contains(int alpha, int beta, int depth = 0) const noexcept {
+    bool contains(StringIndex alpha, StringIndex beta, int depth = 0) const noexcept {
         if (alpha < 0 || beta < 0 || static_cast<std::size_t>(alpha) >= alpha_.size() ||
             static_cast<std::size_t>(beta) >= beta_.size() || depth < 0 || depth > 1)
             return false;
@@ -219,7 +219,7 @@ class ProductSupport {
         return alpha_.dynamic_bytes() + (alpha_.shares_storage(beta_) ? 0 : beta_.dynamic_bytes());
     }
     std::size_t dynamic_bytes() const noexcept {
-        return columns_.capacity() * sizeof(int) + alpha_.dynamic_bytes() +
+        return columns_.capacity() * sizeof(StringIndex) + alpha_.dynamic_bytes() +
                (alpha_.shares_storage(beta_) ? 0 : beta_.dynamic_bytes()) +
                seeds_.capacity() * sizeof(Seed) + (paths_ ? paths_->metadata_bytes() : 0) +
                (covalent_ ? covalent_->dynamic_bytes() : 0);
@@ -230,10 +230,10 @@ class ProductSupport {
     void prepare_columns() {
         if (full_ || complete_covalent_) {
             columns_.resize(beta_.size());
-            std::iota(columns_.begin(), columns_.end(), 0);
+            std::iota(columns_.begin(), columns_.end(), StringIndex{0});
         } else {
             auto c = cursor(0);
-            int b;
+            StringIndex b;
             while (c.next_column(b))
                 columns_.push_back(b);
             std::sort(columns_.begin(), columns_.end());
@@ -266,7 +266,7 @@ class ProductSupport {
     int n_, na_ = 0, nb_ = 0;
     bool complete_covalent_ = false, full_ = false;
     SpinStrings alpha_, beta_;
-    std::vector<int> columns_;
+    std::vector<StringIndex> columns_;
     std::vector<Seed> seeds_;
     std::optional<CovalentSupport> covalent_;
     std::optional<ProductPaths> paths_;

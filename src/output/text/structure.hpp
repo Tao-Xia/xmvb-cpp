@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include <iosfwd>
 
 #include "vbscf/structures/expansion/types.hpp"
@@ -21,7 +23,7 @@ namespace xmvb::output {
  */
 void print_structure(std::ostream& output,
                      const vb::RawStructureData& structures,
-                     int structure_index,
+                     std::int64_t structure_index,
                      int prefix_width);
 
 } // namespace xmvb::output

@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <algorithm>
 #include <cmath>
 #include <iostream>
@@ -65,7 +66,7 @@ struct Fixture {
     int n_bf;
     int ao_pairs;
     Matrix pair_kernel;
-    std::vector<int> unique_left, unique_right;
+    std::vector<std::int64_t> unique_left, unique_right;
     std::vector<double> unique_values;
     std::vector<int> first, second;
 
@@ -925,8 +926,8 @@ void check_exchange_row_graph() {
     xmvb::cuda::Context context(128ULL * 1024 * 1024);
     const auto before = context.counters().current_device_bytes;
     const xmvb::cuda::ExactAoPairOperator gpu(context, graph, fixture.n_bf);
-    const auto csr = static_cast<std::size_t>(fixture.ao_pairs + 1) * sizeof(int) +
-                     graph.columns.size() * (sizeof(int) + sizeof(double));
+    const auto csr = static_cast<std::size_t>(fixture.ao_pairs + 1) * sizeof(std::int64_t) +
+                     graph.columns.size() * (sizeof(std::int64_t) + sizeof(double));
     const auto expected =
         2 * fixture.ao_pairs * sizeof(int) +
         std::min(csr, xmvb::cuda::PackedAoPairMatrix::storage_bytes(fixture.ao_pairs));
@@ -971,7 +972,7 @@ void check_symmetric_tiles() {
     constexpr int nb = 46, pairs = nb * (nb + 1) / 2, channels = 3, source_stride = 5,
                   target_stride = 7;
     Matrix kernel = Matrix::Zero(pairs, pairs), source(pairs, channels);
-    std::vector<int> left, right;
+    std::vector<std::int64_t> left, right;
     std::vector<double> values;
     for (int p = 0; p < pairs; ++p) {
         for (int c = 0; c < channels; ++c)
@@ -1050,13 +1051,13 @@ void check_symmetric_tiles() {
             "unique input contract constructed a symmetric row graph");
     const auto available = context.device_byte_budget() - context.counters().current_device_bytes;
     const auto payload = xmvb::cuda::PackedAoPairMatrix::storage_bytes(pairs);
-    constexpr std::size_t staging = 65536 * (2 * sizeof(int) + sizeof(double));
+    constexpr std::size_t staging = 65536 * (2 * sizeof(std::int64_t) + sizeof(double));
     require(available > payload + staging, "unique tile fixture lacks staging budget");
     xmvb::cuda::Buffer<unsigned char> padding(context, available - payload - staging);
     const auto before = context.counters().host_to_device_bytes;
     const xmvb::cuda::PackedAoPairMatrix streamed(context, unique, nb);
     require(context.counters().host_to_device_bytes - before ==
-                unique.integral_count() * (2 * sizeof(int) + sizeof(double)),
+                unique.integral_count() * (2 * sizeof(std::int64_t) + sizeof(double)),
             "unique packing uploaded duplicated symmetric ERIs");
     xmvb::cuda::Buffer<double> unique_output(context, pairs * target_stride);
     streamed.apply({device_input.data(), pairs, channels, source_stride},

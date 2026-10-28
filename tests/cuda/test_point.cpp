@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <algorithm>
 #include <cmath>
 #include <iostream>
@@ -69,7 +70,7 @@ struct AoFixture {
     static constexpr int basis = 4;
     Matrix core = Matrix::Zero(basis, basis);
     Matrix eri = Matrix::Zero(10, 10);
-    std::vector<int> left, right;
+    std::vector<std::int64_t> left, right;
     std::vector<double> values;
 
     AoFixture() {
@@ -127,7 +128,7 @@ struct AoFixture {
     xmvb::integrals::ActiveSpaceTwoElectronResult packed(const Matrix& kernel) const {
         xmvb::integrals::ActiveSpaceTwoElectronResult result;
         auto& output = result.packed_active_two_electron_integrals;
-        output.resize(xmvb::integrals::packed_active_two_electron_integral_count(2));
+        output.resize(kernel.rows() * (kernel.rows() + 1) / 2);
         for (int p = 0; p < kernel.rows(); ++p)
             for (int q = 0; q <= p; ++q)
                 output[xmvb::core::PairIndex::packed_pair_of_pairs_index(p, q)] = kernel(p, q);
@@ -201,7 +202,7 @@ source_action(const SelectedSpace& space,
                                      overlap_data,
                                      one,
                                      pair_kernel,
-                                     2,
+                                     overlap.rows(),
                                      nullptr,
                                      xmvb::vb::StructureActionMode::ActionOnly);
 }
@@ -217,9 +218,10 @@ double independent_energy(const Input& input,
     const Matrix p = prepared.inactive_density_matrix;
     const Matrix effective = ao.core + ao.jk(p);
     const double core = (p.array() * (ao.core + effective).array()).sum();
-    const Matrix t = prepared.auxiliary_orbital_matrix.middleCols(inactive, 2);
+    const int active = input.n_active_orbitals;
+    const Matrix t = prepared.auxiliary_orbital_matrix.middleCols(inactive, active);
     const Matrix overlap =
-        Eigen::Map<const Matrix>(prepared.active_orbital_overlap_matrix.data(), 2, 2);
+        Eigen::Map<const Matrix>(prepared.active_orbital_overlap_matrix.data(), active, active);
     const Matrix h = t.transpose() * effective * t;
     const Matrix g = ao.active_pair_kernel(t);
     const auto action = source_action(space, structures, overlap, h, ao.packed(g));
@@ -266,19 +268,46 @@ double bilinear(const Derivatives& left, const Derivatives& right) {
            (left.ci.array() * right.ci.array()).sum();
 }
 
-void check_case(bool inactive, int structures) {
+void check_case(bool inactive, int structures, bool source_order = false, bool source_hao = false) {
     constexpr double nuclear = 0.37;
     const AoFixture ao;
     Input input = orbital_input(inactive);
-    const auto space = selected_space(structures);
-    const Matrix identity = Matrix::Identity(2, 2);
-    const auto source = source_action(
-        space, structures, identity, Matrix::Zero(2, 2), ao.packed(Matrix::Zero(3, 3)));
+    auto space = selected_space(structures);
+    if (source_order) {
+        input.n_active_orbitals = input.n_orbitals = 4;
+        input.n_total_electrons = input.n_active_electrons = 4;
+        input.orbital_type = source_hao ? xmvb::vb::kOrbitalTypeHao : xmvb::vb::kOrbitalTypeOeo;
+        const int count = source_hao ? 3 : 4;
+        input.orbital_basis_counts.assign(4, count);
+        input.original_orbital_basis_counts.assign(4, count);
+        input.orbital_basis_index_table.resize(16);
+        input.orbital_value_table.resize(16);
+        for (int o = 0; o < 4; ++o)
+            for (int j = 0; j < 4; ++j) {
+                const int ao = source_hao ? (o + j) % 4 : j;
+                input.orbital_basis_index_table[4 * o + j] = j < count ? ao + 1 : 0;
+                input.orbital_value_table[4 * o + j] =
+                    j < count ? (o == ao ? 1.0 : 0.04 * std::sin(o + 2 * ao + 1.)) : 0.0;
+            }
+        const Strings alpha{{0, 1}, {0, 2}, {1, 3}}, beta{{0, 1}, {0, 3}, {2, 3}};
+        space.terms = {{{0, 0.9}}, {{1, 0.7}}, {{2, -0.8}}};
+        space.topology = xmvb::vb::build_orthogonal_spin_topology(alpha, beta, 4);
+    }
+    const int active = input.n_active_orbitals, pairs = active * (active + 1) / 2;
+    const Matrix identity = Matrix::Identity(active, active);
+    const auto source = source_action(space,
+                                      structures,
+                                      identity,
+                                      Matrix::Zero(active, active),
+                                      ao.packed(Matrix::Zero(pairs, pairs)));
     require(source.storage().orthogonal_direct_ci,
             "selected fixture does not retain a complete orthogonal carrier");
     xmvb::cuda::Context context(256ULL * 1024ULL * 1024ULL);
     const xmvb::cuda::AoMetric ao_metric(context, input.ao_overlap_matrix);
     xmvb::cuda::StructureAction action(context, source);
+    if (source_order)
+        require(action.uses_operator_first(),
+                "source-order point test did not enter production executor");
     xmvb::cuda::ExactAoPairOperator integrals(context, ao.graph(), AoFixture::basis);
     auto dcore = upload(context, ao.core);
     xmvb::cuda::VbPoint point(
@@ -472,6 +501,8 @@ int main() {
         for (bool inactive : {false, true})
             for (int structures : {1, 2, 3})
                 check_case(inactive, structures);
+        check_case(false, 3, true);
+        check_case(false, 3, true, true);
         std::cout << "CUDA VB point energy, gradient, and HVP checks passed\n";
         return 0;
     } catch (const std::exception& error) {

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include <cstddef>
 #include <memory>
 #include <vector>
@@ -25,8 +27,8 @@ class SelectedMetric {
   public:
     SelectedMetric(Context& context, Matrix<double> gram);
     ~SelectedMetric();
-    int dimension() const noexcept {
-        return static_cast<int>(gram_.rows());
+    Eigen::Index dimension() const noexcept {
+        return gram_.rows();
     }
     linalg::ConstMatrixView diagonal() const noexcept {
         return diagonal_.view();
@@ -72,7 +74,7 @@ class SpinMetric {
                               linalg::ConstMatrixView model,
                               linalg::MatrixView output) const;
 
-    int dimension() const noexcept {
+    Eigen::Index dimension() const noexcept {
         return dimension_;
     }
     std::size_t resident_bytes() const noexcept;
@@ -80,20 +82,20 @@ class SpinMetric {
   private:
     struct Group {
         int dimension = 0;
-        int count = 0;
+        std::int64_t count = 0;
         std::size_t first_pointer = 0;
         std::size_t first_index = 0;
         std::size_t first_factor = 0;
     };
 
     void initialize_layout(Context& context,
-                           const std::vector<std::vector<int>>& blocks,
+                           const std::vector<std::vector<Eigen::Index>>& blocks,
                            std::size_t factor_byte_limit);
 
     Context* context_;
-    int dimension_;
+    Eigen::Index dimension_;
     std::vector<Group> groups_;
-    Buffer<int> indices_;
+    Buffer<Eigen::Index> indices_;
     Buffer<double> factors_;
     Buffer<double> gram_diagonal_;
     mutable Matrix<double> scratch_;

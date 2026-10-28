@@ -140,7 +140,7 @@ build_coulomb_diagonal_matrix(const std::vector<double>& packed_active_two_elect
     std::vector<double> matrix(n_active_orbitals * n_active_orbitals, 0.0);
     for (int column = 0; column < n_active_orbitals; ++column) {
         for (int row = 0; row < n_active_orbitals; ++row) {
-            const int packed_index =
+            const auto packed_index =
                 xmvb::core::PairIndex::two_electron_storage_index(row, row, column, column);
             matrix[column * n_active_orbitals + row] =
                 packed_active_two_electron_integrals[packed_index];
@@ -159,7 +159,7 @@ build_exchange_diagonal_matrix(const std::vector<double>& packed_active_two_elec
     std::vector<double> matrix(n_active_orbitals * n_active_orbitals, 0.0);
     for (int column = 0; column < n_active_orbitals; ++column) {
         for (int row = 0; row < n_active_orbitals; ++row) {
-            const int packed_index =
+            const auto packed_index =
                 xmvb::core::PairIndex::two_electron_storage_index(row, column, column, row);
             matrix[column * n_active_orbitals + row] =
                 packed_active_two_electron_integrals[packed_index];
@@ -213,7 +213,7 @@ std::vector<double> build_structure_occupancy(const xmvb::vb::RawStructureData& 
         throw std::invalid_argument("n_orbitals must be positive");
     }
     std::vector<double> occupancy(raw_structure_data.n_structures * n_orbitals, 0.0);
-    for (int structure_index = 0; structure_index < raw_structure_data.n_structures;
+    for (std::int64_t structure_index = 0; structure_index < raw_structure_data.n_structures;
          ++structure_index) {
         const int* structure_orbitals = raw_structure_data.structure_orbitals_data(structure_index);
         for (int electron_index = 0; electron_index < raw_structure_data.n_total_electrons;
@@ -257,7 +257,7 @@ build_structure_pair_topology(const xmvb::vb::RawStructureData& raw_structure_da
             raw_structure_data.n_structures * topology.n_open_shell_electrons, 1);
     }
 
-    for (int structure_index = 0; structure_index < raw_structure_data.n_structures;
+    for (std::int64_t structure_index = 0; structure_index < raw_structure_data.n_structures;
          ++structure_index) {
         const int* structure_orbitals = raw_structure_data.structure_orbitals_data(structure_index);
         for (int pair_index = 0; pair_index < topology.n_active_beta_electrons; ++pair_index) {
@@ -656,9 +656,9 @@ class AcceptedIterationTraceWriter::Impl {
     fs::path steps_dir_;
     std::string source_input_path_;
     std::string raw_structure_selection_name_;
-    int source_raw_structure_count_ = 0;
+    std::size_t source_raw_structure_count_ = 0;
     std::string optimizer_backend_name_;
-    int n_structures_ = 0;
+    Eigen::Index n_structures_ = 0;
     int n_total_electrons_ = 0;
     int n_active_electrons_ = 0;
     int spin_multiplicity_ = 1;

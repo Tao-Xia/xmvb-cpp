@@ -1,4 +1,8 @@
+#include "core/index.hpp"
+#include <cstdint>
 #include "vbscf/structures/assembly/action.hpp"
+
+#include "core/memory.hpp"
 
 #include <algorithm>
 #include <array>
@@ -23,8 +27,8 @@ namespace {
  */
 mcscf::DirectCiTileReader
 interleaved_reader(const mcscf::DirectCiTileReader& reader, int width, int lane) {
-    return [&reader, width, lane](const std::vector<int>& betas,
-                                  const std::vector<int>& rows,
+    return [&reader, width, lane](const std::vector<Eigen::Index>& betas,
+                                  const std::vector<Eigen::Index>& rows,
                                   Eigen::Ref<Eigen::MatrixXd> values,
                                   mcscf::DirectCiRead mode) {
         using View = Eigen::Map<Eigen::MatrixXd, 0, Eigen::OuterStride<>>;
@@ -83,12 +87,14 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
     const auto total_bytes = workspace::available() +
                              (state.product_images ? state.product_images->residency.bytes() : 0);
     const auto retained_bytes =
-        state.product_images ? std::min(state.product_images->budget, total_bytes / 4) : 0;
+        state.product_images ? std::min<Eigen::Index>(state.product_images->budget, total_bytes / 4)
+                             : 0;
     const auto work_bytes = (total_bytes - retained_bytes) / 4;
     operation.sigma_budget(work_bytes);
-    const auto cache_bytes =
-        state.product_images ? std::min(state.product_images->budget, work_bytes) : work_bytes;
-    const auto projection_bytes = std::min(cache_bytes, work_bytes / 4);
+    const auto cache_bytes = state.product_images
+                                 ? std::min<Eigen::Index>(state.product_images->budget, work_bytes)
+                                 : work_bytes;
+    const auto projection_bytes = std::min<Eigen::Index>(cache_bytes, work_bytes / 4);
     const auto factor_bytes = projection_bytes;
     const auto temporary_bytes = work_bytes / 2;
     const int extent = std::max<std::size_t>(
@@ -111,9 +117,9 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
         if (states == 1)
             state.product_images->density = Eigen::MatrixXd::Zero(n, n);
     }
-    const int panels = (n_unique_beta_ + extent - 1) / extent;
+    const Eigen::Index panels = n_unique_beta_ / extent + (n_unique_beta_ % extent != 0);
     const auto* support = product_support_.get();
-    std::vector<int> reachable;
+    std::vector<Eigen::Index> reachable;
     std::vector<bool> reachable_mask(panels, false);
     if (support && !support->full()) {
         for (const int b : support->columns())
@@ -125,14 +131,15 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
             reachable.push_back(p);
     int sampled_beta_columns = 0;
     for (const int panel : reachable)
-        sampled_beta_columns += std::min(extent, n_unique_beta_ - panel * extent);
+        sampled_beta_columns += std::min<Eigen::Index>(extent, n_unique_beta_ - panel * extent);
     const bool ordered_beta = detail::prefer_ordered_beta(spin_products_.size(),
                                                           n_unique_alpha_,
                                                           n_unique_beta_,
                                                           beta.shear_pair_count(),
                                                           sampled_beta_columns);
     std::vector<std::weak_ptr<const detail::ColumnPattern>> patterns(panels);
-    const auto pattern_at = [&](int panel) -> std::shared_ptr<const detail::ColumnPattern> {
+    const auto pattern_at =
+        [&](std::int64_t panel) -> std::shared_ptr<const detail::ColumnPattern> {
         if (auto p = patterns[panel].lock())
             return p;
         // The support and panel geometry do not change with a direction or state.
@@ -149,18 +156,19 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
         }
         profiling::ScopedPhase phase(profiling::Phase::CiProductPattern);
         auto p = std::make_shared<detail::ColumnPattern>();
-        const int count = std::min(extent, n_unique_beta_ - panel * extent);
+        const std::int64_t count = std::min<Eigen::Index>(extent, n_unique_beta_ - panel * extent);
         p->full = !support || support->full();
         p->offsets.resize(count + 1);
         p->offsets[0] = 0;
-        std::vector<int> rows;
-        for (int b = 0; b < count; ++b) {
+        std::vector<Eigen::Index> rows;
+        for (std::int64_t b = 0; b < count; ++b) {
             if (!p->full) {
                 support->append_column_rows(panel * extent + b, rows);
             }
             p->offsets[b + 1] = p->full ? (b + 1) * n_unique_alpha_ : rows.size();
         }
-        p->rows = Eigen::Map<const Eigen::VectorXi>(rows.data(), rows.size());
+        p->rows = Eigen::Map<const Eigen::Matrix<Eigen::Index, Eigen::Dynamic, 1>>(rows.data(),
+                                                                                   rows.size());
         patterns[panel] = p;
         return p;
     };
@@ -180,8 +188,9 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
     // Differentiated beta rows are shared by generation and left projection.
     detail::ColumnPanels beta_directions(
         factor_bytes,
-        [&](int panel) {
-            const int first = panel * extent, count = std::min(extent, n_unique_beta_ - first);
+        [&](std::int64_t panel) {
+            const std::int64_t first = panel * extent,
+                               count = std::min<Eigen::Index>(extent, n_unique_beta_ - first);
             Eigen::MatrixXd rows = Eigen::MatrixXd::Zero(count, n_unique_beta_), dr = rows;
             workspace::Temporary rows_temporary(sizeof(double) * rows.size());
             workspace::Temporary dr_temporary(sizeof(double) * dr.size());
@@ -190,13 +199,13 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
             auto p = std::make_shared<detail::ColumnPattern>();
             p->full = true;
             p->offsets.resize(count + 1);
-            for (int b = 0; b <= count; ++b)
+            for (std::int64_t b = 0; b <= count; ++b)
                 p->offsets[b] = b * n_unique_beta_;
             return detail::pack_columns(dr.transpose(), p);
         },
         {},
-        [&](int panel) {
-            const auto count = std::min(extent, n_unique_beta_ - panel * extent);
+        [&](std::int64_t panel) {
+            const auto count = std::min<Eigen::Index>(extent, n_unique_beta_ - panel * extent);
             return sizeof(double) * static_cast<std::size_t>(count) * n_unique_beta_ +
                    sizeof(int) * (count + 1);
         });
@@ -272,19 +281,20 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
             if (!reachable_mask[b / extent])
                 return {nullptr, nullptr, 0};
             const auto& tile = state.product_images->states[state_id][b / extent];
-            const int first = tile.pattern->offsets[b % extent],
-                      last = tile.pattern->offsets[b % extent + 1];
+            const std::int64_t first = tile.pattern->offsets[b % extent],
+                               last = tile.pattern->offsets[b % extent + 1];
             return {tile.values.col(0).data() + first,
                     tile.pattern->full ? nullptr : tile.pattern->rows.data() + first,
                     last - first};
         };
         detail::ColumnPanels input(
             cache_bytes,
-            [&](int panel) {
+            [&](std::int64_t panel) {
                 profiling::ScopedPhase phase(profiling::Phase::CiProductGenerate);
                 ++result.images.tiles.input_panels;
                 const auto pattern = pattern_at(panel);
-                const int first = panel * extent, count = std::min(extent, n_unique_beta_ - first);
+                const std::int64_t first = panel * extent,
+                                   count = std::min<Eigen::Index>(extent, n_unique_beta_ - first);
                 const auto rows = (!anchored || response) ? beta.row_block(first, count) : nullptr;
                 Eigen::MatrixXd primal =
                     cached ? Eigen::MatrixXd{} : Eigen::MatrixXd::Zero(n_unique_alpha_, count);
@@ -317,8 +327,8 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
                         for (; group != spin_products_.end() &&
                                *group < first_product + n_unique_beta_;
                              ++group) {
-                            const int id = group - spin_products_.begin(),
-                                      b = *group - first_product;
+                            const auto id = group - spin_products_.begin();
+                            const std::int64_t b = *group - first_product;
                             if (coefficients.size())
                                 primal.row(a).noalias() +=
                                     coefficients[id] * rows->col(b).transpose();
@@ -411,7 +421,7 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
                 return detail::pack_columns({&primal, &dy}, pattern);
             },
             {},
-            [&](int panel) {
+            [&](std::int64_t panel) {
                 const auto pattern = pattern_at(panel);
                 return pattern->bytes() +
                        sizeof(double) *
@@ -431,10 +441,10 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
         const auto reader = [&](int family) -> mcscf::DirectCiTileReader {
             return [&,
                     family,
-                    position = std::vector<int>(n_unique_alpha_, -1),
+                    position = std::vector<Eigen::Index>(n_unique_alpha_, -1),
                     tiles = std::vector<const detail::ColumnTile*>(panels, nullptr)](
-                       const std::vector<int>& betas,
-                       const std::vector<int>& rows,
+                       const std::vector<Eigen::Index>& betas,
+                       const std::vector<Eigen::Index>& rows,
                        Eigen::Ref<Eigen::MatrixXd> values,
                        mcscf::DirectCiRead mode) mutable {
                 const bool input_family = family == 1 || family == 3;
@@ -444,7 +454,8 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
                     const int workers = coarse_openmp_thread_count(
                         cooperative_openmp_thread_count(), rows.size() * betas.size());
                     cooperative_openmp_for(betas.size(), workers, [&](std::ptrdiff_t col) {
-                        for (int a = 0; a < static_cast<int>(rows.size()); ++a)
+                        for (std::int64_t a = 0; a < core::checked_index<std::int64_t>(rows.size());
+                             ++a)
                             values(a, col) = image(rows[a], betas[col]);
                     });
                     return;
@@ -452,25 +463,29 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
                 // Rows are sorted and distinct. A complete alpha range needs no map.
                 const bool full_rows = rows.size() == static_cast<std::size_t>(n_unique_alpha_);
                 if (!full_rows)
-                    for (int a = 0; a < static_cast<int>(rows.size()); ++a)
+                    for (std::int64_t a = 0; a < core::checked_index<std::int64_t>(rows.size());
+                         ++a)
                         position[rows[a]] = a;
                 const int component =
                     cached ? ((family == 2 || family == 3) ? 1 : 0) : (family == 3 ? 2 : family);
                 const auto copy_column = [&](int col, const detail::ColumnTile& tile) {
-                    const int b = betas[col] % extent;
-                    const int first = tile.pattern->offsets[b], last = tile.pattern->offsets[b + 1];
+                    const std::int64_t b = betas[col] % extent;
+                    const std::int64_t first = tile.pattern->offsets[b],
+                                       last = tile.pattern->offsets[b + 1];
                     if (tile.pattern->full) {
                         if (full_rows)
                             values.col(col) =
                                 tile.values.col(component).segment(first, n_unique_alpha_);
                         else
-                            for (int a = 0; a < static_cast<int>(rows.size()); ++a)
+                            for (std::int64_t a = 0;
+                                 a < core::checked_index<std::int64_t>(rows.size());
+                                 ++a)
                                 values(a, col) = tile.values(first + rows[a], component);
                     } else {
                         if (mode == mcscf::DirectCiRead::Dense)
                             values.col(col).setZero();
                         for (int k = first; k < last; ++k) {
-                            const int a =
+                            const std::int64_t a =
                                 full_rows ? tile.pattern->rows[k] : position[tile.pattern->rows[k]];
                             if (a >= 0)
                                 values(a, col) = tile.values(k, component);
@@ -485,7 +500,7 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
                     if (input_family) {
                         std::fill(tiles.begin(), tiles.end(), nullptr);
                         for (const int b : betas) {
-                            const int panel = b / extent;
+                            const std::int64_t panel = b / extent;
                             if (reachable_mask[panel] && !tiles[panel])
                                 tiles[panel] = &input.get(panel);
                         }
@@ -493,7 +508,7 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
                     const int workers = coarse_openmp_thread_count(
                         cooperative_openmp_thread_count(), rows.size() * betas.size());
                     cooperative_openmp_for(betas.size(), workers, [&](std::ptrdiff_t col) {
-                        const int panel = betas[col] / extent;
+                        const std::int64_t panel = betas[col] / extent;
                         if (!reachable_mask[panel]) {
                             if (mode == mcscf::DirectCiRead::Dense)
                                 values.col(col).setZero();
@@ -508,10 +523,11 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
                             position[a] = -1;
                     return;
                 }
-                for (int j = 0; j < static_cast<int>(betas.size());) {
-                    const int panel = betas[j] / extent;
-                    int end = j + 1;
-                    while (end < static_cast<int>(betas.size()) && betas[end] / extent == panel)
+                for (std::int64_t j = 0; j < core::checked_index<std::int64_t>(betas.size());) {
+                    const std::int64_t panel = betas[j] / extent;
+                    std::int64_t end = j + 1;
+                    while (end < core::checked_index<std::int64_t>(betas.size()) &&
+                           betas[end] / extent == panel)
                         ++end;
                     if (!reachable_mask[panel]) {
                         if (mode == mcscf::DirectCiRead::Dense)
@@ -546,8 +562,8 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
                 const auto& tile = cached && !input_family
                                        ? state.product_images->states[state_id][b / extent]
                                        : input.get(b / extent);
-                const int offset = tile.pattern->offsets[b % extent],
-                          last = tile.pattern->offsets[b % extent + 1];
+                const std::int64_t offset = tile.pattern->offsets[b % extent],
+                                   last = tile.pattern->offsets[b % extent + 1];
                 const int component =
                     cached ? ((family == 2 || family == 3) ? 1 : 0) : (family == 3 ? 2 : family);
                 return {tile.values.col(component).data() + offset,
@@ -560,8 +576,8 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
         const auto residual_column = column(2);
         const auto q_reader = joint ? reader(3) : mcscf::DirectCiTileReader{};
         const auto q_column = joint ? column(3) : mcscf::DirectCiColumnReader{};
-        const mcscf::DirectCiTileReader read = [&](const std::vector<int>& betas,
-                                                   const std::vector<int>& rows,
+        const mcscf::DirectCiTileReader read = [&](const std::vector<Eigen::Index>& betas,
+                                                   const std::vector<Eigen::Index>& rows,
                                                    Eigen::Ref<Eigen::MatrixXd> values,
                                                    mcscf::DirectCiRead mode) {
             if (cached) {
@@ -607,7 +623,8 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
             projection_bytes,
             [&](int block) {
                 const auto begin = static_cast<std::size_t>(block) * group_extent;
-                const auto count = std::min(group_extent, spin_products_.size() - begin);
+                const auto count =
+                    std::min<Eigen::Index>(group_extent, spin_products_.size() - begin);
                 auto pattern = std::make_shared<detail::ColumnPattern>();
                 pattern->full = true;
                 pattern->offsets.resize(2);
@@ -616,8 +633,10 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
             },
             [&](int block, detail::ColumnTile& tile) {
                 const auto begin = static_cast<std::size_t>(block) * group_extent;
-                for (int target = 0; target < static_cast<int>(projection_targets.size()); ++target)
-                    for (int local = 0; local < tile.values.rows(); ++local) {
+                for (std::int64_t target = 0;
+                     target < core::checked_index<std::int64_t>(projection_targets.size());
+                     ++target)
+                    for (std::int64_t local = 0; local < tile.values.rows(); ++local) {
                         const double value = tile.values(local, target);
                         if (value == 0.0)
                             continue;
@@ -630,18 +649,19 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
             },
             [&](int block) {
                 const auto begin = static_cast<std::size_t>(block) * group_extent;
-                return sizeof(double) * std::min(group_extent, spin_products_.size() - begin) *
+                return sizeof(double) *
+                           std::min<Eigen::Index>(group_extent, spin_products_.size() - begin) *
                            projection_count +
                        2 * sizeof(int);
             });
         // Consume one or two independent output panels. Concatenated RHS blocks
         // share the beta rows, support traversal and mutable alpha transform.
-        const auto project = [&](int panel,
+        const auto project = [&](std::int64_t panel,
                                  Eigen::MatrixXd values,
                                  std::initializer_list<double*> targets,
                                  bool differentiate = false) {
             profiling::ScopedPhase phase(profiling::Phase::CiProductProjection);
-            const int first = panel * extent, count = values.cols() / targets.size();
+            const std::int64_t first = panel * extent, count = values.cols() / targets.size();
             workspace::Temporary values_temporary(sizeof(double) * values.size());
             Eigen::MatrixXd dvalues;
             workspace::Temporary dvalues_temporary;
@@ -701,13 +721,14 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
             workspace::Temporary dr_temporary(sizeof(double) * dr.size());
             for (std::size_t begin = 0; begin < spin_products_.size(); begin += group_extent) {
                 auto& tile = projections.get(begin / group_extent);
-                const auto size = std::min(group_extent, spin_products_.size() - begin);
+                const auto size =
+                    std::min<Eigen::Index>(group_extent, spin_products_.size() - begin);
                 const int workers = coarse_openmp_thread_count(cooperative_openmp_thread_count(),
                                                                size * count * lane);
                 cooperative_openmp_for(size, workers, [&](std::ptrdiff_t local) {
                     const auto g = begin + local;
-                    const int a = spin_products_[g] / n_unique_beta_,
-                              b = spin_products_[g] % n_unique_beta_;
+                    const std::int64_t a = spin_products_[g] / n_unique_beta_,
+                                       b = spin_products_[g] % n_unique_beta_;
                     for (int v = 0; v < lane; ++v)
                         tile.values(local, target_ids[v]) +=
                             differentiate
@@ -727,15 +748,15 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
             bool exchange_reduced = false;
             detail::ColumnPanels output(
                 cache_bytes,
-                [&](int panel) {
+                [&](std::int64_t panel) {
                     auto pattern = pattern_at(panel);
                     return detail::ColumnTile{
                         pattern,
                         Eigen::MatrixXd::Zero(pattern->offsets[pattern->columns()], output_width)};
                 },
-                [&](int panel, detail::ColumnTile& tile) {
+                [&](std::int64_t panel, detail::ColumnTile& tile) {
                     ++result.images.tiles.hamiltonian_projections;
-                    const int first = panel * extent, count = tile.pattern->columns();
+                    const std::int64_t first = panel * extent, count = tile.pattern->columns();
                     Eigen::MatrixXd images = tile.unpack(n_unique_alpha_);
                     const auto h0 = images.leftCols(count);
                     if (weight != 0) {
@@ -849,8 +870,9 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
                                 accepted.values.col(0) = Eigen::Map<const Eigen::VectorXd>(
                                     primal_image.col(first).data(), accepted.values.rows());
                             else
-                                for (int b = 0; b < count; ++b)
-                                    for (int i = pattern.offsets[b]; i < pattern.offsets[b + 1];
+                                for (std::int64_t b = 0; b < count; ++b)
+                                    for (Eigen::Index i = pattern.offsets[b];
+                                         i < pattern.offsets[b + 1];
                                          ++i)
                                         accepted.values(i, 0) =
                                             primal_image(pattern.rows[i], first + b);
@@ -862,7 +884,7 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
                         state.product_images->states[state_id][panel] = std::move(accepted);
                     }
                 },
-                [&](int panel) {
+                [&](std::int64_t panel) {
                     const auto pattern = pattern_at(panel);
                     return pattern->bytes() +
                            sizeof(double) *
@@ -874,27 +896,27 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
                 int source, beta;
             };
             std::vector<OutputColumn> output_columns;
-            const auto writer = [&](int source_begin,
+            const auto writer = [&](std::int64_t source_begin,
                                     int vectors,
                                     int destination_begin) -> mcscf::DirectCiTileWriter {
                 return [&, source_begin, vectors, destination_begin](
-                           const std::vector<int>& betas,
-                           const std::vector<int>& rows,
+                           const std::vector<Eigen::Index>& betas,
+                           const std::vector<Eigen::Index>& rows,
                            const mcscf::DirectCiColumnAccumulator& accumulate) {
                     const int workers = cooperative_openmp_thread_count(),
                               chunks = std::min<int>(workers, rows.size());
                     int j = 0;
-                    while (j < static_cast<int>(betas.size())) {
+                    while (j < core::checked_index<std::int64_t>(betas.size())) {
                         output_columns.clear();
                         std::size_t bytes = 0;
                         // Borrow only a budget-fitting group of panels. LRU entries touched
                         // here are newer than all unborrowed entries, so no get() in this
                         // group can evict an earlier borrowed panel. Tasks finish before
                         // the next group mutates the cache; only small pointers are shared.
-                        while (j < static_cast<int>(betas.size())) {
-                            const int panel = betas[j] / extent;
-                            int end = j + 1;
-                            while (end < static_cast<int>(betas.size()) &&
+                        while (j < core::checked_index<std::int64_t>(betas.size())) {
+                            const std::int64_t panel = betas[j] / extent;
+                            std::int64_t end = j + 1;
+                            while (end < core::checked_index<std::int64_t>(betas.size()) &&
                                    betas[end] / extent == panel)
                                 ++end;
                             if (!reachable_mask[panel]) {
@@ -918,13 +940,14 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
                         const int columns = output_columns.size() * vectors;
                         cooperative_openmp_for(
                             columns * chunks, workers, [&](std::ptrdiff_t index) {
-                                const int column = index % columns, chunk = index / columns;
+                                const std::int64_t column = index % columns,
+                                                   chunk = index / columns;
                                 const auto& output_column = output_columns[column / vectors];
                                 auto& tile = *output_column.tile;
-                                const int beta = output_column.source, v = column % vectors,
-                                          b = output_column.beta;
-                                const int offset = tile.pattern->offsets[b],
-                                          length = tile.pattern->offsets[b + 1] - offset;
+                                const std::int64_t beta = output_column.source,
+                                                   v = column % vectors, b = output_column.beta;
+                                const std::int64_t offset = tile.pattern->offsets[b],
+                                                   length = tile.pattern->offsets[b + 1] - offset;
                                 if (length == 0)
                                     return;
                                 accumulate(beta,
@@ -946,19 +969,20 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
             // once capacity eviction occurs, retire completed panels immediately.
             // The generator reads neighboring INPUT panels, so do not retire those
             // using the shorter sigma-only lifetime.
-            std::vector<int> remaining(panels), completed;
+            std::vector<Eigen::Index> remaining(panels), completed;
             for (int p = 0; p < panels; ++p)
-                remaining[p] = std::min(extent, n_unique_beta_ - p * extent);
-            const mcscf::DirectCiColumnRelease release = [&](std::span<const int> columns) {
-                for (const int b : columns)
-                    if (--remaining[b / extent] == 0)
-                        completed.push_back(b / extent);
-                if (output.evictions) {
-                    for (const int p : completed)
-                        output.release(p);
-                    completed.clear();
-                }
-            };
+                remaining[p] = std::min<Eigen::Index>(extent, n_unique_beta_ - p * extent);
+            const mcscf::DirectCiColumnRelease release =
+                [&](std::span<const Eigen::Index> columns) {
+                    for (const int b : columns)
+                        if (--remaining[b / extent] == 0)
+                            completed.push_back(b / extent);
+                    if (output.evictions) {
+                        for (const int p : completed)
+                            output.release(p);
+                        completed.clear();
+                    }
+                };
             {
                 // Accepted bra and ket are identical. Keep the empty-reader identity
                 // so the channel kernel reuses its scatter; apply the weight outside.
@@ -1042,7 +1066,7 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
             // Count shared row metadata once, not twice. A cached two-lane tangent
             // must fit the same input allowance; otherwise its borrowed views would
             // be invalidated by an LRU insertion during the parallel reader.
-            const auto retain_limit = std::min(retained_bytes, cache_bytes);
+            const auto retain_limit = std::min<Eigen::Index>(retained_bytes, cache_bytes);
             if (!tangent && state.product_images && output.evictions == 0 &&
                 state.product_images->bytes <= retain_limit &&
                 accepted_bytes <= retain_limit - state.product_images->bytes &&
@@ -1053,8 +1077,8 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
             }
             output.finish();
             result.images.tiles.output_evictions += output.evictions;
-            result.images.tiles.output_resident_bytes =
-                std::max(result.images.tiles.output_resident_bytes, output.peak_bytes);
+            result.images.tiles.output_resident_bytes = std::max<Eigen::Index>(
+                result.images.tiles.output_resident_bytes, output.peak_bytes);
         };
         if (cached && collect_images && delta_upper) {
             // delta T = G T implies delta T^T Z = T^T G^T Z. Consume the
@@ -1067,8 +1091,8 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
             for (const int panel : reachable) {
                 if (!images[panel].pattern)
                     continue;
-                const int first = panel * extent;
-                const int count = images[panel].pattern->columns();
+                const std::int64_t first = panel * extent;
+                const std::int64_t count = images[panel].pattern->columns();
                 Eigen::MatrixXd values(n_unique_alpha_, 2 * count);
                 workspace::Temporary values_temporary(sizeof(double) * values.size());
                 sigma.apply_one_body_generator_columns(first,
@@ -1100,15 +1124,16 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
         }
         sweep();
         double norm = 0, parallel = 0, square = 0;
-        std::vector<int> all_rows(n_unique_alpha_);
+        std::vector<Eigen::Index> all_rows(n_unique_alpha_);
         std::iota(all_rows.begin(), all_rows.end(), 0);
         // Accepted fixed-state normalization already supplies M*C. The sigma
         // sweep has consumed Y for all densities/generator terms above; only the
         // redundant structure-overlap projection remains, so omit that reread.
         if (tangent || (collect_images && !overlap_image) || capture)
             for (const int panel : reachable) {
-                const int first = panel * extent, count = std::min(extent, n_unique_beta_ - first);
-                std::vector<int> betas(count);
+                const std::int64_t first = panel * extent,
+                                   count = std::min<Eigen::Index>(extent, n_unique_beta_ - first);
+                std::vector<Eigen::Index> betas(count);
                 std::iota(betas.begin(), betas.end(), first);
                 Eigen::MatrixXd values, directions;
                 if (!tangent || (!cached && delta_upper) || capture) {
@@ -1193,7 +1218,9 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
         projections.finish();
         if (resident_projection) {
             profiling::ScopedPhase phase(profiling::Phase::CiProductProjection);
-            for (int target = 0; target < static_cast<int>(projection_targets.size()); ++target) {
+            for (std::int64_t target = 0;
+                 target < core::checked_index<std::int64_t>(projection_targets.size());
+                 ++target) {
                 // CI-only/forcing targets have no left-direction component. Do not
                 // allocate or transform a zero carrier merely because p also exists.
                 if (left_projected[target].size())
@@ -1217,9 +1244,9 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
         }
         result.images.tiles.input_evictions += input.evictions;
         result.images.tiles.input_resident_bytes =
-            std::max(result.images.tiles.input_resident_bytes, input.peak_bytes);
+            std::max<Eigen::Index>(result.images.tiles.input_resident_bytes, input.peak_bytes);
         result.images.tiles.input_resident_bytes =
-            std::max(result.images.tiles.input_resident_bytes, input_bytes);
+            std::max<Eigen::Index>(result.images.tiles.input_resident_bytes, input_bytes);
     }
     if (!tangent && states == 1 && state.product_images)
         state.product_images->density =
@@ -1241,6 +1268,19 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
             state.product_images ? state.product_images->bytes : 0,
             cache_bytes,
             work_bytes);
+    if (profiling::phase_totals().enabled)
+        std::fprintf(stderr,
+                     "XMVB_PRODUCT_MEMORY,kind=jet,tangent=%d,joint=%d,budget_bytes=%zu,"
+                     "input_peak_bytes=%zu,output_peak_bytes=%zu,accepted_bytes=%zu,"
+                     "temporary_live_bytes=%zu,rss_bytes=%zu\n",
+                     tangent,
+                     joint,
+                     total_bytes,
+                     result.images.tiles.input_resident_bytes,
+                     result.images.tiles.output_resident_bytes,
+                     state.product_images ? state.product_images->bytes : 0,
+                     workspace::temporary_bytes(),
+                     memory::inspect().rss);
     return result;
 }
 

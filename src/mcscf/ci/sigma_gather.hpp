@@ -12,10 +12,12 @@ namespace xmvb::mcscf::detail {
  * composed size_t address; no channel values or excitation-edge arrays are cached.
  */
 struct SigmaGatherRow {
-    int alpha, channel_group = 0;
+    StringIndex alpha, channel_group = 0;
     std::size_t image;
-    std::size_t
-    address(int rhs, int channel, int rhs_stride, std::size_t channel_stride) const noexcept {
+    std::size_t address(int rhs,
+                        int channel,
+                        StringIndex rhs_stride,
+                        std::size_t channel_stride) const noexcept {
         return image + static_cast<std::size_t>(rhs) * rhs_stride +
                static_cast<std::size_t>(channel) * channel_stride;
     }
@@ -27,7 +29,7 @@ struct SigmaGatherRow {
  */
 template <bool Projected, bool FirstRhs> struct SigmaGatherImage {
     const double* values;
-    const int* rhs_strides;
+    const StringIndex* rhs_strides;
     int element_stride = 1;
     const ChannelSelectors* projected = nullptr;
     int pair = 0, width = 1;
@@ -44,7 +46,7 @@ template <bool Projected, bool FirstRhs> struct SigmaGatherImage {
         if constexpr (!Projected && FirstRhs)
             return values[row.image * element_stride];
         else {
-            const int stride = rhs_strides[row.channel_group];
+            const StringIndex stride = rhs_strides[row.channel_group];
             if constexpr (Projected)
                 return values[row.address(
                     FirstRhs ? 0 : rhs, channel, stride, static_cast<std::size_t>(width) * stride)];
@@ -65,29 +67,32 @@ inline void gather_beta_rows(const SigmaGatherImage<Projected, FirstRhs>& image,
                              int rhs,
                              double sign,
                              std::span<const SigmaGatherRow> targets,
-                             int first,
-                             int last,
+                             StringIndex first,
+                             StringIndex last,
                              double* destination,
-                             const int* rows,
-                             int n_rows,
-                             const int* target_index,
-                             const int* halo_index) {
-    const auto before = [](const SigmaGatherRow& row, int alpha) { return row.alpha < alpha; };
+                             const StringIndex* rows,
+                             StringIndex n_rows,
+                             const StringIndex* target_index,
+                             const StringIndex* halo_index) {
+    const auto before = [](const SigmaGatherRow& row, StringIndex alpha) {
+        return row.alpha < alpha;
+    };
     auto target = std::lower_bound(targets.begin(), targets.end(), first, before);
     const auto end = std::lower_bound(target, targets.end(), last, before);
     if (target == end)
         return;
-    int output = 0;
+    StringIndex output = 0;
     if (rows) {
         output = std::lower_bound(rows, rows + n_rows, target->alpha) - rows;
-        const int stop = std::upper_bound(rows + output, rows + n_rows, (end - 1)->alpha) - rows;
+        const StringIndex stop =
+            std::upper_bound(rows + output, rows + n_rows, (end - 1)->alpha) - rows;
         // Exact cardinalities choose the shorter join, without a fitted cutoff.
         // Each output coordinate has at most one row in this beta group.
         if (stop - output < end - target) {
             for (; output < stop; ++output) {
-                const int alpha = rows[output];
-                const int halo = halo_index ? halo_index[alpha] : alpha;
-                const int index = halo < 0 ? -1 : target_index[halo];
+                const StringIndex alpha = rows[output];
+                const StringIndex halo = halo_index ? halo_index[alpha] : alpha;
+                const StringIndex index = halo < 0 ? -1 : target_index[halo];
                 if (index < 0)
                     continue;
                 const auto& row = targets[index];

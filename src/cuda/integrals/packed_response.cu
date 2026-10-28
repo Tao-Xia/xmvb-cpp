@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "cuda/integrals/exact.hpp"
 
 #include <algorithm>
@@ -13,7 +14,8 @@ namespace xmvb::cuda {
 namespace {
 
 unsigned int grid(std::int64_t work) {
-    return static_cast<unsigned int>(std::min<std::int64_t>(65535, (work + 255) / 256));
+    return static_cast<unsigned int>(
+        std::min<std::int64_t>(65535, (work / 256 + (work % 256 != 0))));
 }
 
 struct ExchangeTerms {
@@ -209,47 +211,47 @@ void ExactAoPairOperator::packed_exchange(linalg::ConstMatrixView density,
                             density, tile, first_nu, first_c, nc);
                         check_cuda(cudaGetLastError(), "CUDA tiled exchange density channels");
                     }
-                    check_cublas(cublasDgemmStridedBatched(context_->blas(),
-                                                           CUBLAS_OP_T,
-                                                           CUBLAS_OP_N,
-                                                           n_bf_,
-                                                           nc,
-                                                           n_bf_,
-                                                           &one,
-                                                           plane.data(),
-                                                           n_bf_,
-                                                           square,
-                                                           d.data(),
-                                                           n_bf_,
-                                                           n * nc,
-                                                           &zero,
-                                                           partial.data(),
-                                                           n_bf_,
-                                                           n * nc,
-                                                           count),
+                    check_cublas(cublasDgemmStridedBatched_64(context_->blas(),
+                                                              CUBLAS_OP_T,
+                                                              CUBLAS_OP_N,
+                                                              n_bf_,
+                                                              nc,
+                                                              n_bf_,
+                                                              &one,
+                                                              plane.data(),
+                                                              n_bf_,
+                                                              square,
+                                                              d.data(),
+                                                              n_bf_,
+                                                              n * nc,
+                                                              &zero,
+                                                              partial.data(),
+                                                              n_bf_,
+                                                              n * nc,
+                                                              count),
                                  "CUDA packed batched exchange GEMM");
                 } else {
                     // B is a 1-by-nbf row of the supplied density, hence OP_T and
                     // stride 1 between different nu. OP_N would silently read columns.
-                    check_cublas(cublasDgemmStridedBatched(context_->blas(),
-                                                           CUBLAS_OP_T,
-                                                           CUBLAS_OP_T,
-                                                           n_bf_,
-                                                           1,
-                                                           n_bf_,
-                                                           &one,
-                                                           plane.data(),
-                                                           n_bf_,
-                                                           square,
-                                                           density.data + first_nu +
-                                                               density.ld * n * first_c,
-                                                           blas_int(density.ld),
-                                                           1,
-                                                           &zero,
-                                                           partial.data(),
-                                                           n_bf_,
-                                                           n,
-                                                           count),
+                    check_cublas(cublasDgemmStridedBatched_64(context_->blas(),
+                                                              CUBLAS_OP_T,
+                                                              CUBLAS_OP_T,
+                                                              n_bf_,
+                                                              1,
+                                                              n_bf_,
+                                                              &one,
+                                                              plane.data(),
+                                                              n_bf_,
+                                                              square,
+                                                              density.data + first_nu +
+                                                                  density.ld * n * first_c,
+                                                              density.ld,
+                                                              1,
+                                                              &zero,
+                                                              partial.data(),
+                                                              n_bf_,
+                                                              n,
+                                                              count),
                                  "CUDA packed scalar exchange GEMM");
                 }
                 reduce_exchange<<<grid(n * nc), 256, 0, context_->stream()>>>(

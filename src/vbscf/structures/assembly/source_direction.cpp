@@ -1,3 +1,5 @@
+#include <cstdint>
+#include "core/index.hpp"
 #include "vbscf/structures/assembly/action.hpp"
 
 #include <algorithm>
@@ -10,6 +12,24 @@
 #include "vbscf/structures/orthogonal_ci/integrals.hpp"
 
 namespace xmvb::vb {
+
+StructureActionResult
+StructureAction::scalar_integral_action(const StructureAdjointState& state,
+                                        const OrthogonalActiveIntegrals& delta) const {
+    const auto& r = orthogonal_view().alpha.orbital_transform();
+    const Eigen::MatrixXd generator = r.transpose()
+                                          .triangularView<Eigen::Lower>()
+                                          .solve(delta.orbital_transform.transpose())
+                                          .transpose();
+    const double dm = 2 * (state.overlap_generators[0].array() * generator.array()).sum();
+    const double de = ((state.one_electron_gradient.array() * delta.one_electron.array()).sum() +
+                       (state.pair_kernel_gradient.array() * delta.pair_kernel.array()).sum() +
+                       (state.generator_gradient.array() * generator.array()).sum()) /
+                      state.weights[0];
+    const double c = state.structure_coefficients(0, 0);
+    return {Eigen::MatrixXd::Constant(1, 1, (de + state.energies[0] * dm) / c),
+            Eigen::MatrixXd::Constant(1, 1, dm / c)};
+}
 
 StructureActionResult
 StructureAction::source_integral_action(const StructureAdjointState& state,
@@ -55,17 +75,7 @@ StructureAction::source_integral_action(const StructureAdjointState& state,
                                                                  Eigen::VectorXd::Zero(states)};
     }
     if (scalar) {
-        const double dm = 2 * (state.overlap_generators[0].array() * generator.array()).sum();
-        const double de =
-            ((state.one_electron_gradient.array() * delta.one_electron.array()).sum() +
-             (state.pair_kernel_gradient.array() * delta.pair_kernel.array()).sum() +
-             (state.generator_gradient.array() * generator.array()).sum()) /
-            state.weights[0];
-        // The adjoints differentiate <Y,H Y>, whereas the API returns delta H C,
-        // not C^T delta H C. Do not assume the accepted scalar coefficient is one.
-        const double coefficient = state.structure_coefficients(0, 0);
-        result.overlap(0, 0) = dm / coefficient;
-        result.hamiltonian(0, 0) = (de + state.energies[0] * dm) / coefficient;
+        result = scalar_integral_action(state, delta);
         if (!direction)
             return result;
     }
@@ -171,7 +181,7 @@ StructureActiveIntegralAdjoint StructureAction::source_adjoint_direction(
                     gradient = one;
     if (reuse)
         gradient = cached_direction->generator_direction;
-    for (int i = 0; i < static_cast<int>(state.weights.size()); ++i) {
+    for (std::int64_t i = 0; i < core::checked_index<std::int64_t>(state.weights.size()); ++i) {
         const double weight = state.weights[i];
         if (weight == 0.0)
             continue;

@@ -38,10 +38,10 @@ Eigen::MatrixXd build_pair_transform(const Eigen::Ref<const Eigen::MatrixXd>& or
     Eigen::MatrixXd result = Eigen::MatrixXd::Zero(n_pairs, n_pairs);
     for (int new_p = 0; new_p < n; ++new_p) {
         for (int new_q = 0; new_q <= new_p; ++new_q) {
-            const int new_pair = xmvb::core::PairIndex::packed_pair_index(new_p, new_q);
+            const auto new_pair = xmvb::core::PairIndex::packed_pair_index(new_p, new_q);
             for (int old_p = 0; old_p < n; ++old_p) {
                 for (int old_q = 0; old_q <= old_p; ++old_q) {
-                    const int old_pair = xmvb::core::PairIndex::packed_pair_index(old_p, old_q);
+                    const auto old_pair = xmvb::core::PairIndex::packed_pair_index(old_p, old_q);
                     double value =
                         orbital_transform(old_p, new_p) * orbital_transform(old_q, new_q);
                     if (old_p != old_q) {
@@ -111,10 +111,10 @@ std::vector<double> pack_symmetric_dm2(const std::vector<double>& dm2, int n) {
     std::vector<double> packed(mcscf::orbital_diagonal_packed_eri_count(n), 0.0);
     for (int p = 0; p < n; ++p) {
         for (int q = 0; q <= p; ++q) {
-            const int pq = xmvb::core::PairIndex::packed_pair_index(p, q);
+            const auto pq = xmvb::core::PairIndex::packed_pair_index(p, q);
             for (int r = 0; r < n; ++r) {
                 for (int s = 0; s <= r; ++s) {
-                    const int rs = xmvb::core::PairIndex::packed_pair_index(r, s);
+                    const auto rs = xmvb::core::PairIndex::packed_pair_index(r, s);
                     if (rs > pq)
                         continue;
                     const int multiplicity =

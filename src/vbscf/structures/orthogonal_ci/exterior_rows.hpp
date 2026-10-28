@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include "core/index.hpp"
 #include <cstdint>
 #include <span>
 #include <vector>
@@ -21,19 +22,19 @@ class ExteriorRowPlan {
 
     Rows apply(const Eigen::MatrixXd& upper,
                std::span<const std::uint64_t> masks,
-               std::span<const int> rows) const;
+               std::span<const Eigen::Index> rows) const;
     std::size_t dynamic_bytes() const noexcept;
     mcscf::detail::ExteriorRowTopology topology() const noexcept {
         return {n_,
                 electrons_,
-                static_cast<int>(column_ranks_.size()),
+                core::checked_index<std::int64_t>(column_ranks_.size()),
                 binomial_.data(),
                 column_ranks_.data()};
     }
     std::span<const std::uint64_t> binomial() const noexcept {
         return binomial_;
     }
-    std::span<const int> column_ranks() const noexcept {
+    std::span<const std::int64_t> column_ranks() const noexcept {
         return column_ranks_;
     }
 
@@ -41,7 +42,7 @@ class ExteriorRowPlan {
     std::uint64_t choose(int n, int k) const noexcept;
     int n_, electrons_;
     std::vector<std::uint64_t> binomial_;
-    std::vector<int> column_ranks_;
+    std::vector<std::int64_t> column_ranks_;
 };
 
 } // namespace xmvb::vb

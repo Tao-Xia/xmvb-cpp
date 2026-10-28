@@ -1,3 +1,5 @@
+#include "core/index.hpp"
+#include <cstdint>
 #include "cuda/vb/product.hpp"
 #include "cuda/vb/columns.hpp"
 
@@ -36,7 +38,7 @@ void free_cache_for_allocation(Context& c,
     const auto refresh = [&] {
         const auto current = c.counters().current_device_bytes;
         if (current > resident)
-            available -= std::min(available, current - resident);
+            available -= std::min<std::int64_t>(available, current - resident);
         else
             available += resident - current;
         resident = current;
@@ -81,7 +83,7 @@ void clear(Context& c, linalg::MatrixView panel) {
  * is reused at the orbital point; the dense single-spin panel is then dead.
  */
 struct Factors {
-    Buffer<int> offsets, indices;
+    Buffer<std::int64_t> offsets, indices;
     Buffer<double> values;
     template <class Reserve, class FreeForScratch>
     Factors(Context& c,
@@ -109,8 +111,8 @@ struct Factors {
                                            offsets.data(),
                                            nullptr,
                                            nullptr,
-                                           CUSPARSE_INDEX_32I,
-                                           CUSPARSE_INDEX_32I,
+                                           CUSPARSE_INDEX_64I,
+                                           CUSPARSE_INDEX_64I,
                                            CUSPARSE_INDEX_BASE_ZERO,
                                            CUDA_R_64F),
                          "create beta-factor CSR");
@@ -128,12 +130,11 @@ struct Factors {
             std::int64_t rows, columns, nnz;
             sparse_check(cusparseSpMatGetSize(output, &rows, &columns, &nnz),
                          "count beta-factor exact nonzeros");
-            if (nnz > std::numeric_limits<int>::max())
-                throw std::overflow_error("beta-factor CSR exceeds integer range");
-            reserve(offsets.size() * sizeof(int) +
-                    static_cast<std::size_t>(nnz) * (sizeof(int) + sizeof(double)));
-            free_for_scratch(static_cast<std::size_t>(nnz) * (sizeof(int) + sizeof(double)));
-            indices = Buffer<int>(c, nnz);
+            reserve(offsets.size() * sizeof(std::int64_t) +
+                    static_cast<std::size_t>(nnz) * (sizeof(std::int64_t) + sizeof(double)));
+            free_for_scratch(static_cast<std::size_t>(nnz) *
+                             (sizeof(std::int64_t) + sizeof(double)));
+            indices = Buffer<std::int64_t>(c, nnz);
             values = Buffer<double>(c, nnz);
             sparse_check(
                 cusparseCsrSetPointers(output, offsets.data(), indices.data(), values.data()),
@@ -153,16 +154,17 @@ struct Factors {
         cusparseDestroySpMat(output);
     }
     std::size_t bytes() const {
-        return (offsets.size() + indices.size()) * sizeof(int) + values.size() * sizeof(double);
+        return (offsets.size() + indices.size()) * sizeof(std::int64_t) +
+               values.size() * sizeof(double);
     }
 };
 
-__global__ void generate_selected(const int* starts,
-                                  const int* raw_beta,
+__global__ void generate_selected(const std::int64_t* starts,
+                                  const std::int64_t* raw_beta,
                                   ProductIncidence incidence,
                                   linalg::ConstMatrixView coefficients,
-                                  const int* offsets,
-                                  const int* columns,
+                                  const std::int64_t* offsets,
+                                  const std::int64_t* columns,
                                   const double* factors,
                                   linalg::MatrixView output) {
     for (auto a = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x; a < output.rows;
@@ -171,23 +173,23 @@ __global__ void generate_selected(const int* starts,
             double value = 0.0;
             for (auto t = incidence.offsets[g]; t < incidence.offsets[g + 1]; ++t)
                 value += incidence.weights[t] * coefficients.data[incidence.structures[t]];
-            for (int p = offsets[raw_beta[g]]; p < offsets[raw_beta[g] + 1]; ++p)
+            for (std::int64_t p = offsets[raw_beta[g]]; p < offsets[raw_beta[g] + 1]; ++p)
                 output.data[a + output.ld * columns[p]] += value * factors[p];
         }
 }
 
 /** CPU source-group sweep: primal, beta-direction and independent CI lanes
  * share their incidence sum and fixed beta-factor traversal. */
-__global__ void generate_selected_jet(const int* starts,
-                                      const int* raw_beta,
+__global__ void generate_selected_jet(const std::int64_t* starts,
+                                      const std::int64_t* raw_beta,
                                       ProductIncidence incidence,
                                       linalg::ConstMatrixView coefficients,
                                       linalg::ConstMatrixView response,
-                                      const int* offsets,
-                                      const int* columns,
+                                      const std::int64_t* offsets,
+                                      const std::int64_t* columns,
                                       const double* factors,
-                                      const int* delta_offsets,
-                                      const int* delta_columns,
+                                      const std::int64_t* delta_offsets,
+                                      const std::int64_t* delta_columns,
                                       const double* delta_factors,
                                       int width,
                                       bool joint,
@@ -202,8 +204,8 @@ __global__ void generate_selected_jet(const int* starts,
                 if (response.data)
                     direction += incidence.weights[t] * response.data[index];
             }
-            const int b = raw_beta[g];
-            for (int p = offsets[b]; p < offsets[b + 1]; ++p) {
+            const std::int64_t b = raw_beta[g];
+            for (std::int64_t p = offsets[b]; p < offsets[b + 1]; ++p) {
                 const auto index = a + output.ld * columns[p];
                 output.data[index] += value * factors[p];
                 output.data[index + output.ld * width] += direction * factors[p];
@@ -211,17 +213,17 @@ __global__ void generate_selected_jet(const int* starts,
                     output.data[index + 2 * output.ld * width] += direction * factors[p];
             }
             if (delta_offsets)
-                for (int p = delta_offsets[b]; p < delta_offsets[b + 1]; ++p)
+                for (std::int64_t p = delta_offsets[b]; p < delta_offsets[b + 1]; ++p)
                     output.data[a + output.ld * (width + delta_columns[p])] +=
                         value * delta_factors[p];
         }
 }
 
-__global__ void project_groups(const int* raw_alpha,
-                               const int* raw_beta,
+__global__ void project_groups(const std::int64_t* raw_alpha,
+                               const std::int64_t* raw_beta,
                                int count,
-                               const int* offsets,
-                               const int* columns,
+                               const std::int64_t* offsets,
+                               const std::int64_t* columns,
                                const double* factors,
                                linalg::ConstMatrixView image,
                                int width,
@@ -231,9 +233,9 @@ __global__ void project_groups(const int* raw_alpha,
                                linalg::MatrixView output) {
     for (auto g = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x; g < count;
          g += static_cast<std::size_t>(gridDim.x) * blockDim.x) {
-        const int b = raw_beta[g];
+        const std::int64_t b = raw_beta[g];
         double first = 0.0, second = 0.0;
-        for (int p = offsets[b]; p < offsets[b + 1]; ++p) {
+        for (std::int64_t p = offsets[b]; p < offsets[b + 1]; ++p) {
             const auto index = raw_alpha[g] + image.ld * columns[p];
             first += image.data[index] * factors[p];
             if (lanes == 2)
@@ -259,8 +261,8 @@ __global__ void contract_groups(
  * group has one raw product coordinate; no contiguous product carrier exists.
  */
 __global__ void ordered_products_tiles(ProductIncidence incidence,
-                                       const int* aa,
-                                       const int* bb,
+                                       const std::int64_t* aa,
+                                       const std::int64_t* bb,
                                        int groups,
                                        linalg::ConstMatrixView source,
                                        double* const* tiles,
@@ -303,50 +305,44 @@ void add(Context& c,
          linalg::ConstMatrixView source,
          double scale = 1.0) {
     if (target.ld == target.rows && source.ld == source.rows) {
-        check_cublas(cublasDaxpy(c.blas(),
-                                 blas_int(target.rows * target.cols),
-                                 &scale,
-                                 source.data,
-                                 1,
-                                 target.data,
-                                 1),
-                     "product panel accumulation");
+        check_cublas(
+            cublasDaxpy_64(
+                c.blas(), target.rows * target.cols, &scale, source.data, 1, target.data, 1),
+            "product panel accumulation");
         return;
     }
     for (std::int64_t j = 0; j < target.cols; ++j)
-        check_cublas(cublasDaxpy(c.blas(),
-                                 blas_int(target.rows),
-                                 &scale,
-                                 source.data + source.ld * j,
-                                 1,
-                                 target.data + target.ld * j,
-                                 1),
+        check_cublas(cublasDaxpy_64(c.blas(),
+                                    target.rows,
+                                    &scale,
+                                    source.data + source.ld * j,
+                                    1,
+                                    target.data + target.ld * j,
+                                    1),
                      "product tile accumulation");
 }
 
 void multiply(Context& c, linalg::MatrixView target, double scale) {
     if (target.ld == target.rows) {
-        check_cublas(
-            cublasDscal(c.blas(), blas_int(target.rows * target.cols), &scale, target.data, 1),
-            "product panel scaling");
+        check_cublas(cublasDscal_64(c.blas(), target.rows * target.cols, &scale, target.data, 1),
+                     "product panel scaling");
         return;
     }
     for (std::int64_t j = 0; j < target.cols; ++j)
-        check_cublas(
-            cublasDscal(c.blas(), blas_int(target.rows), &scale, target.data + target.ld * j, 1),
-            "product tile scaling");
+        check_cublas(cublasDscal_64(c.blas(), target.rows, &scale, target.data + target.ld * j, 1),
+                     "product tile scaling");
 }
 
 struct ColumnReadIndex {
-    int local, destination;
+    std::int64_t local, destination;
 };
 
 /** One beta column of an ordered, independently allocated source tile. The
  * dense values borrow the tile; rows still describe the exact CI support. */
 struct ResidentColumn {
     const double* values;
-    const int* rows;
-    int size;
+    const std::int64_t* rows;
+    std::int64_t size;
 };
 
 struct ResidentMaps {
@@ -360,7 +356,7 @@ struct ResidentMaps {
 
 __global__ void read_resident_columns(const ResidentColumn* sources,
                                       const ColumnReadIndex* columns,
-                                      const int* requested,
+                                      const std::int64_t* requested,
                                       int count,
                                       linalg::MatrixView output) {
     const auto column = columns[blockIdx.x];
@@ -371,7 +367,7 @@ __global__ void read_resident_columns(const ResidentColumn* sources,
         const int r = i, a = requested[r];
         bool present = a >= 0 && a < source.size;
         if (source.rows) {
-            int first = 0, last = source.size;
+            std::int64_t first = 0, last = source.size;
             while (first < last) {
                 const int mid = first + (last - first) / 2;
                 if (source.rows[mid] < a)
@@ -389,12 +385,12 @@ __global__ void read_resident_columns(const ResidentColumn* sources,
 __global__ void pack_resident_column(const CiColumnMap* maps,
                                      linalg::ConstMatrixView resident,
                                      linalg::MatrixView compact) {
-    const int b = blockIdx.x;
+    const std::int64_t b = blockIdx.x;
     const auto column = maps[b];
     for (auto i = static_cast<std::size_t>(blockIdx.y) * blockDim.x + threadIdx.x;
          i < static_cast<std::size_t>(column.size);
          i += static_cast<std::size_t>(gridDim.y) * blockDim.x) {
-        const int a = column.rows ? column.rows[i] : static_cast<int>(i);
+        const std::int64_t a = column.rows ? column.rows[i] : static_cast<std::int64_t>(i);
         compact.data[column.offset + i] = resident.data[a + resident.ld * b];
     }
 }
@@ -402,7 +398,7 @@ __global__ void pack_resident_column(const CiColumnMap* maps,
 __global__ void read_columns(const CiColumnMap* maps,
                              linalg::ConstMatrixView packed,
                              const ColumnReadIndex* columns,
-                             const int* requested,
+                             const std::int64_t* requested,
                              int count,
                              int lane,
                              linalg::MatrixView output) {
@@ -415,9 +411,9 @@ __global__ void read_columns(const CiColumnMap* maps,
         // A contiguous beta panel may include an exactly empty column. Its null
         // index pointer is not a full identity map and must never read the next
         // packed column (or the end of the allocation).
-        int index = a >= 0 && a < source.size ? a : -1;
+        std::int64_t index = a >= 0 && a < source.size ? a : -1;
         if (source.rows) {
-            int first = 0, last = source.size;
+            std::int64_t first = 0, last = source.size;
             while (first < last) {
                 const int mid = first + (last - first) / 2;
                 if (source.rows[mid] < a)
@@ -437,7 +433,7 @@ struct RetainedPattern {
     // This LRU owns a device-memory allowance. Host row metadata is reflected
     // in RSS, not charged a second time to Context's device budget.
     std::size_t bytes() const {
-        return pattern->device_rows.size() * sizeof(int);
+        return pattern->device_rows.size() * sizeof(std::int64_t);
     }
 };
 struct SupportMask {
@@ -456,8 +452,8 @@ struct ProductSymbolic {
     PinnedTransfer staging;
     int alpha, beta, groups;
     const mcscf::ProductSupport* support;
-    Buffer<int> starts, raw_alpha, raw_beta;
-    std::vector<int> reachable;
+    Buffer<std::int64_t> starts, raw_alpha, raw_beta;
+    std::vector<std::int64_t> reachable;
     std::vector<std::weak_ptr<const ProductColumnPattern>> patterns;
     std::shared_ptr<const ProductColumnPattern> full_pattern;
     std::unique_ptr<mcscf::ColumnCache<RetainedPattern>> pattern_cache;
@@ -469,7 +465,8 @@ struct ProductSymbolic {
                     int beta_dimension,
                     const mcscf::ProductSupport* exact_support)
         : c(ctx), staging(ctx), alpha(alpha_dimension), beta(beta_dimension),
-          groups(view.products.size()), support(exact_support), patterns(std::max(beta, 0)) {
+          groups(view.products.size()), support(exact_support),
+          patterns(std::max<std::int64_t>(beta, 0)) {
         if (alpha <= 0 || beta <= 0)
             throw std::invalid_argument("product dimensions must be positive");
         if (support)
@@ -478,16 +475,16 @@ struct ProductSymbolic {
             reachable.resize(beta);
             std::iota(reachable.begin(), reachable.end(), 0);
         }
-        std::vector<int> offsets(alpha + 1, 0), aa(groups), bb(groups);
+        std::vector<std::int64_t> offsets(alpha + 1, 0), aa(groups), bb(groups);
         for (int g = 0; g < groups; ++g) {
             aa[g] = view.products[g] / beta;
             bb[g] = view.products[g] % beta;
             ++offsets[aa[g] + 1];
         }
         std::partial_sum(offsets.begin(), offsets.end(), offsets.begin());
-        starts = upload<int>(c, offsets);
-        raw_alpha = upload<int>(c, aa);
-        raw_beta = upload<int>(c, bb);
+        starts = upload<std::int64_t>(c, offsets);
+        raw_alpha = upload<std::int64_t>(c, aa);
+        raw_beta = upload<std::int64_t>(c, bb);
         if (view.exchange_parity) {
             if (view.alpha.occupations() != view.beta.occupations())
                 throw std::invalid_argument("exchange support requires identical spin ordering");
@@ -539,9 +536,9 @@ struct ProductSymbolic {
             support->append_column_rows(b, result->rows);
         result->size = full ? alpha : result->rows.size();
         if (!full)
-            pattern_cache->reserve(result->rows.size() * sizeof(int));
+            pattern_cache->reserve(result->rows.size() * sizeof(std::int64_t));
         if (!full)
-            result->device_rows = upload<int>(c, staging, result->rows);
+            result->device_rows = upload<std::int64_t>(c, staging, result->rows);
         patterns[b] = result;
         if (!full)
             pattern_cache->insert(b, {result});
@@ -564,16 +561,16 @@ struct ProductContraction::Impl {
     std::unique_ptr<mcscf::ColumnCache<Factors>> factor_cache;
     std::unique_ptr<mcscf::ColumnCache<SupportMask>> mask_cache;
     struct ReadGroup {
-        int id, offset, count;
+        std::int64_t id, offset, count;
     };
     struct ReadPlan {
         int extent = 0;
-        std::vector<int> betas, rows;
+        std::vector<std::int64_t> betas, rows;
         std::vector<ReadGroup> groups;
-        Buffer<int> indices;
+        Buffer<std::int64_t> indices;
         bool complete = false;
         std::size_t bytes() const noexcept {
-            return (betas.size() + rows.size() + indices.size()) * sizeof(int) +
+            return (betas.size() + rows.size() + indices.size()) * sizeof(std::int64_t) +
                    groups.size() * sizeof(ReadGroup);
         }
     };
@@ -619,7 +616,7 @@ struct ProductContraction::Impl {
         return symbolic->pattern(b);
     }
 
-    ProductColumns allocate(std::span<const int> keys, int width) {
+    ProductColumns allocate(std::span<const std::int64_t> keys, int width) {
         std::vector<std::shared_ptr<const ProductColumnPattern>> columns;
         columns.reserve(keys.size());
         for (int key : keys)
@@ -627,7 +624,7 @@ struct ProductContraction::Impl {
         return ProductColumns(c, std::move(columns), width);
     }
 
-    std::size_t panel_bytes(std::span<const int> keys, int width) {
+    std::size_t panel_bytes(std::span<const std::int64_t> keys, int width) {
         std::size_t rows = 0;
         for (int key : keys)
             rows += pattern(key)->size;
@@ -639,8 +636,8 @@ struct ProductContraction::Impl {
     OrderedTiles ordered_tiles(int extent) {
         OrderedTiles tiles;
         tiles.reserve((beta + extent - 1) / extent);
-        for (int first = 0; first < beta; first += extent) {
-            tiles.emplace_back(c, alpha, std::min(extent, beta - first));
+        for (std::int64_t first = 0; first < beta; first += extent) {
+            tiles.emplace_back(c, alpha, std::min<std::int64_t>(extent, beta - first));
             clear(c, tiles.back().view());
         }
         return tiles;
@@ -672,7 +669,7 @@ struct ProductContraction::Impl {
         std::vector<Matrix<double>> panels;
         std::vector<linalg::MatrixView> source_views, image_views, adjoint_views;
         Buffer<double*> pointers;
-        Matrix<double> input, h, m, stripe;
+        Matrix<double> input, h, m;
         std::uint64_t sigma_generation = 0;
         std::weak_ptr<const void> sigma_storage;
         const double* sigma_kernel = nullptr;
@@ -688,8 +685,8 @@ struct ProductContraction::Impl {
             source_views.reserve(tiles);
             adjoint_views.reserve(tiles);
             std::vector<double*> table(2 * static_cast<std::size_t>(p.beta) + 2 * tiles);
-            for (int first = 0; first < p.beta; first += extent) {
-                const int count = std::min(extent, p.beta - first);
+            for (std::int64_t first = 0; first < p.beta; first += extent) {
+                const std::int64_t count = std::min<std::int64_t>(extent, p.beta - first);
                 panels.emplace_back(p.c, 2LL * p.alpha, count);
                 const auto data = panels.back().data();
                 source_views.push_back({data, p.alpha, count, 2LL * p.alpha});
@@ -704,9 +701,6 @@ struct ProductContraction::Impl {
                 }
             }
             pointers = upload<double*>(p.c, table);
-            const int rows = p.beta_transform.right_workspace_extent(2LL * p.alpha);
-            if (rows)
-                stripe = Matrix<double>(p.c, p.beta, rows);
         }
 
         void forward(ProductIncidence incidence) {
@@ -732,7 +726,7 @@ struct ProductContraction::Impl {
             }
             for (auto view : source_views)
                 p.alpha_transform.apply_left(view);
-            p.beta_transform.apply_right_columns(source_columns, p.alpha, stripe.view());
+            p.beta_transform.apply_right_columns(source_columns, p.alpha);
         }
 
         void backward(ProductIncidence incidence, bool with_h, bool with_m) {
@@ -747,7 +741,6 @@ struct ProductContraction::Impl {
                 clear(p.c, m.view());
             p.beta_transform.apply_right_columns(with_m ? source_columns : image_columns,
                                                  with_h && with_m ? 2LL * p.alpha : p.alpha,
-                                                 stripe.view(),
                                                  true);
             for (auto view : with_h&& with_m ? adjoint_views : with_m ? source_views : image_views)
                 p.alpha_transform.apply_left(view, true);
@@ -881,8 +874,7 @@ struct ProductContraction::Impl {
             const auto tiles = (static_cast<std::size_t>(beta) + extent - 1) / extent;
             const long double required =
                 sizeof(double) * (2.L * alpha * beta + 3.L * incidence.size) +
-                sizeof(double*) * (2.L * beta + 2.L * tiles) +
-                sizeof(double) * beta * beta_transform.right_workspace_extent(2LL * alpha);
+                sizeof(double*) * (2.L * beta + 2.L * tiles);
             // This is cache admission, never selection of the variational space.
             // Keep the same source/projection partition as the streamed jet.
             if (required > allowance)
@@ -925,11 +917,11 @@ struct ProductContraction::Impl {
         if (!mask_cache)
             mask_cache = std::make_unique<mcscf::ColumnCache<SupportMask>>(
                 budget,
-                [this](int first) {
-                    const int count = std::min(mask_extent, beta - first),
-                              words = (alpha + 63) / 64;
+                [this](std::int64_t first) {
+                    const std::int64_t count = std::min<std::int64_t>(mask_extent, beta - first),
+                                       words = (alpha + 63) / 64;
                     std::vector<std::uint64_t> bits(static_cast<std::size_t>(count) * words, 0);
-                    for (int b = 0; b < count; ++b) {
+                    for (std::int64_t b = 0; b < count; ++b) {
                         const auto column = pattern(first + b);
                         for (int row : column->rows)
                             bits[static_cast<std::size_t>(b) * words + row / 64] |= std::uint64_t{1}
@@ -938,8 +930,9 @@ struct ProductContraction::Impl {
                     return SupportMask{upload<std::uint64_t>(c, bits)};
                 },
                 mcscf::ColumnCache<SupportMask>::Consume{},
-                [this](int first) {
-                    return static_cast<std::size_t>(std::min(mask_extent, beta - first)) *
+                [this](std::int64_t first) {
+                    return static_cast<std::size_t>(
+                               std::min<std::int64_t>(mask_extent, beta - first)) *
                            ((alpha + 63) / 64) * sizeof(std::uint64_t);
                 });
     }
@@ -952,11 +945,11 @@ struct ProductContraction::Impl {
         if (!factor_cache)
             factor_cache = std::make_unique<mcscf::ColumnCache<Factors>>(
                 budget,
-                [this](int id) {
+                [this](std::int64_t id) {
                     const nvtx3::scoped_range range{"vb.factor_sample",
                                                     nvtx3::payload{static_cast<std::uint64_t>(id)}};
-                    const int first = id * factor_extent,
-                              count = std::min(factor_extent, beta - first);
+                    const std::int64_t first = id * factor_extent,
+                                       count = std::min<std::int64_t>(factor_extent, beta - first);
                     auto available = c.available_device_bytes();
                     auto resident = c.counters().current_device_bytes;
                     const auto free_for = [&](std::size_t bytes) {
@@ -965,7 +958,7 @@ struct ProductContraction::Impl {
                     free_for(static_cast<std::size_t>(beta) * count * sizeof(double));
                     Matrix<double> values(c, beta, count);
                     beta_transform.sample_rows(first, values.view());
-                    free_for((static_cast<std::size_t>(beta) + 1) * sizeof(int));
+                    free_for((static_cast<std::size_t>(beta) + 1) * sizeof(std::int64_t));
                     return Factors(
                         c,
                         sparse,
@@ -974,7 +967,9 @@ struct ProductContraction::Impl {
                         free_for);
                 },
                 mcscf::ColumnCache<Factors>::Consume{},
-                [this](int id) { return (static_cast<std::size_t>(beta) + 1) * sizeof(int); });
+                [this](std::int64_t id) {
+                    return (static_cast<std::size_t>(beta) + 1) * sizeof(std::int64_t);
+                });
     }
 
     void generate_source(ProductIncidence incidence,
@@ -997,7 +992,7 @@ struct ProductContraction::Impl {
     // CPU's cooperative panel width, constrained by the current device budget.
     // A one-column beta space is indivisible; otherwise no panel spans beta.
     int panel_extent(std::size_t allowance) const {
-        const auto row_bytes = sizeof(double) * (12ULL * alpha + 8ULL * beta);
+        const auto row_bytes = sizeof(double) * (13ULL * alpha + 8ULL * beta);
         return static_cast<int>(std::max<std::size_t>(
             1,
             std::min<std::size_t>({beta > 1 ? static_cast<std::size_t>(beta - 1) : std::size_t{1},
@@ -1065,12 +1060,12 @@ struct ProductContraction::Impl {
             "vb.jet.plan",
             nvtx3::payload{(static_cast<std::uint64_t>(extent) << 32) |
                            static_cast<unsigned>(panels)}};
-        std::vector<int> all_beta(beta), all_rows(alpha);
+        std::vector<std::int64_t> all_beta(beta), all_rows(alpha);
         std::iota(all_beta.begin(), all_beta.end(), 0);
         std::iota(all_rows.begin(), all_rows.end(), 0);
-        const auto selected = [&](int id) {
-            return std::span<const int>{all_beta}.subspan(id * extent,
-                                                          std::min(extent, beta - id * extent));
+        const auto selected = [&](std::int64_t id) {
+            return std::span<const std::int64_t>{all_beta}.subspan(
+                id * extent, std::min<std::int64_t>(extent, beta - id * extent));
         };
         std::vector<bool> reachable_panel(panels, false);
         for (int b : symbolic->reachable)
@@ -1086,8 +1081,7 @@ struct ProductContraction::Impl {
                     std::numeric_limits<std::size_t>::max() / static_cast<std::size_t>(beta)
                 ? static_cast<std::size_t>(alpha) * beta
                 : std::numeric_limits<std::size_t>::max();
-        const auto source_slots =
-            static_cast<std::size_t>(input_width) + (delta_upper.data && !cached ? 2U : 0U);
+        const auto source_slots = static_cast<std::size_t>(input_width);
         const auto source_descriptors =
             static_cast<std::size_t>(panels) * input_width * sizeof(double*) +
             static_cast<std::size_t>(beta) * input_width * sizeof(ResidentColumn);
@@ -1098,8 +1092,7 @@ struct ProductContraction::Impl {
         // have no use for the beta-factor matrix or its sparse conversion.
         const int targets = joint ? 4 : collect_overlap ? 2 : 1;
         const auto projection_slots =
-            static_cast<std::size_t>(targets) * (delta_upper.data && !cached ? 2U : 1U) +
-            (delta_upper.data && !cached ? 2U : 0U);
+            static_cast<std::size_t>(targets) * (delta_upper.data && !cached ? 2U : 1U);
         const auto projection_descriptors = static_cast<std::size_t>(panels) * targets *
                                             (delta_upper.data && !cached ? 2U : 1U) *
                                             sizeof(double*);
@@ -1119,7 +1112,7 @@ struct ProductContraction::Impl {
         }
         mcscf::ColumnCache<Factors> delta_factors(
             quarter / 4,
-            [&](int id) {
+            [&](std::int64_t id) {
                 const nvtx3::scoped_range range{"vb.factor_direction",
                                                 nvtx3::payload{static_cast<std::uint64_t>(id)}};
                 auto keys = selected(id);
@@ -1132,7 +1125,7 @@ struct ProductContraction::Impl {
                 Matrix<double> values(c, beta, keys.size()), delta(c, beta, keys.size());
                 beta_transform.sample_directional_rows(
                     db, id * extent, values.view(), delta.view());
-                free_for((static_cast<std::size_t>(beta) + 1) * sizeof(int));
+                free_for((static_cast<std::size_t>(beta) + 1) * sizeof(std::int64_t));
                 return Factors(
                     c,
                     sparse,
@@ -1141,14 +1134,15 @@ struct ProductContraction::Impl {
                     free_for);
             },
             {},
-            [&](int id) { return (static_cast<std::size_t>(beta) + 1) * sizeof(int); });
+            [&](std::int64_t id) {
+                return (static_cast<std::size_t>(beta) + 1) * sizeof(std::int64_t);
+            });
         const auto generate =
             [&](linalg::ConstMatrixView source, const Factors& f, linalg::MatrixView values) {
                 generate_source(incidence, source, f, values);
             };
-        // The CPU ordered path is retained when all independent narrow tiles fit.
-        // The extra two slots in the source budget cover the directional beta
-        // transform's bounded transpose stripes; no full product array is formed.
+        // Count only live numerical tiles. In-place beta-column groups require
+        // no transposed primal/tangent stripe reservation.
         OrderedTiles resident_y, resident_dy, resident_q;
         const auto expand = [&](linalg::ConstMatrixView source, OrderedTiles& tiles) {
             tiles = ordered_tiles(extent);
@@ -1229,7 +1223,7 @@ struct ProductContraction::Impl {
                 auto& dy_tiles = joint ? resident_dy : resident_q;
                 for (int id = 0; id < panels; ++id)
                     if (reachable_panel[id]) {
-                        const int count = selected(id).size();
+                        const std::int64_t count = selected(id).size();
                         Matrix<double> orbital(c, alpha, count);
                         sigma.apply_one_body_generator_columns(
                             id * extent, count, accepted_y, relative_direction, orbital.view());
@@ -1239,15 +1233,15 @@ struct ProductContraction::Impl {
         }
         mcscf::ColumnCache<ResidentMaps> resident_maps(
             quarter / 8,
-            [&](int id) {
+            [&](std::int64_t id) {
                 const auto keys = selected(id);
                 ResidentMaps result;
                 result.patterns.reserve(keys.size());
                 std::vector<ResidentColumn> columns(static_cast<std::size_t>(input_width) *
                                                     keys.size());
-                for (int local = 0; local < keys.size(); ++local) {
+                for (std::int64_t local = 0; local < keys.size(); ++local) {
                     const auto& column = result.patterns.emplace_back(pattern(keys[local]));
-                    result.charged_bytes += column->device_rows.size() * sizeof(int);
+                    result.charged_bytes += column->device_rows.size() * sizeof(std::int64_t);
                     for (int lane = 0; lane < input_width; ++lane) {
                         const auto& tiles =
                             cached
@@ -1264,17 +1258,18 @@ struct ProductContraction::Impl {
                 return result;
             },
             {},
-            [&](int id) {
+            [&](std::int64_t id) {
                 // Reserve without generating patterns twice. A sparse column owns at
                 // most alpha exact row indices; actual bytes() is charged on insertion.
                 return static_cast<std::size_t>(selected(id).size()) *
                        (input_width * sizeof(ResidentColumn) +
-                        (support && !support->full() ? static_cast<std::size_t>(alpha) * sizeof(int)
-                                                     : 0));
+                        (support && !support->full()
+                             ? static_cast<std::size_t>(alpha) * sizeof(std::int64_t)
+                             : 0));
             });
         mcscf::ColumnCache<ProductColumns> input(
             quarter,
-            [&](int id) {
+            [&](std::int64_t id) {
                 if (resident_input)
                     throw std::logic_error("resident product source must bypass compact cache");
                 if (audit) {
@@ -1285,7 +1280,7 @@ struct ProductContraction::Impl {
                 const nvtx3::scoped_range range{"vb.source_panel",
                                                 nvtx3::payload{static_cast<std::uint64_t>(id)}};
                 const auto keys = selected(id);
-                const int count = keys.size();
+                const std::int64_t count = keys.size();
                 auto block = allocate(keys, input_width);
                 Matrix<double> scratch;
                 const auto values = dense_panel(block, scratch);
@@ -1345,7 +1340,7 @@ struct ProductContraction::Impl {
                 return block;
             },
             {},
-            [&](int id) { return panel_bytes(selected(id), input_width); });
+            [&](std::int64_t id) { return panel_bytes(selected(id), input_width); });
         const auto metadata_budget = quarter / 8;
         while (!read_plans.empty() && read_plan_bytes > metadata_budget) {
             read_plan_bytes -= read_plans.back().bytes();
@@ -1372,8 +1367,8 @@ struct ProductContraction::Impl {
             }
             // The maximum plan size is linear in requested indices. Evict before
             // uploading a new plan so repeat calls can reuse its device index map.
-            const auto bound = 2 * rows.size() * sizeof(int) +
-                               betas.size() * (3 * sizeof(int) + sizeof(ReadGroup));
+            const auto bound = 2 * rows.size() * sizeof(std::int64_t) +
+                               betas.size() * (3 * sizeof(std::int64_t) + sizeof(ReadGroup));
             const bool retain = bound <= metadata_budget;
             if (retain)
                 while (!read_plans.empty() && read_plan_bytes > metadata_budget - bound) {
@@ -1385,9 +1380,9 @@ struct ProductContraction::Impl {
             plan.betas.assign(betas.begin(), betas.end());
             plan.rows.assign(rows.begin(), rows.end());
             plan.complete = true;
-            std::vector<int> indices(rows.begin(), rows.end());
-            for (int j = 0; j < betas.size(); ++j) {
-                const int b = betas[j];
+            std::vector<std::int64_t> indices(rows.begin(), rows.end());
+            for (std::int64_t j = 0; j < betas.size(); ++j) {
+                const std::int64_t b = betas[j];
                 if (b < 0 || b >= beta)
                     throw std::out_of_range("invalid product reader beta column");
                 const int id = b / extent;
@@ -1395,14 +1390,14 @@ struct ProductContraction::Impl {
                     plan.complete = false;
                     continue;
                 }
-                const int offset = (indices.size() - rows.size()) / 2;
+                const std::int64_t offset = (indices.size() - rows.size()) / 2;
                 if (plan.groups.empty() || plan.groups.back().id != id)
                     plan.groups.push_back({id, offset, 0});
                 ++plan.groups.back().count;
                 indices.push_back(b % extent);
                 indices.push_back(j);
             }
-            plan.indices = upload<int>(c, staging, indices);
+            plan.indices = upload<std::int64_t>(c, staging, indices);
             ++read_plan_uploads;
             if (!retain) {
                 temporary_plan = std::move(plan);
@@ -1426,8 +1421,8 @@ struct ProductContraction::Impl {
                 // when an entire, unreachable beta panel has no reader at all.
                 if (!read_plan.complete)
                     clear(c, values);
-                static_assert(sizeof(ColumnReadIndex) == 2 * sizeof(int) &&
-                              alignof(ColumnReadIndex) == alignof(int));
+                static_assert(sizeof(ColumnReadIndex) == 2 * sizeof(std::int64_t) &&
+                              alignof(ColumnReadIndex) == alignof(std::int64_t));
                 const auto* columns = reinterpret_cast<const ColumnReadIndex*>(
                     read_plan.indices.data() + rows.size());
                 for (const auto& group : read_plan.groups) {
@@ -1481,13 +1476,13 @@ struct ProductContraction::Impl {
         // Reverse group tiles and reader plans have separate bounded allowances.
         mcscf::ColumnCache<Projection> projections(
             quarter / (cached ? 8 : 4),
-            [&](int id) {
+            [&](std::int64_t id) {
                 Projection value{Matrix<double>(
                     c, std::min<std::int64_t>(group_extent, groups - id * group_extent), targets)};
                 clear(c, value.values.view());
                 return value;
             },
-            [&](int id, Projection& tile) {
+            [&](std::int64_t id, Projection& tile) {
                 for (int k = 0; k < targets; ++k)
                     if (destinations[k].data)
                         contract_groups<<<grid(tile.values.rows()), 256, 0, c.stream()>>>(
@@ -1497,14 +1492,14 @@ struct ProductContraction::Impl {
                             tile.values.view().column(k).data,
                             destinations[k].data);
             },
-            [&](int id) {
+            [&](std::int64_t id) {
                 return static_cast<std::size_t>(
                            std::min<std::int64_t>(group_extent, groups - id * group_extent)) *
                        targets * sizeof(double);
             });
         // Match the CPU product jet: independent RHS share one alpha transform
         // and one beta-row traversal, then accumulate into distinct targets.
-        const auto project_panel = [&](int id,
+        const auto project_panel = [&](std::int64_t id,
                                        linalg::MatrixView values,
                                        std::initializer_list<int> destinations,
                                        bool differentiate) {
@@ -1513,7 +1508,7 @@ struct ProductContraction::Impl {
                 nvtx3::payload{(static_cast<std::uint64_t>(differentiate) << 32) |
                                static_cast<unsigned>(id)}};
             const auto keys = selected(id);
-            const int count = keys.size();
+            const std::int64_t count = keys.size();
             const int lanes = destinations.size();
             const std::array<int, 2> target{*destinations.begin(),
                                             lanes == 2 ? *(destinations.begin() + 1) : 0};
@@ -1581,17 +1576,17 @@ struct ProductContraction::Impl {
         bool exchange_reduced = false, retain = false, retaining = true;
         mcscf::ColumnCache<ProductColumns> output(
             quarter,
-            [&](int id) {
+            [&](std::int64_t id) {
                 auto block = allocate(selected(id), input_width);
                 clear(c, block.values.view());
                 return block;
             },
-            [&](int id, ProductColumns& block) {
+            [&](std::int64_t id, ProductColumns& block) {
                 const int previous_stage = source_stage;
                 source_stage = reverse_stage;
                 const nvtx3::scoped_range range{"vb.reverse_panel",
                                                 nvtx3::payload{static_cast<std::uint64_t>(id)}};
-                const int count = selected(id).size(), first = id * extent;
+                const std::int64_t count = selected(id).size(), first = id * extent;
                 Matrix<double> scratch;
                 const auto values = dense_panel(block, scratch);
                 if (scratch.data()) {
@@ -1686,12 +1681,12 @@ struct ProductContraction::Impl {
                 }
                 source_stage = previous_stage;
             },
-            [&](int id) { return panel_bytes(selected(id), input_width); });
+            [&](std::int64_t id) { return panel_bytes(selected(id), input_width); });
         const auto writer = [&](int lane) -> CiTileWriter {
             return [&, lane](auto betas, auto, const CiTileGather& gather) {
-                for (int begin = 0; begin < betas.size();) {
+                for (std::int64_t begin = 0; begin < betas.size();) {
                     const int id = betas[begin] / extent;
-                    const int first = begin;
+                    const std::int64_t first = begin;
                     while (begin < betas.size() && betas[begin] / extent == id)
                         ++begin;
                     if (!reachable_panel[id])
@@ -1755,24 +1750,24 @@ struct ProductContraction::Impl {
         if (cached && delta_upper.data) {
             transpose = Matrix<double>(c, n, n);
             const double one = 1.0, zero = 0.0;
-            check_cublas(cublasDgeam(c.blas(),
-                                     CUBLAS_OP_T,
-                                     CUBLAS_OP_T,
-                                     n,
-                                     n,
-                                     &one,
-                                     relative_direction.data,
-                                     relative_direction.ld,
-                                     &zero,
-                                     relative_direction.data,
-                                     relative_direction.ld,
-                                     transpose.data(),
-                                     n),
+            check_cublas(cublasDgeam_64(c.blas(),
+                                        CUBLAS_OP_T,
+                                        CUBLAS_OP_T,
+                                        n,
+                                        n,
+                                        &one,
+                                        relative_direction.data,
+                                        relative_direction.ld,
+                                        &zero,
+                                        relative_direction.data,
+                                        relative_direction.ld,
+                                        transpose.data(),
+                                        n),
                          "product relative direction transpose");
         }
         for (int id = 0; id < panels; ++id)
             if (reachable_panel[id] && (tangent || collect_overlap)) {
-                const int count = selected(id).size();
+                const std::int64_t count = selected(id).size();
                 Matrix<double> values(c, alpha, (tangent && joint ? 2 : 1) * count);
                 auto dv = values.view().columns(0, count);
                 auto dq = joint ? values.view().columns(count, count) : linalg::MatrixView{};
@@ -1929,11 +1924,11 @@ struct ProductContraction::Impl {
         const auto allowance = std::max<std::size_t>(1, bytes / 5);
         const int extent = panel_extent(allowance);
         const auto reduce = [&](linalg::ConstMatrixView values) {
-            int index = 0;
+            std::int64_t index = 0;
             check_cublas(cublasSetPointerMode(c.blas(), CUBLAS_POINTER_MODE_HOST),
                          "product panel maximum pointer mode");
             check_cublas(
-                cublasIdamax(c.blas(), blas_int(values.rows * values.cols), values.data, 1, &index),
+                cublasIdamax_64(c.blas(), linalg::element_count(values), values.data, 1, &index),
                 "product panel maximum index");
             if (index <= 0)
                 throw std::runtime_error("empty product panel maximum");
@@ -1947,13 +1942,9 @@ struct ProductContraction::Impl {
         const auto beta_size = static_cast<std::size_t>(beta);
         const auto tile_count = (beta_size - 1) / extent + 1;
         const auto pointer_bytes = (tile_count + 2 * beta_size) * sizeof(double*);
-        const auto stripe_bytes =
-            beta_size *
-            std::min<std::size_t>(product_panel_width(), alpha > 1 ? alpha_size - 1 : 0) *
-            sizeof(double);
-        // Leave workspace for support metadata and the large-spin stripe fallback.
+        // Reserve metadata alongside the in-place column transform.
         const bool fits = alpha_size <= (allowance / 2) / (beta_size * sizeof(double)) &&
-                          pointer_bytes + stripe_bytes <= allowance / 4 &&
+                          pointer_bytes <= allowance / 4 &&
                           alpha_size * beta_size * sizeof(double) <= c.available_device_bytes() / 2;
         if (fits) {
             if (support && !support->full()) {
@@ -1977,12 +1968,12 @@ struct ProductContraction::Impl {
                 check_cuda(cudaGetLastError(), "scatter maximum ordered products");
             }
             auto views = ordered_views(tiles);
-            for (int id = 0; id < static_cast<int>(views.size()); ++id)
+            for (std::int64_t id = 0; id < core::checked_index<std::int64_t>(views.size()); ++id)
                 transform(views[id], id * extent, views[id].cols, false);
             beta_transform.apply_right_tiles(views);
             double maximum = 0.0;
-            for (int id = 0; id < static_cast<int>(views.size()); ++id) {
-                const int first = id * extent, count = views[id].cols;
+            for (std::int64_t id = 0; id < core::checked_index<std::int64_t>(views.size()); ++id) {
+                const std::int64_t first = id * extent, count = views[id].cols;
                 const auto touched =
                     std::lower_bound(symbolic->reachable.begin(), symbolic->reachable.end(), first);
                 if (touched == symbolic->reachable.end() || *touched >= first + count)
@@ -2005,8 +1996,8 @@ struct ProductContraction::Impl {
         prepare_factors(extent, allowance / 4);
         prepare_masks(extent, allowance / 4);
         double maximum = 0.0;
-        for (int first = 0; first < beta; first += extent) {
-            const int count = std::min(extent, beta - first);
+        for (std::int64_t first = 0; first < beta; first += extent) {
+            const std::int64_t count = std::min<std::int64_t>(extent, beta - first);
             const auto touched =
                 std::lower_bound(symbolic->reachable.begin(), symbolic->reachable.end(), first);
             if (touched == symbolic->reachable.end() || *touched >= first + count)

@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -306,7 +307,7 @@ int main(int argc, char** argv) {
         }
 
         std::vector<PerStructureCache> structure_cache(raw_structure_data.n_structures);
-        for (int structure_index = 0; structure_index < raw_structure_data.n_structures;
+        for (std::int64_t structure_index = 0; structure_index < raw_structure_data.n_structures;
              ++structure_index) {
             auto& cache = structure_cache[structure_index];
             cache.active_pairs =
@@ -373,9 +374,10 @@ int main(int argc, char** argv) {
             const double exact_overlap = xmvb::vb::raw_structure_overlap(
                 left_terms_local, right_terms_local, support_overlap, overlap_resolver);
             const int max_available_rank = screening_summary.max_numerical_rank;
-            const int effective_max_rank = options.max_rank_cap >= 0
-                                               ? std::min(options.max_rank_cap, max_available_rank)
-                                               : max_available_rank;
+            const int effective_max_rank =
+                options.max_rank_cap >= 0
+                    ? std::min<std::int64_t>(options.max_rank_cap, max_available_rank)
+                    : max_available_rank;
             const double error_scale =
                 std::max(std::abs(exact_overlap), options.normalized_error_floor);
 
@@ -432,7 +434,7 @@ int main(int argc, char** argv) {
             third_singular_values.push_back(record.max_cross_block_third_singular);
             predicted_ranks.push_back(record.predicted_rank);
             overprediction_values.push_back(
-                std::max(record.predicted_rank - record.required_rank, 0));
+                std::max<std::int64_t>(record.predicted_rank - record.required_rank, 0));
             underprediction_count += static_cast<int>(record.predicted_rank < record.required_rank);
             exact_prediction_count +=
                 static_cast<int>(record.predicted_rank == record.required_rank);

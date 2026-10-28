@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "output/text/normalization.hpp"
 
 #include <cmath>
@@ -9,9 +10,19 @@
 
 namespace xmvb::output {
 
+Eigen::VectorXd coulson_chirgwin_weights(const Eigen::Ref<const Eigen::VectorXd>& coefficients,
+                                         const Eigen::Ref<const Eigen::VectorXd>& overlap_product) {
+    if (coefficients.size() == 0 || coefficients.size() != overlap_product.size())
+        throw std::invalid_argument("structure-weight dimensions are inconsistent");
+    const double norm = coefficients.dot(overlap_product);
+    if (!(norm > 0.0) || !std::isfinite(norm))
+        throw std::domain_error("structure coefficients have a non-positive or non-finite norm");
+    return coefficients.array() * overlap_product.array() / norm;
+}
+
 StructureNorms structure_norms(const vb::VbScfOptimizerResult& result) {
     const auto& scf = result.scf_result;
-    const int n_str = scf.n_structures;
+    const std::int64_t n_str = scf.n_structures;
     if (n_str <= 0)
         throw std::invalid_argument("structure report requires a nonempty space");
     Eigen::VectorXd diagonal;

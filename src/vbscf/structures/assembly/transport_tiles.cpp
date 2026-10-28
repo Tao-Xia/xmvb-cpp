@@ -1,3 +1,5 @@
+#include "core/index.hpp"
+#include <cstdint>
 #include "vbscf/structures/assembly/action.hpp"
 
 #include <algorithm>
@@ -82,26 +84,27 @@ StructureAction::cross_overlap_transport_gradient(const Eigen::VectorXd& lambda,
         Eigen::MatrixXd za = Eigen::MatrixXd::Zero(n_unique_alpha_, b.cols());
         Eigen::MatrixXd zb = Eigen::MatrixXd::Zero(n_unique_beta_, a.cols());
 #pragma omp parallel for schedule(static) if (n_unique_alpha_ > 32)
-        for (int ai = 0; ai < n_unique_alpha_; ++ai)
-            for (int g = sources.alpha_offsets[ai]; g < sources.alpha_offsets[ai + 1]; ++g)
+        for (std::int64_t ai = 0; ai < n_unique_alpha_; ++ai)
+            for (std::size_t g = sources.alpha_offsets[ai]; g < sources.alpha_offsets[ai + 1]; ++g)
                 za.row(ai).noalias() += weights[g] * b.row(spin_products_[g] % n_unique_beta_);
 #pragma omp parallel for schedule(static) if (n_unique_beta_ > 32)
-        for (int bi = 0; bi < n_unique_beta_; ++bi)
-            for (const int g : sources.beta_groups[bi])
+        for (std::int64_t bi = 0; bi < n_unique_beta_; ++bi)
+            for (const auto g : sources.beta_groups[bi])
                 zb.row(bi).noalias() += weights[g] * a.row(spin_products_[g] / n_unique_beta_);
         ca.apply_left(&za);
         cb.apply_left(&zb);
         return UpperPair{std::move(za), std::move(zb)};
     };
-    for (int begin = 0; begin < static_cast<int>(sources.columns.size()); begin += extent) {
-        const int count = std::min<int>(extent, sources.columns.size() - begin);
+    for (std::int64_t begin = 0; begin < core::checked_index<std::int64_t>(sources.columns.size());
+         begin += extent) {
+        const std::int64_t count = std::min<int>(extent, sources.columns.size() - begin);
         Eigen::MatrixXd u = Eigen::MatrixXd::Zero(n_unique_alpha_, count), du = u, ub = u, uc = u;
         Eigen::MatrixXd v = Eigen::MatrixXd::Zero(n_unique_beta_, count), dv = v, vc = v;
         for (int j = 0; j < count; ++j) {
-            const int b = sources.columns[begin + j];
+            const std::int64_t b = sources.columns[begin + j];
             v(b, j) = vc(b, j) = 1;
-            for (const int g : sources.beta_groups[b]) {
-                const int a = spin_products_[g] / n_unique_beta_;
+            for (const auto g : sources.beta_groups[b]) {
+                const std::int64_t a = spin_products_[g] / n_unique_beta_;
                 for (auto t = spin_term_offsets_[g]; t < spin_term_offsets_[g + 1]; ++t) {
                     const auto& term = spin_terms_[t];
                     u(a, j) += term.coefficient * reference[term.structure];
@@ -142,7 +145,7 @@ StructureAction::cross_overlap_transport_gradient(const Eigen::VectorXd& lambda,
                 oa.generator_pullback(first.left, u) + ob.generator_pullback(second.right, v);
             oa.apply_adjoint_left(&first.left);
             for (int j = 0; j < count; ++j)
-                for (const int g : sources.beta_groups[sources.columns[begin + j]]) {
+                for (const auto g : sources.beta_groups[sources.columns[begin + j]]) {
                     const double value = first.left(spin_products_[g] / n_unique_beta_, j);
                     for (auto t = spin_term_offsets_[g]; t < spin_term_offsets_[g + 1]; ++t) {
                         const auto& term = spin_terms_[t];

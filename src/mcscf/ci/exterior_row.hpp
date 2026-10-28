@@ -12,9 +12,10 @@ namespace xmvb::mcscf::detail {
 
 /** Borrowed integer topology for the CPU's descending occupied-row recursion. */
 struct ExteriorRowTopology {
-    int orbitals, electrons, dimension;
+    int orbitals, electrons;
+    std::int64_t dimension;
     const std::uint64_t* binomial;
-    const int* column_ranks;
+    const std::int64_t* column_ranks;
     XMVB_ROW_HD std::uint64_t choose(int n, int k) const noexcept {
         return n < 0 || k < 0 || k > n ? 0 : binomial[n * (orbitals + 1) + k];
     }
@@ -72,7 +73,7 @@ XMVB_ROW_HD inline void exterior_row(const ExteriorRowTopology& plan,
         previous = current;
         current = temporary;
     }
-    for (int column = 0; column < plan.dimension; ++column)
+    for (std::int64_t column = 0; column < plan.dimension; ++column)
         output[column] = previous[plan.column_ranks[column]];
 }
 } // namespace xmvb::mcscf::detail

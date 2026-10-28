@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "cuda/linalg/block_map.hpp"
 
 #include <map>
@@ -17,7 +18,7 @@ __global__ void bind_vectors(const double* input,
                              const double** inputs,
                              double** outputs,
                              int count) {
-    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t i = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i < count) {
         inputs[i] = input + input_stride * input_offsets[i];
         outputs[i] = output + output_stride * output_offsets[i];
@@ -85,19 +86,19 @@ void BlockMap::apply(const double* input,
             group.outputs.data(),
             group.count);
         check_cuda(cudaGetLastError(), "CUDA block map vector binding");
-        check_cublas(cublasDgemvBatched(context_->blas(),
-                                        transpose ? CUBLAS_OP_T : CUBLAS_OP_N,
-                                        group.rows,
-                                        group.cols,
-                                        &one,
-                                        group.matrices.data(),
-                                        group.ld,
-                                        group.inputs.data(),
-                                        1,
-                                        &zero,
-                                        group.outputs.data(),
-                                        1,
-                                        group.count),
+        check_cublas(cublasDgemvBatched_64(context_->blas(),
+                                           transpose ? CUBLAS_OP_T : CUBLAS_OP_N,
+                                           group.rows,
+                                           group.cols,
+                                           &one,
+                                           group.matrices.data(),
+                                           group.ld,
+                                           group.inputs.data(),
+                                           1,
+                                           &zero,
+                                           group.outputs.data(),
+                                           1,
+                                           group.count),
                      "cuBLAS block map GEMV");
     }
 }

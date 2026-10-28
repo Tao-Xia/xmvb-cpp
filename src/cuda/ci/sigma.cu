@@ -1,3 +1,4 @@
+#include "core/index.hpp"
 #include "cuda/ci/sigma.hpp"
 
 #include <algorithm>
@@ -29,8 +30,8 @@ __global__ void scatter_channels(linalg::ConstMatrixView input,
                                  std::int64_t count,
                                  int n_alpha,
                                  int n_beta,
-                                 const int* alpha,
-                                 const int* beta,
+                                 const std::int64_t* alpha,
+                                 const std::int64_t* beta,
                                  int channel_count,
                                  int parity,
                                  bool weighted,
@@ -40,7 +41,7 @@ __global__ void scatter_channels(linalg::ConstMatrixView input,
         return;
     const auto row = product_row(begin + index % count, n_alpha, n_beta, parity);
     const int channel = index / count;
-    const int a = row.alpha, b = row.beta;
+    const std::int64_t a = row.alpha, b = row.beta;
     const auto column = row.column, rhs = row.rhs;
     const int sa = alpha[static_cast<std::int64_t>(channel) * n_alpha + a];
     const int sb = beta[static_cast<std::int64_t>(channel) * n_beta + b];
@@ -63,8 +64,8 @@ __global__ void scatter_channel_adjoint(const double* channels,
                                         std::int64_t count,
                                         int n_alpha,
                                         int n_beta,
-                                        const int* alpha,
-                                        const int* beta,
+                                        const std::int64_t* alpha,
+                                        const std::int64_t* beta,
                                         int n_channels,
                                         int parity,
                                         double* const* columns = nullptr) {
@@ -73,7 +74,7 @@ __global__ void scatter_channel_adjoint(const double* channels,
         return;
     const auto row = product_row(begin + index % count, n_alpha, n_beta, parity);
     const int p = index / count;
-    const int a = row.alpha, b = row.beta;
+    const std::int64_t a = row.alpha, b = row.beta;
     const auto column = row.column, rhs = row.rhs;
     const int sa = alpha[static_cast<std::int64_t>(p) * n_alpha + a];
     const int sb = beta[static_cast<std::int64_t>(p) * n_beta + b];
@@ -139,7 +140,7 @@ __global__ void absorbed_one_adjoint(linalg::ConstMatrixView channel,
                                      double* absorbed,
                                      int n_orbitals,
                                      int n_channels) {
-    const int pair = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t pair = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (pair >= n_channels)
         return;
     double value = 0;
@@ -152,7 +153,7 @@ __global__ void absorbed_one_adjoint(linalg::ConstMatrixView channel,
 }
 
 __device__ __forceinline__ int packed_pair(int first, int second) {
-    const int row = max(first, second);
+    const std::int64_t row = max(first, second);
     return row * (row + 1) / 2 + min(first, second);
 }
 
@@ -171,7 +172,7 @@ __global__ void build_effective_one(linalg::ConstMatrixView one_electron,
                                     int n_orbitals,
                                     int n_channels,
                                     int n_electrons) {
-    const int pair = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t pair = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (pair >= n_channels)
         return;
     int row, column;
@@ -189,7 +190,7 @@ __global__ void rebuild_channel_kernel(linalg::ConstMatrixView pair_kernel,
                                        const double* effective,
                                        double* kernel,
                                        int n_channels) {
-    const int index = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t index = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (index >= n_channels * n_channels)
         return;
     const int p = index % n_channels, q = index / n_channels;
@@ -209,10 +210,10 @@ __global__ void pullback_one_electron(const double* absorbed,
                                       linalg::MatrixView one_electron,
                                       int n_orbitals,
                                       int n_electrons) {
-    const int index = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t index = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (index >= n_orbitals * n_orbitals)
         return;
-    const int row = index % n_orbitals, column = index / n_orbitals;
+    const std::int64_t row = index % n_orbitals, column = index / n_orbitals;
     const double weight = absorbed[packed_pair(row, column)] / n_electrons;
     one_electron.data[row + one_electron.ld * column] = row == column ? weight : 0.5 * weight;
 }
@@ -222,7 +223,7 @@ __global__ void pullback_pair_kernel(linalg::ConstMatrixView channel,
                                      linalg::MatrixView pair_kernel,
                                      int n_channels,
                                      int n_electrons) {
-    const int index = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t index = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (index >= n_channels * n_channels)
         return;
     const int p = index % n_channels, q = index / n_channels;
@@ -237,8 +238,8 @@ __global__ void pullback_pair_kernel(linalg::ConstMatrixView channel,
             continue;
         if (orbital != q_row && orbital != q_column)
             continue;
-        const int row = orbital == p_row ? p_column : p_row;
-        const int column = orbital == q_row ? q_column : q_row;
+        const std::int64_t row = orbital == p_row ? p_column : p_row;
+        const std::int64_t column = orbital == q_row ? q_column : q_row;
         correction += absorbed[packed_pair(row, column)] / n_electrons;
     }
     pair_kernel.data[p + pair_kernel.ld * q] =
@@ -248,8 +249,8 @@ __global__ void pullback_pair_kernel(linalg::ConstMatrixView channel,
 
 __global__ void product_diagonal(linalg::MatrixView values,
                                  const double* kernel,
-                                 const int* alpha,
-                                 const int* beta,
+                                 const std::int64_t* alpha,
+                                 const std::int64_t* beta,
                                  int n_alpha,
                                  int n_beta,
                                  int n_orbitals,
@@ -258,7 +259,7 @@ __global__ void product_diagonal(linalg::MatrixView values,
     const std::int64_t product = blockIdx.x * static_cast<std::int64_t>(blockDim.x) + threadIdx.x;
     if (product >= static_cast<std::int64_t>(n_alpha) * values.cols)
         return;
-    const int a = product % n_alpha, b = first_beta + product / n_alpha;
+    const std::int64_t a = product % n_alpha, b = first_beta + product / n_alpha;
     double result = 0;
     for (int p = 0; p < n_orbitals; ++p) {
         const int pp = p * (p + 1) / 2 + p;
@@ -274,8 +275,8 @@ __global__ void product_diagonal(linalg::MatrixView values,
                       kernel[pp + static_cast<std::int64_t>(n_channels) * qq];
         }
     }
-    for (int row = 1; row < n_orbitals; ++row) {
-        for (int column = 0; column < row; ++column) {
+    for (std::int64_t row = 1; row < n_orbitals; ++row) {
+        for (std::int64_t column = 0; column < row; ++column) {
             const int channel = row * (row + 1) / 2 + column;
             const int links = (alpha[static_cast<std::int64_t>(channel) * n_alpha + a] != 0) +
                               (beta[static_cast<std::int64_t>(channel) * n_beta + b] != 0);
@@ -292,14 +293,14 @@ __global__ void apply_orbital_generator(linalg::ConstMatrixView coefficients,
                                         int n_alpha,
                                         int n_beta,
                                         int n_orbitals,
-                                        const int* alpha,
-                                        const int* beta,
+                                        const std::int64_t* alpha,
+                                        const std::int64_t* beta,
                                         int parity) {
     const std::int64_t product = blockIdx.x * static_cast<std::int64_t>(blockDim.x) + threadIdx.x;
     if (product >= products)
         return;
     const auto row = product_row(product, n_alpha, n_beta, parity);
-    const int a = row.alpha, b = row.beta;
+    const std::int64_t a = row.alpha, b = row.beta;
     const auto column = row.column, rhs = row.rhs;
     const double self = coefficients.data[a + coefficients.ld * column];
     double value = 0;
@@ -393,9 +394,12 @@ std::int64_t source_tile_rows(Context& context,
 DirectCiSigma::SpinGraph::SpinGraph(Context& context,
                                     const mcscf::SpinConnections& source,
                                     int channels)
-    : topology(source), sources(context, static_cast<std::size_t>(source.n_strings()) * channels) {
-    std::vector<int> indices(sources.size(), 0);
-    const auto insert = [&](int channel, int row, int address, double sign) {
+    : topology(source),
+      sources(context,
+              core::checked_multiply(core::checked_index<std::size_t>(source.n_strings()),
+                                     core::checked_index<std::size_t>(channels))) {
+    std::vector<std::int64_t> indices(sources.size(), 0);
+    const auto insert = [&](int channel, std::int64_t row, std::int64_t address, double sign) {
         if (channel < 0 || channel >= channels || address < 0 || address >= source.n_strings() ||
             (sign != 1.0 && sign != -1.0))
             throw std::invalid_argument("invalid packed one-body channel link");
@@ -404,13 +408,13 @@ DirectCiSigma::SpinGraph::SpinGraph(Context& context,
             throw std::logic_error("multiple sources in a one-spin packed channel");
         entry = sign > 0 ? address + 1 : -(address + 1);
     };
-    for (int row = 0; row < source.n_strings(); ++row) {
+    for (std::int64_t row = 0; row < source.n_strings(); ++row) {
         for (const auto orbital : source.occupied(row))
             insert(orbital * (orbital + 1) / 2 + orbital, row, row, 1.0);
         for (const auto& link : source.singles(row))
             insert(link.pair, row, link.source, link.sign);
     }
-    context.copy_to_device(sources.data(), indices.data(), indices.size() * sizeof(int));
+    context.copy_to_device(sources.data(), indices.data(), indices.size() * sizeof(std::int64_t));
 }
 
 DirectCiSigma::DirectCiSigma(Context& context,
@@ -420,7 +424,7 @@ DirectCiSigma::DirectCiSigma(Context& context,
     : context_(&context), n_alpha_(source.n_alpha_strings()), n_beta_(source.n_beta_strings()),
       n_orbitals_(source.n_orbitals()), n_electrons_(source.alpha_connections().n_occupied() +
                                                      source.beta_connections_view().n_occupied()),
-      n_channels_(static_cast<int>(source.channel_kernel().rows())),
+      n_channels_(core::checked_index<std::int64_t>(source.channel_kernel().rows())),
       channel_capacity_(channel_capacity), exchange_parity_(exchange_parity),
       shared_spin_graph_(source.shared_spin_connections()),
       kernel_(context, static_cast<std::size_t>(n_channels_) * n_channels_),
@@ -657,7 +661,7 @@ void DirectCiSigma::contract_adjoint(linalg::ConstMatrixView left,
                                      linalg::MatrixView* image,
                                      linalg::MatrixView channel_kernel_adjoint) const {
     const nvtx3::scoped_range range{"ci.sigma_adjoint"};
-    const std::int64_t products = contraction_rows(static_cast<int>(left.cols / n_beta_));
+    const std::int64_t products = contraction_rows(static_cast<std::int64_t>(left.cols / n_beta_));
     const auto rows = scattered_.rows();
     const auto* alpha = alpha_->sources.data();
     const auto* beta = beta_->sources.data();
@@ -1093,7 +1097,8 @@ void DirectCiSigma::apply_generator(linalg::ConstMatrixView coefficients,
         throw std::invalid_argument("invalid CUDA direct-CI orbital generator views");
     const auto* alpha = alpha_->sources.data();
     const auto* beta = beta_->sources.data();
-    const std::int64_t products = contraction_rows(static_cast<int>(coefficients.cols / n_beta_));
+    const std::int64_t products =
+        contraction_rows(static_cast<std::int64_t>(coefficients.cols / n_beta_));
     apply_orbital_generator<<<grid_size(products), 256, 0, context_->stream()>>>(coefficients,
                                                                                  orbital_generator,
                                                                                  image,

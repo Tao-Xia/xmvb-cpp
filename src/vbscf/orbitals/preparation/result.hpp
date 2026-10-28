@@ -15,7 +15,7 @@ struct OrbitalPreparationResult {
     /**
    * @brief CSR-style offsets for nonzero active auxiliary coefficients grouped by AO basis row.
    */
-    std::vector<int> active_sparse_row_offsets;
+    std::vector<std::size_t> active_sparse_row_offsets;
 
     /**
    * @brief Active-orbital indices for nonzero active auxiliary coefficients.

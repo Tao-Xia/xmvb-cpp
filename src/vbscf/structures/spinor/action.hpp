@@ -26,7 +26,7 @@ struct Images {
 class Action {
   public:
     Action(Basis basis, Transform transform, Sigma sigma, std::size_t workspace_bytes);
-    int dimension() const noexcept {
+    Eigen::Index dimension() const noexcept {
         return basis_.size();
     }
     Images apply(const Eigen::Ref<const Eigen::MatrixXcd>& block) const;

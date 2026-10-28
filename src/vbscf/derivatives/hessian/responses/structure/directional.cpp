@@ -194,8 +194,8 @@ SelectedStateDirectionalStructureImages build_selected_structure_direction_from_
     const auto& selected_states = accepted.structure_state->selected_states;
     const int n_active_orbitals = input.orbital_preparation_input.n_active_orbitals;
     const int n_pairs = xmvb::integrals::packed_active_pair_count(n_active_orbitals);
-    const int n_alpha = selected_states.n_unique_alpha;
-    const int n_beta = selected_states.n_unique_beta;
+    const Eigen::Index n_alpha = selected_states.n_unique_alpha;
+    const Eigen::Index n_beta = selected_states.n_unique_beta;
     const int n_states = static_cast<int>(selected_states.states.size());
     const auto& prepared = accepted_point.prepared_active_space;
     const auto& accepted_overlap = prepared.orbital_result.active_orbital_overlap_matrix;
@@ -242,14 +242,16 @@ SelectedStateDirectionalStructureImages build_selected_structure_direction_from_
                 same_tile.delta_regular_hamiltonian() + same_tile.delta_singular_hamiltonian();
 
             if (alpha_channel) {
-                for (int beta_left = 0; beta_left < n_beta; beta_left += tile_extents.beta) {
+                for (Eigen::Index beta_left = 0; beta_left < n_beta;
+                     beta_left += tile_extents.beta) {
                     const int beta_left_end = std::min(n_beta, beta_left + tile_extents.beta);
                     const int beta_left_size = beta_left_end - beta_left;
                     Eigen::MatrixXd tile_hamiltonian =
                         Eigen::MatrixXd::Zero(same_tile.left_size(), n_states * beta_left_size);
                     Eigen::MatrixXd tile_overlap =
                         Eigen::MatrixXd::Zero(same_tile.left_size(), n_states * beta_left_size);
-                    for (int beta_right = 0; beta_right < n_beta; beta_right += tile_extents.beta) {
+                    for (Eigen::Index beta_right = 0; beta_right < n_beta;
+                         beta_right += tile_extents.beta) {
                         const int beta_right_end = std::min(n_beta, beta_right + tile_extents.beta);
                         const AcceptedSpinPairTile beta_tile = same_spin.beta_provider().build(
                             beta_left,
@@ -306,14 +308,15 @@ SelectedStateDirectionalStructureImages build_selected_structure_direction_from_
             }
 
             if (beta_channel) {
-                for (int alpha_left = 0; alpha_left < n_alpha; alpha_left += tile_extents.alpha) {
+                for (Eigen::Index alpha_left = 0; alpha_left < n_alpha;
+                     alpha_left += tile_extents.alpha) {
                     const int alpha_left_end = std::min(n_alpha, alpha_left + tile_extents.alpha);
                     const int alpha_left_size = alpha_left_end - alpha_left;
                     Eigen::MatrixXd tile_hamiltonian =
                         Eigen::MatrixXd::Zero(alpha_left_size, n_states * same_tile.left_size());
                     Eigen::MatrixXd tile_overlap =
                         Eigen::MatrixXd::Zero(alpha_left_size, n_states * same_tile.left_size());
-                    for (int alpha_right = 0; alpha_right < n_alpha;
+                    for (Eigen::Index alpha_right = 0; alpha_right < n_alpha;
                          alpha_right += tile_extents.alpha) {
                         const int alpha_right_end =
                             std::min(n_alpha, alpha_right + tile_extents.alpha);

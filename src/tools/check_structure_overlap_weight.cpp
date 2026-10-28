@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <algorithm>
 #include <cmath>
 #include <iomanip>
@@ -57,7 +58,7 @@ Options parse_arguments(int argc, char** argv) {
 
 double structure_upper_overlap_weight(const std::vector<double>& eigenvector_matrix,
                                       const std::vector<double>& eigenvalues,
-                                      int n_structures,
+                                      std::int64_t n_structures,
                                       int structure_row,
                                       int structure_column) {
     const double state_energy = eigenvalues.front();
@@ -71,7 +72,7 @@ double structure_upper_overlap_weight(const std::vector<double>& eigenvector_mat
 
 double evaluate_ground_state_energy(const std::vector<double>& hamiltonian_matrix,
                                     const std::vector<double>& overlap_matrix,
-                                    int n_structures) {
+                                    std::int64_t n_structures) {
     xmvb::linalg::GeneralizedEigensolver eigensolver;
     return eigensolver.solve_dense(hamiltonian_matrix, overlap_matrix, n_structures)
         .eigenvalues.front();
@@ -86,10 +87,10 @@ int main(int argc, char** argv) {
         xmvb::vb::ActiveSpaceGradientEvaluator evaluator;
         const auto result =
             evaluator.evaluate(load_result.input, load_result.nuclear_repulsion_energy);
-        const int n_structures = result.scf_result.n_structures;
+        const std::int64_t n_structures = result.scf_result.n_structures;
 
         std::vector<std::pair<double, int>> ranked_entries;
-        for (int row = 0; row < n_structures; ++row) {
+        for (std::int64_t row = 0; row < n_structures; ++row) {
             for (int column = 0; column <= row; ++column) {
                 const double weight =
                     structure_upper_overlap_weight(result.scf_result.eigenvector_matrix,
@@ -108,7 +109,8 @@ int main(int argc, char** argv) {
                 return left.second < right.second;
             });
 
-        const int n_to_report = std::min(options.count, static_cast<int>(ranked_entries.size()));
+        const int n_to_report =
+            std::min<std::int64_t>(options.count, static_cast<int>(ranked_entries.size()));
         std::cout << std::setprecision(12);
         std::cout << "initial_electronic_energy = " << result.scf_result.electronic_energy << '\n';
         std::cout << "finite_difference_step = " << options.step << '\n';

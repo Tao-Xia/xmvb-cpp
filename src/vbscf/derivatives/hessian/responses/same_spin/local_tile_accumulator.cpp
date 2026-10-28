@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "vbscf/derivatives/hessian/responses/same_spin/local_tile_accumulator_internal.hpp"
 
 #include <algorithm>
@@ -16,8 +17,8 @@ Eigen::MatrixXd pack_partner_panel_vectors(const SelectedStateDeterminantMatrice
                                            bool target_alpha,
                                            int panel_begin,
                                            int panel_size) {
-    const int target_size = target_alpha ? states.n_unique_alpha : states.n_unique_beta;
-    const int partner_size = target_alpha ? states.n_unique_beta : states.n_unique_alpha;
+    const Eigen::Index target_size = target_alpha ? states.n_unique_alpha : states.n_unique_beta;
+    const Eigen::Index partner_size = target_alpha ? states.n_unique_beta : states.n_unique_alpha;
     if (panel_begin < 0 || panel_size <= 0 || panel_begin + panel_size > target_size) {
         throw std::invalid_argument("partner-action panel bounds are invalid");
     }
@@ -87,10 +88,10 @@ void build_panel_accepted_weights(const SelectedStateDeterminantMatrices& states
                                   const std::vector<double>& energies,
                                   const SameSpinPartnerActionPanel& panel,
                                   bool target_alpha,
-                                  int left_begin,
-                                  int left_size,
-                                  int right_begin,
-                                  int right_size,
+                                  std::int64_t left_begin,
+                                  Eigen::Index left_size,
+                                  std::int64_t right_begin,
+                                  Eigen::Index right_size,
                                   SameSpinAcceptedTileWeights* weights) {
     if (left_begin < panel.begin || left_begin + left_size > panel.begin + panel.size) {
         throw std::logic_error("accepted weight tile is outside its partner-action panel");
@@ -294,10 +295,12 @@ void LocalSameSpinTileAccumulator::accumulate_beta_weight_response(
     const SameSpinDirectionalPairTileView& alpha_tile) {
     const Eigen::MatrixXd delta_hamiltonian =
         alpha_tile.delta_regular_hamiltonian() + alpha_tile.delta_singular_hamiltonian();
-    const int extent = std::min(selected_states_.n_unique_beta, tile_plan_.extents.beta);
+    const Eigen::Index extent =
+        std::min<Eigen::Index>(selected_states_.n_unique_beta, tile_plan_.extents.beta);
     SameSpinAcceptedTileWeights weights;
-    for (int right = 0; right < selected_states_.n_unique_beta; right += extent) {
-        const int right_size = std::min(extent, selected_states_.n_unique_beta - right);
+    for (Eigen::Index right = 0; right < selected_states_.n_unique_beta; right += extent) {
+        const Eigen::Index right_size =
+            std::min<Eigen::Index>(extent, selected_states_.n_unique_beta - right);
         const int n_states = static_cast<int>(selected_states_.states.size());
         Eigen::MatrixXd overlap_right(alpha_tile.left_size(), n_states * right_size);
         Eigen::MatrixXd hamiltonian_right(alpha_tile.left_size(), n_states * right_size);
@@ -310,8 +313,9 @@ void LocalSameSpinTileAccumulator::accumulate_beta_weight_response(
             hamiltonian_right.middleCols(static_cast<int>(state) * right_size, right_size)
                 .noalias() = delta_hamiltonian * coefficients_right;
         }
-        for (int left = 0; left < selected_states_.n_unique_beta; left += extent) {
-            const int left_size = std::min(extent, selected_states_.n_unique_beta - left);
+        for (Eigen::Index left = 0; left < selected_states_.n_unique_beta; left += extent) {
+            const Eigen::Index left_size =
+                std::min<Eigen::Index>(extent, selected_states_.n_unique_beta - left);
             weights.reset(left_size, right_size);
             for (std::size_t state = 0; state < selected_states_.states.size(); ++state) {
                 const auto& selected_state = selected_states_.states[state];
@@ -356,10 +360,12 @@ void LocalSameSpinTileAccumulator::accumulate_alpha_weight_response(
     const SameSpinDirectionalPairTileView& beta_tile) {
     const Eigen::MatrixXd delta_hamiltonian =
         beta_tile.delta_regular_hamiltonian() + beta_tile.delta_singular_hamiltonian();
-    const int extent = std::min(selected_states_.n_unique_alpha, tile_plan_.extents.alpha);
+    const Eigen::Index extent =
+        std::min<Eigen::Index>(selected_states_.n_unique_alpha, tile_plan_.extents.alpha);
     SameSpinAcceptedTileWeights weights;
-    for (int left = 0; left < selected_states_.n_unique_alpha; left += extent) {
-        const int left_size = std::min(extent, selected_states_.n_unique_alpha - left);
+    for (Eigen::Index left = 0; left < selected_states_.n_unique_alpha; left += extent) {
+        const Eigen::Index left_size =
+            std::min<Eigen::Index>(extent, selected_states_.n_unique_alpha - left);
         const int n_states = static_cast<int>(selected_states_.states.size());
         Eigen::MatrixXd overlap_left(left_size, n_states * beta_tile.right_size());
         Eigen::MatrixXd hamiltonian_left(left_size, n_states * beta_tile.right_size());
@@ -376,8 +382,9 @@ void LocalSameSpinTileAccumulator::accumulate_alpha_weight_response(
                             beta_tile.right_size())
                 .noalias() = coefficients_left * delta_hamiltonian;
         }
-        for (int right = 0; right < selected_states_.n_unique_alpha; right += extent) {
-            const int right_size = std::min(extent, selected_states_.n_unique_alpha - right);
+        for (Eigen::Index right = 0; right < selected_states_.n_unique_alpha; right += extent) {
+            const Eigen::Index right_size =
+                std::min<Eigen::Index>(extent, selected_states_.n_unique_alpha - right);
             weights.reset(left_size, right_size);
             for (std::size_t state = 0; state < selected_states_.states.size(); ++state) {
                 const auto& selected_state = selected_states_.states[state];

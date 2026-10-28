@@ -851,7 +851,7 @@ EigenResponseResult solve_generalized_eigen_response(
         candidate_absolute_targets[state] = options.relative_residual_tolerance * beta_first[state];
     }
 
-    for (int iteration = 0;
+    for (Eigen::Index iteration = 0;
          iteration < options.max_iterations &&
          !std::all_of(
              converged.begin(), converged.end(), [](bool value) { return value; });
@@ -1759,7 +1759,7 @@ EigenSubspaceResponseResult solve_equal_weight_generalized_eigen_subspace_respon
         residual_norms[state] = beta_first[state];
     }
 
-    for (int iteration = 0;
+    for (Eigen::Index iteration = 0;
          iteration < options.max_iterations &&
          !std::all_of(
              converged.begin(), converged.end(), [](bool value) { return value; });

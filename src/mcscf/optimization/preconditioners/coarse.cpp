@@ -1,3 +1,4 @@
+#include "core/index.hpp"
 #include "mcscf/optimization/preconditioners/coarse.hpp"
 
 #include <algorithm>
@@ -14,7 +15,7 @@
 
 namespace xmvb::mcscf {
 
-CoarsePreconditioner::CoarsePreconditioner(int dimension,
+CoarsePreconditioner::CoarsePreconditioner(Eigen::Index dimension,
                                            int capacity,
                                            double lindep,
                                            double action_accuracy)
@@ -22,7 +23,7 @@ CoarsePreconditioner::CoarsePreconditioner(int dimension,
     if (dimension <= 0 || capacity < 0 || !(lindep > 0) || !std::isfinite(action_accuracy) ||
         action_accuracy < 0)
         throw std::invalid_argument("invalid coarse preconditioner dimensions");
-    basis_.resize(dimension, std::min(dimension, capacity));
+    basis_.resize(dimension, std::min<Eigen::Index>(dimension, capacity));
     images_.resize(dimension, basis_.cols());
     metrics_.resize(dimension, basis_.cols());
     hessian_projection_ = Eigen::MatrixXd::Zero(basis_.cols(), basis_.cols());
@@ -185,7 +186,7 @@ Eigen::VectorXd CoarsePreconditioner::apply(
     return fine + v * (a - b);
 }
 
-SchurSpectrum CoarsePreconditioner::schur_spectrum(int no) const {
+SchurSpectrum CoarsePreconditioner::schur_spectrum(Eigen::Index no) const {
     if (no <= 0 || no >= basis_.rows())
         throw std::invalid_argument("invalid sampled Schur orbital dimension");
     std::vector<int> oi, si;
@@ -264,7 +265,7 @@ SchurSpectrum CoarsePreconditioner::schur_spectrum(int no) const {
 }
 
 CoarseSpectrum CoarsePreconditioner::orbital_spectrum(
-    int no, const std::function<Eigen::VectorXd(const Eigen::VectorXd&)>& inverse) const {
+    Eigen::Index no, const std::function<Eigen::VectorXd(const Eigen::VectorXd&)>& inverse) const {
     if (no <= 0 || no > basis_.rows())
         throw std::invalid_argument("invalid sampled orbital dimension");
     std::vector<int> indices;

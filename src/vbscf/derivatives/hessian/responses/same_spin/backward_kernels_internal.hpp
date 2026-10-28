@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include "mcscf/ci/string_table.hpp"
 
 #include <utility>
@@ -30,7 +32,7 @@ void accumulate_spin_matrix_backward(
     const Eigen::MatrixXd& hamiltonian_weight_matrix,
     const Eigen::MatrixXd& overlap_weight_matrix,
     const Eigen::MatrixXd& partner_total_transfer_matrix,
-    int n_unique_determinants,
+    std::int64_t n_unique_determinants,
     int n_active_orbitals,
     Eigen::MatrixXd* active_one_electron_gradient,
     std::vector<double>* active_orbital_overlap_gradient,
@@ -57,7 +59,7 @@ void accumulate_spin_local_matrix_backward(
     const Eigen::MatrixXd& delta_hamiltonian_weight_matrix,
     const Eigen::MatrixXd& delta_overlap_weight_matrix,
     const Eigen::MatrixXd& delta_partner_total_transfer_matrix,
-    int n_unique_determinants,
+    std::int64_t n_unique_determinants,
     int n_active_orbitals,
     const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron_matrix,
     const xmvb::integrals::ActiveSpaceTwoElectronResult& active_space_two_electron_result,
@@ -98,9 +100,9 @@ void accumulate_accepted_pair_weight_response_tile(
     const xmvb::mcscf::StringTable& unique_determinants,
     const std::vector<SpinDeterminantPairEvaluation>& accepted_pairs,
     const SameSpinAcceptedTileWeights& directional_weights,
-    int left_begin,
-    int right_begin,
-    int n_unique,
+    std::int64_t left_begin,
+    std::int64_t right_begin,
+    std::int64_t n_unique,
     int n_active_orbitals,
     Eigen::MatrixXd* active_one_electron_gradient,
     std::vector<double>* active_orbital_overlap_gradient,

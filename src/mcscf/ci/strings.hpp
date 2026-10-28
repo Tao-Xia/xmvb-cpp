@@ -8,6 +8,8 @@
 #include <span>
 #include <vector>
 
+#include "mcscf/ci/product_index.hpp"
+
 namespace xmvb::mcscf {
 
 /** @brief Increasing occupied orbitals decoded lazily from one spin string. */
@@ -66,14 +68,14 @@ class SpinStrings {
     SpinStrings(int n_orbitals, std::span<const std::uint64_t> masks);
     SpinStrings(int n_orbitals, const std::vector<std::vector<int>>& occupations);
     const std::vector<std::uint64_t>& masks() const noexcept;
-    int index(std::uint64_t mask) const;
+    StringIndex index(std::uint64_t mask) const;
     /** @brief Map a certified colex rank emitted by a fixed-particle generator. */
-    int index_from_rank(std::uint64_t rank) const;
-    int size() const noexcept;
+    StringIndex index_from_rank(std::uint64_t rank) const;
+    StringIndex size() const noexcept;
     int orbitals() const noexcept;
     int electrons() const noexcept;
     bool complete() const noexcept;
-    OccupiedOrbitals occupied(int string) const noexcept {
+    OccupiedOrbitals occupied(StringIndex string) const noexcept {
         return OccupiedOrbitals(masks()[string]);
     }
     /** @brief Materialize only for consumers requiring explicit submatrix indices. */

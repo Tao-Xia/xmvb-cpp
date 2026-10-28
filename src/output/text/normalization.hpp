@@ -6,6 +6,12 @@
 
 namespace xmvb::output {
 
+/** @brief Exact Coulson-Chirgwin weights from raw C and its cached M*C.
+ * No structure normalization, overlap matrix or extra physical action is needed.
+ */
+Eigen::VectorXd coulson_chirgwin_weights(const Eigen::Ref<const Eigen::VectorXd>& coefficients,
+                                         const Eigen::Ref<const Eigen::VectorXd>& overlap_product);
+
 /** @brief Exact norms shared by all states in one structure report. */
 struct StructureNorms {
     Eigen::VectorXd values;

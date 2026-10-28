@@ -34,7 +34,7 @@ constexpr Eigen::Index kMaximumOrbitalCouplingBatchColumns = 8;
 
 Eigen::Index bounded_orbital_coupling_width(Eigen::Index requested,
                                             const OrbitalPreparationInput& input,
-                                            int n_structures,
+                                            Eigen::Index n_structures,
                                             int n_states) {
     const std::size_t n_bf = input.n_basis_functions;
     const std::size_t n_active = input.n_active_orbitals;
@@ -315,7 +315,7 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch_impl(
         const auto outer_batch_start = std::chrono::steady_clock::now();
         const int n_selected_states =
             static_cast<int>(accepted_point_context_->selected_state_indices.size());
-        const int n_structures = accepted_point_context_->n_structures;
+        const Eigen::Index n_structures = accepted_point_context_->n_structures;
         Eigen::MatrixXd delta_hamiltonian_selected;
         Eigen::MatrixXd delta_overlap_selected;
         if (components.structure_response) {

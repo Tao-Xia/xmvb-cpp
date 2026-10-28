@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/index.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -16,9 +18,9 @@ namespace xmvb::cuda {
  */
 struct ProductColumnPattern {
     bool full = false;
-    int size = 0;
-    std::vector<int> rows;
-    Buffer<int> device_rows;
+    std::int64_t size = 0;
+    std::vector<std::int64_t> rows;
+    Buffer<std::int64_t> device_rows;
 };
 
 /** Device counterpart of CPU ColumnTile. One packed allocation stores all
@@ -32,7 +34,7 @@ struct ProductColumns {
     std::vector<std::int64_t> offsets;
     Buffer<CiColumnMap> maps;
     Matrix<double> values;
-    int max_rows = 0;
+    std::int64_t max_rows = 0;
 
     std::size_t bytes() const noexcept;
     linalg::MatrixView column(int beta);
@@ -65,8 +67,8 @@ void read_product_columns(Context& context,
                           std::span<const ProductColumns* const> panels,
                           int extent,
                           int lane,
-                          std::span<const int> betas,
-                          std::span<const int> rows,
+                          std::span<const std::int64_t> betas,
+                          std::span<const std::int64_t> rows,
                           linalg::MatrixView destination);
 
 /** Bounded metadata cache for repeated reads of borrowed compact panels.
@@ -85,8 +87,8 @@ class ProductColumnReadCache {
     ProductColumnReadCache(const ProductColumnReadCache&) = delete;
     ProductColumnReadCache& operator=(const ProductColumnReadCache&) = delete;
     void read(int lane,
-              std::span<const int> betas,
-              std::span<const int> rows,
+              std::span<const std::int64_t> betas,
+              std::span<const std::int64_t> rows,
               linalg::MatrixView destination);
     std::size_t bytes() const noexcept;
     std::size_t peak_bytes() const noexcept;
@@ -113,7 +115,7 @@ class ProductImages {
         return complete_;
     }
     int size() const noexcept {
-        return static_cast<int>(panels_.size());
+        return core::checked_index<std::int64_t>(panels_.size());
     }
     std::size_t bytes() const noexcept {
         return bytes_;

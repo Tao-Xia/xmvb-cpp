@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "cuda/vb/tangent.hpp"
 
 #include <algorithm>
@@ -31,7 +32,7 @@ void device_copy(Context& context, double* destination, const double* source, st
 } // namespace
 
 SingleStateCiTangent::SingleStateCiTangent(Context& context,
-                                           int structures,
+                                           std::int64_t structures,
                                            linalg::ConstMatrixView selected_state,
                                            linalg::ConstMatrixView selected_hamiltonian_image,
                                            linalg::ConstMatrixView selected_metric_image,
@@ -59,17 +60,18 @@ SingleStateCiTangent::SingleStateCiTangent(Context& context,
     device_copy(context, metric_.data(), selected_metric_image_.data, structures_);
     double selected_norm = 0.0;
     check_cublas(
-        cublasDdot(
+        cublasDdot_64(
             context.blas(), structures_, selected_.data(), 1, metric_.data(), 1, &selected_norm),
         "CI tangent selected metric norm");
     const double metric_tolerance =
-        1.0e3 * std::numeric_limits<double>::epsilon() * std::max(1, structures_);
+        1.0e3 * std::numeric_limits<double>::epsilon() * std::max<std::int64_t>(1, structures_);
     if (!std::isfinite(selected_norm) || std::abs(selected_norm - 1.0) > metric_tolerance)
         throw std::invalid_argument("single-state CI tangent requires S-normalized selected state");
     device_copy(context, reflector_.data(), metric_.data(), structures_);
     double metric_image_norm = 0.0;
-    check_cublas(cublasDnrm2(context.blas(), structures_, reflector_.data(), 1, &metric_image_norm),
-                 "CI tangent constraint norm");
+    check_cublas(
+        cublasDnrm2_64(context.blas(), structures_, reflector_.data(), 1, &metric_image_norm),
+        "CI tangent constraint norm");
     double first = 0.0;
     context.copy_to_host(&first, reflector_.data(), sizeof(double));
     if (!(metric_image_norm > 0.0) || !std::isfinite(metric_image_norm) || !std::isfinite(first))
@@ -80,7 +82,7 @@ SingleStateCiTangent::SingleStateCiTangent(Context& context,
     check_cuda(cudaGetLastError(), "CI tangent reflector kernel");
     double squared = 0.0;
     check_cublas(
-        cublasDdot(
+        cublasDdot_64(
             context.blas(), structures_, reflector_.data(), 1, reflector_.data(), 1, &squared),
         "CI tangent reflector norm");
     if (!(squared > 0.0) || !std::isfinite(squared))
@@ -110,12 +112,12 @@ void SingleStateCiTangent::project_coordinates(linalg::ConstMatrixView ambient,
     device_copy(*context_, work_.data(), ambient.data, structures_);
     double inner = 0.0;
     check_cublas(
-        cublasDdot(context_->blas(), structures_, reflector_.data(), 1, work_.data(), 1, &inner),
+        cublasDdot_64(context_->blas(), structures_, reflector_.data(), 1, work_.data(), 1, &inner),
         "CI tangent project dot");
     const double factor = -reflector_factor_ * inner;
-    check_cublas(
-        cublasDaxpy(context_->blas(), structures_, &factor, reflector_.data(), 1, work_.data(), 1),
-        "CI tangent project reflector");
+    check_cublas(cublasDaxpy_64(
+                     context_->blas(), structures_, &factor, reflector_.data(), 1, work_.data(), 1),
+                 "CI tangent project reflector");
     device_copy(*context_, coordinates.data, work_.data() + 1, tangent_size());
 }
 
@@ -128,19 +130,19 @@ void SingleStateCiTangent::expand_coordinates(linalg::ConstMatrixView coordinate
     device_copy(*context_, ambient.data + 1, coordinates.data, tangent_size());
     double inner = 0.0;
     check_cublas(
-        cublasDdot(context_->blas(), structures_, reflector_.data(), 1, ambient.data, 1, &inner),
+        cublasDdot_64(context_->blas(), structures_, reflector_.data(), 1, ambient.data, 1, &inner),
         "CI tangent expand dot");
     const double factor = -reflector_factor_ * inner;
-    check_cublas(
-        cublasDaxpy(context_->blas(), structures_, &factor, reflector_.data(), 1, ambient.data, 1),
-        "CI tangent expand reflector");
+    check_cublas(cublasDaxpy_64(
+                     context_->blas(), structures_, &factor, reflector_.data(), 1, ambient.data, 1),
+                 "CI tangent expand reflector");
 }
 
 void SingleStateCiTangent::coefficient_response_coordinates(linalg::ConstMatrixView coordinates,
                                                             linalg::MatrixView response) const {
     expand_coordinates(coordinates, response);
     const double factor = 1.0 / coordinate_scale_;
-    check_cublas(cublasDscal(context_->blas(), structures_, &factor, response.data, 1),
+    check_cublas(cublasDscal_64(context_->blas(), structures_, &factor, response.data, 1),
                  "CI tangent coefficient scale");
 }
 
@@ -149,8 +151,9 @@ double SingleStateCiTangent::maximum_coefficient_component_coordinates(
     expand_coordinates(coordinates, ambient_.view());
     const double inverse_scale = 1.0 / coordinate_scale_;
     if (actions_.maximum_component) {
-        check_cublas(cublasDscal(context_->blas(), structures_, &inverse_scale, ambient_.data(), 1),
-                     "CI tangent maximum coefficient scale");
+        check_cublas(
+            cublasDscal_64(context_->blas(), structures_, &inverse_scale, ambient_.data(), 1),
+            "CI tangent maximum coefficient scale");
         return actions_.maximum_component(ambient_.view());
     }
     int one_based = 0;
@@ -184,34 +187,34 @@ void SingleStateCiTangent::apply_inverse_augmented_hessian_diagonal(
         // FULL uses P_L R P_R, not a Schur inverse of R: the signed carrier
         // diagonal can make R indefinite. This is the CPU FULL branch exactly.
         double selected_rhs = 0.0;
-        check_cublas(cublasDdot(context_->blas(),
-                                structures_,
-                                selected_.data(),
-                                1,
-                                ambient_.data(),
-                                1,
-                                &selected_rhs),
+        check_cublas(cublasDdot_64(context_->blas(),
+                                   structures_,
+                                   selected_.data(),
+                                   1,
+                                   ambient_.data(),
+                                   1,
+                                   &selected_rhs),
                      "CI tangent carrier right constraint dot");
         device_copy(*context_, work_.data(), ambient_.data(), structures_);
         const double negative = -selected_rhs;
         check_cublas(
-            cublasDaxpy(
+            cublasDaxpy_64(
                 context_->blas(), structures_, &negative, metric_.data(), 1, work_.data(), 1),
             "CI tangent carrier right constraint projection");
         actions_.augmented_inverse(work_.view(), eigenvalue, hessian_.view());
         double left_weight = 0.0;
         check_cublas(
-            cublasDdot(
+            cublasDdot_64(
                 context_->blas(), structures_, metric_.data(), 1, hessian_.data(), 1, &left_weight),
             "CI tangent carrier left constraint dot");
         const double minus_left = -left_weight;
-        check_cublas(cublasDaxpy(context_->blas(),
-                                 structures_,
-                                 &minus_left,
-                                 selected_.data(),
-                                 1,
-                                 hessian_.data(),
-                                 1),
+        check_cublas(cublasDaxpy_64(context_->blas(),
+                                    structures_,
+                                    &minus_left,
+                                    selected_.data(),
+                                    1,
+                                    hessian_.data(),
+                                    1),
                      "CI tangent carrier left constraint projection");
         project_coordinates(hessian_.view(), direction);
         return;
@@ -222,18 +225,19 @@ void SingleStateCiTangent::apply_inverse_augmented_hessian_diagonal(
     actions_.augmented_inverse(metric_.view(), eigenvalue, ambient_.view());
     double numerator = 0.0, denominator = 0.0;
     check_cublas(
-        cublasDdot(
+        cublasDdot_64(
             context_->blas(), structures_, metric_.data(), 1, hessian_.data(), 1, &numerator),
         "CI tangent Schur numerator");
     check_cublas(
-        cublasDdot(
+        cublasDdot_64(
             context_->blas(), structures_, metric_.data(), 1, ambient_.data(), 1, &denominator),
         "CI tangent Schur denominator");
     if (!(denominator > 0.0) || !std::isfinite(denominator) || !std::isfinite(numerator))
         throw std::runtime_error("CI tangent AH constraint model is not positive definite");
     const double factor = -numerator / denominator;
     check_cublas(
-        cublasDaxpy(context_->blas(), structures_, &factor, ambient_.data(), 1, hessian_.data(), 1),
+        cublasDaxpy_64(
+            context_->blas(), structures_, &factor, ambient_.data(), 1, hessian_.data(), 1),
         "CI tangent left constraint projection");
     project_coordinates(hessian_.view(), direction);
 }
@@ -257,7 +261,7 @@ void SingleStateCiTangent::apply_images_coordinates(linalg::ConstMatrixView coor
     actions_.hamiltonian_metric(ambient_.view(), hessian_.view(), metric_.view());
     const double minus_energy = -selected_energy_;
     check_cublas(
-        cublasDaxpy(
+        cublasDaxpy_64(
             context_->blas(), structures_, &minus_energy, metric_.data(), 1, hessian_.data(), 1),
         "CI tangent shifted Hessian");
     project_coordinates(hessian_.view(), hessian_image);
@@ -268,16 +272,16 @@ void SingleStateCiTangent::origin_gradient(linalg::MatrixView gradient) const {
     check_coordinates(gradient);
     device_copy(*context_, hessian_.data(), selected_hamiltonian_image_.data, structures_);
     const double minus_energy = -selected_energy_;
-    check_cublas(cublasDaxpy(context_->blas(),
-                             structures_,
-                             &minus_energy,
-                             selected_metric_image_.data,
-                             1,
-                             hessian_.data(),
-                             1),
+    check_cublas(cublasDaxpy_64(context_->blas(),
+                                structures_,
+                                &minus_energy,
+                                selected_metric_image_.data,
+                                1,
+                                hessian_.data(),
+                                1),
                  "CI tangent origin residual");
     const double scale = coordinate_scale_;
-    check_cublas(cublasDscal(context_->blas(), structures_, &scale, hessian_.data(), 1),
+    check_cublas(cublasDscal_64(context_->blas(), structures_, &scale, hessian_.data(), 1),
                  "CI tangent origin gradient scale");
     project_coordinates(hessian_.view(), gradient);
 }

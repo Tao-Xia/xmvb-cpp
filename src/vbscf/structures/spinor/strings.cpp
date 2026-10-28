@@ -1,4 +1,5 @@
 #include "vbscf/structures/spinor/strings.hpp"
+#include "mcscf/ci/strings.hpp"
 
 #include <algorithm>
 #include <complex>
@@ -7,20 +8,6 @@
 
 namespace xmvb::vb::spinor {
 namespace {
-
-std::size_t binomial(int n, int k) {
-    k = std::min(k, n - k);
-    std::uint64_t value = 1;
-    const std::uint64_t index_limit = static_cast<std::uint64_t>(std::numeric_limits<int>::max());
-    for (int i = 1; i <= k; ++i) {
-        // Before this step value <= INT_MAX, so multiplying by at most 63 is
-        // safe in uint64_t. Once larger, the precise count is unnecessary.
-        value = value * static_cast<unsigned>(n - k + i) / static_cast<unsigned>(i);
-        if (value > index_limit)
-            return static_cast<std::size_t>(index_limit + 1);
-    }
-    return static_cast<std::size_t>(value);
-}
 
 template <typename Callback> void for_each_mask(int n, int k, Callback&& callback) {
     if (k == 0) {
@@ -53,9 +40,9 @@ Strings::Strings(int n_spinor, int n_electrons, int n_a, std::size_t max_states)
         throw std::invalid_argument("spinor strings require 0 <= electrons <= spinors <= 63 and "
                                     "0 <= n_a <= n_spinor");
     }
-    const std::size_t count = binomial(n_spinor, n_electrons);
-    if (count > max_states || count > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-        throw std::length_error("complete spinor carrier exceeds max_states or int index range");
+    const std::size_t count = mcscf::string_count(n_spinor, n_electrons);
+    if (count > max_states) {
+        throw std::length_error("complete spinor carrier exceeds max_states");
     }
     masks_.reserve(count);
     index_by_mask_.reserve(count);
@@ -67,7 +54,7 @@ Strings::Strings(int n_spinor, int n_electrons, int n_a, std::size_t max_states)
         for_each_mask(n_a, occupied_a, [&](std::uint64_t a_mask) {
             for_each_mask(n_b, occupied_b, [&](std::uint64_t b_mask) {
                 const std::uint64_t mask = a_mask | (b_mask << n_a);
-                index_by_mask_.emplace(mask, static_cast<int>(masks_.size()));
+                index_by_mask_.emplace(mask, core::checked_index<Eigen::Index>(masks_.size()));
                 masks_.push_back(mask);
             });
         });
@@ -77,7 +64,7 @@ Strings::Strings(int n_spinor, int n_electrons, int n_a, std::size_t max_states)
     }
 }
 
-int Strings::index(std::uint64_t mask) const {
+Eigen::Index Strings::index(std::uint64_t mask) const {
     const auto found = index_by_mask_.find(mask);
     if (found == index_by_mask_.end()) {
         throw std::invalid_argument("occupation mask is absent from spinor carrier");
@@ -85,7 +72,7 @@ int Strings::index(std::uint64_t mask) const {
     return found->second;
 }
 
-int Strings::substitution(int source, int created, int removed, int* sign) const {
+Eigen::Index Strings::substitution(Eigen::Index source, int created, int removed, int* sign) const {
     if (source < 0 || source >= dimension() || created < 0 || created >= n_spinor_ || removed < 0 ||
         removed >= n_spinor_ || sign == nullptr) {
         throw std::invalid_argument("invalid spinor substitution source or orbital");

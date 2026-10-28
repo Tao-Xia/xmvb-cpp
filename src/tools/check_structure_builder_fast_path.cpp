@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -118,7 +119,7 @@ void print_largest_differences(const std::string& label,
             return left.second < right.second;
         });
 
-    const int n_to_report = std::min(count, static_cast<int>(ranked_entries.size()));
+    const int n_to_report = std::min<std::int64_t>(count, static_cast<int>(ranked_entries.size()));
     for (int report_index = 0; report_index < n_to_report; ++report_index) {
         const int flat_index = ranked_entries[report_index].second;
         std::cout << label << "_diff[" << report_index << "] index=" << flat_index
@@ -176,7 +177,7 @@ int main(int argc, char** argv) {
             load_result.input.structure_data.n_structures,
             same_spin_pair_cache);
         const auto fast_end = std::chrono::high_resolution_clock::now();
-        const int n_structures = load_result.input.structure_data.n_structures;
+        const std::int64_t n_structures = load_result.input.structure_data.n_structures;
         Eigen::MatrixXd trial_vectors(n_structures, 3);
         for (int column = 0; column < trial_vectors.cols(); ++column) {
             for (int row = 0; row < trial_vectors.rows(); ++row) {
@@ -262,10 +263,10 @@ int main(int argc, char** argv) {
             prepared_active_space.active_space_two_electron_result,
             load_result.input.orbital_preparation_input.n_active_orbitals);
         const auto compact_action_setup_end = std::chrono::high_resolution_clock::now();
-        const int action_benchmark_repeats = std::max(
+        const int action_benchmark_repeats = std::max<std::int64_t>(
             1,
-            std::min(256,
-                     static_cast<int>(2.0e9L / std::max(1.0L, direct_ci_plan.kronecker_flops))));
+            std::min<std::int64_t>(
+                256, static_cast<int>(2.0e9L / std::max(1.0L, direct_ci_plan.kronecker_flops))));
         const auto compact_action_start = std::chrono::high_resolution_clock::now();
         xmvb::vb::StructureActionResult compact_action_result;
         for (int repeat = 0; repeat < action_benchmark_repeats; ++repeat) {
@@ -291,7 +292,7 @@ int main(int argc, char** argv) {
                                                                   std::move(images.overlap)};
             };
         const xmvb::linalg::DavidsonOptions davidson_options{
-            1, 2 * n_structures, std::min(n_structures, 128), 1.0, 1.0e-8, 1.0e-8};
+            1, 2 * n_structures, std::min<std::int64_t>(n_structures, 128), 1.0, 1.0e-8, 1.0e-8};
         const auto davidson_start = std::chrono::high_resolution_clock::now();
         const auto davidson = eigensolver.solve_davidson(davidson_action,
                                                          compact_diagonal.hamiltonian,
@@ -306,7 +307,7 @@ int main(int argc, char** argv) {
         const Eigen::MatrixXd selected_vector = dense_eigenvectors.leftCols(1);
         Eigen::MatrixXd delta_hamiltonian_selected(n_structures, 1);
         Eigen::MatrixXd delta_overlap_selected(n_structures, 1);
-        for (int structure = 0; structure < n_structures; ++structure) {
+        for (std::int64_t structure = 0; structure < n_structures; ++structure) {
             delta_hamiltonian_selected(structure, 0) =
                 std::sin(0.017 * static_cast<double>(structure + 1));
             delta_overlap_selected(structure, 0) =
@@ -332,7 +333,7 @@ int main(int argc, char** argv) {
             dense_eigenvectors.transpose() * delta_overlap_selected;
         Eigen::VectorXd spectral_rotation = Eigen::VectorXd::Zero(n_structures);
         spectral_rotation[0] = -0.5 * transformed_overlap[0];
-        for (int state = 1; state < n_structures; ++state) {
+        for (std::int64_t state = 1; state < n_structures; ++state) {
             spectral_rotation[state] =
                 (transformed_hamiltonian[state] - selected_energy[0] * transformed_overlap[state]) /
                 (selected_energy[0] - dense_eigenpairs.eigenvalues[state]);

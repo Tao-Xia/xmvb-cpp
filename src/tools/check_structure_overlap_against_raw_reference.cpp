@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <algorithm>
 #include <cmath>
 #include <iomanip>
@@ -69,7 +70,7 @@ double max_abs_difference(const std::vector<double>& left, const std::vector<dou
 
 std::vector<xmvb::vb::OrbitalPair>
 build_active_pairs_for_structure(const xmvb::vb::RawStructureData& raw_structure_data,
-                                 int structure_index) {
+                                 std::int64_t structure_index) {
     const int n_inactive_doubly_occupied_orbitals =
         (raw_structure_data.n_total_electrons - raw_structure_data.n_active_electrons) / 2;
     const int n_open_shell_electrons = raw_structure_data.spin_multiplicity - 1;
@@ -101,15 +102,15 @@ build_raw_raw_structure_overlap_matrix(const xmvb::vb::RawStructureData& raw_str
     const Eigen::Map<const Matrix> active_overlap(
         active_overlap_matrix.data(), n_active_orbitals, n_active_orbitals);
     xmvb::vb::DeterminantOverlapResolver overlap_resolver;
-    const int n_structures = raw_structure_data.n_structures;
+    const std::int64_t n_structures = raw_structure_data.n_structures;
     std::vector<std::vector<xmvb::vb::RawStructureDeterminantTerm>> structure_terms(n_structures);
-    for (int structure_index = 0; structure_index < n_structures; ++structure_index) {
+    for (std::int64_t structure_index = 0; structure_index < n_structures; ++structure_index) {
         structure_terms[structure_index] = xmvb::vb::enumerate_raw_determinant_terms(
             build_active_pairs_for_structure(raw_structure_data, structure_index));
     }
 
     std::vector<double> overlap_matrix(n_structures * n_structures, 0.0);
-    for (int left_structure = 0; left_structure < n_structures; ++left_structure) {
+    for (std::int64_t left_structure = 0; left_structure < n_structures; ++left_structure) {
         for (int right_structure = 0; right_structure <= left_structure; ++right_structure) {
             const double overlap_value =
                 xmvb::vb::raw_structure_overlap(structure_terms[left_structure],

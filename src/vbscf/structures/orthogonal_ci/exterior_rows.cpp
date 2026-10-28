@@ -1,6 +1,8 @@
+#include <cstdint>
 #include "vbscf/structures/orthogonal_ci/exterior_rows.hpp"
 
 #include <algorithm>
+#include "core/index.hpp"
 #include <array>
 #include <bit>
 #include <memory>
@@ -30,7 +32,7 @@ ExteriorRowPlan::ExteriorRowPlan(int n_orbitals,
             rank += choose(orbital, k);
             mask &= mask - 1;
         }
-        column_ranks_[column] = static_cast<int>(rank);
+        column_ranks_[column] = core::checked_index<std::int64_t>(rank);
     }
 }
 
@@ -40,7 +42,7 @@ std::uint64_t ExteriorRowPlan::choose(int n, int k) const noexcept {
 
 ExteriorRowPlan::Rows ExteriorRowPlan::apply(const Eigen::MatrixXd& upper,
                                              std::span<const std::uint64_t> masks,
-                                             std::span<const int> rows) const {
+                                             std::span<const Eigen::Index> rows) const {
     profiling::ScopedPhase phase(profiling::Phase::CiTransformRight);
     const std::size_t dimension = masks.size();
     // A worker owns contiguous rows. Writing a column-major result here would

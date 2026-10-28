@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "mcscf/ci/spin.hpp"
 
 #include <algorithm>
@@ -33,8 +34,8 @@ Eigen::MatrixXd SpinSpace::apply_squared(const Eigen::Ref<const Eigen::MatrixXd>
     if (!raised_alpha_)
         return result;
     Eigen::MatrixXd raised = Eigen::MatrixXd::Zero(raised_alpha_->size(), raised_beta_->size());
-    for (int b = 0; b < beta_.size(); ++b)
-        for (int a = 0; a < alpha_.size(); ++a) {
+    for (std::int64_t b = 0; b < beta_.size(); ++b)
+        for (std::int64_t a = 0; a < alpha_.size(); ++a) {
             const auto am = alpha_.masks()[a], bm = beta_.masks()[b];
             auto transferable = bm & ~am;
             while (transferable) {
@@ -46,8 +47,8 @@ Eigen::MatrixXd SpinSpace::apply_squared(const Eigen::Ref<const Eigen::MatrixXd>
             }
         }
     // The lowering operation is the exact transpose of the same raising links.
-    for (int b = 0; b < beta_.size(); ++b)
-        for (int a = 0; a < alpha_.size(); ++a) {
+    for (std::int64_t b = 0; b < beta_.size(); ++b)
+        for (std::int64_t a = 0; a < alpha_.size(); ++a) {
             const auto am = alpha_.masks()[a], bm = beta_.masks()[b];
             auto transferable = bm & ~am;
             while (transferable) {
@@ -62,12 +63,12 @@ Eigen::MatrixXd SpinSpace::apply_squared(const Eigen::Ref<const Eigen::MatrixXd>
     return result;
 }
 
-int SpinSpace::dimension(int spin) const {
+std::size_t SpinSpace::dimension(int spin) const {
     const int electrons = na_ + nb_;
     if (spin < std::abs(na_ - nb_) || spin > std::min(electrons, 2 * n_ - electrons) ||
         (spin - electrons) % 2)
         throw std::invalid_argument("requested total spin is absent from the CI space");
-    const int a = (electrons + spin) / 2, b = electrons - a;
+    const std::int64_t a = (electrons + spin) / 2, b = electrons - a;
     const auto product = [&](int p, int q) {
         const auto x = string_count(n_, p), y = string_count(n_, q);
         if (y && x > std::numeric_limits<std::size_t>::max() / y)
@@ -75,9 +76,7 @@ int SpinSpace::dimension(int spin) const {
         return x * y;
     };
     const auto count = product(a, b) - product(a + 1, b - 1);
-    if (count > static_cast<std::size_t>(std::numeric_limits<int>::max()))
-        throw std::length_error("pure-spin dimension exceeds index range");
-    return static_cast<int>(count);
+    return count;
 }
 
 Eigen::MatrixXd SpinSpace::project(const Eigen::Ref<const Eigen::MatrixXd>& x, int spin) const {

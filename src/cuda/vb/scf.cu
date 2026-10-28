@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "cuda/vb/scf.hpp"
 
 #include <algorithm>
@@ -55,13 +56,12 @@ Matrix<double> clone(Context& c, View x) {
 void add(Context& c, Out y, View x, double factor = 1.0) {
     for (int j = 0; j < x.cols; ++j)
         check_cublas(
-            cublasDaxpy(
-                c.blas(), blas_int(x.rows), &factor, x.column(j).data, 1, y.column(j).data, 1),
+            cublasDaxpy_64(c.blas(), x.rows, &factor, x.column(j).data, 1, y.column(j).data, 1),
             "SCF vector sum");
 }
 void scale(Context& c, Out x, double factor) {
     for (int j = 0; j < x.cols; ++j)
-        check_cublas(cublasDscal(c.blas(), blas_int(x.rows), &factor, x.column(j).data, 1),
+        check_cublas(cublasDscal_64(c.blas(), x.rows, &factor, x.column(j).data, 1),
                      "SCF vector scaling");
 }
 double norm(Context& c, View x) {
@@ -69,8 +69,7 @@ double norm(Context& c, View x) {
     for (int j = 0; j < x.cols; ++j) {
         double value = 0.0;
         check_cublas(
-            cublasDdot(
-                c.blas(), blas_int(x.rows), x.column(j).data, 1, x.column(j).data, 1, &value),
+            cublasDdot_64(c.blas(), x.rows, x.column(j).data, 1, x.column(j).data, 1, &value),
             "SCF norm");
         square += value;
     }
@@ -78,7 +77,7 @@ double norm(Context& c, View x) {
 }
 double dot(Context& c, View x, View y) {
     double result = 0.0;
-    check_cublas(cublasDdot(c.blas(), blas_int(x.rows), x.data, 1, y.data, 1, &result), "SCF dot");
+    check_cublas(cublasDdot_64(c.blas(), x.rows, x.data, 1, y.data, 1, &result), "SCF dot");
     return result;
 }
 
@@ -95,7 +94,7 @@ struct Trial {
  */
 std::unique_ptr<vb::StructureAction> make_topology(const vb::VbScfInput& input,
                                                    const vb::SameSpinPairCacheContext& topology) {
-    const int na = input.orbital_preparation_input.n_active_orbitals;
+    const std::int64_t na = input.orbital_preparation_input.n_active_orbitals;
     Eigen::MatrixXd identity = Eigen::MatrixXd::Identity(na, na);
     std::vector<double> overlap(identity.data(), identity.data() + identity.size());
     integrals::ActiveSpaceTwoElectronResult two;
@@ -126,8 +125,8 @@ ScfResult solve_scf(Context& context,
         throw std::invalid_argument("GPU CIAH requires analytic Hessian-diagonal preconditioning");
     const auto start = Clock::now();
     const auto& orbital = input.orbital_preparation_input;
-    const int nb = orbital.n_basis_functions, norb = orbital.n_orbitals;
-    const int na = orbital.n_active_orbitals, nstr = input.structure_data.n_structures;
+    const std::int64_t nb = orbital.n_basis_functions, norb = orbital.n_orbitals;
+    const std::int64_t na = orbital.n_active_orbitals, nstr = input.structure_data.n_structures;
     const auto upload_start = Clock::now();
     auto host_integrals = std::move(integral_stream);
     ExactAoPairOperator ao(context, host_integrals, nb);
@@ -622,6 +621,8 @@ ScfResult solve_scf(Context& context,
         if (observe)
             observe(record);
     }
+    if (result.converged)
+        result.overlap_coefficients = accepted.point->release_overlap_product();
     result.energy = accepted.energy;
     result.orbitals = std::move(accepted.raw);
     result.coefficients = std::move(accepted.coefficients);

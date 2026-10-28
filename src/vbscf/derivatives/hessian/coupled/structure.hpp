@@ -78,11 +78,11 @@ class StructureTangentOperator {
     explicit StructureTangentOperator(std::shared_ptr<const AcceptedPointContext> accepted_point,
                                       const StructureAction& action);
 
-    int n_structures() const noexcept;
+    Eigen::Index n_structures() const noexcept;
     int n_states() const noexcept;
 
     /** @brief Number of independent horizontal structure coordinates. */
-    int tangent_size() const noexcept;
+    Eigen::Index tangent_size() const noexcept;
 
     /** @brief Packs a horizontal tangent into independent coordinates. */
     Eigen::VectorXd coordinates(const StructureTangent& tangent) const;
@@ -255,7 +255,7 @@ class StructureTangentOperator {
     Eigen::MatrixXd selected_;
     Eigen::MatrixXd selected_metric_inverse_;
     Eigen::HouseholderQR<Eigen::MatrixXd> constraint_qr_;
-    int n_structures_ = 0;
+    Eigen::Index n_structures_ = 0;
     int n_states_ = 0;
 };
 

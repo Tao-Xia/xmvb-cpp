@@ -19,8 +19,9 @@ def main():
         path = Path(directory) / "input.xmi"
 
         def run(configuration, iterations, options=(), forbidden=True, molden=False, iscf=8,
-                guess_body=None):
+                guess_body=None, method="vbscf"):
             text = original.replace("tnvb\ntnbond=128\ntnsumbond=256\n", configuration + "\n")
+            text = text.replace("vbscf\n", method + "\n", 1)
             text = text.replace("itmax=0", f"itmax={iterations}")
             text = text.replace("iscf=8", f"iscf={iscf}")
             if guess_body is not None:
@@ -57,6 +58,11 @@ def main():
                 assert len(re.findall(r"(?m)^Sym=", exported)) == 24, exported
                 assert "Molden output" in result.stdout, result.stdout
             return result.returncode, result.stdout
+
+        for method in ("cuvbscf", "casscf", "dft"):
+            status, output = run("TNVB TNBOND=128", 0, method=method)
+            assert status != 0 and "TNVB requires the VBSCF electronic method" in output, output
+            assert "[TNVB-MPS]" not in output, output
 
         for configuration, itmax, options in [
                 ("TNVB TNBOND=128", 0, ()),

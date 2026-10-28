@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
@@ -407,7 +408,7 @@ int main(int argc, char** argv) {
 
         std::vector<PerStructureCache> structure_cache(raw_structure_data.n_structures);
         std::map<int, int> determinant_term_count_histogram;
-        for (int structure_index = 0; structure_index < raw_structure_data.n_structures;
+        for (std::int64_t structure_index = 0; structure_index < raw_structure_data.n_structures;
              ++structure_index) {
             auto& cache = structure_cache[structure_index];
             cache.active_pairs =
@@ -529,9 +530,9 @@ int main(int argc, char** argv) {
                 width_summary.min_determinant_pair_count = record.determinant_pair_count;
                 width_summary.max_determinant_pair_count = record.determinant_pair_count;
             } else {
-                width_summary.min_determinant_pair_count = std::min(
+                width_summary.min_determinant_pair_count = std::min<std::int64_t>(
                     width_summary.min_determinant_pair_count, record.determinant_pair_count);
-                width_summary.max_determinant_pair_count = std::max(
+                width_summary.max_determinant_pair_count = std::max<std::int64_t>(
                     width_summary.max_determinant_pair_count, record.determinant_pair_count);
             }
 

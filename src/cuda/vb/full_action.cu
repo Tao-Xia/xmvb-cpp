@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "cuda/vb/full_action.hpp"
 
 #include <algorithm>
@@ -19,9 +20,9 @@ namespace xmvb::cuda {
 namespace {
 
 __global__ void identity_matrix(linalg::MatrixView matrix) {
-    const int index = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t index = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (index < matrix.rows * matrix.cols) {
-        const int row = index % matrix.rows, column = index / matrix.rows;
+        const std::int64_t row = index % matrix.rows, column = index / matrix.rows;
         matrix.data[row + matrix.ld * column] = row == column ? 1.0 : 0.0;
     }
 }
@@ -41,7 +42,7 @@ __global__ void divide_diagonal_column(linalg::MatrixView source,
 }
 
 __global__ void beta_identity_columns(linalg::MatrixView values, int first) {
-    const int column = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t column = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (column < values.cols)
         values.data[first + column + values.ld * column] = 1.0;
 }
@@ -130,7 +131,8 @@ struct FullAction::Impl {
         const auto payload = rows * beta * sizeof(double);
         // Leave room for the transform stripe, diagonal panel and shared sigma
         // workspace. This changes residency only, not the physical operator.
-        const int extent = std::min(product_panel_width(), std::max(1, beta - 1));
+        const int extent =
+            std::min<std::int64_t>(product_panel_width(), std::max<std::int64_t>(1, beta - 1));
         const auto panels = (static_cast<std::size_t>(beta) + extent - 1) / extent;
         const auto metadata =
             panels * sizeof(linalg::MatrixView) + static_cast<std::size_t>(beta) * sizeof(double*);
@@ -141,8 +143,8 @@ struct FullAction::Impl {
         std::vector<linalg::MatrixView> views;
         owners.reserve((beta + extent - 1) / extent);
         views.reserve(owners.capacity());
-        for (int first = 0; first < beta; first += extent) {
-            owners.emplace_back(context, alpha, std::min(extent, beta - first));
+        for (std::int64_t first = 0; first < beta; first += extent) {
+            owners.emplace_back(context, alpha, std::min<std::int64_t>(extent, beta - first));
             views.push_back(owners.back().view());
         }
         Buffer<linalg::MatrixView> descriptors(context, views.size());
@@ -199,7 +201,7 @@ struct FullAction::Impl {
                     throw std::invalid_argument("invalid ordered FULL map");
             }
             if (divide) {
-                int first = 0;
+                std::int64_t first = 0;
                 for (auto tile : views) {
                     auto values = diagonal.view().columns(0, tile.cols);
                     action.carrier_sigma().diagonal_columns(first, values);
@@ -244,8 +246,9 @@ struct FullAction::Impl {
         for (std::int64_t column = 0; column < source.cols; ++column) {
             auto target = image.column(column);
             clear(context, target);
-            for (int first = 0; first < sources.source_count(); first += extent) {
-                const int count = std::min(extent, sources.source_count() - first);
+            for (std::int64_t first = 0; first < sources.source_count(); first += extent) {
+                const std::int64_t count =
+                    std::min<std::int64_t>(extent, sources.source_count() - first);
                 auto a = alpha.view().columns(0, count), b = beta.view().columns(0, count);
                 sources.load(first, count, source.column(column), a, b);
                 alpha_map.apply_left(a, adjoint, inverse);
@@ -266,9 +269,9 @@ struct FullAction::Impl {
         for (std::int64_t column = 0; column < source.cols; ++column) {
             auto target = image.column(column);
             clear(context, target);
-            for (int first = 0; first < sources.source_count();) {
-                const int first_beta = sources.source_column(first);
-                int count = 1;
+            for (std::int64_t first = 0; first < sources.source_count();) {
+                const std::int64_t first_beta = sources.source_column(first);
+                std::int64_t count = 1;
                 while (count < extent && first + count < sources.source_count() &&
                        sources.source_column(first + count) == first_beta + count)
                     ++count;
@@ -294,8 +297,9 @@ struct FullAction::Impl {
         for (std::int64_t column = 0; column < source.cols; ++column) {
             auto target = image.column(column);
             clear(context, target);
-            for (int first = 0; first < sources.source_count(); first += extent) {
-                const int count = std::min(extent, sources.source_count() - first);
+            for (std::int64_t first = 0; first < sources.source_count(); first += extent) {
+                const std::int64_t count =
+                    std::min<std::int64_t>(extent, sources.source_count() - first);
                 auto a = alpha.view().columns(0, count), b = beta.view().columns(0, count);
                 sources.load(first, count, source.column(column), a, b);
                 action.alpha_transform().apply_left(a, true, true);
@@ -313,8 +317,8 @@ struct FullAction::Impl {
                         double shift,
                         bool diagonal_inverse) const {
         const int extent = sources.source_extent();
-        const int alpha_count = action.n_alpha_strings();
-        const int beta_count = action.n_beta_strings();
+        const std::int64_t alpha_count = action.n_alpha_strings();
+        const std::int64_t beta_count = action.n_beta_strings();
         Matrix<double> source_alpha(context, alpha_count, extent);
         Matrix<double> source_beta(context, beta_count, extent);
         Matrix<double> target_alpha(context, alpha_count, extent);
@@ -325,14 +329,14 @@ struct FullAction::Impl {
         for (std::int64_t rhs = 0; rhs < source.cols; ++rhs) {
             auto target = image.column(rhs);
             clear(context, target);
-            for (int first_beta = 0; first_beta < beta_count; first_beta += extent) {
-                const int target_count = std::min(extent, beta_count - first_beta);
+            for (std::int64_t first_beta = 0; first_beta < beta_count; first_beta += extent) {
+                const int target_count = std::min<std::int64_t>(extent, beta_count - first_beta);
                 auto carrier = target_alpha.view().columns(0, target_count);
                 clear(context, carrier);
-                for (int first_source = 0; first_source < sources.source_count();
+                for (std::int64_t first_source = 0; first_source < sources.source_count();
                      first_source += extent) {
                     const int source_count =
-                        std::min(extent, sources.source_count() - first_source);
+                        std::min<std::int64_t>(extent, sources.source_count() - first_source);
                     auto a = source_alpha.view().columns(0, source_count);
                     auto b = source_beta.view().columns(0, source_count);
                     sources.load(first_source, source_count, source.column(rhs), a, b);

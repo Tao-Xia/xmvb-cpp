@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <algorithm>
 #include <span>
 #include <vector>
@@ -9,15 +10,17 @@
 
 namespace xmvb::integrals {
 
+using PairAddress = std::int64_t;
+
 struct AoPairIntegral {
-    int left_pair;
-    int right_pair;
+    PairAddress left_pair;
+    PairAddress right_pair;
     double value;
 };
 
 /** Owned unique-integral chunk; no AO-pair symmetry expansion. */
 struct AoIntegralChunk {
-    std::vector<int> rows, columns;
+    std::vector<PairAddress> rows, columns;
     std::vector<double> values;
 };
 
@@ -29,18 +32,18 @@ struct AoIntegralChunk {
  * may also request the unique stream to avoid an unused CSR intermediate.
  */
 struct AoPairGraph {
-    std::vector<int> row_offsets;
-    std::vector<int> columns;
+    std::vector<PairAddress> row_offsets;
+    std::vector<PairAddress> columns;
     std::vector<double> values;
     /** Unique-integral CSR references ordered by storage position for locality. */
-    std::vector<int> integral_rows;
-    std::vector<int> integral_edges;
+    std::vector<PairAddress> integral_rows;
+    std::vector<PairAddress> integral_edges;
     /**
    * Compact unique-integral payload used when a symmetric CSR graph would
    * exceed its 32-bit edge-address space. Pair-exchange symmetry is retained:
    * every `(row,column,value)` appears exactly once.
    */
-    std::vector<int> integral_columns;
+    std::vector<PairAddress> integral_columns;
     std::vector<double> integral_values;
     /** Alternative to flat unique arrays: one retained set of producer chunks. */
     std::vector<AoIntegralChunk> chunks;
@@ -94,11 +97,11 @@ struct AoPairGraph {
             const auto k = index - chunk_offsets[i];
             return {chunks[i].rows[k], chunks[i].columns[k], chunks[i].values[k]};
         }
-        const int row = integral_rows[index];
+        const auto row = integral_rows[index];
         if (has_compact_integral_stream()) {
             return {row, integral_columns[index], integral_values[index]};
         }
-        const int edge = integral_edges[index];
+        const auto edge = integral_edges[index];
         return {row, columns[edge], values[edge]};
     }
 
@@ -107,13 +110,13 @@ struct AoPairGraph {
    */
     template <class Function> void for_each_chunk(Function&& function) const {
         if (chunks.empty())
-            function(std::span<const int>{integral_rows},
-                     std::span<const int>{integral_columns},
+            function(std::span<const PairAddress>{integral_rows},
+                     std::span<const PairAddress>{integral_columns},
                      std::span<const double>{integral_values});
         else
             for (const auto& chunk : chunks)
-                function(std::span<const int>{chunk.rows},
-                         std::span<const int>{chunk.columns},
+                function(std::span<const PairAddress>{chunk.rows},
+                         std::span<const PairAddress>{chunk.columns},
                          std::span<const double>{chunk.values});
     }
 

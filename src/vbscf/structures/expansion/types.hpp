@@ -2,7 +2,9 @@
 
 #include <cstddef>
 #include <iterator>
+#include <limits>
 #include <span>
+#include <stdexcept>
 #include <vector>
 
 #include <Eigen/Core>
@@ -20,7 +22,7 @@ struct StructureExpansionTerm {
     /**
    * @brief Zero-based structure index.
    */
-    int structure_index = 0;
+    Eigen::Index structure_index = 0;
 
     /**
    * @brief Signed coefficient contributed by the spin-string pair to the structure.
@@ -34,7 +36,7 @@ struct StructureExpansionTerm {
 /** @brief Borrowed spin-string pairs; topology queries never decode occupations. */
 class SpinStringRows {
   public:
-    SpinStringRows(const mcscf::StringTable& strings, const std::vector<int>& ids)
+    SpinStringRows(const mcscf::StringTable& strings, const std::vector<mcscf::StringIndex>& ids)
         : strings_(strings), pair_ids_(&ids) {}
     SpinStringRows(const mcscf::StringTable& strings) : strings_(strings) {}
     SpinStringRows(const std::vector<std::vector<int>>& rows) : strings_(rows) {}
@@ -47,8 +49,9 @@ class SpinStringRows {
     const mcscf::StringTable& strings() const {
         return strings_;
     }
-    std::span<const int> indices() const {
-        return pair_ids_ ? std::span<const int>(*pair_ids_) : std::span<const int>();
+    std::span<const mcscf::StringIndex> indices() const {
+        return pair_ids_ ? std::span<const mcscf::StringIndex>(*pair_ids_)
+                         : std::span<const mcscf::StringIndex>();
     }
     std::size_t string_id(std::size_t i) const {
         return pair_ids_ ? (*pair_ids_)[i] : i;
@@ -114,7 +117,7 @@ class SpinStringRows {
 
   private:
     mcscf::StringTable strings_;
-    const std::vector<int>* pair_ids_ = nullptr;
+    const std::vector<mcscf::StringIndex>* pair_ids_ = nullptr;
 };
 
 /** Borrowed pair-to-structure rows backed by CSR or existing row storage. */
@@ -205,7 +208,7 @@ struct StructureAccumulationResult {
     /**
    * @brief Number of VB structures.
    */
-    int n_structures = 0;
+    std::size_t n_structures = 0;
 
     /**
    * @brief Structure overlap matrix.
@@ -252,7 +255,7 @@ struct RawStructureData {
     /**
    * @brief Number of structures.
    */
-    int n_structures = 0;
+    std::size_t n_structures = 0;
 
     /**
    * @brief Total number of electrons.
@@ -288,11 +291,21 @@ struct RawStructureData {
     std::vector<int> raw_structure_orbitals;
 
     std::size_t flat_orbital_count() const {
-        return n_structures * n_total_electrons;
+        return structure_orbital_offset(n_structures);
     }
 
-    const int* structure_orbitals_data(int structure_index) const {
-        return raw_structure_orbitals.data() + structure_index * n_total_electrons;
+    /** @brief Wide flat address; the multiplication must precede no narrowing. */
+    std::size_t structure_orbital_offset(std::size_t structure_index) const {
+        if (n_total_electrons < 0)
+            throw std::invalid_argument("negative structure electron count");
+        const auto stride = static_cast<std::size_t>(n_total_electrons);
+        if (stride && structure_index > std::numeric_limits<std::size_t>::max() / stride)
+            throw std::overflow_error("raw structure orbital address exceeds size_t range");
+        return structure_index * stride;
+    }
+
+    const int* structure_orbitals_data(std::size_t structure_index) const {
+        return raw_structure_orbitals.data() + structure_orbital_offset(structure_index);
     }
 };
 
@@ -308,7 +321,7 @@ struct StructureExpansion {
     /**
    * @brief Number of VB structures.
    */
-    int n_structures = 0;
+    std::size_t n_structures = 0;
 
     /**
    * @brief Unique zero-based alpha occupied spin strings.
@@ -321,8 +334,8 @@ struct StructureExpansion {
     mcscf::StringTable beta_strings;
 
     /** Spin-string table indices for each unique pair. */
-    std::vector<int> pair_alpha;
-    std::vector<int> pair_beta;
+    std::vector<mcscf::StringIndex> pair_alpha;
+    std::vector<mcscf::StringIndex> pair_beta;
 
     /** CSR row boundaries for pair-to-structure terms. */
     std::vector<std::size_t> offsets;

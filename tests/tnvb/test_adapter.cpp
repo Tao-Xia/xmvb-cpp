@@ -1,11 +1,26 @@
 #include "tnvb/gradient/adapter.hpp"
 #include "tnvb/electronic/input_signature.hpp"
+#include "tnvb/communication/process.hpp"
 #include <cmath>
 #include <stdexcept>
 #include <limits>
 #include "acceptance.hpp"
 
 int main() {
+  // Wide upstream counts must fail at the v3 protocol boundary, before a worker.
+  xmvb::tnvb::WorkerProcess protocol;
+  for (int field=0;field<2;++field) {
+    xmvb::vb::VbScfInput oversized;
+    oversized.raw_structure_data.n_structures=1;
+    oversized.orbital_preparation_input.n_active_orbitals=1;
+    const auto too_large=std::size_t(std::numeric_limits<std::int32_t>::max())+1;
+    if (field==0) oversized.raw_structure_data.n_structures=too_large;
+    else oversized.orbital_preparation_input.n_active_orbitals=too_large;
+    bool rejected=false;
+    try { (void)protocol.evaluate(oversized,{}, {},false); }
+    catch (const std::overflow_error&) { rejected=true; }
+    if (!rejected) throw std::runtime_error("wide TNVB count narrowed before protocol validation");
+  }
   // Producer-chunk AO integrals are part of the scientific input identity.
   // A changed value or address must invalidate ENERGY-to-GRADIENT reuse.
   xmvb::vb::VbScfInput chunked;

@@ -41,8 +41,9 @@ class StructureExpander {
    * @param selected_structure_indices Zero-based structure indices to keep.
    * @return StructureExpansion Spin-string pairs and remapped terms.
    */
-    StructureExpansion expand_subset(const RawStructureData& raw_structure_data,
-                                     const std::vector<int>& selected_structure_indices) const;
+    StructureExpansion
+    expand_subset(const RawStructureData& raw_structure_data,
+                  const std::vector<std::size_t>& selected_structure_indices) const;
 };
 
 } // namespace xmvb::vb

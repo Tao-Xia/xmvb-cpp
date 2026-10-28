@@ -10,7 +10,8 @@ enum class FactorContraction { Integral, Generator, Residual };
 bool use_amplitude_map(const SpinFactorSource& source);
 
 /** @brief Shared scratch doubles for one amplitude multiplication panel. */
-std::size_t amplitude_workspace(const SpinFactorSource& source, int tile, int columns);
+std::size_t
+amplitude_workspace(const SpinFactorSource& source, Eigen::Index tile, Eigen::Index columns);
 
 bool integral_bra_is_left(const DirectCiSigmaAction& sigma,
                           const SpinFactorSource& left,
@@ -19,7 +20,7 @@ bool integral_bra_is_left(const DirectCiSigmaAction& sigma,
 
 /** @brief Joint source/channel schedule; counts work, never changes the operator. */
 struct FactorPanels {
-    int left = 0, right = 0, channels = 0;
+    Eigen::Index left = 0, right = 0, channels = 0;
     std::size_t workspace_bytes = 0;
     long double work = 0, source_columns = 0;
 };

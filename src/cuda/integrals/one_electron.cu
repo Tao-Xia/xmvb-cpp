@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "cuda/integrals/one_electron.hpp"
 
 #include <stdexcept>

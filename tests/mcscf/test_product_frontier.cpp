@@ -181,10 +181,10 @@ void check_column_plans() {
     const auto check_bounds = [](const Support& support,
                                  int beta,
                                  int depth,
-                                 const std::vector<int>& expected,
+                                 const std::vector<std::int64_t>& expected,
                                  int count) {
         for (int upper = 0; upper <= count; ++upper) {
-            std::vector<int> actual{-1}, bounded{-1};
+            std::vector<std::int64_t> actual{-1}, bounded{-1};
             support.append_column_rows(beta, actual, depth, upper);
             for (const int a : expected)
                 if (a >= 0 && a < upper)
@@ -212,7 +212,7 @@ void check_column_plans() {
                 const Support support(n, a, b, products);
                 for (int depth = 0; depth <= 1; ++depth)
                     for (int j = 0; j < static_cast<int>(b.size()); ++j) {
-                        std::vector<int> actual{-1}, expected{-1};
+                        std::vector<std::int64_t> actual{-1}, expected{-1};
                         support.append_column_rows(j, actual, depth);
                         for (int i = 0; i < static_cast<int>(a.size()); ++i)
                             if (reachable(a[i], b[j], seeds, n, depth))
@@ -226,10 +226,10 @@ void check_column_plans() {
                 products.resize(std::min<std::size_t>(products.size(), 2));
                 seeds.resize(products.size());
                 const Support selected(n, a, b, products);
-                std::vector<int> columns;
+                std::vector<std::int64_t> columns;
                 for (int depth = 0; depth <= 1; ++depth)
                     for (int j = 0; j < static_cast<int>(b.size()); ++j) {
-                        std::vector<int> actual, expected;
+                        std::vector<std::int64_t> actual, expected;
                         selected.append_column_rows(j, actual, depth);
                         for (int i = 0; i < static_cast<int>(a.size()); ++i)
                             if (reachable(a[i], b[j], seeds, n, depth))

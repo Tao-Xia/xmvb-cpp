@@ -114,15 +114,16 @@ double bilinear(const Matrix& left, const Matrix& image) {
 void check_compact_endpoints() {
     using namespace xmvb::cuda;
     Context context(8ULL * 1024 * 1024);
-    const auto pattern = [&](std::vector<int> rows, bool full = false, int size = 0) {
+    const auto pattern = [&](std::vector<std::int64_t> rows, bool full = false, int size = 0) {
         auto result = std::make_shared<ProductColumnPattern>();
         result->full = full;
         result->size = full ? size : rows.size();
         result->rows = std::move(rows);
         if (!full) {
-            result->device_rows = Buffer<int>(context, result->rows.size());
-            context.copy_to_device(
-                result->device_rows.data(), result->rows.data(), result->rows.size() * sizeof(int));
+            result->device_rows = Buffer<std::int64_t>(context, result->rows.size());
+            context.copy_to_device(result->device_rows.data(),
+                                   result->rows.data(),
+                                   result->rows.size() * sizeof(std::int64_t));
         }
         return result;
     };
@@ -345,10 +346,10 @@ void check_product_tiles(
                     pattern->rows.push_back(a);
         pattern->size = pattern->full ? as.size() : pattern->rows.size();
         if (!pattern->rows.empty()) {
-            pattern->device_rows = xmvb::cuda::Buffer<int>(context, pattern->rows.size());
+            pattern->device_rows = xmvb::cuda::Buffer<std::int64_t>(context, pattern->rows.size());
             context.copy_to_device(pattern->device_rows.data(),
                                    pattern->rows.data(),
-                                   pattern->rows.size() * sizeof(int));
+                                   pattern->rows.size() * sizeof(std::int64_t));
         }
         for (int v = 0; v < width; ++v)
             for (int r = 0; r < pattern->size; ++r)
@@ -1322,7 +1323,7 @@ void check_exterior(int rhs_count, int n = 4, int nalpha = 2, int nbeta = 1) {
         const int alpha_dim = static_cast<int>(alpha.size());
         const int columns = static_cast<int>(beta.size());
         const int words = (alpha_dim + 63) / 64;
-        std::vector<int> offsets{0}, supported_rows;
+        std::vector<Eigen::Index> offsets{0}, supported_rows;
         std::vector<std::uint64_t> masks(static_cast<std::size_t>(columns) * words, 0);
         for (int b = 0; b < columns; ++b) {
             for (int a = 0; a < alpha_dim; ++a)
@@ -1357,7 +1358,7 @@ void check_exterior(int rhs_count, int n = 4, int nalpha = 2, int nbeta = 1) {
         }
     }
     {
-        const std::vector<int> requested{static_cast<int>(beta.size()) - 1, 0};
+        const std::vector<std::int64_t> requested{static_cast<int>(beta.size()) - 1, 0};
         xmvb::cuda::Matrix<double> d_upper(context, n, n),
             rows(context, beta.size(), requested.size());
         xmvb::cuda::copy_to_device(context, d_upper.view(), upper);
@@ -1383,7 +1384,7 @@ void check_exterior(int rhs_count, int n = 4, int nalpha = 2, int nbeta = 1) {
         const int dimension = static_cast<int>(beta.size());
         const std::array<std::array<int, 2>, 2> intervals{{{1, 2}, {dimension - 1, 1}}};
         for (const auto [first, count] : intervals) {
-            std::vector<int> requested(count);
+            std::vector<std::int64_t> requested(count);
             for (int j = 0; j < count; ++j)
                 requested[j] = first + j;
             xmvb::cuda::Matrix<double> arbitrary(context, dimension, count),
@@ -1495,7 +1496,7 @@ void check_exterior(int rhs_count, int n = 4, int nalpha = 2, int nbeta = 1) {
             const int dimension = static_cast<int>(alpha.size());
             const std::array<std::array<int, 2>, 2> intervals{{{1, 2}, {dimension - 1, 1}}};
             for (const auto [first, count] : intervals) {
-                std::vector<int> requested(count);
+                std::vector<std::int64_t> requested(count);
                 Matrix expected = Matrix::Zero(dimension, count),
                        expected_delta = Matrix::Zero(dimension, count);
                 for (int j = 0; j < count; ++j) {

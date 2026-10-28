@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "vbscf/core/configuration/flags.hpp"
+#include "mcscf/ci/strings.hpp"
 
 namespace xmvb::vb {
 namespace {
@@ -122,18 +123,9 @@ std::size_t combination_count(int m, int n) {
     if (m < 0 || n < 0 || m > n) {
         throw std::runtime_error("invalid combination arguments in structure generator");
     }
-    const int reduced_m = std::min(m, n - m);
-    if (reduced_m == 0) {
-        return 1;
-    }
-
-    std::size_t value = static_cast<std::size_t>(n);
-    for (int index = 1; index <= reduced_m - 1; ++index) {
-        value = checked_mul(value, static_cast<std::size_t>(n - index), "combination_count");
-        value /= static_cast<std::size_t>(index);
-    }
-    value /= static_cast<std::size_t>(reduced_m);
-    return value;
+    // Cancel each denominator before multiplication, including large counts
+    // whose final value fits size_t but whose factorial intermediates do not.
+    return mcscf::string_count(n, m);
 }
 
 std::size_t spin_tableau_count(int n, int spin) {
@@ -144,22 +136,10 @@ std::size_t spin_tableau_count(int n, int spin) {
         return 1;
     }
 
-    std::size_t value = static_cast<std::size_t>(spin);
-    const int offset = (n - spin + 1) / 2;
-    const int off2 = (n + spin + 1) / 2;
-    const int nloop = (n + spin - 1) / 2;
-    for (int index = 1; index <= nloop; ++index) {
-        value = checked_mul(value, static_cast<std::size_t>(index + offset), "spin_tableau_count");
-        if (index <= off2) {
-            value /= static_cast<std::size_t>(index);
-        }
-    }
-    if (off2 > nloop) {
-        for (int index = nloop + 1; index <= off2; ++index) {
-            value /= static_cast<std::size_t>(index);
-        }
-    }
-    return value;
+    if ((n - spin + 1) % 2)
+        return 0;
+    const int beta = (n - spin + 1) / 2;
+    return combination_count(beta, n) - (beta ? combination_count(beta - 1, n) : 0);
 }
 
 std::size_t structure_count_for_class(int ionic_class,
@@ -572,7 +552,7 @@ void append_structure_class_to_output(int ionic_class,
             throw std::runtime_error("raw structure generation exceeded the precomputed count");
         }
         int* structure_begin = raw_structure_data->raw_structure_orbitals.data() +
-                               (*next_structure_index) * raw_structure_data->n_total_electrons;
+                               raw_structure_data->structure_orbital_offset(*next_structure_index);
         write_structure_to_output(n_inactive_doubly_occupied_orbitals,
                                   ionic_class,
                                   ion_row,
@@ -633,7 +613,9 @@ void append_structure_class_to_output(int ionic_class,
         });
 }
 
-std::size_t count_active_raw_structures(const InputDeckMetadata& metadata) {
+} // namespace
+
+std::size_t count_generated_structures(const InputDeckMetadata& metadata) {
     if (metadata.wavefunction_type != wavefunction_type_code(WavefunctionType::Structure)) {
         throw std::runtime_error("structure-class generation supports only WFNTYP=STR");
     }
@@ -678,8 +660,6 @@ std::size_t count_active_raw_structures(const InputDeckMetadata& metadata) {
     return structure_count;
 }
 
-} // namespace
-
 bool can_build_generated_raw_structures_from_structure_class(const InputDeckMetadata& metadata,
                                                              int n_total_electrons) noexcept {
     return !metadata.structure_class_keyword.empty() &&
@@ -700,20 +680,16 @@ build_generated_raw_structures_from_structure_class(const InputDeckMetadata& met
 
     const int n_inactive_doubly_occupied_orbitals =
         (n_total_electrons - metadata.declared_active_electrons) / 2;
-    const std::size_t n_structures = count_active_raw_structures(metadata);
+    const std::size_t n_structures = count_generated_structures(metadata);
 
     RawStructureData raw_structure_data;
     raw_structure_data.n_structures = n_structures;
-    raw_structure_data.n_total_electrons = static_cast<std::size_t>(n_total_electrons);
-    raw_structure_data.n_active_electrons =
-        static_cast<std::size_t>(metadata.declared_active_electrons);
+    raw_structure_data.n_total_electrons = n_total_electrons;
+    raw_structure_data.n_active_electrons = metadata.declared_active_electrons;
     raw_structure_data.spin_multiplicity = metadata.declared_spin_multiplicity;
     raw_structure_data.wavefunction_type = metadata.wavefunction_type;
     raw_structure_data.vb_function_type = metadata.vb_function_type;
-    raw_structure_data.raw_structure_orbitals.assign(
-        checked_mul(
-            n_structures, static_cast<std::size_t>(n_total_electrons), "raw_structure_orbitals"),
-        0);
+    raw_structure_data.raw_structure_orbitals.assign(raw_structure_data.flat_orbital_count(), 0);
 
     if (is_single_reference_active_structure_case(metadata)) {
         write_single_reference_structure(

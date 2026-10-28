@@ -17,7 +17,7 @@ enum class InputScfOptimizer {
 };
 
 /** Electronic wavefunction selected by a bare `$CTRL` method flag. */
-enum class ElectronicMethod { Vbscf, Casscf, Dft };
+enum class ElectronicMethod { Vbscf, CuVbscf, Casscf, Dft };
 
 /** KS spin channels; Auto selects UKS when NMUL is greater than one. */
 enum class KohnShamSpin { Auto, Restricted, Unrestricted };

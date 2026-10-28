@@ -1,5 +1,8 @@
 #pragma once
 
+#include "core/index.hpp"
+#include <cstdint>
+
 #include <stdexcept>
 
 namespace xmvb::vb {
@@ -74,19 +77,27 @@ contract_diagonal_structure_pair_kernel(const std::vector<double>& left_diagonal
                                         const std::vector<double>& right_diagonal_coefficients,
                                         const MatrixType& alpha_kernel,
                                         const MatrixType& beta_kernel) {
-    if (alpha_kernel.rows() != static_cast<int>(left_diagonal_coefficients.size()) ||
-        alpha_kernel.cols() != static_cast<int>(right_diagonal_coefficients.size()) ||
-        beta_kernel.rows() != static_cast<int>(left_diagonal_coefficients.size()) ||
-        beta_kernel.cols() != static_cast<int>(right_diagonal_coefficients.size())) {
+    if (alpha_kernel.rows() !=
+            core::checked_index<std::int64_t>(left_diagonal_coefficients.size()) ||
+        alpha_kernel.cols() !=
+            core::checked_index<std::int64_t>(right_diagonal_coefficients.size()) ||
+        beta_kernel.rows() !=
+            core::checked_index<std::int64_t>(left_diagonal_coefficients.size()) ||
+        beta_kernel.cols() !=
+            core::checked_index<std::int64_t>(right_diagonal_coefficients.size())) {
         throw std::invalid_argument("diagonal matrix-form structure contraction shape mismatch");
     }
     double contraction = 0.0;
-    for (int column = 0; column < static_cast<int>(right_diagonal_coefficients.size()); ++column) {
+    for (std::int64_t column = 0;
+         column < core::checked_index<std::int64_t>(right_diagonal_coefficients.size());
+         ++column) {
         const double right_coefficient = right_diagonal_coefficients[column];
         if (right_coefficient == 0.0) {
             continue;
         }
-        for (int row = 0; row < static_cast<int>(left_diagonal_coefficients.size()); ++row) {
+        for (std::int64_t row = 0;
+             row < core::checked_index<std::int64_t>(left_diagonal_coefficients.size());
+             ++row) {
             const double left_coefficient = left_diagonal_coefficients[row];
             if (left_coefficient == 0.0) {
                 continue;

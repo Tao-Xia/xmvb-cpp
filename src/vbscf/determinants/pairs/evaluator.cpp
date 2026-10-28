@@ -132,7 +132,7 @@ double evaluate_opposite_spin_coulomb_coupling(const std::vector<int>& alpha_occ
                     const int beta_orbital_right = beta_occ_R[beta_right_row];
                     const double beta_cofactor =
                         beta_cofactor_1st(beta_right_row, beta_left_column);
-                    const int two_electron_index =
+                    const auto two_electron_index =
                         xmvb::core::PairIndex::two_electron_storage_index(beta_orbital_right,
                                                                           beta_orbital_left,
                                                                           alpha_orbital_right,
@@ -182,7 +182,7 @@ double evaluate_opposite_spin_coulomb_coupling(
         for (int alpha_right_row = 0; alpha_right_row < n_alpha_electrons; ++alpha_right_row) {
             const int alpha_orbital_right = alpha_occ_R[alpha_right_row];
             const double alpha_cofactor = alpha_cofactor_1st(alpha_right_row, alpha_left_column);
-            const int alpha_packed_pair_index =
+            const auto alpha_packed_pair_index =
                 xmvb::core::PairIndex::packed_pair_index(alpha_orbital_right, alpha_orbital_left);
             for (int beta_left_column = 0; beta_left_column < n_beta_electrons;
                  ++beta_left_column) {
@@ -191,7 +191,7 @@ double evaluate_opposite_spin_coulomb_coupling(
                     const int beta_orbital_right = beta_occ_R[beta_right_row];
                     const double beta_cofactor =
                         beta_cofactor_1st(beta_right_row, beta_left_column);
-                    const int beta_packed_pair_index = xmvb::core::PairIndex::packed_pair_index(
+                    const auto beta_packed_pair_index = xmvb::core::PairIndex::packed_pair_index(
                         beta_orbital_right, beta_orbital_left);
                     opposite_spin_coulomb_coupling +=
                         alpha_cofactor * beta_cofactor *
@@ -250,7 +250,7 @@ double evaluate_opposite_spin_coulomb_coupling(const std::vector<int>& alpha_occ
                     const int beta_orbital_right = beta_occ_R[beta_right_row];
                     const double beta_cofactor =
                         beta_cofactor_1st(beta_right_row, beta_left_column);
-                    const int two_electron_index =
+                    const auto two_electron_index =
                         xmvb::core::PairIndex::two_electron_storage_index(beta_orbital_right,
                                                                           beta_orbital_left,
                                                                           alpha_orbital_right,

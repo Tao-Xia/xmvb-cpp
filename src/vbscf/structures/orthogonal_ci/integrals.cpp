@@ -1,3 +1,5 @@
+#include <cstdint>
+#include "core/index.hpp"
 #include "vbscf/structures/orthogonal_ci/integrals.hpp"
 
 #include <algorithm>
@@ -36,8 +38,8 @@ Eigen::MatrixXd unpack_two_electron_kernel(const std::vector<double>& packed,
 Eigen::MatrixXd
 apply_ri_factor_generator(const Eigen::Ref<const Eigen::MatrixXd>& factors,
                           const Eigen::Ref<const Eigen::MatrixXd>& relative_transform) {
-    const int n = static_cast<int>(relative_transform.rows());
-    const int n_aux = static_cast<int>(factors.rows());
+    const int n = core::checked_index<std::int64_t>(relative_transform.rows());
+    const int n_aux = core::checked_index<std::int64_t>(factors.rows());
     if (n <= 0 || relative_transform.cols() != n || n_aux <= 0 ||
         factors.cols() != xmvb::integrals::packed_active_pair_count(n)) {
         throw std::invalid_argument("RI factor generator has incompatible dimensions");
@@ -214,7 +216,7 @@ NonorthogonalActiveIntegralAdjoint backpropagate_orthogonal_active_integral_adjo
     const Eigen::Ref<const Eigen::MatrixXd>& orthogonal_pair_kernel_gradient,
     const Eigen::Ref<const Eigen::MatrixXd>& generator_gradient) {
     xmvb::profiling::ScopedPhase phase(xmvb::profiling::Phase::ActiveFrameAdjoint);
-    const int n_orbitals = static_cast<int>(accepted.one_electron.rows());
+    const int n_orbitals = core::checked_index<std::int64_t>(accepted.one_electron.rows());
     const int n_pairs = xmvb::integrals::packed_active_pair_count(n_orbitals);
     if (n_orbitals <= 0 || accepted.one_electron.cols() != n_orbitals ||
         accepted.orbital_transform.rows() != n_orbitals ||
@@ -275,7 +277,7 @@ NonorthogonalActiveIntegralAdjoint backpropagate_orthogonal_active_integral_adjo
     const Eigen::Ref<const Eigen::MatrixXd>& orthogonal_pair_kernel_gradient_direction,
     const Eigen::Ref<const Eigen::MatrixXd>& generator_gradient_direction) {
     xmvb::profiling::ScopedPhase phase(xmvb::profiling::Phase::ActiveFrameAdjointDirection);
-    const int n_orbitals = static_cast<int>(accepted.one_electron.rows());
+    const int n_orbitals = core::checked_index<std::int64_t>(accepted.one_electron.rows());
     const int n_pairs = xmvb::integrals::packed_active_pair_count(n_orbitals);
     if (n_orbitals <= 0 || direction.one_electron.rows() != n_orbitals ||
         direction.one_electron.cols() != n_orbitals || direction.pair_kernel.rows() != n_pairs ||

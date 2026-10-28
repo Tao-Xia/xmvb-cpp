@@ -1,3 +1,4 @@
+#include "core/index.hpp"
 #include "mcscf/ci/planner.hpp"
 #include "mcscf/ci/strings.hpp"
 
@@ -22,7 +23,7 @@ SpinSpaceAnalysis analyze_spin_space(const std::vector<std::vector<int>>& string
     if (strings.empty() || n_active_orbitals <= 0 || n_active_orbitals > 63) {
         return result;
     }
-    result.n_electrons = static_cast<int>(strings.front().size());
+    result.n_electrons = core::checked_index<std::int64_t>(strings.front().size());
     result.dimension = string_count(n_active_orbitals, result.n_electrons);
     if (strings.size() != result.dimension) {
         return result;
@@ -31,7 +32,7 @@ SpinSpaceAnalysis analyze_spin_space(const std::vector<std::vector<int>>& string
     std::unordered_set<std::uint64_t> masks;
     masks.reserve(strings.size());
     for (const auto& occupied : strings) {
-        if (static_cast<int>(occupied.size()) != result.n_electrons) {
+        if (core::checked_index<std::int64_t>(occupied.size()) != result.n_electrons) {
             return result;
         }
         std::uint64_t mask = 0;

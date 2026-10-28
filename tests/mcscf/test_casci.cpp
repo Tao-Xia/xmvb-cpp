@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <cmath>
 #include <iostream>
 #include <fstream>
@@ -160,7 +161,7 @@ void check_inactive_energy() {
     xmvb::integrals::AoIntegralInput ao;
     ao.n_basis_functions = 3;
     ao.ao_core_hamiltonian_matrix = mo.one_electron;
-    std::vector<int> left, right;
+    std::vector<std::int64_t> left, right;
     std::vector<double> values;
     for (int p = 0; p < 6; ++p)
         for (int q = 0; q <= p; ++q) {

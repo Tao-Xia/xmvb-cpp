@@ -607,12 +607,11 @@ VbScfInputLoadResult load_vbscf_input_with_timings(const std::string& input_file
     // Structure topology is independent of the AO payload. Finish expansion
     // before generating ERIs so its temporary workspace does not overlap them.
     const auto raw_structure_selection_start_time = std::chrono::steady_clock::now();
-    const int source_raw_structure_count = raw_structure_data.n_structures;
+    const std::size_t source_raw_structure_count = raw_structure_data.n_structures;
     const auto selected_raw_structure_indices =
         select_raw_structure_indices(raw_structure_data, options.raw_structure_selection);
     RawStructureData selected_raw_structure_data;
-    if (static_cast<int>(selected_raw_structure_indices.size()) ==
-        raw_structure_data.n_structures) {
+    if (selected_raw_structure_indices.size() == raw_structure_data.n_structures) {
         selected_raw_structure_data = std::move(raw_structure_data);
     } else {
         selected_raw_structure_data =
@@ -627,7 +626,7 @@ VbScfInputLoadResult load_vbscf_input_with_timings(const std::string& input_file
         !result.tnvb.enabled &&
         load_result.raw_structure_source == RawStructureSource::GeneratedFromStructureClass &&
         input_deck_metadata.structure_class_keyword.find("FULL") != std::string::npos &&
-        static_cast<int>(selected_raw_structure_indices.size()) == source_raw_structure_count;
+        selected_raw_structure_indices.size() == source_raw_structure_count;
 
     if (options.expand_selected_raw_structures && !result.tnvb.enabled) {
         const auto structure_expansion_start_time = std::chrono::steady_clock::now();

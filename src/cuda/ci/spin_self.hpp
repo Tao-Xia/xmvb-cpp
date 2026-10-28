@@ -28,7 +28,8 @@ class SpinSelf {
 
   private:
     Context* context_;
-    int orbitals_, occupied_, strings_, channels_;
+    int orbitals_, occupied_, channels_;
+    std::int64_t strings_;
     Buffer<int> occupations_, first_, second_;
     Matrix<double> moments_, energy_, overlap_;
 };

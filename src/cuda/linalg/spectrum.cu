@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "cuda/linalg/spectrum.hpp"
 
 #include <stdexcept>
@@ -13,7 +14,7 @@ void solver_check(cusolverStatus_t status, const char* operation) {
 }
 
 __global__ void symmetrize(double* values, int n) {
-    const int k = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t k = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (k < n * n) {
         const int i = k % n, j = k / n;
         if (i < j) {
@@ -25,7 +26,7 @@ __global__ void symmetrize(double* values, int n) {
 }
 
 __global__ void powers(const double* eigenvalues, double* weights, int n, double exponent) {
-    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t i = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i < n)
         weights[i] = pow(eigenvalues[i], exponent);
 }
@@ -87,16 +88,16 @@ Matrix<double> spectral_power(Context& ctx, const SymmetricSpectrum& eig, double
     powers<<<(n + 127) / 128, 128, 0, ctx.stream()>>>(
         eig.values.data(), weights.data(), n, exponent);
     check_cuda(cudaGetLastError(), "CUDA spectral powers");
-    check_cublas(cublasDdgmm(ctx.blas(),
-                             CUBLAS_SIDE_RIGHT,
-                             n,
-                             n,
-                             eig.vectors.data(),
-                             n,
-                             weights.data(),
-                             1,
-                             scaled.data(),
-                             n),
+    check_cublas(cublasDdgmm_64(ctx.blas(),
+                                CUBLAS_SIDE_RIGHT,
+                                n,
+                                n,
+                                eig.vectors.data(),
+                                n,
+                                weights.data(),
+                                1,
+                                scaled.data(),
+                                n),
                  "CUDA spectral column scaling");
     gemm(ctx,
          result.view(),

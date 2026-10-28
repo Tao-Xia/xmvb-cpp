@@ -1,4 +1,7 @@
 #include "cli/run.hpp"
+#ifdef XMVB_ENABLE_CUDA
+#include "cli/cuvbscf.hpp"
+#endif
 #include "cli/casscf.hpp"
 #include "cli/dft.hpp"
 
@@ -35,6 +38,17 @@ int run(Options command_line) {
     memory::configure(command_line.ci_workspace_bytes);
     const std::string& input_path = command_line.input_path;
     const auto deck = vb::parse_input_deck_model(input_path);
+    if (deck.metadata.tnvb.enabled &&
+        deck.metadata.electronic_method != vb::ElectronicMethod::Vbscf) {
+        throw std::invalid_argument("TNVB requires the VBSCF electronic method; use VBSCF TNVB");
+    }
+    if (deck.metadata.electronic_method == vb::ElectronicMethod::CuVbscf) {
+#ifdef XMVB_ENABLE_CUDA
+        return run_cuvbscf(command_line, deck.metadata);
+#else
+        throw std::runtime_error("CUVBSCF requires a build with XMVB_ENABLE_CUDA=ON");
+#endif
+    }
     if (deck.metadata.electronic_method == vb::ElectronicMethod::Dft) {
         return run_dft(command_line, deck);
     }

@@ -25,6 +25,8 @@ set(XMVB_VBSCF_STRUCTURE_SOURCES
   vbscf/structures/assembly/states.cpp
   vbscf/structures/assembly/transport_tiles.cpp
   vbscf/structures/assembly/orthogonal_tiles.cpp
+  vbscf/structures/assembly/operator_first.cpp
+  vbscf/structures/assembly/operator_first_jet.cpp
   vbscf/structures/assembly/product_jet.cpp
   vbscf/structures/assembly/overlap_tiles.cpp
   vbscf/structures/assembly/source_tiles.cpp

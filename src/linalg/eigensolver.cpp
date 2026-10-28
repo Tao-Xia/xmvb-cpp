@@ -1,3 +1,4 @@
+#include "core/index.hpp"
 #include "linalg/eigensolver.hpp"
 
 #include <algorithm>
@@ -18,11 +19,12 @@ namespace {
 
 void validate_generalized_eigenproblem_inputs(std::span<const double> hamiltonian_matrix,
                                               std::span<const double> overlap_matrix,
-                                              int dimension) {
+                                              Eigen::Index dimension) {
     if (dimension <= 0) {
         throw std::invalid_argument("dimension must be positive");
     }
-    const std::size_t expected_size = static_cast<std::size_t>(dimension) * dimension;
+    const std::size_t expected_size = core::checked_multiply(
+        core::checked_index<std::size_t>(dimension), core::checked_index<std::size_t>(dimension));
     if (hamiltonian_matrix.size() != expected_size || overlap_matrix.size() != expected_size) {
         throw std::invalid_argument(
             "hamiltonian_matrix and overlap_matrix must be square matrices");
@@ -171,7 +173,7 @@ Eigen::MatrixXd
 make_davidson_initial_vectors(const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
                               const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
                               int n_vectors) {
-    const int dimension = static_cast<int>(hamiltonian_diagonal.size());
+    const Eigen::Index dimension = hamiltonian_diagonal.size();
     std::vector<int> diagonal_order(dimension);
     for (int index = 0; index < dimension; ++index)
         diagonal_order[index] = index;
@@ -199,7 +201,7 @@ make_davidson_initial_vectors(const Eigen::Ref<const Eigen::VectorXd>& hamiltoni
     return vectors;
 }
 
-DavidsonOptions make_davidson_options(int dimension,
+DavidsonOptions make_davidson_options(Eigen::Index dimension,
                                       int n_roots,
                                       double energy_tolerance,
                                       double relative_residual_tolerance,
@@ -217,12 +219,14 @@ DavidsonOptions make_davidson_options(int dimension,
     const long double n = static_cast<long double>(dimension);
     const long double capacity = 2.0L * kBasisBudgetDoubles /
                                  (std::sqrt(9.0L * n * n + 4.0L * kBasisBudgetDoubles) + 3.0L * n);
-    const int max_subspace = std::min(dimension, static_cast<int>(std::floor(capacity)));
-    if (max_subspace < std::min(dimension, 2 * n_roots)) {
+    const int max_subspace = core::checked_index<int>(
+        std::min<Eigen::Index>(dimension, static_cast<int>(std::floor(capacity))));
+    if (max_subspace < std::min<Eigen::Index>(dimension, 2LL * n_roots)) {
         throw std::runtime_error("Davidson selected-root block exceeds the basis workspace budget");
     }
     return DavidsonOptions{n_roots,
-                           2 * dimension,
+                           core::checked_index<Eigen::Index>(core::checked_multiply(
+                               2, core::checked_index<std::size_t>(dimension))),
                            max_subspace,
                            energy_tolerance,
                            relative_residual_tolerance,
@@ -232,8 +236,9 @@ DavidsonOptions make_davidson_options(int dimension,
 GeneralizedEigenResult
 GeneralizedEigensolver::solve_dense(std::span<const double> hamiltonian_matrix,
                                     std::span<const double> overlap_matrix,
-                                    int dimension) const {
+                                    Eigen::Index dimension) const {
     validate_generalized_eigenproblem_inputs(hamiltonian_matrix, overlap_matrix, dimension);
+    const auto lapack_dimension = core::checked_index<lapack_int>(dimension);
     GeneralizedEigenResult result;
     std::vector<double> h_copy(hamiltonian_matrix.begin(), hamiltonian_matrix.end());
     std::vector<double> s_copy(overlap_matrix.begin(), overlap_matrix.end());
@@ -242,11 +247,11 @@ GeneralizedEigensolver::solve_dense(std::span<const double> hamiltonian_matrix,
                                            1,
                                            'V',
                                            'U',
-                                           dimension,
+                                           lapack_dimension,
                                            h_copy.data(),
-                                           dimension,
+                                           lapack_dimension,
                                            s_copy.data(),
-                                           dimension,
+                                           lapack_dimension,
                                            result.eigenvalues.data());
     check_generalized_eigensolver_info(info);
     result.eigenvector_matrix = std::move(h_copy);
@@ -256,8 +261,9 @@ GeneralizedEigensolver::solve_dense(std::span<const double> hamiltonian_matrix,
 std::vector<double>
 GeneralizedEigensolver::solve_dense_eigenvalues(std::span<const double> hamiltonian_matrix,
                                                 std::span<const double> overlap_matrix,
-                                                int dimension) const {
+                                                Eigen::Index dimension) const {
     validate_generalized_eigenproblem_inputs(hamiltonian_matrix, overlap_matrix, dimension);
+    const auto lapack_dimension = core::checked_index<lapack_int>(dimension);
     std::vector<double> h_copy(hamiltonian_matrix.begin(), hamiltonian_matrix.end());
     std::vector<double> s_copy(overlap_matrix.begin(), overlap_matrix.end());
     std::vector<double> eigenvalues(static_cast<std::size_t>(dimension));
@@ -265,11 +271,11 @@ GeneralizedEigensolver::solve_dense_eigenvalues(std::span<const double> hamilton
                                            1,
                                            'N',
                                            'U',
-                                           dimension,
+                                           lapack_dimension,
                                            h_copy.data(),
-                                           dimension,
+                                           lapack_dimension,
                                            s_copy.data(),
-                                           dimension,
+                                           lapack_dimension,
                                            eigenvalues.data());
     check_generalized_eigensolver_info(info);
     return eigenvalues;
@@ -280,7 +286,7 @@ DavidsonResult GeneralizedEigensolver::solve_davidson(
     const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
     const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
     const DavidsonOptions& options) const {
-    const int dimension = static_cast<int>(hamiltonian_diagonal.size());
+    const Eigen::Index dimension = hamiltonian_diagonal.size();
     detail::validate_davidson_diagonals(hamiltonian_diagonal, overlap_diagonal);
     detail::validate_davidson_options(dimension, options);
     const int n_initial = std::min(options.max_subspace_dimension, 2 * options.n_roots);

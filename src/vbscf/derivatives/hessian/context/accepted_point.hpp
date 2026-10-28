@@ -1,5 +1,7 @@
 #pragma once
 
+#include <Eigen/Core>
+
 #include <optional>
 #include <vector>
 
@@ -145,7 +147,7 @@ struct AcceptedPointContext {
     int n_active_orbitals = 0;
 
     /** @brief Dimension of the structure space acted on by `structure_action`. */
-    int n_structures = 0;
+    Eigen::Index n_structures = 0;
 
     /**
    * @brief Whether the accepted point supports matrix-form same-spin adjoints.

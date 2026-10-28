@@ -37,7 +37,7 @@ struct RaisedDeterminantHash {
 };
 
 struct DeterminantTerm {
-    int determinant = 0;
+    std::size_t determinant = 0;
     double coefficient = 0.0;
 };
 
@@ -60,7 +60,8 @@ StructureSpinAnalysis analyze_structure_spin(const StructureExpansion& structure
     }
 
     std::vector<std::vector<DeterminantTerm>> structure_terms(structures.n_structures);
-    for (int determinant = 0; determinant < static_cast<int>(alpha_rows.size()); ++determinant) {
+    for (std::size_t determinant = 0; determinant < static_cast<int>(alpha_rows.size());
+         ++determinant) {
         if (alpha_rows.electron_count(determinant) != n_alpha ||
             beta_rows.electron_count(determinant) != n_beta)
             throw std::invalid_argument("structure expansion mixes electron-number sectors");
@@ -78,7 +79,7 @@ StructureSpinAnalysis analyze_structure_spin(const StructureExpansion& structure
     result.spin = 0.5 * static_cast<double>(spin_multiplicity - 1);
     result.spin_squared = result.spin * (result.spin + 1.0);
 
-    for (int structure = 0; structure < structures.n_structures; ++structure) {
+    for (std::size_t structure = 0; structure < structures.n_structures; ++structure) {
         if (structure_terms[structure].empty()) {
             throw std::invalid_argument("structure has no determinant expansion");
         }

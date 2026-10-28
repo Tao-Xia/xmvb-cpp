@@ -1,3 +1,4 @@
+#include "core/index.hpp"
 #include "cuda/vb/metric.hpp"
 
 #include <algorithm>
@@ -28,11 +29,11 @@ int selected_dimension(linalg::ConstMatrixView gram) {
     if (gram.rows <= 0 || gram.rows != gram.cols || gram.ld < gram.rows || !gram.data ||
         !vb::RepresentationOverlap::PreparedMetric::fits_selected(gram.rows))
         throw std::invalid_argument("CUDA selected Gram exceeds bounded representation");
-    return static_cast<int>(gram.rows);
+    return core::checked_index<int>(gram.rows);
 }
 
 __global__ void selected_diagonal(linalg::ConstMatrixView gram, double* diagonal) {
-    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t i = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i < gram.rows)
         diagonal[i] = gram.data[i + gram.ld * i];
 }
@@ -51,7 +52,7 @@ void check_solver(cusolverStatus_t status, const char* operation) {
 
 // Each output cell has one owner and intersects two product-sorted sparse W
 // columns. This fixes reduction order without atomics or a global dense Gram.
-__global__ void assemble_gram(const int* indices,
+__global__ void assemble_gram(const Eigen::Index* indices,
                               const std::int64_t* offsets,
                               const std::int64_t* products,
                               const double* coefficients,
@@ -64,12 +65,12 @@ __global__ void assemble_gram(const int* indices,
     if (cell >= cells)
         return;
     const std::int64_t block = cell / (static_cast<std::int64_t>(dimension) * dimension);
-    const int row = static_cast<int>(cell % dimension);
-    const int column = static_cast<int>((cell / dimension) % dimension);
+    const std::int64_t row = static_cast<std::int64_t>(cell % dimension);
+    const std::int64_t column = static_cast<std::int64_t>((cell / dimension) % dimension);
     if (row < column)
         return;
-    const int left = indices[first_index + block * dimension + row];
-    const int right = indices[first_index + block * dimension + column];
+    const Eigen::Index left = indices[first_index + block * dimension + row];
+    const Eigen::Index right = indices[first_index + block * dimension + column];
     std::int64_t a = offsets[left], b = offsets[right];
     const std::int64_t a_end = offsets[left + 1], b_end = offsets[right + 1];
     double value = 0.0;
@@ -87,7 +88,7 @@ __global__ void assemble_gram(const int* indices,
     factors[first_factor + cell] = value;
 }
 
-__global__ void extract_gram_diagonal(const int* indices,
+__global__ void extract_gram_diagonal(const Eigen::Index* indices,
                                       const double* factors,
                                       double* diagonal,
                                       std::size_t first_index,
@@ -113,8 +114,8 @@ __global__ void validate_lower_factors(const double* factors,
     if (cell >= cells)
         return;
     const auto block = cell / (static_cast<std::int64_t>(dimension) * dimension);
-    const int row = static_cast<int>(cell % dimension);
-    const int column = static_cast<int>((cell / dimension) % dimension);
+    const std::int64_t row = static_cast<std::int64_t>(cell % dimension);
+    const std::int64_t column = static_cast<std::int64_t>((cell / dimension) % dimension);
     if (row < column)
         return;
     const double value = factors[first_factor + cell];
@@ -122,18 +123,20 @@ __global__ void validate_lower_factors(const double* factors,
         atomicCAS(info + first_pointer + block, 0, -100);
 }
 
-__global__ void
-gather_blocks(linalg::ConstMatrixView source, const int* indices, double* packed, int count) {
-    const int position = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void gather_blocks(linalg::ConstMatrixView source,
+                              const Eigen::Index* indices,
+                              double* packed,
+                              int count) {
+    const std::int64_t position = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (position < count)
         packed[position] = source.data[indices[position]];
 }
 
 __global__ void scatter_blocks(const double* packed,
-                               const int* indices,
+                               const Eigen::Index* indices,
                                linalg::MatrixView destination,
                                int count) {
-    const int position = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t position = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (position < count)
         destination.data[indices[position]] = packed[position];
 }
@@ -143,7 +146,7 @@ __global__ void scale_diagonal_model(linalg::ConstMatrixView source,
                                      const double* gram_diagonal,
                                      linalg::MatrixView destination,
                                      int count) {
-    const int position = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t position = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (position < count)
         destination.data[position] =
             source.data[position] * sqrt(gram_diagonal[position] / model.data[position]);
@@ -179,7 +182,7 @@ void SelectedMetric::solve(linalg::ConstMatrixView rhs, linalg::MatrixView image
 }
 
 void SpinMetric::initialize_layout(Context& context,
-                                   const std::vector<std::vector<int>>& blocks,
+                                   const std::vector<std::vector<Eigen::Index>>& blocks,
                                    std::size_t factor_byte_limit) {
     // Reorder entire occupation blocks, never rows within a block, so equal
     // block dimensions share the same batched TRSM path.
@@ -194,7 +197,7 @@ void SpinMetric::initialize_layout(Context& context,
             d > (factor_byte_limit - factor_bytes) / sizeof(double) / d)
             throw std::length_error("CUDA spin metric factors exceed byte budget");
         factor_bytes += d * d * sizeof(double);
-        for (const int index : blocks[b]) {
+        for (const Eigen::Index index : blocks[b]) {
             if (index < 0 || index >= dimension_ || seen[index]++)
                 throw std::invalid_argument("CUDA spin metric block indices overlap");
         }
@@ -203,7 +206,7 @@ void SpinMetric::initialize_layout(Context& context,
     if (std::find(seen.begin(), seen.end(), 0) != seen.end())
         throw std::invalid_argument("CUDA spin metric blocks do not cover the space");
 
-    std::vector<int> host_indices;
+    std::vector<Eigen::Index> host_indices;
     host_indices.reserve(dimension_);
     std::vector<const double*> host_factor_pointers;
     std::vector<double*> host_scratch_pointers;
@@ -212,7 +215,7 @@ void SpinMetric::initialize_layout(Context& context,
         if (batch.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
             throw std::overflow_error("CUDA spin metric batch count exceeds int range");
         groups_.push_back({d,
-                           static_cast<int>(batch.size()),
+                           core::checked_index<std::int64_t>(batch.size()),
                            host_factor_pointers.size(),
                            host_indices.size(),
                            factor_elements});
@@ -226,17 +229,18 @@ void SpinMetric::initialize_layout(Context& context,
     if (host_indices.size() != static_cast<std::size_t>(dimension_))
         throw std::logic_error("CUDA spin metric packed block length disagrees");
 
-    indices_ = Buffer<int>(context, host_indices.size());
+    indices_ = Buffer<Eigen::Index>(context, host_indices.size());
     factors_ = Buffer<double>(context, factor_elements);
     gram_diagonal_ = Buffer<double>(context, dimension_);
     factor_pointers_ = Buffer<const double*>(context, host_factor_pointers.size());
     scratch_pointers_ = Buffer<double*>(context, host_scratch_pointers.size());
-    context.copy_to_device(indices_.data(), host_indices.data(), host_indices.size() * sizeof(int));
+    context.copy_to_device(
+        indices_.data(), host_indices.data(), host_indices.size() * sizeof(Eigen::Index));
     // Device pointer arrays are immutable because both buffers are resident for
     // this metric's lifetime. Compute addresses from offsets without GPU copies.
     std::size_t pointer = 0, factor_offset = 0, scratch_offset = 0;
     for (const auto& group : groups_)
-        for (int b = 0; b < group.count; ++b) {
+        for (std::int64_t b = 0; b < group.count; ++b) {
             host_factor_pointers[pointer] = factors_.data() + factor_offset;
             host_scratch_pointers[pointer] = scratch_.data() + scratch_offset;
             factor_offset += static_cast<std::size_t>(group.dimension) * group.dimension;
@@ -276,7 +280,7 @@ SpinMetric::SpinMetric(Context& context,
             throw std::invalid_argument("CUDA spin incidence term is invalid");
         ++host_offsets[static_cast<std::size_t>(term.structure) + 1];
     }
-    for (int i = 0; i < dimension_; ++i)
+    for (std::int64_t i = 0; i < dimension_; ++i)
         host_offsets[i + 1] += host_offsets[i];
     std::vector<std::int64_t> positions = host_offsets;
     std::vector<std::int64_t> host_products(view.terms.size());
@@ -287,14 +291,14 @@ SpinMetric::SpinMetric(Context& context,
             throw std::invalid_argument("CUDA spin incidence row offsets are invalid");
         for (auto term_index = first; term_index < last; ++term_index) {
             const auto& term = view.terms[term_index];
-            if (term.group != static_cast<int>(product))
+            if (term.group != product)
                 throw std::invalid_argument("CUDA spin incidence group index is invalid");
             const auto position = positions[term.structure]++;
             host_products[position] = static_cast<std::int64_t>(product);
             host_weights[position] = term.coefficient;
         }
     }
-    for (int i = 0; i < dimension_; ++i)
+    for (std::int64_t i = 0; i < dimension_; ++i)
         if (positions[i] != host_offsets[i + 1])
             throw std::logic_error("CUDA spin incidence CSC packing disagrees");
 
@@ -353,7 +357,7 @@ SpinMetric::SpinMetric(Context& context,
                                              mutable_pointers.data() + group.first_pointer,
                                              group.dimension,
                                              info.data() + group.first_pointer,
-                                             group.count),
+                                             blas_int(group.count)),
                      "cusolverDnDpotrfBatched spin metric");
         const auto cells =
             static_cast<std::int64_t>(group.count) * group.dimension * group.dimension;
@@ -397,19 +401,19 @@ void SpinMetric::solve(linalg::ConstMatrixView rhs, linalg::MatrixView output, P
             const auto* factors = factor_pointers_.data() + group.first_pointer;
             auto* values = scratch_pointers_.data() + group.first_pointer;
             const auto triangular = [&](cublasOperation_t operation) {
-                check_cublas(cublasDtrsmBatched(context_->blas(),
-                                                CUBLAS_SIDE_LEFT,
-                                                CUBLAS_FILL_MODE_LOWER,
-                                                operation,
-                                                CUBLAS_DIAG_NON_UNIT,
-                                                group.dimension,
-                                                1,
-                                                &one,
-                                                factors,
-                                                group.dimension,
-                                                values,
-                                                group.dimension,
-                                                group.count),
+                check_cublas(cublasDtrsmBatched_64(context_->blas(),
+                                                   CUBLAS_SIDE_LEFT,
+                                                   CUBLAS_FILL_MODE_LOWER,
+                                                   operation,
+                                                   CUBLAS_DIAG_NON_UNIT,
+                                                   group.dimension,
+                                                   1,
+                                                   &one,
+                                                   factors,
+                                                   group.dimension,
+                                                   values,
+                                                   group.dimension,
+                                                   blas_int(group.count)),
                              "cublasDtrsmBatched spin metric");
             };
             if (part != Part::Upper)

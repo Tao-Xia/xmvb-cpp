@@ -107,7 +107,7 @@ class ProductPaths {
         words_ = (size_ + 63) / 64;
         bounds_.assign(2 * static_cast<std::size_t>(n_) * (n_ + 1) * words_, 0);
         for (std::size_t seed = 0; seed < size_; ++seed) {
-            int a = 0, b = 0;
+            std::int64_t a = 0, b = 0;
             for (int k = 0; k < n_; ++k) {
                 a += (seeds[seed].first >> k) & 1;
                 b += (seeds[seed].second >> k) & 1;
@@ -118,7 +118,7 @@ class ProductPaths {
         // L_spin(k,c) contains precisely the seeds whose prefix count is <= c.
         for (int spin = 0; spin < 2; ++spin)
             for (int k = 0; k < n_; ++k)
-                for (int count = 1; count <= n_; ++count)
+                for (std::int64_t count = 1; count <= n_; ++count)
                     for (std::size_t w = 0; w < words_; ++w)
                         bounds_[offset(spin, k, count) + w] |=
                             bounds_[offset(spin, k, count - 1) + w];
@@ -306,7 +306,7 @@ class ProductPaths {
                 return false;
             bool possible = true, support = true;
             if (paths_->covalent_) {
-                const int beta_count = beta_stack_[k + 1].count;
+                const std::int64_t beta_count = beta_stack_[k + 1].count;
                 support = parent.support && count + beta_count >= k + 1;
                 possible = count + beta_count + depth_ >= k + 1;
             } else if (!paths_->full_) {

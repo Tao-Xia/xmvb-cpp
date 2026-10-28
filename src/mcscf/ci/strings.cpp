@@ -1,3 +1,4 @@
+#include "core/index.hpp"
 #include "mcscf/ci/strings.hpp"
 #include "mcscf/ci/combinations.hpp"
 
@@ -57,13 +58,12 @@ struct SpinStrings::Data {
     int n, electrons;
     std::vector<std::uint64_t> masks, ranks;
     bool complete;
-    std::vector<int> indices;
+    std::vector<StringIndex> indices;
     Data(int orbitals, std::span<const std::uint64_t> input)
         : n(orbitals), electrons(input.empty() ? 0 : std::popcount(input.front())),
           masks(input.begin(), input.end()) {
         validate_sector(n, electrons);
-        if (masks.empty() ||
-            masks.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+        if (masks.empty())
             throw std::invalid_argument("invalid spin-string count");
         complete = masks.size() == string_count(n, electrons);
         const auto full = (std::uint64_t{1} << n) - 1;
@@ -75,7 +75,7 @@ struct SpinStrings::Data {
         }
         if (complete && !canonical) {
             indices.assign(masks.size(), -1);
-            for (int i = 0; i < static_cast<int>(masks.size()); ++i) {
+            for (StringIndex i = 0; i < core::checked_index<StringIndex>(masks.size()); ++i) {
                 auto& index = indices[rank(masks[i])];
                 if (index >= 0)
                     throw std::invalid_argument("duplicate spin string");
@@ -83,9 +83,9 @@ struct SpinStrings::Data {
             }
         } else if (!complete) {
             // A sparse spin sector never allocates a full-universe rank table.
-            std::vector<std::pair<std::uint64_t, int>> sorted;
+            std::vector<std::pair<std::uint64_t, StringIndex>> sorted;
             sorted.reserve(masks.size());
-            for (int i = 0; i < static_cast<int>(masks.size()); ++i)
+            for (StringIndex i = 0; i < core::checked_index<StringIndex>(masks.size()); ++i)
                 sorted.emplace_back(rank(masks[i]), i);
             std::sort(sorted.begin(), sorted.end());
             ranks.reserve(sorted.size());
@@ -114,8 +114,6 @@ struct SpinStrings::Data {
 SpinStrings::SpinStrings(int n, int electrons) {
     validate_sector(n, electrons);
     const auto count = string_count(n, electrons);
-    if (count > static_cast<std::size_t>(std::numeric_limits<int>::max()))
-        throw std::length_error("spin-string count exceeds index range");
     std::vector<std::uint64_t> masks;
     masks.reserve(count);
     std::uint64_t mask = electrons ? (std::uint64_t{1} << electrons) - 1 : 0;
@@ -136,8 +134,8 @@ const std::vector<std::uint64_t>& SpinStrings::masks() const noexcept {
     static const std::vector<std::uint64_t> empty;
     return data_ ? data_->masks : empty;
 }
-int SpinStrings::size() const noexcept {
-    return masks().size();
+StringIndex SpinStrings::size() const noexcept {
+    return core::checked_index<StringIndex>(masks().size());
 }
 int SpinStrings::orbitals() const noexcept {
     return data_ ? data_->n : 0;
@@ -148,16 +146,17 @@ int SpinStrings::electrons() const noexcept {
 bool SpinStrings::complete() const noexcept {
     return data_ && data_->complete;
 }
-int SpinStrings::index(std::uint64_t mask) const {
+StringIndex SpinStrings::index(std::uint64_t mask) const {
     if (!data_ || (mask >> data_->n) || std::popcount(mask) != data_->electrons)
         throw std::out_of_range("spin mask is outside its sector");
     return index_from_rank(data_->rank(mask));
 }
-int SpinStrings::index_from_rank(std::uint64_t rank) const {
+StringIndex SpinStrings::index_from_rank(std::uint64_t rank) const {
     if (!data_ || rank >= detail::spin_choose(data_->n, data_->electrons))
         throw std::out_of_range("spin rank is outside its sector");
     if (data_->complete)
-        return data_->indices.empty() ? static_cast<int>(rank) : data_->indices[rank];
+        return data_->indices.empty() ? core::checked_index<StringIndex>(rank)
+                                      : data_->indices[rank];
     const auto found = std::lower_bound(data_->ranks.begin(), data_->ranks.end(), rank);
     if (found == data_->ranks.end() || *found != rank)
         throw std::out_of_range("spin mask is absent from the sparse sector");

@@ -67,7 +67,7 @@ struct ActiveSpaceGradientForwardContext {
 
 void validate_state_selection(const std::vector<int>& selected_state_indices,
                               const std::vector<double>& state_average_weights,
-                              int n_structures) {
+                              Eigen::Index n_structures) {
     if (selected_state_indices.empty()) {
         throw std::invalid_argument("selected_state_indices must not be empty");
     }
@@ -83,9 +83,9 @@ void validate_state_selection(const std::vector<int>& selected_state_indices,
 }
 
 double compute_average_structure_overlap(const std::vector<double>& overlap_matrix,
-                                         int n_structures) {
+                                         Eigen::Index n_structures) {
     double diagonal_sum = 0.0;
-    for (int structure_index = 0; structure_index < n_structures; ++structure_index) {
+    for (Eigen::Index structure_index = 0; structure_index < n_structures; ++structure_index) {
         diagonal_sum += overlap_matrix[structure_index * n_structures + structure_index];
     }
     return diagonal_sum / static_cast<double>(n_structures);
@@ -122,7 +122,8 @@ void retain_structure_action(const VbScfInput& input, ActiveSpaceGradientForward
         precomputed_diagonal.emplace();
         precomputed_diagonal->hamiltonian.resize(input.structure_data.n_structures);
         precomputed_diagonal->overlap.resize(input.structure_data.n_structures);
-        for (int structure = 0; structure < input.structure_data.n_structures; ++structure) {
+        for (Eigen::Index structure = 0; structure < input.structure_data.n_structures;
+             ++structure) {
             const std::size_t diagonal_index =
                 static_cast<std::size_t>(structure) * input.structure_data.n_structures + structure;
             precomputed_diagonal->hamiltonian[structure] =
@@ -143,7 +144,7 @@ void retain_structure_action(const VbScfInput& input, ActiveSpaceGradientForward
 }
 
 /** @brief Plan solver storage before admitting reusable numerical factors. */
-linalg::DavidsonOptions structure_solve_options(int n_structures,
+linalg::DavidsonOptions structure_solve_options(Eigen::Index n_structures,
                                                 int n_roots,
                                                 StructureSolveAccuracy structure_solve_accuracy) {
     structure_solve_accuracy.validate();
@@ -169,7 +170,7 @@ xmvb::linalg::DavidsonResult solve_selected_structure_roots(
     const xmvb::linalg::GeneralizedEigenAction& action,
     const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
     const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
-    int n_structures,
+    Eigen::Index n_structures,
     int n_roots,
     StructureSolveAccuracy structure_solve_accuracy,
     const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors,
@@ -241,7 +242,7 @@ solve_complete_structure_roots(const StructureAction& action,
                                const Eigen::Ref<const Eigen::MatrixXd>& initial,
                                const linalg::GeneralizedEigensolver& solver) {
     const auto& diagonal = action.preconditioner_diagonal();
-    const int n = action.n_structures();
+    const Eigen::Index n = action.n_structures();
     const bool recycled = initial.rows() == n && initial.cols() >= n_roots && initial.allFinite();
     const auto options = linalg::make_davidson_options(n,
                                                        n_roots,
@@ -320,7 +321,7 @@ std::shared_ptr<const SelectedMetric> selected_ci_metric(const StructureAction& 
     return metric.selected_metric();
 }
 
-void select_structure_states(int n_structures,
+void select_structure_states(Eigen::Index n_structures,
                              const std::vector<int>& selected_state_indices,
                              ActiveSpaceGradientForwardContext* context) {
     const int n_roots = static_cast<int>(context->eigen_result.eigenvalues.size());
@@ -353,7 +354,7 @@ void solve_structure_problem(
     const xmvb::linalg::GeneralizedEigensolver& generalized_eigensolver,
     ActiveSpaceGradientForwardContext* context) {
     const auto& prepared = context->timed_active_space_context.prepared_active_space;
-    const int n_structures = input.structure_data.n_structures;
+    const Eigen::Index n_structures = input.structure_data.n_structures;
     const int n_roots = required_root_count(selected_state_indices);
     auto stage_start_time = std::chrono::steady_clock::now();
     const bool use_materialized_operator = structure_eigensolver == StructureEigensolver::Dense;
@@ -375,7 +376,7 @@ void solve_structure_problem(
         context->average_structure_overlap = compute_average_structure_overlap(
             context->structure_matrices.overlap_matrix, n_structures);
         context->structure_overlap_diagonal.resize(n_structures);
-        for (int structure = 0; structure < n_structures; ++structure) {
+        for (Eigen::Index structure = 0; structure < n_structures; ++structure) {
             context->structure_overlap_diagonal[structure] =
                 context->structure_matrices
                     .overlap_matrix[static_cast<std::size_t>(structure) * n_structures + structure];
@@ -705,7 +706,7 @@ finalize_active_space_second_order_context(const VbScfInput& input,
     } else if (!forward_context->structure_matrices.hamiltonian_matrix.empty()) {
         // Dense CI has no Davidson Ritz images. Supply the same accepted-state
         // contract from its resident matrices, only for the selected roots.
-        const int n = context->n_structures;
+        const Eigen::Index n = context->n_structures;
         const Eigen::Map<const Eigen::MatrixXd> hamiltonian(
             forward_context->structure_matrices.hamiltonian_matrix.data(), n, n);
         const Eigen::Map<const Eigen::MatrixXd> overlap(

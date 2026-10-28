@@ -18,9 +18,11 @@ bool StructureMetricInverse::fits(const StructureAction& action,
                                   std::size_t workspace_byte_limit) {
     if (!action.storage().orthogonal_direct_ci)
         return false;
-    const std::size_t column_bytes = (alpha_strings.size() * beta_strings.size() +
-                                      4 * static_cast<std::size_t>(action.n_structures_)) *
-                                     sizeof(double);
+    const std::size_t column_bytes = core::checked_multiply(
+        sizeof(double),
+        core::checked_add(
+            core::checked_multiply(alpha_strings.size(), beta_strings.size()),
+            core::checked_multiply(4, core::checked_index<std::size_t>(action.n_structures_))));
     if (column_bytes == 0 || column_bytes > workspace_byte_limit)
         return false;
     return SpinMetric::fits(action, alpha_strings, beta_strings, factor_byte_limit);
@@ -40,9 +42,9 @@ StructureMetricInverse::StructureMetricInverse(const StructureAction& action,
                                      sizeof(double);
     if (column_bytes == 0 || workspace_byte_limit < column_bytes)
         throw std::length_error("structure metric workspace cannot hold one carrier column");
-    chunk_width_ = static_cast<int>(
+    chunk_width_ = core::checked_index<Eigen::Index>(
         std::min<std::size_t>(workspace_byte_limit / column_bytes,
-                              std::numeric_limits<int>::max() / action.n_unique_beta_));
+                              std::numeric_limits<Eigen::Index>::max() / action.n_unique_beta_));
 }
 
 Eigen::MatrixXd StructureMetricInverse::apply(const Eigen::Ref<const Eigen::MatrixXd>& rhs) const {
@@ -130,7 +132,7 @@ Eigen::MatrixXd StructureMetricInverse::apply_ci_hamiltonian(
     Eigen::MatrixXd result(coordinates.rows(), coordinates.cols());
     // Sigma retains both its input and output carrier. Keep their combined
     // payload within the existing carrier-column allowance even for tiny G.
-    const int width = std::max(1, chunk_width_ / 2);
+    const Eigen::Index width = std::max<Eigen::Index>(1, chunk_width_ / 2);
     for (Eigen::Index first = 0; first < coordinates.cols(); first += width) {
         const Eigen::Index count = std::min<Eigen::Index>(width, coordinates.cols() - first);
         const auto carrier = action_->expand_structure_block(

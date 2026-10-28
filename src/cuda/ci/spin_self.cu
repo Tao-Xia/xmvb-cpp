@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "cuda/ci/spin_self.hpp"
 
 #include <algorithm>
@@ -23,14 +24,14 @@ __global__ void
 gather_occupied(View frame, const int* occupied, double* factors, int n, int k, int count) {
     const auto i = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i < static_cast<std::int64_t>(n) * k * count) {
-        const int row = i % n, col = (i / n) % k, string = i / (n * k);
+        const std::int64_t row = i % n, col = (i / n) % k, string = i / (n * k);
         factors[i] = frame.data[row + frame.ld * occupied[string * k + col]];
     }
 }
 
 __global__ void
 matrix_pointers(double* lu, double* inverse, double** left, double** right, int k, int count) {
-    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t i = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i < count) {
         left[i] = lu + i * k * k;
         right[i] = inverse + i * k * k;
@@ -39,7 +40,7 @@ matrix_pointers(double* lu, double* inverse, double** left, double** right, int 
 
 __global__ void
 self_overlap(const double* lu, const int* pivots, double* overlap, int k, int count) {
-    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t i = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i < count) {
         double value = 1.0;
         for (int j = 0; j < k; ++j) {
@@ -89,8 +90,8 @@ __global__ void self_energy(const double* densities,
         const int left = pqrs % kernel.rows, right = pqrs / kernel.rows;
         const int p = first[left], q = second[left], r = first[right], s = second[right];
         double moment = 0.0;
-        for (int a = 0; a < (p == q ? 1 : 2); ++a)
-            for (int b = 0; b < (r == s ? 1 : 2); ++b) {
+        for (std::int64_t a = 0; a < (p == q ? 1 : 2); ++a)
+            for (std::int64_t b = 0; b < (r == s ? 1 : 2); ++b) {
                 const int i = a ? q : p, j = a ? p : q, k = b ? s : r, l = b ? r : s;
                 // <a_i^+ a_j a_k^+ a_l> for a normalized Slater state.
                 moment += density(d, n, i, j) * density(d, n, k, l) +
@@ -105,7 +106,7 @@ __global__ void self_energy(const double* densities,
 }
 
 __global__ void vacuum(double* overlap, double* energy, int count) {
-    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::int64_t i = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i < count) {
         overlap[i] = 1.0;
         energy[i] = 0.0;
@@ -177,31 +178,31 @@ void SpinSelf::update(View frame, View kernel) {
     Buffer<double*> left(c, tile), right(c, tile);
     Buffer<int> pivots(c, k * tile), info(c, tile);
     const double one = 1.0, zero = 0.0;
-    for (int begin = 0; begin < strings_; begin += tile) {
-        const int count = std::min(tile, strings_ - begin);
+    for (std::int64_t begin = 0; begin < strings_; begin += tile) {
+        const std::int64_t count = std::min<std::int64_t>(tile, strings_ - begin);
         gather_occupied<<<grid(1LL * n * k * count), threads, 0, c.stream()>>>(
             frame, occupations_.data() + begin * k, factors.data(), n, k, count);
         matrix_pointers<<<grid(count), threads, 0, c.stream()>>>(
             lu.data(), inverse.data(), left.data(), right.data(), k, count);
         check_cuda(cudaGetLastError(), "spin-self occupied gather");
-        check_cublas(cublasDgemmStridedBatched(c.blas(),
-                                               CUBLAS_OP_T,
-                                               CUBLAS_OP_N,
-                                               k,
-                                               k,
-                                               n,
-                                               &one,
-                                               factors.data(),
-                                               n,
-                                               n * k,
-                                               factors.data(),
-                                               n,
-                                               n * k,
-                                               &zero,
-                                               lu.data(),
-                                               k,
-                                               k * k,
-                                               count),
+        check_cublas(cublasDgemmStridedBatched_64(c.blas(),
+                                                  CUBLAS_OP_T,
+                                                  CUBLAS_OP_N,
+                                                  k,
+                                                  k,
+                                                  n,
+                                                  &one,
+                                                  factors.data(),
+                                                  n,
+                                                  n * k,
+                                                  factors.data(),
+                                                  n,
+                                                  n * k,
+                                                  &zero,
+                                                  lu.data(),
+                                                  k,
+                                                  k * k,
+                                                  count),
                      "spin-self occupied Gram GEMM");
         check_cublas(
             cublasDgetrfBatched(c.blas(), k, left.data(), k, pivots.data(), info.data(), count),
@@ -220,43 +221,43 @@ void SpinSelf::update(View frame, View kernel) {
                                          count),
                      "spin-self batched Gram inverse");
         check_info(c, info, count);
-        check_cublas(cublasDgemmStridedBatched(c.blas(),
-                                               CUBLAS_OP_N,
-                                               CUBLAS_OP_N,
-                                               n,
-                                               k,
-                                               k,
-                                               &one,
-                                               factors.data(),
-                                               n,
-                                               n * k,
-                                               inverse.data(),
-                                               k,
-                                               k * k,
-                                               &zero,
-                                               contracted.data(),
-                                               n,
-                                               n * k,
-                                               count),
+        check_cublas(cublasDgemmStridedBatched_64(c.blas(),
+                                                  CUBLAS_OP_N,
+                                                  CUBLAS_OP_N,
+                                                  n,
+                                                  k,
+                                                  k,
+                                                  &one,
+                                                  factors.data(),
+                                                  n,
+                                                  n * k,
+                                                  inverse.data(),
+                                                  k,
+                                                  k * k,
+                                                  &zero,
+                                                  contracted.data(),
+                                                  n,
+                                                  n * k,
+                                                  count),
                      "spin-self inverse projection");
-        check_cublas(cublasDgemmStridedBatched(c.blas(),
-                                               CUBLAS_OP_N,
-                                               CUBLAS_OP_T,
-                                               n,
-                                               n,
-                                               k,
-                                               &one,
-                                               contracted.data(),
-                                               n,
-                                               n * k,
-                                               factors.data(),
-                                               n,
-                                               n * k,
-                                               &zero,
-                                               densities.data(),
-                                               n,
-                                               n * n,
-                                               count),
+        check_cublas(cublasDgemmStridedBatched_64(c.blas(),
+                                                  CUBLAS_OP_N,
+                                                  CUBLAS_OP_T,
+                                                  n,
+                                                  n,
+                                                  k,
+                                                  &one,
+                                                  contracted.data(),
+                                                  n,
+                                                  n * k,
+                                                  factors.data(),
+                                                  n,
+                                                  n * k,
+                                                  &zero,
+                                                  densities.data(),
+                                                  n,
+                                                  n * n,
+                                                  count),
                      "spin-self normalized density");
         channel_means<<<grid(1LL * count * channels_), threads, 0, c.stream()>>>(
             densities.data(), first_.data(), second_.data(), moments_.view(), n, begin, count);

@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <algorithm>
 #include <cmath>
 #include <iomanip>
@@ -269,7 +270,7 @@ expand_with_sign_mode(const xmvb::vb::RawStructureData& raw_structure_data, Sign
     std::vector<std::vector<xmvb::vb::StructureExpansionTerm>> incidence_rows;
 
     std::unordered_map<DeterminantKey, int, DeterminantKeyHasher> determinant_to_index;
-    for (int structure_index = 0; structure_index < raw_structure_data.n_structures;
+    for (std::int64_t structure_index = 0; structure_index < raw_structure_data.n_structures;
          ++structure_index) {
         const int* raw_structure = raw_structure_data.structure_orbitals_data(structure_index);
 
@@ -365,7 +366,7 @@ void print_matrix_block(const std::vector<double>& matrix,
                         int dimension,
                         int print_limit,
                         const char* label) {
-    const int block_size = std::min(dimension, print_limit);
+    const int block_size = std::min<std::int64_t>(dimension, print_limit);
     std::cout << label << "_top_left_" << block_size << "x" << block_size << ":\n";
     for (int row = 0; row < block_size; ++row) {
         for (int column = 0; column < block_size; ++column) {

@@ -1,3 +1,4 @@
+#include "core/index.hpp"
 #include "mcscf/optimization/neo/solver.hpp"
 
 #include <algorithm>
@@ -121,10 +122,11 @@ solve_neo(const QuadraticProblem& problem, const NeoOptions& options, bool allow
         throw std::invalid_argument("invalid NEO solver options");
     }
 
-    const int dimension = static_cast<int>(problem.size());
-    const int maximum_dimension = options.maximum_subspace_dimension == 0
-                                      ? dimension
-                                      : std::min(dimension, options.maximum_subspace_dimension);
+    const Eigen::Index dimension = problem.size();
+    const Eigen::Index maximum_dimension =
+        options.maximum_subspace_dimension == 0
+            ? dimension
+            : std::min<Eigen::Index>(dimension, options.maximum_subspace_dimension);
     if (options.stop_on_negative_curvature && !problem.gradient().isZero(0.0)) {
         throw std::invalid_argument(
             "NEO negative-curvature probe requires an exactly zero gradient");

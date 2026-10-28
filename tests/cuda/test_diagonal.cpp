@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <algorithm>
 #include <cmath>
 #include <iostream>
@@ -27,7 +28,7 @@ struct Fixture {
     static constexpr int nbf = 5;
     static constexpr int npair = nbf * (nbf + 1) / 2;
     Matrix graph = Matrix::Zero(npair, npair);
-    std::vector<int> left, right;
+    std::vector<std::int64_t> left, right;
     std::vector<double> values;
 
     explicit Fixture(bool sparse = false) {
@@ -388,7 +389,8 @@ void check_large_core_projection() {
             z(i, j) = std::cos(0.09 * (i + j + 1));
             w(i, j) = 0.02 * std::sin(0.2 * (i + 1) * (j + 1));
         }
-    std::vector<int> first, second, rows, columns;
+    std::vector<int> first, second;
+    std::vector<std::int64_t> rows, columns;
     std::vector<double> values;
     for (int i = 0; i < nb; ++i)
         for (int j = 0; j <= i; ++j) {

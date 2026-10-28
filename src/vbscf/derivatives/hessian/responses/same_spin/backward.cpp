@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "vbscf/derivatives/hessian/responses/same_spin/backward.hpp"
 
 #include <algorithm>
@@ -80,10 +81,12 @@ Eigen::MatrixXd pack_partner_vectors(const SelectedStateDeterminantMatrices& acc
                                      TargetSpin target_spin,
                                      int panel_begin,
                                      int panel_size) {
-    const int target_size = target_spin == TargetSpin::Alpha ? accepted_states.n_unique_alpha
-                                                             : accepted_states.n_unique_beta;
-    const int partner_rows = target_spin == TargetSpin::Alpha ? accepted_states.n_unique_beta
-                                                              : accepted_states.n_unique_alpha;
+    const Eigen::Index target_size = target_spin == TargetSpin::Alpha
+                                         ? accepted_states.n_unique_alpha
+                                         : accepted_states.n_unique_beta;
+    const Eigen::Index partner_rows = target_spin == TargetSpin::Alpha
+                                          ? accepted_states.n_unique_beta
+                                          : accepted_states.n_unique_alpha;
     if (panel_begin < 0 || panel_size <= 0 || panel_begin + panel_size > target_size) {
         throw std::invalid_argument("partner-action panel bounds are invalid");
     }
@@ -124,7 +127,7 @@ const mcscf::StringTable& target_strings(const SameSpinPairCacheContext& cache,
                                             : cache.beta_reuse_table.unique_determinants;
 }
 
-int target_size(const SelectedStateDeterminantMatrices& states, TargetSpin target_spin) {
+Eigen::Index target_size(const SelectedStateDeterminantMatrices& states, TargetSpin target_spin) {
     return target_spin == TargetSpin::Alpha ? states.n_unique_alpha : states.n_unique_beta;
 }
 
@@ -132,10 +135,10 @@ Eigen::MatrixXd accepted_panel_image(const Eigen::MatrixXd& coefficients,
                                      const Eigen::MatrixXd& action,
                                      TargetSpin target_spin,
                                      int action_begin,
-                                     int left_begin,
-                                     int left_size,
-                                     int right_begin,
-                                     int right_size) {
+                                     std::int64_t left_begin,
+                                     Eigen::Index left_size,
+                                     std::int64_t right_begin,
+                                     Eigen::Index right_size) {
     if (target_spin == TargetSpin::Alpha) {
         return action.middleCols(action_begin, left_size).transpose() *
                coefficients.middleRows(right_begin, right_size).transpose();
@@ -151,10 +154,10 @@ Eigen::MatrixXd directional_panel_image(const Eigen::MatrixXd& coefficients,
                                         TargetSpin target_spin,
                                         int accepted_begin,
                                         int directional_begin,
-                                        int left_begin,
-                                        int left_size,
-                                        int right_begin,
-                                        int right_size) {
+                                        std::int64_t left_begin,
+                                        Eigen::Index left_size,
+                                        std::int64_t right_begin,
+                                        Eigen::Index right_size) {
     if (target_spin == TargetSpin::Alpha) {
         Eigen::MatrixXd image =
             directional_action.middleCols(directional_begin, left_size).transpose() *
@@ -196,10 +199,10 @@ void build_accepted_tile_weights(const SelectedStateDeterminantMatrices& states,
                                  const AcceptedSpinPairActionResult& action,
                                  TargetSpin target_spin,
                                  int panel_size,
-                                 int left_begin,
-                                 int left_size,
-                                 int right_begin,
-                                 int right_size,
+                                 std::int64_t left_begin,
+                                 Eigen::Index left_size,
+                                 std::int64_t right_begin,
+                                 Eigen::Index right_size,
                                  SameSpinAcceptedTileWeights* weights) {
     weights->reset(left_size, right_size);
     for (std::size_t state = 0; state < states.states.size(); ++state) {
@@ -235,10 +238,10 @@ void build_directional_tile_weights(const SelectedStateDeterminantMatrices& stat
                                     const AcceptedSpinPairActionResult& action,
                                     TargetSpin target_spin,
                                     int panel_size,
-                                    int left_begin,
-                                    int left_size,
-                                    int right_begin,
-                                    int right_size,
+                                    std::int64_t left_begin,
+                                    Eigen::Index left_size,
+                                    std::int64_t right_begin,
+                                    Eigen::Index right_size,
                                     SameSpinAcceptedTileWeights* weights) {
     weights->reset(left_size, right_size);
     const int directional_offset = panel_size * static_cast<int>(states.states.size());
@@ -300,10 +303,10 @@ void consume_spin_panels(const SameSpinPairCacheContext& cache,
                          const xmvb::integrals::ActiveSpaceTwoElectronResult& two_electron,
                          Eigen::MatrixXd* h1e_gradient,
                          SameSpinMatrixBackwardContribution* result) {
-    const int n_unique = target_size(states, target_spin);
+    const std::int64_t n_unique = target_size(states, target_spin);
     SameSpinAcceptedTileWeights weights;
-    for (int panel_begin = 0; panel_begin < n_unique; panel_begin += tile_extent) {
-        const int panel_size = std::min(tile_extent, n_unique - panel_begin);
+    for (std::int64_t panel_begin = 0; panel_begin < n_unique; panel_begin += tile_extent) {
+        const int panel_size = std::min<std::int64_t>(tile_extent, n_unique - panel_begin);
         const AcceptedSpinPairActionResult action =
             apply_partner_action_panel(cache,
                                        states,
@@ -315,10 +318,10 @@ void consume_spin_panels(const SameSpinPairCacheContext& cache,
                                        h1e,
                                        two_electron,
                                        action_workspace_bytes);
-        const auto consume_tile = [&](int left_begin,
-                                      int left_size,
-                                      int right_begin,
-                                      int right_size) {
+        const auto consume_tile = [&](std::int64_t left_begin,
+                                      Eigen::Index left_size,
+                                      std::int64_t right_begin,
+                                      Eigen::Index right_size) {
             if (directions == nullptr) {
                 build_accepted_tile_weights(states,
                                             energies,
@@ -372,16 +375,16 @@ void consume_spin_panels(const SameSpinPairCacheContext& cache,
                                                    &result->packed_active_two_electron_gradient);
         };
         if (target_spin == TargetSpin::Alpha) {
-            for (int right_begin = 0; right_begin < n_unique; right_begin += tile_extent) {
+            for (std::int64_t right_begin = 0; right_begin < n_unique; right_begin += tile_extent) {
                 consume_tile(panel_begin,
                              panel_size,
                              right_begin,
-                             std::min(tile_extent, n_unique - right_begin));
+                             std::min<std::int64_t>(tile_extent, n_unique - right_begin));
             }
         } else {
-            for (int left_begin = 0; left_begin < n_unique; left_begin += tile_extent) {
+            for (std::int64_t left_begin = 0; left_begin < n_unique; left_begin += tile_extent) {
                 consume_tile(left_begin,
-                             std::min(tile_extent, n_unique - left_begin),
+                             std::min<std::int64_t>(tile_extent, n_unique - left_begin),
                              panel_begin,
                              panel_size);
             }

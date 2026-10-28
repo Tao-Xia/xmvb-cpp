@@ -25,20 +25,21 @@ void near(const Matrix& actual, const Matrix& expected, const char* message) {
 }
 
 std::shared_ptr<const xmvb::cuda::ProductColumnPattern> pattern(xmvb::cuda::Context& context,
-                                                                std::vector<int> rows) {
+                                                                std::vector<std::int64_t> rows) {
     auto result = std::make_shared<xmvb::cuda::ProductColumnPattern>();
     result->size = rows.size();
     result->rows = std::move(rows);
-    result->device_rows = xmvb::cuda::Buffer<int>(context, result->size);
+    result->device_rows = xmvb::cuda::Buffer<std::int64_t>(context, result->size);
     context.copy_to_device(
-        result->device_rows.data(), result->rows.data(), result->size * sizeof(int));
+        result->device_rows.data(), result->rows.data(), result->size * sizeof(std::int64_t));
     return result;
 }
 
 void check(int parity) {
     xmvb::cuda::Context context(16ULL * 1024 * 1024);
     // An exact transpose-closed support with several absent coordinates.
-    const std::array<std::vector<int>, 4> rows{{{0, 1, 3}, {0, 1, 2}, {1, 2, 3}, {0, 2, 3}}};
+    const std::array<std::vector<std::int64_t>, 4> rows{
+        {{0, 1, 3}, {0, 1, 2}, {1, 2, 3}, {0, 2, 3}}};
     std::vector<std::shared_ptr<const xmvb::cuda::ProductColumnPattern>> patterns;
     for (const auto& selected : rows)
         patterns.push_back(pattern(context, selected));
@@ -67,7 +68,7 @@ void check(int parity) {
     const std::array<xmvb::cuda::ProductColumns*, 2> mutable_panels{&blocks[0], &blocks[1]};
     xmvb::cuda::project_product_exchange(context, mutable_panels, 2, parity);
     const std::array<const xmvb::cuda::ProductColumns*, 2> panels{&blocks[0], &blocks[1]};
-    const std::array<int, 4> all{0, 1, 2, 3};
+    const std::array<std::int64_t, 4> all{0, 1, 2, 3};
     for (int lane = 0; lane < 2; ++lane) {
         Matrix expected = Matrix::Zero(4, 4);
         for (int b = 0; b < 4; ++b)
@@ -84,8 +85,8 @@ void check(int parity) {
         xmvb::cuda::copy_to_host(context, actual, dense.view());
         near(actual, expected, "compact exchange projection differs from CPU rule");
 
-        const std::array<int, 3> requested_betas{3, 1, 0};
-        const std::array<int, 3> requested_rows{3, 0, 2};
+        const std::array<std::int64_t, 3> requested_betas{3, 1, 0};
+        const std::array<std::int64_t, 3> requested_rows{3, 0, 2};
         xmvb::cuda::Matrix<double> selected(context, 3, 3);
         xmvb::cuda::read_product_columns(
             context, panels, 2, lane, requested_betas, requested_rows, selected.view());
@@ -101,7 +102,7 @@ void check(int parity) {
 
 void check_reject_asymmetric() {
     xmvb::cuda::Context context(16ULL * 1024 * 1024);
-    const std::array<std::vector<int>, 4> rows{{{0, 1, 3}, {1, 2}, {1, 2, 3}, {0, 2, 3}}};
+    const std::array<std::vector<std::int64_t>, 4> rows{{{0, 1, 3}, {1, 2}, {1, 2, 3}, {0, 2, 3}}};
     std::vector<std::shared_ptr<const xmvb::cuda::ProductColumnPattern>> patterns;
     for (const auto& selected : rows)
         patterns.push_back(pattern(context, selected));
@@ -120,7 +121,7 @@ void check_reject_asymmetric() {
 
 void check_read_cache() {
     xmvb::cuda::Context context(16ULL * 1024 * 1024);
-    const std::array<std::vector<int>, 4> rows{{{0, 2}, {1, 3}, {0, 1}, {2, 3}}};
+    const std::array<std::vector<std::int64_t>, 4> rows{{{0, 2}, {1, 3}, {0, 1}, {2, 3}}};
     std::vector<std::shared_ptr<const xmvb::cuda::ProductColumnPattern>> patterns;
     for (const auto& selected : rows)
         patterns.push_back(pattern(context, selected));
@@ -143,7 +144,7 @@ void check_read_cache() {
         xmvb::cuda::copy_to_device(context, blocks[panel].values.view(), packed);
     }
     const std::array<const xmvb::cuda::ProductColumns*, 2> panels{&blocks[0], &blocks[1]};
-    const std::array<int, 3> betas{3, 1, 0}, selected_rows{3, 0, 2};
+    const std::array<std::int64_t, 3> betas{3, 1, 0}, selected_rows{3, 0, 2};
     xmvb::cuda::Matrix<double> device_result(context, 3, 3);
     const auto expected = [&](int lane) {
         Matrix result(3, 3);

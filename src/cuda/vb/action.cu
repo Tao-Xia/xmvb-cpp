@@ -1,4 +1,8 @@
+#include "core/index.hpp"
 #include "cuda/vb/action.hpp"
+#include "cuda/vb/operator_first.hpp"
+#include "mcscf/ci/raw_action.hpp"
+#include "mcscf/ci/sigma.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -42,8 +46,8 @@ __global__ void assemble_spin_self_model(const std::int64_t* row_offsets,
                                          const double* weights,
                                          linalg::ConstMatrixView projected_alpha,
                                          linalg::ConstMatrixView beta_moments,
-                                         const int* alpha_ids,
-                                         const int* beta_ids,
+                                         const std::int64_t* alpha_ids,
+                                         const std::int64_t* beta_ids,
                                          const double* alpha_energy,
                                          const double* beta_energy,
                                          const double* alpha_overlap,
@@ -59,8 +63,8 @@ __global__ void assemble_spin_self_model(const std::int64_t* row_offsets,
     if (row_offsets[group] == row_offsets[group + 1])
         return;
     const auto product = products[group];
-    const int a = alpha_ids[product % n_alpha];
-    const int b = beta_ids[product / n_alpha];
+    const std::int64_t a = alpha_ids[product % n_alpha];
+    const std::int64_t b = beta_ids[product / n_alpha];
     const double norm = alpha_overlap[a] * beta_overlap[b];
     double energy = alpha_energy[a] + beta_energy[b];
     for (int channel = 0; channel < projected_alpha.cols; ++channel)
@@ -87,7 +91,8 @@ __global__ void assemble_spin_self_model(const std::int64_t* row_offsets,
 }
 
 unsigned int tile_grid(std::int64_t work) {
-    return static_cast<unsigned int>(std::min<std::int64_t>(65535, (work + 255) / 256));
+    return static_cast<unsigned int>(
+        std::min<std::int64_t>(65535, (work / 256 + (work % 256 != 0))));
 }
 
 __global__ void spin_gram_identity(const std::int64_t* product_indices,
@@ -103,15 +108,15 @@ __global__ void spin_gram_identity(const std::int64_t* product_indices,
          index < total;
          index += static_cast<std::int64_t>(gridDim.x) * blockDim.x) {
         if (index < alpha_size) {
-            const int column = static_cast<int>(index / alpha);
-            const int row = static_cast<int>(index % alpha);
+            const std::int64_t column = static_cast<std::int64_t>(index / alpha);
+            const std::int64_t row = static_cast<std::int64_t>(index % alpha);
             const auto product = product_indices[first_group + column];
             alpha_columns.data[row + alpha_columns.ld * column] =
                 row == product % alpha ? 1.0 : 0.0;
         } else {
             const auto local = index - alpha_size;
-            const int column = static_cast<int>(local / beta);
-            const int row = static_cast<int>(local % beta);
+            const std::int64_t column = static_cast<std::int64_t>(local / beta);
+            const std::int64_t row = static_cast<std::int64_t>(local % beta);
             const auto product = product_indices[first_group + column];
             beta_columns.data[row + beta_columns.ld * column] = row == product / alpha ? 1.0 : 0.0;
         }
@@ -189,7 +194,7 @@ class DenseDescriptor {
 struct StructureAction::Impl {
     Context& context;
     const vb::StructureAction::OrthogonalView source_view;
-    int structures, alpha, beta;
+    std::int64_t structures, alpha, beta;
     std::int64_t groups;
     vb::StructureDiagonal diagonal;
     DirectCiSigma sigma;
@@ -199,7 +204,7 @@ struct StructureAction::Impl {
     std::unique_ptr<SpinSelf> alpha_self;
     std::unique_ptr<SpinSelf> beta_self_storage;
     const SpinSelf* beta_self;
-    Buffer<int> alpha_self_ids, beta_self_ids;
+    Buffer<std::int64_t> alpha_self_ids, beta_self_ids;
     Matrix<double> model_upper;
     std::uint64_t model_version = std::numeric_limits<std::uint64_t>::max();
     Buffer<std::int64_t> row_offsets, product_indices, columns;
@@ -211,6 +216,7 @@ struct StructureAction::Impl {
     mutable std::unique_ptr<FullAction> full_action;
     std::uint64_t version = 0;
     OrbitalFrameIdentity frame_identity;
+    std::unique_ptr<OperatorFirstAction> operator_first;
 
     Impl(Context& ctx, const vb::StructureAction& source)
         : context(ctx), source_view(source.orthogonal_view()), structures(source.n_structures()),
@@ -245,13 +251,14 @@ struct StructureAction::Impl {
                 alpha_touched[i] = beta_touched[i] = alpha_touched[i] | beta_touched[i];
         const auto make_self = [&](const auto& transform, const auto& touched, auto& device_ids) {
             std::vector<std::uint64_t> masks;
-            std::vector<int> ids(touched.size(), -1);
+            std::vector<std::int64_t> ids(touched.size(), -1);
             for (std::size_t i = 0; i < touched.size(); ++i)
                 if (touched[i]) {
-                    ids[i] = static_cast<int>(masks.size());
+                    ids[i] = core::checked_index<std::int64_t>(masks.size());
                     masks.push_back(transform.occupations()[i]);
                 }
-            context.copy_to_device(device_ids.data(), ids.data(), ids.size() * sizeof(int));
+            context.copy_to_device(
+                device_ids.data(), ids.data(), ids.size() * sizeof(std::int64_t));
             return std::make_unique<SpinSelf>(ctx, transform.n_orbitals(), masks);
         };
         alpha_self = make_self(view.alpha, alpha_touched, alpha_self_ids);
@@ -260,7 +267,7 @@ struct StructureAction::Impl {
         if (!beta_storage)
             check_cuda(cudaMemcpyAsync(beta_self_ids.data(),
                                        alpha_self_ids.data(),
-                                       alpha * sizeof(int),
+                                       alpha * sizeof(std::int64_t),
                                        cudaMemcpyDeviceToDevice,
                                        context.stream()),
                        "share spin-self row map");
@@ -380,15 +387,51 @@ struct StructureAction::Impl {
         if (vectors.rows != structures || h.rows != structures || m.rows != structures ||
             vectors.cols <= 0 || h.cols != vectors.cols || m.cols != vectors.cols)
             throw std::invalid_argument("CUDA structure action block dimensions");
-        selected_contraction().apply_selected(
-            selected_incidence(), vectors, sigma, h, m, available_bytes());
+        if (operator_first)
+            operator_first->apply(vectors, h, m, available_bytes());
+        else
+            selected_contraction().apply_selected(
+                selected_incidence(), vectors, sigma, h, m, available_bytes());
     }
 };
 
 StructureAction::StructureAction(Context& context, const vb::StructureAction& source)
-    : impl_(std::make_unique<Impl>(context, source)) {}
+    : impl_(std::make_unique<Impl>(context, source)) {
+    const auto v = source.orthogonal_view();
+    const auto order = mcscf::RawCiPlan::work(
+        v.sigma.alpha_connections(), v.sigma.beta_connections_view(), v.products.size());
+    if (v.products.size() < static_cast<std::size_t>(v.alpha.dimension()) * v.beta.dimension() &&
+        order.prefer_source()) {
+        impl_->operator_first = std::make_unique<OperatorFirstAction>(context, *this);
+        const auto& integrals = source.orthogonal_integrals();
+        Matrix<double> h(context, integrals.one_electron.rows(), integrals.one_electron.cols()),
+            g(context, integrals.pair_kernel.rows(), integrals.pair_kernel.cols()),
+            r(context, h.rows(), h.cols());
+        copy_to_device(context, h.view(), integrals.one_electron);
+        copy_to_device(context, g.view(), integrals.pair_kernel);
+        copy_to_device(context, r.view(), v.alpha.orbital_transform());
+        impl_->operator_first->update(h.view(), g.view(), r.view());
+    }
+}
 StructureAction::~StructureAction() = default;
-int StructureAction::size() const noexcept {
+std::unique_ptr<OperatorFirstAction> StructureAction::make_operator_first() const {
+    return impl_->operator_first ? impl_->operator_first->clone() : nullptr;
+}
+void StructureAction::source_map(bool transpose,
+                                 linalg::ConstMatrixView input,
+                                 linalg::MatrixView output) const {
+    auto& p = *impl_;
+    const auto bytes = p.spmm_bytes(transpose, input, output);
+    if (bytes > p.sparse_workspace.size()) {
+        p.sparse_workspace = {};
+        p.sparse_workspace = Buffer<std::byte>(p.context, bytes);
+    }
+    p.spmm_with_workspace(transpose, input, output, p.sparse_workspace.data());
+}
+bool StructureAction::uses_operator_first() const noexcept {
+    return bool(impl_->operator_first);
+}
+std::int64_t StructureAction::size() const noexcept {
     return impl_->structures;
 }
 const vb::StructureDiagonal& StructureAction::preconditioner_diagonal() const noexcept {
@@ -419,19 +462,19 @@ void StructureAction::diagonal_model(linalg::MatrixView h, linalg::MatrixView m)
     Matrix<double> symmetric(p.context, kernel.rows, kernel.cols),
         projected(p.context, p.alpha_self->moments().rows, kernel.cols);
     const double one = 1.0;
-    check_cublas(cublasDgeam(p.context.blas(),
-                             CUBLAS_OP_N,
-                             CUBLAS_OP_T,
-                             blas_int(kernel.rows),
-                             blas_int(kernel.cols),
-                             &one,
-                             kernel.data,
-                             blas_int(kernel.ld),
-                             &one,
-                             kernel.data,
-                             blas_int(kernel.ld),
-                             symmetric.data(),
-                             blas_int(kernel.rows)),
+    check_cublas(cublasDgeam_64(p.context.blas(),
+                                CUBLAS_OP_N,
+                                CUBLAS_OP_T,
+                                kernel.rows,
+                                kernel.cols,
+                                &one,
+                                kernel.data,
+                                kernel.ld,
+                                &one,
+                                kernel.data,
+                                kernel.ld,
+                                symmetric.data(),
+                                kernel.rows),
                  "CUDA spin-self cross kernel");
     if (p.model_version != p.version) {
         p.alpha_self->update(p.model_upper.view(), kernel);
@@ -475,7 +518,7 @@ void StructureAction::build_selected_metric(linalg::MatrixView output) const {
         throw std::invalid_argument("CUDA selected metric output dimensions");
     p.sigma.reset_workspace();
     if (p.groups == 0) {
-        for (int column = 0; column < p.structures; ++column)
+        for (std::int64_t column = 0; column < p.structures; ++column)
             check_cuda(cudaMemsetAsync(output.data + output.ld * column,
                                        0,
                                        p.structures * sizeof(double),
@@ -526,7 +569,8 @@ void StructureAction::build_selected_metric(linalg::MatrixView output) const {
     void* workspace = extra_workspace.empty() ? static_cast<void*>(p.sparse_workspace.data())
                                               : static_cast<void*>(extra_workspace.data());
     for (std::int64_t begin = 0; begin < p.groups; begin += width) {
-        const int count = static_cast<int>(std::min<std::int64_t>(width, p.groups - begin));
+        const std::int64_t count =
+            static_cast<std::int64_t>(std::min<std::int64_t>(width, p.groups - begin));
         const auto alpha_gram = linalg::MatrixView{spin_grams.data(), p.alpha, count, p.alpha};
         const auto beta_gram = linalg::MatrixView{
             spin_grams.data() + static_cast<std::int64_t>(p.alpha) * count, p.beta, count, p.beta};
@@ -552,7 +596,7 @@ void StructureAction::build_selected_metric(linalg::MatrixView output) const {
         const auto projected = selected_product.view().columns(0, count);
         p.spmm_with_workspace(true, gram, projected, workspace);
         const linalg::MatrixView terms{source_terms.data(), count, p.structures, width};
-        for (int column = 0; column < p.structures; ++column)
+        for (std::int64_t column = 0; column < p.structures; ++column)
             check_cuda(
                 cudaMemsetAsync(
                     terms.data + terms.ld * column, 0, count * sizeof(double), p.context.stream()),
@@ -614,6 +658,8 @@ void StructureAction::update_frame(linalg::ConstMatrixView upper, OrbitalFrameId
         impl_->beta_storage->update_upper(upper);
     if (impl_->selected_product)
         impl_->selected_product->update_frame();
+    if (p.operator_first)
+        p.operator_first->update_frame(upper);
     p.frame_identity = identity;
     ++impl_->version;
 }
@@ -624,6 +670,8 @@ void StructureAction::update_integrals(linalg::ConstMatrixView h,
     impl_->sigma.update_integrals(h, g);
     const auto previous_version = impl_->version;
     update_frame(upper, identity);
+    if (impl_->operator_first)
+        impl_->operator_first->update(h, g, upper);
     // Integral contents can change while the orbital frame remains identical.
     if (impl_->version == previous_version)
         ++impl_->version;
@@ -637,8 +685,11 @@ void StructureAction::apply(linalg::ConstMatrixView vectors,
 void StructureAction::apply_hamiltonian(linalg::ConstMatrixView vectors,
                                         linalg::MatrixView hamiltonian) const {
     const auto& p = *impl_;
-    p.selected_contraction().apply_selected(
-        p.selected_incidence(), vectors, p.sigma, hamiltonian, {}, p.available_bytes());
+    if (p.operator_first)
+        p.operator_first->apply(vectors, hamiltonian, {}, p.available_bytes());
+    else
+        p.selected_contraction().apply_selected(
+            p.selected_incidence(), vectors, p.sigma, hamiltonian, {}, p.available_bytes());
 }
 
 void StructureAction::apply_overlap(linalg::ConstMatrixView vectors,
@@ -647,14 +698,17 @@ void StructureAction::apply_overlap(linalg::ConstMatrixView vectors,
     if (vectors.rows != p.structures || overlap.rows != p.structures || vectors.cols <= 0 ||
         overlap.cols != vectors.cols)
         throw std::invalid_argument("CUDA overlap block dimensions");
-    p.selected_contraction().apply_selected(
-        p.selected_incidence(), vectors, p.sigma, {}, overlap, p.available_bytes(), true);
+    if (p.operator_first)
+        p.operator_first->apply(vectors, {}, overlap, p.available_bytes());
+    else
+        p.selected_contraction().apply_selected(
+            p.selected_incidence(), vectors, p.sigma, {}, overlap, p.available_bytes(), true);
 }
 
-int StructureAction::n_alpha_strings() const noexcept {
+std::int64_t StructureAction::n_alpha_strings() const noexcept {
     return impl_->alpha;
 }
-int StructureAction::n_beta_strings() const noexcept {
+std::int64_t StructureAction::n_beta_strings() const noexcept {
     return impl_->beta;
 }
 

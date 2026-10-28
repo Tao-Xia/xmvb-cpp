@@ -51,7 +51,7 @@ struct DeterminantTerm {
 };
 
 struct StructureGeminalExpansion {
-    int structure_index = 0;
+    std::int64_t structure_index = 0;
     std::vector<Pair> pairs;
     std::vector<DeterminantTerm> determinant_terms;
     bool is_disjoint_covalent = false;
@@ -211,7 +211,7 @@ int canonicalize_spin_string(std::vector<int>* occupied_orbitals) {
 }
 
 std::vector<Pair> extract_active_pairs(const xmvb::vb::RawStructureData& raw_structure_data,
-                                       int structure_index) {
+                                       std::int64_t structure_index) {
     const int n_inactive_doubly_occupied_orbitals =
         (raw_structure_data.n_total_electrons - raw_structure_data.n_active_electrons) / 2;
     const int n_open_shell_electrons = raw_structure_data.spin_multiplicity - 1;
@@ -312,7 +312,7 @@ bool is_disjoint_covalent_structure(const std::vector<Pair>& pairs, int n_active
 
 StructureGeminalExpansion
 build_structure_geminal_expansion(const xmvb::vb::RawStructureData& raw_structure_data,
-                                  int structure_index,
+                                  std::int64_t structure_index,
                                   int n_active_orbitals,
                                   int swapped_term_phase) {
     StructureGeminalExpansion expansion;
@@ -684,7 +684,7 @@ double pfaffian_metric_candidate(const StructureGeminalExpansion& left_structure
     return skew_symmetric_pfaffian(std::move(pfaffian_matrix));
 }
 
-std::string format_indices(const std::vector<int>& indices) {
+template <typename Index> std::string format_indices(const std::vector<Index>& indices) {
     std::ostringstream stream;
     stream << "[";
     for (std::size_t index = 0; index < indices.size(); ++index) {
@@ -713,7 +713,7 @@ std::string format_pairs(const std::vector<Pair>& pairs) {
 template <typename Evaluator>
 CandidateReport evaluate_candidate(const std::string& name,
                                    const std::vector<StructureGeminalExpansion>& geminal_expansions,
-                                   const std::vector<int>& selected_structure_indices,
+                                   const std::vector<std::size_t>& selected_structure_indices,
                                    const std::vector<double>& exact_overlap_matrix,
                                    int n_selected_structures,
                                    double tolerance,
@@ -735,7 +735,7 @@ CandidateReport evaluate_candidate(const std::string& name,
                 ++report.mismatch_count;
             }
             report.max_abs_error = std::max(report.max_abs_error, absolute_error);
-            report.max_rel_error = std::max(report.max_rel_error, relative_error);
+            report.max_rel_error = std::max<std::int64_t>(report.max_rel_error, relative_error);
 
             PairError error;
             error.row_local = row;
@@ -786,13 +786,13 @@ int main(int argc, char** argv) {
         }
 
         int total_disjoint_covalent_structures = 0;
-        std::vector<int> selected_structure_indices;
+        std::vector<std::size_t> selected_structure_indices;
         std::vector<StructureGeminalExpansion> geminal_expansions;
         selected_structure_indices.reserve(
             options.max_structures > 0 ? options.max_structures : raw_structure_data.n_structures);
         geminal_expansions.reserve(selected_structure_indices.capacity());
 
-        for (int structure_index = 0; structure_index < raw_structure_data.n_structures;
+        for (std::int64_t structure_index = 0; structure_index < raw_structure_data.n_structures;
              ++structure_index) {
             auto expansion = build_structure_geminal_expansion(
                 raw_structure_data, structure_index, n_active_orbitals, swapped_term_phase);
@@ -972,8 +972,8 @@ int main(int argc, char** argv) {
             std::cout << "max_rel_error = " << report.max_rel_error << '\n';
             std::cout << "mismatch_count = " << report.mismatch_count << '\n';
 
-            const int n_to_report =
-                std::min(options.report_count, static_cast<int>(report.pair_errors.size()));
+            const int n_to_report = std::min<std::int64_t>(
+                options.report_count, static_cast<int>(report.pair_errors.size()));
             for (int report_index = 0; report_index < n_to_report; ++report_index) {
                 const auto& error = report.pair_errors[report_index];
                 const auto& left_structure = geminal_expansions[error.row_local];

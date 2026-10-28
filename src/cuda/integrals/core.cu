@@ -1,3 +1,4 @@
+#include <cstdint>
 #include "cuda/integrals/exact.hpp"
 
 #include <algorithm>

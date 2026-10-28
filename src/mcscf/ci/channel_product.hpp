@@ -1,5 +1,8 @@
 #pragma once
 
+#include "core/index.hpp"
+#include <cstdint>
+
 #include <algorithm>
 #include <span>
 #include <stdexcept>
@@ -19,7 +22,7 @@ using ChannelRows = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen:
 class ChannelSelectors {
     struct Block {
         std::vector<int> columns, inverse;
-        int first = -1, last = -1;
+        StringIndex first = -1, last = -1;
     };
     int pairs_;
     std::vector<Block> blocks_;
@@ -29,8 +32,8 @@ class ChannelSelectors {
         blocks_.resize(restricted ? 1 + orbitals * orbitals : 1);
         if (!restricted)
             return;
-        for (int first = 0; first < orbitals; ++first)
-            for (int last = first; last < orbitals - 1; ++last) {
+        for (StringIndex first = 0; first < orbitals; ++first)
+            for (StringIndex last = first; last < orbitals - 1; ++last) {
                 auto& block = blocks_[1 + first * orbitals + last];
                 block.first = first;
                 block.last = last;
@@ -100,10 +103,12 @@ class ChannelProduct : public ChannelSelectors {
  * copied to rearrange rows. Unrestricted tiles use implicit identity maps.
  */
 class ChannelLayout {
-    std::vector<int> offsets_, image_rows_, channels_, rhs_strides_;
+    std::vector<StringIndex> offsets_, image_rows_, rhs_strides_;
+    std::vector<int> channels_;
     std::vector<std::size_t> packed_offsets_;
     bool identity_ = true, packed_images_ = false;
-    int pairs_ = 0, rows_ = 0;
+    int pairs_ = 0;
+    StringIndex rows_ = 0;
 
   public:
     void reset(const ChannelSelectors& basis,
@@ -113,7 +118,7 @@ class ChannelLayout {
                bool store_images = true,
                bool packed_images = false) {
         pairs_ = basis.channels(0);
-        rows_ = count * width;
+        rows_ = core::checked_index<StringIndex>(core::checked_multiply(count, width));
         packed_images_ = packed_images;
         offsets_.assign(basis.groups() + 1, 0);
         packed_offsets_.assign(basis.groups() + 1, 0);
@@ -141,23 +146,25 @@ class ChannelLayout {
         image_rows_.resize(count * width);
         auto position = offsets_;
         for (int rhs = 0; rhs < width; ++rhs)
-            for (int row = 0; row < count; ++row)
+            for (StringIndex row = 0; row < count; ++row)
                 image_rows_[rhs * count + row] = position[groups[row]]++;
     }
 
     /** @brief Reuse the tile's diagonal-index storage as sorted RHS-zero images.
    * Invoke once after reset(). No coefficients or per-RHS index copies are made.
    */
-    void prepare_diagonals(std::span<int> rows) const {
-        for (int& row : rows)
+    void prepare_diagonals(std::span<StringIndex> rows) const {
+        for (auto& row : rows)
             row = image(row);
         std::sort(rows.begin(), rows.end());
     }
 
     /** @brief Diagonals owned by one group and local RHS-zero row interval. */
-    std::span<const int>
-    diagonals(std::span<const int> images, int group, int first, int last) const {
-        first = std::max(0, first);
+    std::span<const StringIndex> diagonals(std::span<const StringIndex> images,
+                                           int group,
+                                           StringIndex first,
+                                           StringIndex last) const {
+        first = std::max<StringIndex>(0, first);
         last = std::min(rhs_stride(group), last);
         if (first >= last || images.empty())
             return {};
@@ -167,7 +174,7 @@ class ChannelLayout {
         return {begin, end};
     }
     struct Panel {
-        int first, rows;
+        StringIndex first, rows;
         std::size_t packed;
     };
 
@@ -175,19 +182,20 @@ class ChannelLayout {
    * plus the requested images. Only scalar boundaries are returned; source
    * rows remain in their existing group order, without padding or repacking.
    */
-    Panel panel(int first, int source_copies, std::size_t entries, int image_copies = 1) const {
+    Panel
+    panel(StringIndex first, int source_copies, std::size_t entries, int image_copies = 1) const {
         if (first < 0 || first >= offsets_.back() || source_copies < 0 || image_copies < 1)
             throw std::invalid_argument("invalid channel row panel");
         Panel result{first, 0, 0};
         std::size_t used = 0;
-        for (int g = 0; g < static_cast<int>(channels_.size()); ++g) {
-            const int start = std::max(first + result.rows, offsets_[g]);
+        for (std::int64_t g = 0; g < core::checked_index<std::int64_t>(channels_.size()); ++g) {
+            const auto start = std::max(first + result.rows, offsets_[g]);
             if (start >= offsets_[g + 1])
                 continue;
             const auto row_entries =
                 static_cast<std::size_t>(source_copies) * channels_[g] +
                 static_cast<std::size_t>(image_copies) * (packed_images_ ? channels_[g] : pairs_);
-            const int count = static_cast<int>(
+            const std::int64_t count = static_cast<std::int64_t>(
                 std::min<std::size_t>(offsets_[g + 1] - start, (entries - used) / row_entries));
             result.rows += count;
             result.packed += static_cast<std::size_t>(count) * channels_[g];
@@ -204,24 +212,24 @@ class ChannelLayout {
     std::size_t output_offset(int group) const noexcept {
         return packed_images_ ? packed_offsets_[group] : static_cast<std::size_t>(offsets_[group]);
     }
-    int output_stride(int group) const noexcept {
+    StringIndex output_stride(int group) const noexcept {
         return packed_images_ ? size(group) : rows_;
     }
-    std::size_t output_index(int image, int group, int channel) const noexcept {
+    std::size_t output_index(StringIndex image, int group, int channel) const noexcept {
         return output_offset(group) + image - offsets_[group] +
                static_cast<std::size_t>(channel) * output_stride(group);
     }
 
-    const int* rhs_strides() const noexcept {
+    const StringIndex* rhs_strides() const noexcept {
         return rhs_strides_.data();
     }
-    int rhs_stride(int group) const noexcept {
+    StringIndex rhs_stride(int group) const noexcept {
         return rhs_strides_[group];
     }
-    int begin(int group) const noexcept {
+    StringIndex begin(int group) const noexcept {
         return offsets_[group];
     }
-    int size(int group) const noexcept {
+    StringIndex size(int group) const noexcept {
         return offsets_[group + 1] - offsets_[group];
     }
     std::size_t offset(int group) const noexcept {
@@ -230,13 +238,13 @@ class ChannelLayout {
     std::size_t entries() const noexcept {
         return packed_offsets_.back();
     }
-    std::size_t packed(int row, int group) const noexcept {
+    std::size_t packed(StringIndex row, int group) const noexcept {
         return identity_ ? static_cast<std::size_t>(row) * pairs_
                          : packed_offsets_[group] +
                                static_cast<std::size_t>(image_rows_[row] - offsets_[group]) *
                                    channels_[group];
     }
-    int image(int row) const noexcept {
+    StringIndex image(StringIndex row) const noexcept {
         return identity_ ? row : image_rows_[row];
     }
 };
@@ -253,13 +261,13 @@ inline void multiply_channels(const ChannelProduct& basis,
                               int thread,
                               int team,
                               bool add,
-                              std::span<const int> diagonal_images,
+                              std::span<const StringIndex> diagonal_images,
                               int width,
                               bool exchange) {
     const double scale = exchange ? 2.0 : 1.0;
     for (int group = 0; group < basis.groups(); ++group) {
-        const int size = layout.size(group), first = size * thread / team,
-                  last = size * (thread + 1) / team;
+        const std::int64_t size = layout.size(group), first = size * thread / team,
+                           last = size * (thread + 1) / team;
         if (first == last)
             continue;
         const int channels = basis.channels(group);
@@ -276,8 +284,8 @@ inline void multiply_channels(const ChannelProduct& basis,
             Eigen::OuterStride<>(layout.output_stride(group)));
         const auto scale_diagonals = [&](double factor) {
             for (int v = 0; v < width; ++v) {
-                const int shift = v * layout.rhs_stride(group);
-                for (const int image :
+                const StringIndex shift = v * layout.rhs_stride(group);
+                for (const StringIndex image :
                      layout.diagonals(diagonal_images, group, first - shift, last - shift))
                     output.row(image - layout.begin(group) + shift - first) *= factor;
             }
@@ -305,7 +313,7 @@ inline void contract_channel_gram(const ChannelProduct& basis,
                                   const double* left,
                                   const double* right,
                                   Eigen::MatrixXd& result,
-                                  std::span<const int> diagonal_images,
+                                  std::span<const StringIndex> diagonal_images,
                                   int count,
                                   int width,
                                   bool exchange,
@@ -320,8 +328,8 @@ inline void contract_channel_gram(const ChannelProduct& basis,
             Eigen::Map<Eigen::MatrixXd> partial(scratch + 2 * thread * area, pairs, pairs);
             partial.setZero();
             for (int group = 0; group < basis.groups(); ++group) {
-                const int size = layout.size(group), first = size * thread / parts,
-                          last = size * (thread + 1) / parts;
+                const std::int64_t size = layout.size(group), first = size * thread / parts,
+                                   last = size * (thread + 1) / parts;
                 if (first == last)
                     continue;
                 const int k = basis.channels(group);
@@ -337,10 +345,10 @@ inline void contract_channel_gram(const ChannelProduct& basis,
                 gram.noalias() = (exchange ? 2.0 : 1.0) * a.transpose() * b;
                 if (exchange)
                     for (int v = 0; v < width; ++v) {
-                        const int shift = v * layout.rhs_stride(group);
+                        const StringIndex shift = v * layout.rhs_stride(group);
                         for (const int base : layout.diagonals(
                                  diagonal_images, group, first - shift, last - shift)) {
-                            const int local = base - layout.begin(group) + shift - first;
+                            const StringIndex local = base - layout.begin(group) + shift - first;
                             gram.noalias() -= a.row(local).transpose() * b.row(local);
                         }
                     }
@@ -363,10 +371,10 @@ inline void contract_channel_gram(const ChannelProduct& basis,
     } else {
 #pragma omp for schedule(static)
         for (int entry = 0; entry < pairs * pairs; ++entry) {
-            const int row = entry % pairs, col = entry / pairs;
+            const StringIndex row = entry % pairs, col = entry / pairs;
             double value = 0;
             for (int group = 0; group < basis.groups(); ++group) {
-                const int size = layout.size(group);
+                const std::int64_t size = layout.size(group);
                 if (!size)
                     continue;
                 const int i = basis.local(group, row), j = basis.local(group, col),
@@ -381,7 +389,7 @@ inline void contract_channel_gram(const ChannelProduct& basis,
                     for (int v = 0; v < width; ++v)
                         for (const int base : layout.diagonals(
                                  diagonal_images, group, 0, layout.rhs_stride(group))) {
-                            const int image =
+                            const StringIndex image =
                                 base - layout.begin(group) + v * layout.rhs_stride(group);
                             value -= a[image] * b[image];
                         }

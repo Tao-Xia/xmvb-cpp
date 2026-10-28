@@ -10,9 +10,9 @@ namespace xmvb::vb {
 namespace {
 
 double compute_average_structure_overlap(const std::vector<double>& overlap_matrix,
-                                         int n_structures) {
+                                         Eigen::Index n_structures) {
     double diagonal_sum = 0.0;
-    for (int structure_index = 0; structure_index < n_structures; ++structure_index) {
+    for (Eigen::Index structure_index = 0; structure_index < n_structures; ++structure_index) {
         const std::size_t diagonal_index = structure_index * n_structures + structure_index;
         diagonal_sum += overlap_matrix[diagonal_index];
     }
@@ -33,7 +33,7 @@ double compute_selected_state_average_energy(const std::vector<double>& eigenval
 
 void validate_state_selection(const std::vector<int>& selected_state_indices,
                               const std::vector<double>& state_average_weights,
-                              int n_structures) {
+                              Eigen::Index n_structures) {
     if (selected_state_indices.empty()) {
         throw std::invalid_argument("selected_state_indices must not be empty");
     }
