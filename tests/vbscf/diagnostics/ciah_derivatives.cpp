@@ -1,3 +1,4 @@
+#include "ciah_path.hpp"
 #include <Eigen/Core>
 #include <Eigen/Eigenvalues>
 #include <Eigen/LU>
@@ -49,12 +50,13 @@ int main(int argc, char** argv) {
     try {
         if (argc != 2 &&
             !(argc == 3 &&
-              (std::string(argv[2]) == "--refine" || std::string(argv[2]) == "--identity" ||
+              (std::string_view(argv[2]).starts_with("--path=") ||
+               std::string(argv[2]) == "--refine" || std::string(argv[2]) == "--identity" ||
                std::string(argv[2]) == "--repeat" || std::string(argv[2]) == "--soft-mesh" ||
                std::string(argv[2]) == "--dense-ah" || std::string(argv[2]) == "--joint-geometry")))
-            throw std::runtime_error(
-                "usage: check_ciah_derivatives INPUT.xmi "
-                "[--refine|--identity|--repeat|--soft-mesh|--dense-ah|--joint-geometry]");
+            throw std::runtime_error("usage: check_ciah_derivatives INPUT.xmi "
+                                     "[--refine|--identity|--repeat|--soft-mesh|--dense-ah|--joint-"
+                                     "geometry|--path=DIR]");
         const bool soft_mesh = argc == 3 && std::string(argv[2]) == "--soft-mesh";
         const bool refine = argc == 3 && (std::string(argv[2]) == "--refine" || soft_mesh);
         const bool identity_audit = argc == 3 && std::string(argv[2]) == "--identity";
@@ -87,6 +89,10 @@ int main(int argc, char** argv) {
                            nullptr,
                            OrbitalChart::Coordinates::Unwhitened);
         const ExactHvpOperator hvp(accepted.second_order_context, &input, layout, &chart);
+        if (argc == 3 && std::string_view(argv[2]).starts_with("--path=")) {
+            xmvb::test::export_ciah_path(o, hvp.structure_action(), argv[2] + 7);
+            return 0;
+        }
         const StructureTangentOperator structure(accepted.second_order_context,
                                                  hvp.structure_action());
         const AffineCoupling affine(context, hvp, structure);
