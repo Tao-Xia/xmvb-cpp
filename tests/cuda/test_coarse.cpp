@@ -108,6 +108,41 @@ void check_balancing() {
     }
 }
 
+void check_shift_pole() {
+    constexpr int n = 3;
+    const Matrix h = Eigen::Vector3d(-2.0, 3.0, 7.0).asDiagonal();
+    const Matrix base = Eigen::Vector3d(.7, .4, .2).asDiagonal();
+    xmvb::cuda::Context context(32ULL * 1024 * 1024);
+    auto d_base = upload(context, base);
+    for (double angle : {0.0, .37}) {
+        xmvb::cuda::DeviceCoarsePreconditioner gpu(context, n, 2, 1e-14);
+        xmvb::mcscf::CoarsePreconditioner cpu(n, 2, 1e-14);
+        Vector first(n), second(n);
+        first << std::cos(angle), std::sin(angle), 0;
+        second << -std::sin(angle), std::cos(angle), 0;
+        observe(context, gpu, cpu, first, h * first, first);
+        observe(context, gpu, cpu, second, h * second, second);
+        for (int i = 0; i < n; ++i) {
+            const Vector rhs = Vector::Unit(n, i);
+            auto d_rhs = upload(context, rhs);
+            DeviceMatrix out(context, n, 1);
+            int calls = 0;
+            gpu.apply(
+                d_rhs.view(),
+                -2.0,
+                [&](xmvb::linalg::ConstMatrixView r, xmvb::linalg::MatrixView z) {
+                    ++calls;
+                    xmvb::cuda::gemm(context, z, d_base.view(), r);
+                },
+                out.view());
+            const Vector expected =
+                cpu.apply(rhs, -2.0, [&](const Vector& r) -> Vector { return base * r; });
+            require(calls == 1 && (download(context, out.view()) - expected).norm() < 3e-11,
+                    "CUDA coarse shift pole changed the range or lost the base action");
+        }
+    }
+}
+
 void check_certification() {
     constexpr int n = 4096;
     Vector first(n), second = Vector::Constant(n, 1.0 / 64.0);
@@ -371,6 +406,7 @@ void check_split_panels() {
 
 int main() {
     try {
+        check_shift_pole();
         check_balancing();
         check_certification();
         check_scalar_batches();

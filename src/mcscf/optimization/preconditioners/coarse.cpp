@@ -1,5 +1,6 @@
 #include "core/index.hpp"
 #include "mcscf/optimization/preconditioners/coarse.hpp"
+#include "linalg/range_inverse.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -167,22 +168,17 @@ Eigen::VectorXd CoarsePreconditioner::apply(
         return inverse(residual);
     const auto v = basis_.leftCols(size_);
     const Eigen::MatrixXd lv = images_.leftCols(size_) - eigenvalue * metrics_.leftCols(size_);
-    const Eigen::MatrixXd e = hessian_projection_.topLeftCorner(size_, size_) -
-                              eigenvalue * metric_projection_.topLeftCorner(size_, size_);
-    Eigen::FullPivLU<Eigen::MatrixXd> factor(e);
-    if (!factor.isInvertible())
-        throw std::runtime_error("singular exact coarse shifted operator");
-    const auto solve = [&](const Eigen::VectorXd& rhs) -> Eigen::VectorXd {
-        const Eigen::VectorXd solution = factor.solve(rhs);
-        const double bound = 256 * std::numeric_limits<double>::epsilon() * size_ *
-                             std::max(1.0, e.norm() * solution.norm() + rhs.norm());
-        if (!solution.allFinite() || (e * solution - rhs).norm() > bound)
-            throw std::runtime_error("coarse inverse failed its residual certificate");
-        return solution;
-    };
-    const Eigen::VectorXd a = solve(v.transpose() * residual);
+    const linalg::RangeInverse factor(hessian_projection_.topLeftCorner(size_, size_) -
+                                      eigenvalue * metric_projection_.topLeftCorner(size_, size_));
+    if (factor.rank() != size_)
+        diagnostics::ciah_trace("coarse_shift_range",
+                                "size=%d,rank=%ld,shift=%.17g",
+                                size_,
+                                static_cast<long>(factor.rank()),
+                                eigenvalue);
+    const Eigen::VectorXd a = factor.solve(v.transpose() * residual);
     const Eigen::VectorXd fine = inverse(residual - lv * a);
-    const Eigen::VectorXd b = solve(lv.transpose() * fine);
+    const Eigen::VectorXd b = factor.solve(lv.transpose() * fine);
     return fine + v * (a - b);
 }
 

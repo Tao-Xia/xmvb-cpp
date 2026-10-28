@@ -1,5 +1,6 @@
 #include <cstdint>
 #include "cuda/optimization/coarse.hpp"
+#include "linalg/range_inverse.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -14,6 +15,7 @@
 #include <Eigen/SVD>
 
 #include "cuda/linalg/blas.hpp"
+#include "mcscf/optimization/trace.hpp"
 
 namespace xmvb::cuda {
 namespace {
@@ -615,21 +617,16 @@ void DeviceCoarsePreconditioner::apply(linalg::ConstMatrixView residual,
         copy(output, sample_h_.view());
         return;
     }
-    const Eigen::MatrixXd e = hessian_projection_.topLeftCorner(size_, size_) -
-                              eigenvalue * metric_projection_.topLeftCorner(size_, size_);
-    Eigen::FullPivLU<Eigen::MatrixXd> factor(e);
-    if (!factor.isInvertible())
-        throw std::runtime_error("singular exact CUDA coarse shifted operator");
-    const auto solve = [&](const Eigen::VectorXd& rhs) {
-        const Eigen::VectorXd solution = factor.solve(rhs);
-        const double bound = 256 * std::numeric_limits<double>::epsilon() * size_ *
-                             std::max(1.0, e.norm() * solution.norm() + rhs.norm());
-        if (!solution.allFinite() || (e * solution - rhs).norm() > bound)
-            throw std::runtime_error("CUDA coarse inverse failed residual certificate");
-        return solution;
-    };
+    const linalg::RangeInverse factor(hessian_projection_.topLeftCorner(size_, size_) -
+                                      eigenvalue * metric_projection_.topLeftCorner(size_, size_));
+    if (factor.rank() != size_)
+        mcscf::diagnostics::ciah_trace("coarse_shift_range",
+                                       "size=%d,rank=%ld,shift=%.17g",
+                                       size_,
+                                       static_cast<long>(factor.rank()),
+                                       eigenvalue);
     Eigen::VectorXd projected = project_basis(residual);
-    const Eigen::VectorXd a = solve(projected);
+    const Eigen::VectorXd a = factor.solve(projected);
     copy(sample_v_.view(), residual);
     combine(sample_v_.view(), images_.view(), a, -1.0);
     combine_compact(sample_v_.view(), a, true, eigenvalue);
@@ -665,7 +662,7 @@ void DeviceCoarsePreconditioner::apply(linalg::ConstMatrixView residual,
     for (int i = 0; i < size_; ++i)
         projected[i] =
             packed[i] - eigenvalue * packed[starts[columns_[i].panel] + columns_[i].slot];
-    const Eigen::VectorXd b = solve(projected);
+    const Eigen::VectorXd b = factor.solve(projected);
     copy(output, sample_h_.view());
     combine_compact(output, a - b, false);
 }

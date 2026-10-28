@@ -899,6 +899,46 @@ void check_coarse_balancing_inverse() {
     }
 }
 
+/** @brief A coarse shift pole keeps the unresolved physical direction in the base inverse. */
+void check_coarse_shift_pole() {
+    const Eigen::Matrix3d h = Eigen::Vector3d(-2.0, 3.0, 7.0).asDiagonal();
+    const Eigen::Matrix3d m = Eigen::Matrix3d::Identity();
+    const Eigen::Matrix3d base = Eigen::Vector3d(.7, .4, .2).asDiagonal();
+    for (double angle : {0.0, .37, 1.1}) {
+        xmvb::mcscf::CoarsePreconditioner coarse(3, 2, 1e-14);
+        Eigen::Vector3d first(std::cos(angle), std::sin(angle), 0.0);
+        Eigen::Vector3d second(-std::sin(angle), std::cos(angle), 0.0);
+        coarse.observe(first, h * first, m * first);
+        coarse.observe(second, h * second, m * second);
+        Eigen::Matrix3d actual;
+        int calls = 0;
+        for (int i = 0; i < 3; ++i)
+            actual.col(i) = coarse.apply(
+                Eigen::Vector3d::Unit(i), -2.0, [&](const Eigen::VectorXd& r) -> Eigen::VectorXd {
+                    ++calls;
+                    return base * r;
+                });
+        const Eigen::Matrix3d expected = Eigen::Vector3d(.7, .2, .2).asDiagonal();
+        require(calls == 3 && (actual - expected).norm() < 2e-12,
+                "coarse pole removed a physical direction or changed under sample rotations");
+        require((actual - actual.transpose()).norm() < 2e-12,
+                "range balancing at a shift pole is not symmetric");
+    }
+    // A zero Rayleigh compression need not mean that H*v itself vanishes.
+    Eigen::Matrix3d coupled = Eigen::Matrix3d::Identity();
+    coupled(0, 0) = 0.0;
+    coupled(0, 1) = coupled(1, 0) = 1.0;
+    xmvb::mcscf::CoarsePreconditioner coarse(3, 1, 1e-14);
+    const Eigen::Vector3d v = Eigen::Vector3d::UnitX();
+    coarse.observe(v, coupled * v, v);
+    const Eigen::Vector3d rhs(.3, -.2, .7);
+    require((coarse.apply(
+                 rhs, 0.0, [&](const Eigen::VectorXd& r) -> Eigen::VectorXd { return base * r; }) -
+             base * rhs)
+                    .norm() < 2e-12,
+            "unresolved coarse compression bypassed the base inverse");
+}
+
 /** @brief Full-length projection roundoff is not a coarse-size tolerance. */
 void check_coarse_projection_roundoff() {
     constexpr int n = 4096;
@@ -1220,6 +1260,7 @@ void check_curvature_macro_candidate() {
 
 int main() {
     try {
+        check_coarse_shift_pole();
         check_curvature_microstep();
         check_curvature_macro_candidate();
         check_gradient_independent_curvature();

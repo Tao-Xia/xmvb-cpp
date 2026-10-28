@@ -39,7 +39,7 @@ class CoarsePreconditioner {
     void observe(const Eigen::VectorXd& direction,
                  const Eigen::VectorXd& image,
                  const Eigen::VectorXd& metric_image);
-    /** @brief Apply the signed balancing inverse with one base inverse call. */
+    /** @brief Apply signed range balancing with one base inverse call, including at shift poles. */
     Eigen::VectorXd
     apply(const Eigen::VectorXd& residual,
           double eigenvalue,
