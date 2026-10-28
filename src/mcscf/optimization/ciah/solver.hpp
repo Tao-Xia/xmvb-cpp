@@ -47,7 +47,7 @@ template <class Result>
 bool ciah_result_resolved(const Result& result,
                           double rhs_norm,
                           double relative_accuracy) noexcept {
-    const double alpha = std::abs(result.reference_component);
+    const double alpha = std::abs(result.reference_scale * result.reference_component);
     return !result.negative_curvature && std::isfinite(result.residual_norm) &&
            result.residual_norm >= 0.0 && std::isfinite(alpha) && alpha > 0.0 &&
            std::isfinite(rhs_norm) && rhs_norm >= 0.0 && std::isfinite(relative_accuracy) &&
@@ -137,10 +137,13 @@ struct CiahResult {
     double eigenvalue = 0.0;
     /** Signed reference component of the generalized-normalized Ritz vector. */
     double reference_component = 0.0;
+    /** Reference-row coupling scale; one is the unrestricted AH model. */
+    double reference_scale = 1.0;
     Eigen::VectorXd step;
     Eigen::VectorXd hessian_step;
     Eigen::VectorXd metric_step;
-    /** AH eigenpair residual. For Newton steps: alpha * (g + H p - eigenvalue * G p).
+    /** AH eigenpair residual. For Newton steps:
+     * reference_scale * alpha * (g + H p - eigenvalue * G p).
      * For curvature rays: alpha * g + H p - eigenvalue * G p; p is the undivided tail.
      */
     Eigen::VectorXd residual;
@@ -193,12 +196,13 @@ template <class Result, class Ops> class CiahStepPathT {
     }
 
     /** @brief Current AH residual of the unused step, using cached H/G images.
-   * With s=remaining*p, choose omega=g^T*s to satisfy the reference row.
+   * With s=remaining*p, omega=reference_scale^2*g^T*s satisfies the reference row.
    * The remaining row is g+H*s-omega*G*s. Its source Ritz residual is not
    * a certificate after the gradient changes, even for a quadratic model.
    */
     Vector residual_at(const Vector& gradient) const {
-        const double omega = remaining_ * ops_.dot(gradient, proposal_->step);
+        const double omega = proposal_->reference_scale * proposal_->reference_scale * remaining_ *
+                             ops_.dot(gradient, proposal_->step);
         Vector residual = ops_.clone(gradient);
         ops_.axpy(residual, remaining_, proposal_->hessian_step);
         ops_.axpy(residual, -omega * remaining_, proposal_->metric_step);
@@ -336,6 +340,9 @@ class CiahWorkspace {
 
     explicit CiahWorkspace(const QuadraticProblem& problem, CiahOptions options)
         : CiahWorkspace(problem, std::nullopt, std::move(options)) {}
+
+    /** @brief Use the existing physical component cap in the projected AH solve. */
+    void set_step_limit(std::function<double(const Eigen::VectorXd&)> maximum, double cap);
 
     /** @brief Mark a changed RHS for a cached-space Ritz solve before expansion.
    * Retains every direction and its H/G images, but discards the old equation's

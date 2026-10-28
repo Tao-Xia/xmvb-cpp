@@ -117,6 +117,11 @@ int CiahWorkspace::basis_size() const noexcept {
     return impl_->core.basis_size();
 }
 
+void CiahWorkspace::set_step_limit(std::function<double(const Eigen::VectorXd&)> maximum,
+                                   double cap) {
+    impl_->core.set_step_limit(std::move(maximum), cap);
+}
+
 void CiahWorkspace::reset_rhs() noexcept {
     impl_->core.reset_rhs();
 }
@@ -126,6 +131,7 @@ CiahResult CiahWorkspace::next(const Eigen::VectorXd& current_gradient) {
     CiahResult result;
     result.eigenvalue = value.eigenvalue;
     result.reference_component = value.reference_component;
+    result.reference_scale = value.reference_scale;
     result.step = std::move(value.step);
     result.hessian_step = std::move(value.hessian_step);
     result.metric_step = std::move(value.metric_step);

@@ -269,6 +269,63 @@ void check_bounded_ciah_model() {
             "bounded hard case changed under independent coordinate units");
 }
 
+/** @brief Production scaled-AH residuals keep all external components and path scale. */
+void check_scaled_ciah_equation() {
+    const Eigen::Matrix3d h = Eigen::Vector3d(-2, 1, 7).asDiagonal();
+    const Eigen::Matrix3d mass = Eigen::Vector3d(1, 2, .5).asDiagonal();
+    const Eigen::Vector3d g(0, .4, .2);
+    int actions = 0;
+    const auto problem = dense_problem(h, mass, g, &actions);
+    CiahWorkspace workspace(problem, Eigen::VectorXd::Ones(3));
+    workspace.set_step_limit([](const Eigen::VectorXd& p) { return p.cwiseAbs().maxCoeff(); }, .03);
+    const auto verify = [&](const CiahResult& result, const Eigen::VectorXd& rhs) {
+        const double a = result.reference_component, scale = result.reference_scale;
+        const Eigen::VectorXd residual =
+            rhs + h * result.step - result.eigenvalue * mass * result.step;
+        require(!result.negative_curvature && scale >= 1 - 1e-12 &&
+                    (scale == 1 || result.step.cwiseAbs().maxCoeff() <= .03 * (1 + 1e-12)),
+                "finite-step AH lost its scale or physical bound");
+        require_close(result.residual,
+                      scale * a * residual,
+                      2e-12,
+                      "scaled AH omitted the reference scale or outside-space residual");
+        require(std::abs(a * a * (1 + scale * scale * result.step.dot(mass * result.step)) - 1) <
+                        2e-12 &&
+                    std::abs(result.eigenvalue - scale * scale * rhs.dot(result.step)) < 2e-10,
+                "bounded step does not satisfy its normalized scaled AH reference row");
+        for (double accuracy : {1.0 / 3, 1e-8})
+            require(result.resolved(rhs.norm(), accuracy) ==
+                        (residual.norm() <= accuracy * rhs.norm()),
+                    "inexact scaled AH forcing uses the wrong reference amplitude");
+    };
+    auto result = workspace.next(g);
+    verify(result, g);
+    require(result.residual_norm > 1e-4,
+            "scaled AH replaced the complete residual by its Ritz projection");
+    for (int j = 0; j < 5 && !result.exhaustion; ++j) {
+        result = workspace.next(g);
+        verify(result, g);
+    }
+    require(result.reference_scale > 1 && actions == workspace.basis_size(),
+            "hard-case restriction failed to scale its root or repeated a physical image");
+    const Eigen::Vector3d changed(.01, .35, .24);
+    CiahStepPath path;
+    path.set(result);
+    path.take(.3);
+    const Eigen::VectorXd remaining = .7 * result.step;
+    const double omega = result.reference_scale * result.reference_scale * changed.dot(remaining);
+    require_close(path.residual_at(changed),
+                  changed + h * remaining - omega * mass * remaining,
+                  2e-12,
+                  "scaled AH replay lost its reference-row scale");
+    const int before = actions;
+    workspace.reset_rhs();
+    const auto refreshed = workspace.next(changed);
+    verify(refreshed, changed);
+    require(actions == before && refreshed.new_hvp_actions == 0,
+            "scaled keyframe refresh rebuilt an unchanged physical image");
+}
+
 void check_origin_ray_residual(const xmvb::mcscf::CiahOriginRay& ray,
                                const Eigen::MatrixXd& hessian,
                                const Eigen::MatrixXd& metric,
@@ -1373,6 +1430,7 @@ int main() {
         check_indefinite_root_selection();
         check_stiff_spectator_curvature();
         check_bounded_ciah_model();
+        check_scaled_ciah_equation();
         check_cached_origin_ray();
         check_origin_ray_macro_energy();
         check_gradient_refresh_and_preconditioner();

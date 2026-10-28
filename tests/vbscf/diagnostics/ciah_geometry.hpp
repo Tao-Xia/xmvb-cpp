@@ -162,6 +162,31 @@ void audit_joint_geometry(const vb::OrbitalPreparationInput& input,
     const Eigen::MatrixXd curvature =
         .5 * (basis.transpose() * images + images.transpose() * basis);
     const Eigen::MatrixXd quantum = 2 * jacobian.transpose() * jacobian;
+    Eigen::MatrixXd inverse_model(internal, internal);
+    for (Eigen::Index j = 0; j < internal; ++j)
+        inverse_model.col(j) =
+            basis.topLeftCorner(no, internal).transpose() *
+            chart.apply_inverse_augmented_hessian_diagonal(basis.col(j).head(no), 0);
+    const Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> inverse_spectrum(
+        (.5 * (inverse_model + inverse_model.transpose())).eval());
+    if (inverse_spectrum.info() != Eigen::Success)
+        throw std::runtime_error("internal inverse model witness spectrum failed");
+    Eigen::Index witness = -1;
+    for (Eigen::Index j = 0; j < internal; ++j)
+        if (inverse_spectrum.eigenvalues()[j] < 0)
+            witness = j;
+    std::cout << "PRECONDITIONER_WITNESS,negative=" << (witness >= 0)
+              << ",inverse_min=" << inverse_spectrum.eigenvalues()[0]
+              << ",inverse_max=" << inverse_spectrum.eigenvalues().tail(1)[0];
+    if (witness >= 0) {
+        Eigen::VectorXd v = Eigen::VectorXd::Zero(columns);
+        v.head(internal) = inverse_spectrum.eigenvectors().col(witness);
+        std::cout << ",predicted_curvature=" << 1.0 / inverse_spectrum.eigenvalues()[witness]
+                  << ",physical_curvature=" << v.dot(curvature * v) / v.dot(mass * v)
+                  << ",gradient=" << (basis.transpose() * gradient).dot(v);
+    }
+    std::cout << std::endl;
+
     const Eigen::GeneralizedSelfAdjointEigenSolver<Eigen::MatrixXd> relative(quantum, mass);
     if (relative.info() != Eigen::Success)
         throw std::runtime_error("joint versus ray metric eigensystem failed");
