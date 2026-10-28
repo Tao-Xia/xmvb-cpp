@@ -108,6 +108,43 @@ void check_balancing() {
     }
 }
 
+/** @brief CPU/GPU retain finite physical curvatures despite different coordinate units. */
+void check_physical_scaling() {
+    constexpr int n = 3;
+    const Eigen::Vector3d units(1.0, 1e-10, 1e3);
+    const Matrix t = units.asDiagonal(), inv = units.cwiseInverse().asDiagonal();
+    const Matrix h = t * Eigen::Vector3d(2.0, -3.0, 7.0).asDiagonal() * t;
+    const Matrix m = t * t, base = .4 * inv * inv;
+    xmvb::cuda::Context context(32ULL * 1024 * 1024);
+    xmvb::cuda::DeviceCoarsePreconditioner gpu(context, n, 2, 1e-14);
+    xmvb::mcscf::CoarsePreconditioner cpu(n, 2, 1e-14);
+    for (int i = 0; i < 2; ++i) {
+        const Vector v = Vector::Unit(n, i);
+        observe(context, gpu, cpu, v, h * v, m * v);
+    }
+    auto d_base = upload(context, base);
+    for (double shift : {0.0, -.2}) {
+        Matrix actual(n, n);
+        for (int i = 0; i < n; ++i) {
+            const Vector rhs = Vector::Unit(n, i);
+            auto d_rhs = upload(context, rhs);
+            DeviceMatrix out(context, n, 1);
+            gpu.apply(
+                d_rhs.view(),
+                shift,
+                [&](xmvb::linalg::ConstMatrixView r, xmvb::linalg::MatrixView z) {
+                    xmvb::cuda::gemm(context, z, d_base.view(), r);
+                },
+                out.view());
+            actual.col(i) = download(context, out.view());
+        }
+        const Matrix expected =
+            Eigen::Vector3d(1.0 / (2.0 - shift), 1.0 / (-3.0 - shift), .4).asDiagonal();
+        require((t * actual * t - expected).norm() < 3e-11,
+                "CUDA coarse numerical rank depends on orbital/CI coordinate units");
+    }
+}
+
 void check_shift_pole() {
     constexpr int n = 3;
     const Matrix h = Eigen::Vector3d(-2.0, 3.0, 7.0).asDiagonal();
@@ -406,6 +443,7 @@ void check_split_panels() {
 
 int main() {
     try {
+        check_physical_scaling();
         check_shift_pole();
         check_balancing();
         check_certification();

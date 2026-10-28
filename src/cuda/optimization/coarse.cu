@@ -618,7 +618,9 @@ void DeviceCoarsePreconditioner::apply(linalg::ConstMatrixView residual,
         return;
     }
     const linalg::RangeInverse factor(hessian_projection_.topLeftCorner(size_, size_) -
-                                      eigenvalue * metric_projection_.topLeftCorner(size_, size_));
+                                          eigenvalue *
+                                              metric_projection_.topLeftCorner(size_, size_),
+                                      metric_projection_.diagonal().head(size_));
     if (factor.rank() != size_)
         mcscf::diagnostics::ciah_trace("coarse_shift_range",
                                        "size=%d,rank=%ld,shift=%.17g",

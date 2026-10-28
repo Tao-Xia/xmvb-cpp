@@ -169,7 +169,9 @@ Eigen::VectorXd CoarsePreconditioner::apply(
     const auto v = basis_.leftCols(size_);
     const Eigen::MatrixXd lv = images_.leftCols(size_) - eigenvalue * metrics_.leftCols(size_);
     const linalg::RangeInverse factor(hessian_projection_.topLeftCorner(size_, size_) -
-                                      eigenvalue * metric_projection_.topLeftCorner(size_, size_));
+                                          eigenvalue *
+                                              metric_projection_.topLeftCorner(size_, size_),
+                                      metric_projection_.diagonal().head(size_));
     if (factor.rank() != size_)
         diagnostics::ciah_trace("coarse_shift_range",
                                 "size=%d,rank=%ld,shift=%.17g",

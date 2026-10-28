@@ -21,9 +21,20 @@ namespace xmvb::linalg {
  */
 class RangeInverse {
   public:
-    explicit RangeInverse(Eigen::MatrixXd matrix) : matrix_(std::move(matrix)) {
+    explicit RangeInverse(Eigen::MatrixXd matrix, const Eigen::VectorXd& metric_diagonal)
+        : matrix_(std::move(matrix)) {
         if (matrix_.rows() != matrix_.cols() || !matrix_.allFinite())
             throw std::invalid_argument("range inverse requires a finite symmetric matrix");
+        if (metric_diagonal.size() != matrix_.rows() || !metric_diagonal.allFinite() ||
+            (metric_diagonal.array() <= 0.0).any())
+            throw std::invalid_argument("range inverse requires positive physical metric norms");
+        // E a=b, a=D z, D_ii=(v_i^T M v_i)^(-1/2): solve
+        // (D E D) z=D b. Numerical rank must not depend on the units of
+        // the orbital/CI samples. This changes neither E nor its full-rank inverse.
+        scale_ = metric_diagonal.array().sqrt().inverse();
+        matrix_ = (scale_.asDiagonal() * matrix_ * scale_.asDiagonal()).eval();
+        if (!matrix_.allFinite())
+            throw std::runtime_error("non-finite physically scaled coarse matrix");
         factor_.compute(matrix_);
         rank_ = factor_.rank();
         if (rank_ == matrix_.rows())
@@ -49,11 +60,12 @@ class RangeInverse {
 
     /** @brief Solve the range component, retaining signed resolved curvatures. */
     Eigen::VectorXd solve(const Eigen::VectorXd& rhs) const {
-        Eigen::VectorXd result, target = rhs;
+        const Eigen::VectorXd scaled_rhs = scale_.cwiseProduct(rhs);
+        Eigen::VectorXd result, target = scaled_rhs;
         if (vectors_.size() == 0) {
-            result = factor_.solve(rhs);
+            result = factor_.solve(scaled_rhs);
         } else {
-            const Eigen::VectorXd coordinates = vectors_.transpose() * rhs;
+            const Eigen::VectorXd coordinates = vectors_.transpose() * scaled_rhs;
             result.noalias() = vectors_ * inverse_.cwiseProduct(coordinates);
             Eigen::VectorXd projected = coordinates;
             for (Eigen::Index i = 0; i < projected.size(); ++i)
@@ -62,10 +74,10 @@ class RangeInverse {
             target.noalias() = vectors_ * projected;
         }
         const double bound = 256 * std::numeric_limits<double>::epsilon() * matrix_.rows() *
-                             std::max(1.0, matrix_.norm() * result.norm() + rhs.norm());
+                             std::max(1.0, matrix_.norm() * result.norm() + scaled_rhs.norm());
         if (!result.allFinite() || (matrix_ * result - target).norm() > bound)
             throw std::runtime_error("coarse range inverse failed its residual certificate");
-        return result;
+        return scale_.cwiseProduct(result);
     }
 
     Eigen::Index rank() const noexcept {
@@ -75,7 +87,7 @@ class RangeInverse {
   private:
     Eigen::MatrixXd matrix_, vectors_;
     Eigen::FullPivLU<Eigen::MatrixXd> factor_;
-    Eigen::VectorXd inverse_;
+    Eigen::VectorXd inverse_, scale_;
     Eigen::Index rank_ = 0;
 };
 

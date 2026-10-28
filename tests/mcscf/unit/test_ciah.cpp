@@ -899,6 +899,38 @@ void check_coarse_balancing_inverse() {
     }
 }
 
+/** @brief Coordinate units cannot erase physically finite sampled curvature. */
+void check_coarse_physical_scaling() {
+    for (double unit : {1.0, 1e-5, 1e-10}) {
+        const Eigen::Vector3d units(1.0, unit, 1e3);
+        const Eigen::Matrix3d t = units.asDiagonal();
+        const Eigen::Matrix3d inv = units.cwiseInverse().asDiagonal();
+        const Eigen::Matrix3d h = t * Eigen::Vector3d(2.0, -3.0, 7.0).asDiagonal() * t;
+        const Eigen::Matrix3d m = t * t;
+        const Eigen::Matrix3d base = .4 * inv * inv;
+        xmvb::mcscf::CoarsePreconditioner coarse(3, 2, 1e-14);
+        for (int i = 0; i < 2; ++i) {
+            const Eigen::Vector3d v = Eigen::Vector3d::Unit(i);
+            coarse.observe(v, h * v, m * v);
+        }
+        for (double shift : {0.0, -.2}) {
+            Eigen::Matrix3d actual;
+            int calls = 0;
+            for (int i = 0; i < 3; ++i)
+                actual.col(i) = coarse.apply(Eigen::Vector3d::Unit(i),
+                                             shift,
+                                             [&](const Eigen::VectorXd& rhs) -> Eigen::VectorXd {
+                                                 ++calls;
+                                                 return base * rhs;
+                                             });
+            const Eigen::Matrix3d expected =
+                Eigen::Vector3d(1.0 / (2.0 - shift), 1.0 / (-3.0 - shift), .4).asDiagonal();
+            require(calls == 3 && (t * actual * t - expected).norm() < 2e-12,
+                    "coarse numerical rank depends on arbitrary orbital/CI coordinate units");
+        }
+    }
+}
+
 /** @brief A coarse shift pole keeps the unresolved physical direction in the base inverse. */
 void check_coarse_shift_pole() {
     const Eigen::Matrix3d h = Eigen::Vector3d(-2.0, 3.0, 7.0).asDiagonal();
@@ -1260,6 +1292,7 @@ void check_curvature_macro_candidate() {
 
 int main() {
     try {
+        check_coarse_physical_scaling();
         check_coarse_shift_pole();
         check_curvature_microstep();
         check_curvature_macro_candidate();
