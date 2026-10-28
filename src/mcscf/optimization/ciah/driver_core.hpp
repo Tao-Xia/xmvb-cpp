@@ -124,7 +124,7 @@ auto run_ciah_microsteps_core(Backend backend,
         ++result.micro_steps;
         ++since_keyframe;
         const double predicted_norm = backend.coordinate_norm(predicted_gradient);
-        if (diagnostics::ciah_trace_enabled())
+        if (diagnostics::ciah_event_trace_enabled())
             diagnostics::ciah_trace(
                 "ciah_micro",
                 "basis=%d,micro=%d,omega=%.17g,alpha=%.17g,residual=%.17g,gradient=%.17g,step_"
