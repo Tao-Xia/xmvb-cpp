@@ -13,6 +13,7 @@
 #include <Eigen/SVD>
 
 #include "ciah_internal.hpp"
+#include "ciah_state_metric.hpp"
 #include "ciah_restricted.hpp"
 #include "mcscf/ci/sigma.hpp"
 #include "vbscf/derivatives/hessian/coupled/structure.hpp"
@@ -23,25 +24,6 @@
 #include "vbscf/structures/orthogonal_ci/exterior_transform.hpp"
 
 namespace xmvb::test {
-
-/** @brief Independent tiny compound matrix for general, not just triangular, frames.
- * This bounded reference never enters a production action or allocates an
- * ambient carrier for a molecular optimization.
- */
-inline Eigen::MatrixXd reference_compound(const mcscf::SpinStrings& strings,
-                                          const Eigen::MatrixXd& transform) {
-    const auto occupations = strings.decode();
-    Eigen::MatrixXd result(strings.size(), strings.size());
-    Eigen::MatrixXd minor(strings.electrons(), strings.electrons());
-    for (Eigen::Index i = 0; i < result.rows(); ++i)
-        for (Eigen::Index j = 0; j < result.cols(); ++j) {
-            for (Eigen::Index a = 0; a < minor.rows(); ++a)
-                for (Eigen::Index b = 0; b < minor.cols(); ++b)
-                    minor(a, b) = transform(occupations[i][a], occupations[j][b]);
-            result(i, j) = minor.determinant();
-        }
-    return result;
-}
 
 /** @brief Compare orbital-ray and normalized wavefunction metrics in an internal+CI span.
  * All states are represented in one immutable orthogonal active reference.
@@ -314,6 +296,52 @@ void audit_joint_geometry(const vb::OrbitalPreparationInput& input,
             return std::max(chart.maximum_rotation_component(full.head(no)),
                             structure.maximum_coefficient_component_coordinates(full.tail(ns)));
         };
+        // Exact wavefunction metric on precisely the same sampled tangent span.
+        StateMetricReference joint(
+            input, prepared, layout, chart, structure, action, state, state_norm);
+        std::vector<StateMetricReference::Feature> features;
+        for (Eigen::Index j = 0; j < trial_basis.cols(); ++j)
+            features.push_back(joint.feature(trial_basis.col(j)));
+        Eigen::MatrixXd qm(columns + 1, columns + 1);
+        for (Eigen::Index j = 0; j < qm.cols(); ++j)
+            for (Eigen::Index i = 0; i < qm.rows(); ++i)
+                qm(i, j) = joint.inner(features[i], features[j]);
+        std::cout << "JOINT_EXTERNAL_METRIC,internal_error="
+                  << (qm.topLeftCorner(columns, columns) - quantum).norm()
+                  << ",external_norm=" << qm(columns, columns)
+                  << ",mixed_norm=" << qm.topRightCorner(columns, 1).norm() << std::endl;
+        for (Eigen::Index sample = 0; sample < 4; ++sample) {
+            Eigen::VectorXd x(columns + 1);
+            for (Eigen::Index j = 0; j < x.size(); ++j)
+                x[j] = std::sin((sample + 1.) * (j + 1.));
+            x /= maximum(x);
+            const Eigen::VectorXd direction = trial_basis * x;
+            const double analytic = .5 * x.dot(qm * x);
+            for (double mesh : {.003, .001}) {
+                const auto plus = joint.point(direction, mesh),
+                           minus = joint.point(direction, -mesh);
+                const double finite = (1 - joint.overlap(minus, plus)) / (2 * mesh * mesh);
+                std::cout << "JOINT_EXTERNAL_FD,sample=" << sample << ",mesh=" << mesh
+                          << ",analytic=" << analytic << ",finite=" << finite << ",relative_error="
+                          << std::abs(finite - analytic) / std::max(1., std::abs(analytic))
+                          << std::endl;
+            }
+        }
+        const Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> state_metric(qm);
+        const double roundoff = std::numeric_limits<double>::epsilon() * (columns + 1) *
+                                state_metric.eigenvalues().tail(1)[0];
+        std::cout << "JOINT_EXTERNAL_RANK,minimum=" << state_metric.eigenvalues()[0]
+                  << ",maximum=" << state_metric.eigenvalues().tail(1)[0]
+                  << ",roundoff=" << roundoff << std::endl;
+        if (state_metric.info() == Eigen::Success && state_metric.eigenvalues()[0] > roundoff) {
+            const double e0 = keyframe_energy(Eigen::VectorXd::Zero(no + ns));
+            const Eigen::VectorXd p = restricted_quadratic_reference(th, qm, tg, maximum, .03);
+            std::cout << "RESTRICTED_TRIAL,type=wavefunction,sampled_dimension=" << columns + 1
+                      << ",max_component=" << maximum(p)
+                      << ",prediction=" << tg.dot(p) + .5 * p.dot(th * p)
+                      << ",energy_change=" << keyframe_energy(trial_basis * p) - e0
+                      << ",physical_length=" << std::sqrt(p.dot(qm * p)) << std::endl;
+        }
         const Eigen::VectorXd clipped = clipped_ah_reference(th, tm, tg, maximum, .03);
         const Eigen::VectorXd restricted = restricted_quadratic_reference(th, tm, tg, maximum, .03);
         const double origin_energy = keyframe_energy(Eigen::VectorXd::Zero(no + ns));
