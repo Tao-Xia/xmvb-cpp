@@ -344,13 +344,12 @@ solve_factored_structure_roots(const StructureAction& action,
  */
 std::shared_ptr<const SelectedMetric> selected_ci_metric(const StructureAction& action,
                                                          const SameSpinPairCacheContext& topology,
-                                                         const std::vector<double>& overlap,
+                                                         const Eigen::MatrixXd& upper,
                                                          int n) {
     if (!RepresentationOverlap::PreparedMetric::fits_selected(action.n_structures()))
         return {};
     const auto& alpha = topology.alpha_reuse_table.unique_determinants;
     const auto& beta = topology.beta_reuse_table.unique_determinants;
-    const auto upper = overlap_upper(Eigen::Map<const Eigen::MatrixXd>(overlap.data(), n, n));
     const auto metric = RepresentationOverlap(action, alpha, beta, n).prepare_metric(upper);
     if (!metric.selected_matrix().size())
         return {};
@@ -556,13 +555,13 @@ void solve_structure_problem(
                 context);
         } else {
             profiling::ScopedPhase preconditioner_phase(profiling::Phase::CiPreconditioner, true);
-            auto metric =
-                structure_action.storage().orthogonal_direct_ci
-                    ? selected_ci_metric(structure_action,
-                                         context->same_spin_pair_cache,
-                                         prepared.orbital_result.active_orbital_overlap_matrix,
-                                         input.orbital_preparation_input.n_active_orbitals)
-                    : std::shared_ptr<const SelectedMetric>{};
+            auto metric = structure_action.storage().orthogonal_direct_ci
+                              ? selected_ci_metric(
+                                    structure_action,
+                                    context->same_spin_pair_cache,
+                                    prepared.active_space_two_electron_result.orbital_transform,
+                                    input.orbital_preparation_input.n_active_orbitals)
+                              : std::shared_ptr<const SelectedMetric>{};
             context->selected_metric = metric;
             std::function<Eigen::VectorXd(const Eigen::VectorXd&, double)> preconditioner;
             if (!metric && structure_action.storage().orthogonal_direct_ci) {

@@ -30,10 +30,7 @@ CiTransport::CiTransport(const OrbitalPreparationInput& input,
                origin.same_spin_pair_cache.beta_reuse_table.unique_determinants,
                input.n_active_orbitals),
       origin_pullback_(input, origin.prepared_active_space.orbital_result, layout),
-      upper_(overlap_upper(Eigen::Map<const Eigen::MatrixXd>(
-          origin.prepared_active_space.orbital_result.active_orbital_overlap_matrix.data(),
-          input.n_active_orbitals,
-          input.n_active_orbitals))),
+      upper_(origin.prepared_active_space.active_space_two_electron_result.orbital_transform),
       zero_(Eigen::MatrixXd::Zero(input.n_active_orbitals, input.n_active_orbitals)),
       c0_(origin.selected_state_eigenvectors),
       coordinate_scale_(std::sqrt(2.0 * origin.normalized_state_weights.at(0))),
@@ -151,10 +148,15 @@ CiTransportPoint CiTransport::retract(const Eigen::VectorXd& orbital_step,
     CiTransportPoint point;
     point.input = chart_.retract_step(input_, orbital_step);
     point.prepared = ActiveSpaceOrbitalPreparer{}.prepare(point.input);
-    point.upper = overlap_upper(
-        Eigen::Map<const Eigen::MatrixXd>(point.prepared.active_orbital_overlap_matrix.data(),
-                                          input_.n_active_orbitals,
-                                          input_.n_active_orbitals));
+    const auto active = point.prepared.auxiliary_orbital_matrix.middleCols(
+        (input_.n_total_electrons - input_.n_active_electrons) / 2, input_.n_active_orbitals);
+    point.upper = active_frame(active,
+                               point.input.ao_overlap_matrix,
+                               Eigen::Map<const Eigen::MatrixXd>(
+                                   point.prepared.active_orbital_overlap_matrix.data(),
+                                   input_.n_active_orbitals,
+                                   input_.n_active_orbitals))
+                      .upper;
     point.origin_direction = overlap_upper_direction(
         upper_, origin_pullback_.overlap_direction(raw_direction(orbital_step)));
     point.base_coefficients = c0_ + structure_.coefficient_response_coordinates(structure_step);

@@ -20,16 +20,19 @@ namespace xmvb::test {
  * This bounded reference never enters a production action or allocates an
  * ambient carrier for a molecular optimization.
  */
-inline Eigen::MatrixXd reference_compound(const mcscf::SpinStrings& strings,
-                                          const Eigen::MatrixXd& transform) {
+template <class Derived>
+Eigen::Matrix<typename Derived::Scalar, Eigen::Dynamic, Eigen::Dynamic>
+reference_compound(const mcscf::SpinStrings& strings, const Eigen::MatrixBase<Derived>& transform) {
+    using Matrix = Eigen::Matrix<typename Derived::Scalar, Eigen::Dynamic, Eigen::Dynamic>;
+    const Matrix values = transform;
     const auto occupations = strings.decode();
-    Eigen::MatrixXd result(strings.size(), strings.size());
-    Eigen::MatrixXd minor(strings.electrons(), strings.electrons());
+    Matrix result(strings.size(), strings.size());
+    Matrix minor(strings.electrons(), strings.electrons());
     for (Eigen::Index i = 0; i < result.rows(); ++i)
         for (Eigen::Index j = 0; j < result.cols(); ++j) {
             for (Eigen::Index a = 0; a < minor.rows(); ++a)
                 for (Eigen::Index b = 0; b < minor.cols(); ++b)
-                    minor(a, b) = transform(occupations[i][a], occupations[j][b]);
+                    minor(a, b) = values(occupations[i][a], occupations[j][b]);
             result(i, j) = minor.determinant();
         }
     return result;

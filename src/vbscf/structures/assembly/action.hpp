@@ -106,6 +106,7 @@ struct StructureAdjointState {
     std::vector<double> energies;
     Eigen::MatrixXd one_electron_gradient;
     Eigen::MatrixXd pair_kernel_gradient;
+    /** Adjoint of the upper-triangular frame generator; lower entries are unspecified. */
     Eigen::MatrixXd generator_gradient;
     /** Upper-triangular accepted-state transition 1-RDMs for gauge multipliers. */
     std::vector<Eigen::MatrixXd> overlap_generators;
@@ -115,7 +116,7 @@ struct StructureAdjointState {
 struct StructureIntegralDirection {
     /** Prepared once by the forward direction; borrowed by its reverse consumer. */
     std::shared_ptr<const OrthogonalActiveIntegrals> integrals;
-    /** Weighted generator-gradient direction accumulated before source images are released. */
+    /** Upper-generator adjoint direction; lower entries are unspecified. */
     Eigen::MatrixXd generator_direction;
     /** Integral cotangents from the same orbital-direction tile sweep. */
     Eigen::MatrixXd one_electron_direction, pair_kernel_direction;

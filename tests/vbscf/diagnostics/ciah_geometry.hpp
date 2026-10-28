@@ -14,6 +14,7 @@
 
 #include "ciah_internal.hpp"
 #include "ciah_state_metric.hpp"
+#include "ciah_precision.hpp"
 #include "ciah_restricted.hpp"
 #include "mcscf/ci/sigma.hpp"
 #include "vbscf/derivatives/hessian/coupled/structure.hpp"
@@ -33,6 +34,7 @@ namespace xmvb::test {
 template <class Action, class Gradient, class Energy>
 void audit_joint_geometry(const vb::OrbitalPreparationInput& input,
                           const vb::OrbitalPreparationResult& prepared,
+                          const vb::AcceptedPointContext& context,
                           const vb::SparseParameterLayout& layout,
                           const vb::OrbitalChart& chart,
                           const vb::StructureTangentOperator& structure,
@@ -192,6 +194,16 @@ void audit_joint_geometry(const vb::OrbitalPreparationInput& input,
               << std::endl;
     const Eigen::MatrixXd sigma = view.sigma.apply(state, view.exchange_parity);
     const Eigen::VectorXd projected_gradient = basis.transpose() * gradient;
+    audit_internal_precision(input,
+                             prepared,
+                             context,
+                             action,
+                             structure,
+                             coefficients,
+                             state,
+                             basis,
+                             internal_jets,
+                             projected_gradient);
     const auto active_curvature = internal_state_curvature(
         view.sigma, state, sigma, r, inverse, input.ao_overlap_matrix, internal_jets);
     std::cout << "JOINT_ACTIVE_CURVATURE,error=" << (active_curvature.hessian - curvature).norm()

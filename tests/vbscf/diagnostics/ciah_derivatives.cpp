@@ -178,6 +178,7 @@ int main(int argc, char** argv) {
             xmvb::test::audit_joint_geometry(
                 o,
                 prep,
+                context,
                 layout,
                 chart,
                 structure,
