@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Independent C++ TNVB protocol: singlet SU(2), fixed D, DIRECT, FULL only.
 
-The paired core is an owned copy of stable worker revision
-fbe78374bdcf1dd73930fe5f5c3f0d403d5c4cbf6e30d093b9a8a16fa6cc3e73.
-Energy requests never invoke the total-state/RDM branch of that core.
+Energy requests construct structure MPSs and solve their H/S problem.
+Gradient requests additionally construct the DIRECT total state and its full RDMs.
 """
 
 import os
@@ -17,8 +16,6 @@ os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["GOTO_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["XMVB_BLOCK2_RDM_CHECK_TOL"] = "1e-7"
-os.environ.pop("XMVB_BLOCK2_SUM_ENERGY_TOL", None)
-os.environ.pop("XMVB_BLOCK2_VALIDATE_DIRECT_D3G", None)
 
 import numpy as np
 import scipy.linalg
@@ -103,7 +100,6 @@ def evaluate(request, sum_bond, mode, ci_options=None, retain_state=None, integr
         fit_error = identity_error = rdm_seconds = 0.0
     else:
         result = core.build_hs(request, root=0, sum_bond=sum_bond,
-                               d3g_mode=0, d3g_backend=0, sum_mode=0,
                                ci_options=ci_options, ci_result=ci_result,
                                integral_frame=integral_frame)
         hmat, smat, fit_error, root_energy, root_coefficient, p, pi, d3g, checks = result

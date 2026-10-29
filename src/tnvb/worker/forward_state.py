@@ -46,7 +46,7 @@ def inventory(directory):
     return result
 
 
-def export_context(retain, source, tags, rinv, h1, g2):
+def export_context(retain, source, tags, h1, g2):
     """Called only after construction/H/S drivers have released the bank."""
     import pair_core as core
     started=time.perf_counter()
@@ -55,7 +55,7 @@ def export_context(retain, source, tags, rinv, h1, g2):
     bank=root/'mps'
     bank.mkdir()
     count=core.move_parallel_state_files(source,str(bank),tags)
-    np.savez(root/'context.npz',rinv=rinv,h1=h1,g2=g2)
+    np.savez(root/'context.npz',h1=h1,g2=g2)
     retain.update(state_tags=list(tags),files=count,
                   seconds=time.perf_counter()-started)
 
@@ -141,17 +141,16 @@ def resume(directory, request_path, request, sum_bond):
         raise ValueError('TNVB handoff structure count mismatch')
     h,s,energies,c,diagnostics=read_energy_response(root.parent/'response.bin',nstr,norb)
     with np.load(root/'context.npz',allow_pickle=False) as context:
-        rinv,h1,g2=context['rinv'],context['h1'],context['g2']
-    if (rinv.shape!=(norb,norb) or h1.shape!=(norb,norb) or
-            g2.shape!=(norb,)*4 or not all(np.all(np.isfinite(x)) for x in (rinv,h1,g2))):
+        h1,g2=context['h1'],context['g2']
+    if (h1.shape!=(norb,norb) or
+            g2.shape!=(norb,)*4 or not all(np.all(np.isfinite(x)) for x in (h1,g2))):
         raise ValueError('invalid TNVB handoff integral context')
     core.validate_structure_metric(h,s)
     core.log_summary(f'[TNVB] repr=MPS/SU2 active={nelec}e/{norb}o nstr={nstr} '
         f'D={bond}/{sum_bond} check=GRADIENT state=HANDOFF d3g=FULL')
     result=core.compute_total_state_rdms(str(root/'mps'),str(root.parent),
-        manifest['state_tags'],norb,nelec,bond,sum_bond,0,h,s,rinv,h1,g2,0,0,0,
-        selected_eigenpair=(float(energies[0]),c[:,0]),consume_source=True,
-        orthogonal_output=True)
+        manifest['state_tags'],norb,nelec,bond,sum_bond,0,h,s,h1,g2,
+        selected_eigenpair=(float(energies[0]),c[:,0]),consume_source=True)
     fit_error,energy,coefficient,p,pi,d3g,checks=result
     if abs(energy-energies[0])>1e-10:
         raise RuntimeError('TNVB handoff changed its CI eigenvalue')

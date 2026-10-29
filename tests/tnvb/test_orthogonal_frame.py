@@ -19,12 +19,34 @@ def functions(path,names,scope):
 
 
 SCOPE=dict(np=np,scipy=__import__('scipy'))
-functions(ROOT/'pair_core.py',{'pair_index','unpack_eri','orthogonalize_integrals',
+functions(ROOT/'pair_core.py',{'pair_index','unpack_eri',
           'accept_orthogonal_integrals','orthogonal_reduced_data',
-          'transform_reduced_data_to_xmvb','read_exact'},SCOPE)
+          'read_exact'},SCOPE)
 READER=dict(np=np,struct=struct,REQUEST_MAGIC=b'CPTNREQ3',VERSION=3,
             core=types.SimpleNamespace(read_exact=SCOPE['read_exact']))
 functions(ROOT/'evaluate.py',{'read_array','read_request'},READER)
+
+
+# Independent raw-frame reference, kept outside the production worker.
+def transform_reduced_data_to_xmvb(rinv, dm1, dm2, contracted_orth):
+    """Transform the 1/2-RDM and contracted 3-RDM to XMVB conventions."""
+    density1 = rinv @ dm1 @ rinv.T
+    density2 = np.einsum(
+        "ip,jq,kr,ls,pqrs->ijkl",
+        rinv,
+        rinv,
+        rinv,
+        rinv,
+        dm2,
+        optimize=True,
+    )
+    # Block2: dm2[x1,x2,y2,y1].  XMVB: Pit[y2,y1,x2,x1].
+    pit = np.asfortranarray(density2.transpose(2, 3, 1, 0))
+    contracted_nonorth = rinv @ contracted_orth @ rinv.T
+    # Block2 dm1[x1,y1]; XMVB P[y1,x1].  It is symmetric for the real
+    # state used here, but retain the explicit convention.
+    pmat = np.asfortranarray(density1.T)
+    return pmat, pit, np.asfortranarray(contracted_nonorth)
 
 
 class OrthogonalFrameTests(unittest.TestCase):
@@ -58,7 +80,7 @@ class OrthogonalFrameTests(unittest.TestCase):
         np.testing.assert_array_equal(pi,dm2.transpose(2,3,1,0))
         np.testing.assert_array_equal(c,contracted)
         q=np.linalg.inv(self.r)
-        raw=SCOPE['transform_reduced_data_to_xmvb'](q,dm1,dm2,contracted)
+        raw=transform_reduced_data_to_xmvb(q,dm1,dm2,contracted)
         expected=np.einsum('ia,jb,kc,ld,abcd->ijkl',q,q,q,q,pi)
         np.testing.assert_allclose(raw[1],expected,atol=2e-14)
 

@@ -1,5 +1,27 @@
 # Independent TNVB: build, run and numerical acceptance
 
+## Production worker surface
+
+The owned worker contains the SU(2) paired-structure constructor, DIRECT
+total-state SVD, full 1/2/3-RDM evaluation, DENSE/Davidson structure solvers
+and the one-shot ENERGY-to-gradient state handoff. It accepts the C++
+orthogonal integral frame directly. Input keywords and wire protocol v3
+are unchanged.
+
+Unused SZ/determinant constructors, variational total-state fitting,
+CONTRACTED/VALIDATE implementations (including explicit-product, hole-state,
+sigma, weighted-NPDM and complementary-operator prototypes), their process
+pools and backend-selection arguments have been removed. They have no
+compatibility entrypoints or environment-controlled fallback. Raw-frame
+density conversion is retained only as an independent test reference.
+
+The production truncation thresholds, total-state fitting warning at
+`1e-7 Eh`, RDM warning at `1e-8` and fatal RDM consistency limit at `1e-7`
+are unchanged. Full 3-RDM reduction still avoids a second rank-six copy.
+Execution-policy controls for scratch, memory, threads, H/S construction
+and NPDM profiling remain available. This cleanup changes code ownership
+and maintenance cost; it does not claim a different computational scaling.
+
 ## Same-point ENERGY to FULL-gradient handoff: 2026-10-18
 
 The lazy-gradient interface now retains the final structure MPS files from

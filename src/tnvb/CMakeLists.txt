@@ -31,6 +31,8 @@ install(FILES worker/davidson.py worker/common_ci.py worker/fixed_family.py work
         DESTINATION libexec/xmvb-cpp/tnvb)
 
 if (BUILD_TESTING)
+  add_test(NAME tnvb_worker_surface COMMAND "${XMVB_TNVB_PYTHON}"
+    "${CMAKE_SOURCE_DIR}/tests/tnvb/test_worker_surface.py")
   add_test(NAME tnvb_orthogonal_frame COMMAND "${XMVB_TNVB_PYTHON}"
     "${CMAKE_SOURCE_DIR}/tests/tnvb/test_orthogonal_frame.py")
   add_test(NAME tnvb_full_rdm COMMAND "${XMVB_TNVB_PYTHON}"
