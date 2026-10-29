@@ -30,7 +30,8 @@
 namespace xmvb::vb {
 namespace {
 
-constexpr std::size_t kStructureActionWorkspaceBytes = detail::kStructureTileWorkspaceBytes;
+constexpr std::size_t kStructureActionWorkspaceBytes =
+    512ULL * 1024ULL * 1024ULL;
 constexpr int kMaximumStructureActionBatchColumns = 8;
 
 int bounded_structure_action_width(int requested,

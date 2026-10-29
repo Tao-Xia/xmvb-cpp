@@ -24,7 +24,8 @@ void print_input_sections(std::ostream& output,
 void print_iteration_header(std::ostream& output);
 void print_iteration_row(
     std::ostream& output, int iteration, double energy, double energy_change, double gradient_inf);
-void print_scf_status(std::ostream& output, bool converged, int iterations, double energy);
+void print_scf_status(
+    std::ostream& output, bool converged, int iterations, double energy, bool energy_only = false);
 
 /** @brief Print supplied coefficients without constructing norms or matrices. */
 void print_structure_coefficients(std::ostream& output,

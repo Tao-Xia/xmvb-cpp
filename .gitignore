@@ -2,6 +2,7 @@
 build/
 build-*/
 cmake-build-*/
+/install-tnvb/
 .cache/
 .codex
 .codex/
@@ -105,9 +106,14 @@ pdflatex3.fls
 uv.lock
 pyproject.toml
 scripts/
+article/
+docs/*
+!docs/tnvb_gradient_conventions.md
+!docs/tnvb_acceptance_report.md
+!docs/tnvb_usage.md
+!docs/tnvb_iscf8_integration.md
+!docs/tnvb_full_rdm_optimization.md
 # Local manuscripts, derivations and benchmark reports; keep these off GitHub.
-/article/
-/docs/
 /doc/
 /benchmarks/**/*.md
 !/benchmarks/README.md

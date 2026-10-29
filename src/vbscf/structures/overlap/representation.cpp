@@ -74,18 +74,18 @@ double deleted_minor(const Eigen::MatrixXd& k,
     const int size = static_cast<int>(rows.size()) - (omit_row_1 >= 0) - (omit_row_2 >= 0);
     if (size == 0)
         return 1.0;
-    Eigen::MatrixXd minor(size, size);
+    Eigen::MatrixXd minor_matrix(size, size);
     for (int i = 0, ii = 0; i < static_cast<int>(rows.size()); ++i) {
         if (i == omit_row_1 || i == omit_row_2)
             continue;
         for (int j = 0, jj = 0; j < static_cast<int>(cols.size()); ++j) {
             if (j == omit_col_1 || j == omit_col_2)
                 continue;
-            minor(ii, jj++) = k(rows[i], cols[j]);
+            minor_matrix(ii, jj++) = k(rows[i], cols[j]);
         }
         ++ii;
     }
-    return minor.partialPivLu().determinant();
+    return minor_matrix.partialPivLu().determinant();
 }
 
 double

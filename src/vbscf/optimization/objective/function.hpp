@@ -13,6 +13,7 @@
 #include "vbscf/orbitals/charts/layout.hpp"
 #include "vbscf/derivatives/gradient/orbital/evaluator.hpp"
 #include "vbscf/derivatives/gradient/orbital/result.hpp"
+#include "vbscf/derivatives/gradient/active_space/backend.hpp"
 
 namespace xmvb::vb {
 
@@ -34,6 +35,7 @@ struct VbScfObjectiveTrialEvaluation {
     bool valid = false;
 
     std::optional<ActiveSpaceForwardEvaluation> forward_evaluation;
+    std::unique_ptr<ElectronicStateForwardEvaluation> electronic_forward;
 };
 
 /** @brief Exact coupled gradient at a prescribed orbital/structure keyframe. */
@@ -63,7 +65,8 @@ class VbScfObjective {
                    double nuclear_repulsion_energy,
                    StructureEigensolver structure_eigensolver,
                    StructureSolveAccuracy structure_solve_accuracy,
-                   const OrbitalGradientEvaluator* orbital_gradient_evaluator);
+                   const OrbitalGradientEvaluator* orbital_gradient_evaluator,
+                   std::shared_ptr<const ElectronicStateBackend> electronic_backend = {});
 
     VbScfObjective(const VbScfObjective&) = delete;
     VbScfObjective& operator=(const VbScfObjective&) = delete;
@@ -146,6 +149,7 @@ class VbScfObjective {
     StructureEigensolver structure_eigensolver_ = StructureEigensolver::Davidson;
     StructureSolveAccuracy structure_solve_accuracy_;
     const OrbitalGradientEvaluator* gradient_evaluator_ = nullptr;
+    std::shared_ptr<const ElectronicStateBackend> electronic_backend_;
 
     OrbitalGradientResult gradient_result_;
     std::vector<double> energy_history_;
@@ -155,7 +159,8 @@ class VbScfObjective {
     TrialEvaluation evaluate_trial_energy_with_initial_eigenvectors(
         const Eigen::VectorXd& parameter_vector,
         bool canonicalize_sparse_gauge,
-        const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors) const;
+        const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors,
+        bool complete_external_gradient = false) const;
 };
 
 } // namespace xmvb::vb

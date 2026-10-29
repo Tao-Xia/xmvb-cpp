@@ -13,6 +13,7 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include <unistd.h>
 
 extern "C" {
 #include "cint.h"
@@ -237,6 +238,17 @@ std::filesystem::path resolve_basis_file_path(const std::string& basis_leaf_name
         current_path = current_path.parent_path();
     }
 
+    // Preserve project/local basis precedence. Independently installed binaries
+    // also carry basis assets, so execution need not take place in the source tree.
+    std::array<char, 4096> executable{};
+    const auto length = ::readlink("/proc/self/exe", executable.data(), executable.size() - 1);
+    if (length > 0) {
+        const auto candidate =
+            fs::path(std::string(executable.data(), length)).parent_path().parent_path() /
+            "share/xmvb-cpp/basis" / basis_leaf_name;
+        if (fs::exists(candidate))
+            return candidate;
+    }
     throw std::runtime_error("failed to locate basis file: " + basis_leaf_name);
 }
 

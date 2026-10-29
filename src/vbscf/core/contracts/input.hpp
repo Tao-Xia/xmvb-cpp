@@ -3,6 +3,7 @@
 #include <memory>
 
 #include "vbscf/structures/expansion/types.hpp"
+#include "vbscf/core/contracts/tnvb.hpp"
 #include "integrals/ao/input.hpp"
 #include "integrals/ao/libcint_input.hpp"
 #include "vbscf/orbitals/preparation/input.hpp"
@@ -24,6 +25,10 @@ enum class StandardTwoElectronMode {
  * @brief End-to-end input bundle for the VBSCF matrix path.
  */
 struct VbScfInput {
+    TnVbConfiguration tnvb;
+    /** Raw topology is used directly by non-determinant electronic backends. */
+    RawStructureData raw_structure_data;
+
     /**
    * @brief Whether the selected structures span the complete active space.
    *

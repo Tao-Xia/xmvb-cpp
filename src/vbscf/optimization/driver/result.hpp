@@ -239,6 +239,8 @@ struct VbScfAcceptedIterationSnapshot {
  * @brief Result of the VBSCF orbital optimization loop.
  */
 struct VbScfOptimizerResult {
+    /** Energy-only completion has no orbital convergence or gradient claim. */
+    bool energy_only = false;
     /**
    * @brief Whether the optimization satisfied the convergence criterion.
    */

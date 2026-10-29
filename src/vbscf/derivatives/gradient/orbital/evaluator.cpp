@@ -388,6 +388,12 @@ OrbitalGradientResult OrbitalGradientEvaluator::evaluate_from_active_space_gradi
         std::move(active_space_gradient_result.active_orbital_overlap_matrix);
     result.active_one_electron_integrals =
         std::move(active_space_gradient_result.active_space_one_electron_result.h1e_act);
+    const int n_active = input.orbital_preparation_input.n_active_orbitals;
+    if (active_space_gradient_result.active_one_electron_gradient.size() ==
+        static_cast<std::size_t>(n_active) * n_active) {
+        result.active_one_electron_gradient = Eigen::Map<const Eigen::MatrixXd>(
+            active_space_gradient_result.active_one_electron_gradient.data(), n_active, n_active);
+    }
     result.packed_active_two_electron_integrals =
         std::move(active_space_gradient_result.active_space_two_electron_result
                       .packed_active_two_electron_integrals);

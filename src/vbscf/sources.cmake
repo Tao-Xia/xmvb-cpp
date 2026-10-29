@@ -80,6 +80,8 @@ set(XMVB_VBSCF_ACTIVE_INTEGRAL_SOURCES
 )
 
 set(XMVB_VBSCF_DERIVATIVE_SOURCES
+  vbscf/derivatives/gradient/active_space/backend.cpp
+  vbscf/derivatives/gradient/active_space/determinant_backend.cpp
   vbscf/derivatives/gradient/active_space/helpers.cpp
   vbscf/derivatives/gradient/active_space/evaluator.cpp
   vbscf/derivatives/gradient/orbital/evaluator.cpp

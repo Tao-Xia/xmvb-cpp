@@ -229,7 +229,11 @@ void print_summary(const vb::VbScfOptimizerOptions& options,
     const double optimizer_wall_time_seconds = result.total_wall_time_seconds;
     const int effective_thread_count = allocated_cpu_thread_count();
 
-    print_scf_status(std::cout, command_converged, result.n_iterations, result.final_total_energy);
+    print_scf_status(std::cout,
+                     command_converged,
+                     result.n_iterations,
+                     result.final_total_energy,
+                     result.energy_only);
     const double average_structure_overlap =
         print_final_state_sections(std::cout, load_result, result);
     const auto command_finish_time = std::chrono::system_clock::now();
@@ -265,32 +269,48 @@ void print_summary(const vb::VbScfOptimizerOptions& options,
         print_log_field("Final Davidson CI residual (Eh)",
                         format_scientific_double(davidson.maximum_stationarity_residual, 8));
     }
+    if (result.scf_result.tnvb_diagnostics.has_value()) {
+        const auto& tensor = *result.scf_result.tnvb_diagnostics;
+        print_log_field("TNVB structure bond", std::to_string(tensor.structure_bond));
+        if (tensor.gradient_evaluated) {
+            print_log_field("TNVB total-state bond", std::to_string(tensor.total_bond));
+            print_log_field("TNVB fit energy discrepancy",
+                            format_scientific_double(tensor.fit_energy_error));
+            print_log_field("TNVB RDM identity error",
+                            format_scientific_double(tensor.rdm_identity_error));
+            print_log_field("TNVB final RDM wall time", format_seconds(tensor.rdm_wall_seconds));
+        }
+        print_log_field("TNVB final state/H/S wall time",
+                        format_seconds(tensor.state_and_hs_wall_seconds));
+    }
     if (trace_sample_directory.has_value()) {
         print_log_field("Trace sample directory", trace_sample_directory->string());
     }
     if (molden_output_path.has_value()) {
         print_log_field("Molden output", molden_output_path->string());
     }
-    print_log_field("Gradient metric", "projected |g|_inf");
-    if (options.backend == vb::VbScfOptimizerBackend::Ciah) {
-        print_log_field("Orbital coordinates", "unwhitened quotient");
-        print_log_field("Projected infinity norm",
-                        "reference coordinates for stopping/final report");
+    if (!result.energy_only) {
+        print_log_field("Gradient metric", "projected |g|_inf");
+        if (options.backend == vb::VbScfOptimizerBackend::Ciah) {
+            print_log_field("Orbital coordinates", "unwhitened quotient");
+            print_log_field("Projected infinity norm",
+                            "reference coordinates for stopping/final report");
+        }
+        const bool certifies_physical_gradient =
+            input.complete_active_space &&
+            input.orbital_preparation_input.orbital_type == vb::kOrbitalTypeOeo &&
+            (options.backend == vb::VbScfOptimizerBackend::Plbfgs ||
+             options.backend == vb::VbScfOptimizerBackend::Ciah ||
+             options.backend == vb::VbScfOptimizerBackend::NonredundantTruncatedNewton);
+        if (certifies_physical_gradient) {
+            print_log_field("Additional stationarity metric", "physical |g|_(G^-1)");
+            print_log_field("Physical gradient threshold",
+                            format_scientific_double(options.gradient_tolerance, 8));
+        }
+        print_log_field("Convergence threshold",
+                        format_convergence_threshold_summary(options.energy_tolerance,
+                                                             options.gradient_tolerance));
     }
-    const bool certifies_physical_gradient =
-        input.complete_active_space &&
-        input.orbital_preparation_input.orbital_type == vb::kOrbitalTypeOeo &&
-        (options.backend == vb::VbScfOptimizerBackend::Plbfgs ||
-         options.backend == vb::VbScfOptimizerBackend::Ciah ||
-         options.backend == vb::VbScfOptimizerBackend::NonredundantTruncatedNewton);
-    if (certifies_physical_gradient) {
-        print_log_field("Additional stationarity metric", "physical |g|_(G^-1)");
-        print_log_field("Physical gradient threshold",
-                        format_scientific_double(options.gradient_tolerance, 8));
-    }
-    print_log_field(
-        "Convergence threshold",
-        format_convergence_threshold_summary(options.energy_tolerance, options.gradient_tolerance));
     print_log_field("Nuclear repulsion energy",
                     format_fixed_double(load_result.nuclear_repulsion_energy, 12));
     print_log_field("Initial total energy", format_fixed_double(result.initial_total_energy, 12));
@@ -311,20 +331,22 @@ void print_summary(const vb::VbScfOptimizerOptions& options,
                     format_fixed_double(final_valence_structure_eigenvalue, 12));
     print_log_field("Average structure overlap",
                     format_fixed_double(average_structure_overlap, 12));
-    print_log_field("Final gradient |g|_inf",
-                    format_scientific_double(result.final_gradient_inf_norm, 8));
-    print_log_field("Final gradient |g|_2",
-                    format_scientific_double(result.final_gradient_l2_norm, 8));
-    print_log_field("Final projected |g|_inf",
-                    format_scientific_double(result.final_projected_gradient_inf_norm, 8));
-    print_log_field("Final projected |g|_2",
-                    format_scientific_double(result.final_projected_gradient_l2_norm, 8));
-    if (result.final_physical_gradient_norm.has_value()) {
-        print_log_field("Final physical |g|_(G^-1)",
-                        format_scientific_double(*result.final_physical_gradient_norm, 8));
-    } else {
-        print_log_field("Final physical gradient diagnostic",
-                        "unavailable: " + result.final_physical_gradient_diagnostic);
+    if (!result.energy_only) {
+        print_log_field("Final gradient |g|_inf",
+                        format_scientific_double(result.final_gradient_inf_norm, 8));
+        print_log_field("Final gradient |g|_2",
+                        format_scientific_double(result.final_gradient_l2_norm, 8));
+        print_log_field("Final projected |g|_inf",
+                        format_scientific_double(result.final_projected_gradient_inf_norm, 8));
+        print_log_field("Final projected |g|_2",
+                        format_scientific_double(result.final_projected_gradient_l2_norm, 8));
+        if (result.final_physical_gradient_norm.has_value()) {
+            print_log_field("Final physical |g|_(G^-1)",
+                            format_scientific_double(*result.final_physical_gradient_norm, 8));
+        } else {
+            print_log_field("Final physical gradient diagnostic",
+                            "unavailable: " + result.final_physical_gradient_diagnostic);
+        }
     }
     if (options.backend == xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton) {
         if (!result.tnhvp_iteration_trace.empty()) {

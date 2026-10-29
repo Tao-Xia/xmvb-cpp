@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.20)
 project(xmvb_standalone VERSION 0.1.0 LANGUAGES C CXX Fortran)
 
 include(CTest)
+option(XMVB_ENABLE_TNVB "Build the independent SU(2) Block2 TNVB backend" OFF)
 
 file(TO_CMAKE_PATH "$ENV{CONDA_PREFIX}" XMVB_CONDA_PREFIX)
 
@@ -53,6 +54,8 @@ endforeach()
 list(REMOVE_DUPLICATES CMAKE_PREFIX_PATH)
 
 find_package(OpenMP REQUIRED)
+set(THREADS_PREFER_PTHREAD_FLAG TRUE)
+find_package(Threads REQUIRED)
 
 if (NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)

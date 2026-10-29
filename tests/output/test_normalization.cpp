@@ -79,6 +79,16 @@ void check_common_report_layout() {
     xmvb::output::print_scf_status(output, false, 2, -198.751);
     require(output.str().find("VBSCF did not converge in     2 iterations") != std::string::npos,
             "nonconverged calculation was reported as converged");
+    std::ostringstream fixed;
+    fixed << std::scientific << std::setprecision(16);
+    const auto fixed_flags = fixed.flags();
+    xmvb::output::print_scf_status(fixed, false, 0, -198.751, true);
+    require(fixed.str().find("Fixed-orbital ENERGY completed in     0 iterations") !=
+                    std::string::npos &&
+                fixed.str().find("VBSCF converged") == std::string::npos &&
+                fixed.str().find("did not converge") == std::string::npos &&
+                fixed.flags() == fixed_flags && fixed.precision() == 16,
+            "fixed-orbital completion changed convergence claims or diagnostic formatting");
 }
 
 void check_available_norms() {

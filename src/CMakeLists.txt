@@ -233,7 +233,13 @@ target_link_libraries(xmvb_vbscf
     ${CINT_LIB}
     ${LAPACKE_LIB}
     xmvb_openmp
+    Threads::Threads
     m)
+# Static libcint builds with quad-precision Rys quadrature need libquadmath
+# explicitly; shared-library deployments already carry this dependency.
+if (CINT_LIB MATCHES "\\.a$" AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  target_link_libraries(xmvb_vbscf PUBLIC quadmath)
+endif()
 if (LAPACK_TYPE STREQUAL "OpenBLAS")
   target_link_libraries(xmvb_vbscf PUBLIC ${LAPACK_LIB})
 elseif (LAPACK_TYPE STREQUAL "refBLAS")
@@ -465,6 +471,18 @@ target_link_libraries(xmvb
     xmvb_casscf
     xmvb_dft
     xmvb_vbscf)
+if (XMVB_ENABLE_TNVB)
+  add_subdirectory(tnvb)
+  target_link_libraries(xmvb PRIVATE xmvb_tnvb)
+  target_compile_definitions(xmvb PRIVATE XMVB_ENABLE_TNVB=1)
+  # An independently installed executable must retain its configured runtime.
+  get_filename_component(_xmvb_lapack_runtime_dir "${LAPACK_LIB}" DIRECTORY)
+  set_target_properties(xmvb PROPERTIES
+    INSTALL_RPATH "${XMVB_TNVB_LIBRARY_DIR};${_xmvb_lapack_runtime_dir}"
+    BUILD_WITH_INSTALL_RPATH TRUE)
+  install(TARGETS xmvb RUNTIME DESTINATION bin)
+  install(DIRECTORY "${CMAKE_SOURCE_DIR}/basis/" DESTINATION share/xmvb-cpp/basis)
+endif()
 
 file(
   GLOB_RECURSE XMVB_BASIS_INPUTS

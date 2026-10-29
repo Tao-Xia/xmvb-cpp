@@ -44,12 +44,14 @@ VbScfObjective::VbScfObjective(VbScfInput input,
                                double nuclear_repulsion_energy,
                                StructureEigensolver structure_eigensolver,
                                StructureSolveAccuracy structure_solve_accuracy,
-                               const OrbitalGradientEvaluator* orbital_gradient_evaluator)
+                               const OrbitalGradientEvaluator* orbital_gradient_evaluator,
+                               std::shared_ptr<const ElectronicStateBackend> electronic_backend)
     : input_(std::move(input)), layout_(std::move(layout)), state_indices_(selected_state_indices),
       state_weights_(state_average_weights), nuclear_repulsion_(nuclear_repulsion_energy),
       structure_eigensolver_(structure_eigensolver),
       structure_solve_accuracy_(structure_solve_accuracy),
-      gradient_evaluator_(orbital_gradient_evaluator) {}
+      gradient_evaluator_(orbital_gradient_evaluator),
+      electronic_backend_(std::move(electronic_backend)) {}
 
 double VbScfObjective::operator()(const Eigen::VectorXd& parameter_vector,
                                   Eigen::VectorXd& gradient) {
@@ -67,8 +69,14 @@ void VbScfObjective::ensure_reference_gradient() {
 VbScfObjective::TrialEvaluation
 VbScfObjective::evaluate_trial(const Eigen::VectorXd& parameter_vector,
                                bool canonicalize_sparse_gauge) const {
-    TrialEvaluation evaluation = evaluate_trial_energy(parameter_vector, canonicalize_sparse_gauge);
-    complete_trial(&evaluation);
+    TrialEvaluation evaluation;
+    if (electronic_backend_) {
+        evaluation = evaluate_trial_energy_with_initial_eigenvectors(
+            parameter_vector, canonicalize_sparse_gauge, Eigen::MatrixXd{}, true);
+    } else {
+        evaluation = evaluate_trial_energy(parameter_vector, canonicalize_sparse_gauge);
+        complete_trial(&evaluation);
+    }
     return evaluation;
 }
 
@@ -86,8 +94,12 @@ VbScfObjective::evaluate_trial_energy(const Eigen::VectorXd& parameter_vector,
 VbScfObjective::TrialEvaluation VbScfObjective::evaluate_trial_energy_with_initial_eigenvectors(
     const Eigen::VectorXd& parameter_vector,
     bool canonicalize_sparse_gauge,
-    const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors) const {
+    const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors,
+    bool complete_external_gradient) const {
     xmvb::profiling::ScopedPhase phase(xmvb::profiling::Phase::TrialForward, true);
+    if (input_.tnvb.enabled && !parameter_vector.allFinite()) {
+        throw std::invalid_argument("TNVB trial coordinates are nonfinite");
+    }
     const auto iteration_start_time = std::chrono::steady_clock::now();
     OrbitalPreparationInput trial_orbitals = input_.orbital_preparation_input;
     layout_.unpack(parameter_vector, &trial_orbitals);
@@ -100,15 +112,38 @@ VbScfObjective::TrialEvaluation VbScfObjective::evaluate_trial_energy_with_initi
 
     TrialEvaluation evaluation;
     evaluation.orbital_preparation_input = input_.orbital_preparation_input;
-    evaluation.forward_evaluation.emplace(
-        gradient_evaluator_->evaluate_forward(input_,
-                                              state_indices_,
-                                              state_weights_,
-                                              nuclear_repulsion_,
-                                              structure_eigensolver_,
-                                              structure_solve_accuracy_,
-                                              initial_eigenvectors));
-    evaluation.energy = evaluation.forward_evaluation->total_energy();
+    if (electronic_backend_) {
+        ElectronicStateRequest request;
+        request.selected_states = state_indices_;
+        request.state_weights = state_weights_;
+        request.nuclear_repulsion_energy = nuclear_repulsion_;
+        request.eigensolver = structure_eigensolver_;
+        request.accuracy = structure_solve_accuracy_;
+        request.initial_eigenvectors = initial_eigenvectors;
+        if (complete_external_gradient) {
+            evaluation.gradient_result =
+                gradient_evaluator_->evaluate_without_reference_energy_gradient(
+                    input_, electronic_backend_->evaluate_energy_gradient(input_, request));
+            evaluation.gradient =
+                layout_.gather_from_full(evaluation.gradient_result.sparse_orbital_energy_gradient);
+            evaluation.energy = evaluation.gradient_result.scf_result.total_energy;
+            evaluation.gradient_inf_norm = gradient_infinity_norm(evaluation.gradient);
+            evaluation.gradient_ready = true;
+        } else {
+            evaluation.electronic_forward = electronic_backend_->evaluate_energy(input_, request);
+            evaluation.energy = evaluation.electronic_forward->total_energy();
+        }
+    } else {
+        evaluation.forward_evaluation.emplace(
+            gradient_evaluator_->evaluate_forward(input_,
+                                                  state_indices_,
+                                                  state_weights_,
+                                                  nuclear_repulsion_,
+                                                  structure_eigensolver_,
+                                                  structure_solve_accuracy_,
+                                                  initial_eigenvectors));
+        evaluation.energy = evaluation.forward_evaluation->total_energy();
+    }
     evaluation.chart_changed = chart_changed;
     evaluation.wall_time_seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - iteration_start_time)
@@ -176,15 +211,24 @@ VbScfObjective::TrialEvaluation VbScfObjective::evaluate_trial_energy_with_struc
 void VbScfObjective::complete_trial(TrialEvaluation* evaluation) const {
     xmvb::profiling::ScopedPhase phase(xmvb::profiling::Phase::TrialGradient, true);
     if (evaluation == nullptr || !evaluation->valid || evaluation->gradient_ready ||
-        !evaluation->forward_evaluation.has_value()) {
+        (!evaluation->forward_evaluation.has_value() && !evaluation->electronic_forward)) {
         throw std::invalid_argument("trial completion requires a valid energy-only evaluation");
     }
     const auto completion_start_time = std::chrono::steady_clock::now();
     ScopedTrialOrbitals trial_scope(&input_, evaluation->orbital_preparation_input);
-    evaluation->gradient_result =
-        gradient_evaluator_->complete_gradient(input_, std::move(*evaluation->forward_evaluation));
-    evaluation->forward_evaluation.reset();
-    if (evaluation->gradient_result.second_order_context == nullptr) {
+    if (electronic_backend_) {
+        evaluation->gradient_result =
+            gradient_evaluator_->evaluate_without_reference_energy_gradient(
+                input_,
+                electronic_backend_->complete_gradient(input_,
+                                                       std::move(evaluation->electronic_forward)));
+    } else {
+        evaluation->gradient_result = gradient_evaluator_->complete_gradient(
+            input_, std::move(*evaluation->forward_evaluation));
+        evaluation->forward_evaluation.reset();
+    }
+    if ((!electronic_backend_ || electronic_backend_->provides_second_order_context()) &&
+        evaluation->gradient_result.second_order_context == nullptr) {
         throw std::runtime_error(
             "relaxed orbital gradient did not populate the accepted-point second-order context");
     }

@@ -160,8 +160,22 @@ void apply_ctrl_assignment(const std::string& raw_key,
     }
     const std::string key = to_ascii_upper(raw_key);
     const std::string value_upper = to_ascii_upper(raw_value);
+    if (key == "TNBOND" || key == "TNSUMBOND") {
+        std::size_t consumed = 0;
+        const int bond = std::stoi(raw_value, &consumed);
+        if (bond <= 0 || consumed != raw_value.size()) {
+            throw std::invalid_argument(key + " must be a positive integer");
+        }
+        if (key == "TNBOND") {
+            metadata->tnvb.structure_bond = bond;
+        } else {
+            metadata->tnvb.total_bond = bond;
+        }
+        return;
+    }
     if (key == "ITMAX") {
         metadata->requested_scf_max_iterations = std::stoi(raw_value);
+        metadata->has_explicit_scf_max_iterations = true;
         return;
     }
     if (key == "NSTATE") {
@@ -227,6 +241,7 @@ void apply_ctrl_assignment(const std::string& raw_key,
                                     "ISCF=8 for P-LBFGS, or ISCF=9 for CIAH");
     }
     if (key == "EIGENSOLVER") {
+        metadata->has_explicit_structure_eigensolver = true;
         if (value_upper == "DAVIDSON") {
             metadata->structure_eigensolver = StructureEigensolver::Davidson;
             return;
@@ -362,7 +377,9 @@ void apply_ctrl_flag(const std::string& raw_token, InputDeckMetadata* metadata) 
         throw std::invalid_argument("metadata must not be null");
     }
     const std::string token = to_ascii_upper(raw_token);
-    if (token == "VBSCF" || token == "CUVBSCF" || token == "CASSCF" || token == "DFT") {
+    if (token == "TNVB") {
+        metadata->tnvb.enabled = true;
+    } else if (token == "VBSCF" || token == "CUVBSCF" || token == "CASSCF" || token == "DFT") {
         const ElectronicMethod requested = token == "DFT"       ? ElectronicMethod::Dft
                                            : token == "CASSCF"  ? ElectronicMethod::Casscf
                                            : token == "CUVBSCF" ? ElectronicMethod::CuVbscf
