@@ -629,12 +629,24 @@ StructureAction::StructureAction(
                                                   direct_ci_->sigma.beta_connections_view(),
                                                   spin_products_.size());
         if (spin_products_.size() < static_cast<std::size_t>(n_unique_alpha_) * n_unique_beta_ &&
-            order.prefer_source())
-            operator_first_ =
+            order.prefer_source()) {
+            auto candidate =
                 std::make_unique<OperatorFirstAction>(orthogonal_view(),
                                                       n_structures_,
                                                       direct_ci_->integrals,
                                                       direct_ci_->integrals.orbital_transform);
+            // The inverse-dependent order can lose physical accuracy as raw
+            // orbitals coalesce. Select the orthogonal tile order for *all*
+            // consumers together, including the accepted and directional jets.
+            if (candidate->preserves_physical_operator())
+                operator_first_ = std::move(candidate);
+        }
+    }
+
+    if (!direct_ci_ && direct_ci_plan.carrier_complete()) {
+        // Transport and metric factors share this topology with every H backend.
+        // No CI sigma, transformed integrals, or physical product arrays are built.
+        sources_ = std::make_unique<SpinSources>(spin_products_, n_unique_alpha_, n_unique_beta_);
     }
 
     if (mode == StructureActionMode::ActionOnly)

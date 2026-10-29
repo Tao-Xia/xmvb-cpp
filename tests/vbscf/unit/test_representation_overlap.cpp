@@ -91,13 +91,19 @@ StructureAction make_action(const std::vector<std::vector<int>>& alpha,
             }
         }
     }
-    const auto topology =
-        build_same_spin_pair_topology(determinant_alpha, determinant_beta, n_orbitals);
     const Eigen::MatrixXd identity = Eigen::MatrixXd::Identity(n_orbitals, n_orbitals);
     const std::vector<double> packed_overlap(identity.data(), identity.data() + identity.size());
     xmvb::integrals::ActiveSpaceTwoElectronResult two_electron;
     two_electron.packed_active_two_electron_integrals.assign(
         xmvb::integrals::packed_active_two_electron_integral_count(n_orbitals), 0.0);
+    const auto topology =
+        build_same_spin_pair_cache_context(determinant_alpha,
+                                           determinant_beta,
+                                           DeterminantPairEvaluator{},
+                                           packed_overlap,
+                                           Eigen::MatrixXd::Zero(n_orbitals, n_orbitals),
+                                           n_orbitals,
+                                           two_electron);
     return StructureAction(terms,
                            3,
                            topology,
@@ -199,6 +205,8 @@ void check_case(const std::vector<std::vector<int>>& alpha,
 
     const Eigen::MatrixXd metric_reference = reference_cross(right, right, w, alpha, beta);
     const auto prepared = overlap.prepare_metric(right);
+    require(!full_ambient || static_cast<bool>(prepared.selected_metric()),
+            "complete spin carrier lost its physical metric factor with a different H backend");
     require(relative_error(prepared(block), metric_reference * block) < 2e-12 &&
                 relative_error(prepared(block), overlap.apply(right, right, block)) < 2e-12,
             "prepared metric multi-RHS action differs from cross-Gram action");

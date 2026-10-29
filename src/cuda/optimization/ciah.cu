@@ -249,6 +249,12 @@ DeviceCiahWorkspace::DeviceCiahWorkspace(Context& context,
     : impl_(std::make_unique<Impl>(context, dimension, std::move(options), initial)) {}
 
 DeviceCiahWorkspace::~DeviceCiahWorkspace() = default;
+void DeviceCiahWorkspace::set_step_limit(std::function<double(linalg::ConstMatrixView)> maximum,
+                                         double cap) {
+    impl_->core.set_step_limit(
+        [maximum = std::move(maximum)](const Matrix<double>& v) { return maximum(v.view()); }, cap);
+}
+
 void DeviceCiahWorkspace::reset_rhs() noexcept {
     impl_->core.reset_rhs();
 }
@@ -442,6 +448,7 @@ DeviceCiahMicroResult run_device_ciah_microsteps(DeviceCiahWorkspace& workspace,
         throw std::invalid_argument("CUDA CIAH microstep callbacks are incomplete");
     Matrix<double> initial =
         copy_vector(workspace.context(), workspace.dimension(), initial_gradient);
+    workspace.set_step_limit(callbacks.maximum_component, mcscf::detail::ciah_step_max_component);
     return mcscf::detail::run_ciah_microsteps_core(
         DeviceDriverBackend{{&workspace.context()}, callbacks, workspace.dimension()},
         workspace,

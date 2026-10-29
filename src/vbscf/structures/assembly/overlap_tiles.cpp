@@ -294,7 +294,7 @@ UpperPair StructureAction::cross_overlap_adjoint(const Eigen::VectorXd& left,
     const bool left_requested = side == OverlapSide::Both;
     const bool dl = directional && !delta_left->isZero(0.0);
     const bool dr = directional && !delta_right->isZero(0.0);
-    if (same_chart(la, lb) && same_chart(ra, rb) &&
+    if (direct_ci_ && same_chart(la, lb) && same_chart(ra, rb) &&
         use_product_overlap(
             la, lb, workspace_bytes, 2 + static_cast<int>(dl) + static_cast<int>(dr))) {
         if (directional && !dl && !dr)

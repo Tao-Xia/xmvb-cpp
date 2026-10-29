@@ -34,5 +34,11 @@ void audit_orbital_step(const OrbitalPreparationInput& input,
                         int micro,
                         const Eigen::VectorXd& base_reduced = Eigen::VectorXd{});
 
+/** @brief Opt-in raw orbital/CI state snapshot; no physical evaluation is performed. */
+void audit_ciah_state(const OrbitalPreparationInput& input,
+                      const Eigen::Ref<const Eigen::MatrixXd>& coefficients,
+                      const char* stage,
+                      double energy);
+
 } // namespace diagnostics
 } // namespace xmvb::vb

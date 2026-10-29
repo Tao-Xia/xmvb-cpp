@@ -155,6 +155,11 @@ DirectionalOppositeSpinPairTileView::projected_channel(int packed_pair) const {
     return channel_view(storage_->projected_channel_values, packed_pair);
 }
 
+DirectionalOppositeSpinPairTileView::ConstChannelMap
+DirectionalOppositeSpinPairTileView::cofactor_projected_channel(int packed_pair) const {
+    return channel_view(storage_->cofactor_projected_channel_values, packed_pair);
+}
+
 namespace {
 
 DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile_impl(
@@ -208,6 +213,7 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile_impl(
     result.pairs.resize(static_cast<std::size_t>(work_items));
     result.raw_channel_values = Eigen::MatrixXd::Zero(work_items, n_packed_pairs);
     result.projected_channel_values = Eigen::MatrixXd::Zero(work_items, n_packed_pairs);
+    result.cofactor_projected_channel_values.resize(work_items, n_packed_pairs);
 
     const int n_threads = xmvb::effective_openmp_thread_count();
 #pragma omp parallel for schedule(static) if (n_threads > 1) num_threads(n_threads)
@@ -250,7 +256,7 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile_impl(
             accepted_tile_byte_bound(unique_determinants, n_active_orbitals, work_items) /
             sizeof(double));
         const Eigen::Index resident_tile_values =
-            accepted_tile_values + 2 * static_cast<Eigen::Index>(n_packed_pairs) * work_items;
+            accepted_tile_values + 3 * static_cast<Eigen::Index>(n_packed_pairs) * work_items;
         const Eigen::Index available_workspace_values = std::max<Eigen::Index>(
             1,
             workspace_value_cap -
@@ -287,10 +293,15 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile_impl(
             Eigen::MatrixXd accepted_auxiliary =
                 *accepted_ri_active_pair_factors * accepted_projection;
             Eigen::MatrixXd directional_auxiliary =
-                *directional_ri_active_pair_factors * accepted_projection;
-            directional_auxiliary.noalias() +=
                 *accepted_ri_active_pair_factors * directional_projection;
             Eigen::MatrixXd projected =
+                accepted_ri_active_pair_factors->transpose() * directional_auxiliary;
+            result.cofactor_projected_channel_values.middleRows(begin, width) =
+                projected.transpose();
+            // Keep the full derivative for backward consumers of either spin.
+            directional_auxiliary.noalias() =
+                *directional_ri_active_pair_factors * accepted_projection;
+            projected.noalias() +=
                 accepted_ri_active_pair_factors->transpose() * directional_auxiliary;
             projected.noalias() +=
                 directional_ri_active_pair_factors->transpose() * accepted_auxiliary;
@@ -334,7 +345,7 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile_impl(
         accepted_tile_byte_bound(unique_determinants, n_active_orbitals, work_items) /
         sizeof(double));
     const Eigen::Index resident_tile_values =
-        accepted_tile_values + 3 * static_cast<Eigen::Index>(n_packed_pairs) * work_items;
+        accepted_tile_values + 4 * static_cast<Eigen::Index>(n_packed_pairs) * work_items;
     const Eigen::Index available_workspace_values =
         std::max<Eigen::Index>(1,
                                workspace_value_cap - std::min<std::int64_t>(workspace_value_cap - 1,
@@ -350,6 +361,8 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile_impl(
         const Eigen::Index row_end = std::min<std::int64_t>(n_packed_pairs, row_begin + row_block);
         fill_exact_kernel_rows(accepted_kernel, row_begin, row_end, n_packed_pairs, &accepted_rows);
         Eigen::MatrixXd projected = accepted_rows * result.raw_channel_values.transpose();
+        result.cofactor_projected_channel_values.middleCols(row_begin, row_end - row_begin) =
+            projected.transpose();
         if (!directional_kernel.empty()) {
             fill_exact_kernel_rows(
                 directional_kernel, row_begin, row_end, n_packed_pairs, &directional_rows);

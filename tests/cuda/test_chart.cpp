@@ -2,6 +2,7 @@
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 #include <Eigen/Core>
@@ -440,7 +441,10 @@ void check_accepted(bool oeo, int inactive, bool complete = true, bool separated
         cpu_analytic_full.data()[indices[i]] = cpu_analytic_raw[i];
     near_accepted(download(context, gpu_analytic_raw.view()),
                   cpu_analytic_full,
-                  "CUDA analytic Hessian-diagonal raw step differs");
+                  ("CUDA analytic Hessian-diagonal raw step differs: oeo=" + std::to_string(oeo) +
+                   ", inactive=" + std::to_string(inactive) + ", full=" + std::to_string(full) +
+                   ", separated=" + std::to_string(separated))
+                      .c_str());
     const double cpu_max = reference_analytic.maximum_rotation_component(cpu_analytic_step);
     const double gpu_max = chart.max_component(gpu_analytic_step.view());
     if (std::abs(cpu_max - gpu_max) > 2e-8 * std::max(1.0, cpu_max))

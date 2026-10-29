@@ -354,7 +354,10 @@ SelectedStateDirectionalStructureImages build_selected_structure_direction_from_
                             hamiltonian_image.noalias() +=
                                 left_overlap * delta_hamiltonian.transpose();
                             for (int target = 0; target < n_pairs; ++target) {
-                                const auto directional = opposite_tile->projected_channel(target);
+                                // d(Pa^T G Pb) = dPa^T G Pb + Pa^T dG Pb + Pa^T G dPb.
+                                // The alpha sweep already includes dG; beta contributes only dPb.
+                                const auto directional =
+                                    opposite_tile->cofactor_projected_channel(target);
                                 if (channels[target].empty() || directional.isZero(0.0)) {
                                     continue;
                                 }

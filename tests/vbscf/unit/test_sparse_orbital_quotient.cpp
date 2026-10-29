@@ -833,7 +833,7 @@ void check_analytic_block_pullback(const OrbitalPreparationInput& input,
     AnalyticOrbitalDiagonal model;
     const Eigen::LLT<Eigen::MatrixXd> metric(input.ao_overlap_matrix);
     model.mo_coefficients = metric.matrixU().solve(Eigen::MatrixXd::Identity(n_bf, n_bf));
-    if (complete_active_space && input.orbital_type == kOrbitalTypeOeo) {
+    if (input.orbital_type == kOrbitalTypeOeo) {
         const Eigen::MatrixXd white = metric.matrixU() * orbitals;
         const Eigen::HouseholderQR<Eigen::MatrixXd> qr(white);
         const Eigen::MatrixXd frame = qr.householderQ() * Eigen::MatrixXd::Identity(n_bf, n_bf);
@@ -850,6 +850,34 @@ void check_analytic_block_pullback(const OrbitalPreparationInput& input,
         model.inactive_inverse_transform(0, 1) = 0.23;
     if (n_active > 1)
         model.active_inverse_transform(0, 1) = -0.31;
+    if (input.orbital_type == kOrbitalTypeOeo) {
+        // Roundoff in an ill-conditioned orthogonalization breaks the exact
+        // frame identity used by the inexpensive Gram inverse. Reproduce that
+        // defect without altering the actual orbital coordinates or rank.
+        auto perturbed = model;
+        perturbed.mo_coefficients.col(n_core) *= 1.0 + 1e-8;
+        OrbitalChart ah(input,
+                        layout,
+                        orbitals,
+                        orbitals,
+                        nullptr,
+                        false,
+                        complete_active_space,
+                        nullptr,
+                        OrbitalChart::Coordinates::Unwhitened);
+        const int rank = ah.reduced_size();
+        const auto signature = ah.rank_signature();
+        ah.set_curvature(input, nullptr, &perturbed, OrbitalChart::CurvatureUse::AugmentedHessian);
+        const Eigen::VectorXd x = Eigen::VectorXd::LinSpaced(rank, -.3, .7);
+        const Eigen::VectorXd y = Eigen::VectorXd::LinSpaced(rank, .6, -.2);
+        const Eigen::VectorXd bx = ah.apply_inverse_augmented_hessian_diagonal(x, -2.0);
+        const Eigen::VectorXd by = ah.apply_inverse_augmented_hessian_diagonal(y, -2.0);
+        require(ah.reduced_size() == rank && ah.rank_signature() == signature && bx.allFinite() &&
+                    by.allFinite() &&
+                    std::abs(x.dot(by) - y.dot(bx)) <
+                        2e-10 * std::max({1.0, x.norm() * by.norm(), y.norm() * bx.norm()}),
+                "refined rotation inverse changed rank or lost self-adjointness");
+    }
     const OrbitalChart chart(input,
                              layout,
                              orbitals,
@@ -935,7 +963,7 @@ void check_analytic_block_pullback(const OrbitalPreparationInput& input,
                      reference.apply_inverse_augmented_hessian_diagonal(coordinate_probe, shift))
                             .norm() < 2e-11,
                     "AH-only preparation changed the signed preconditioner");
-        if (complete_active_space && input.orbital_type == kOrbitalTypeOeo) {
+        if (input.orbital_type == kOrbitalTypeOeo) {
             bool refused_positive_action = false;
             try {
                 ah.apply_reduced_curvature(coordinate_probe);
@@ -1005,8 +1033,10 @@ void check_analytic_block_pullback(const OrbitalPreparationInput& input,
         lifts.push_back(chart.expand_retract_input_tangent(input, Eigen::VectorXd::Unit(size, j)));
     Eigen::MatrixXd signed_reference = Eigen::MatrixXd::Zero(size, size);
     const int n_core_rotations = (n_bf - n_core) * n_core;
+    const bool full_frame = input.orbital_type == kOrbitalTypeOeo;
+    const int active_start = complete_active_space ? input.n_orbitals : n_core;
     Eigen::MatrixXd rotation_map =
-        Eigen::MatrixXd::Zero(n_core_rotations + (n_bf - input.n_orbitals) * n_active, size);
+        Eigen::MatrixXd::Zero(n_core_rotations + (n_bf - active_start) * n_active, size);
     Eigen::VectorXd rotation_weights = Eigen::VectorXd::Zero(rotation_map.rows());
     const Eigen::VectorXd probe = Eigen::VectorXd::LinSpaced(size, -0.4, 0.7);
     double maximum_rotation = 0.0;
@@ -1042,10 +1072,10 @@ void check_analytic_block_pullback(const OrbitalPreparationInput& input,
                                               (component * component.transpose());
                 maximum_rotation =
                     std::max(maximum_rotation, std::abs(source[q] * component.dot(probe)));
-                if (target < n_core || p >= input.n_orbitals) {
+                if (target < n_core || p >= active_start) {
                     const int row = target < n_core ? p - n_core + q * (n_bf - n_core)
-                                                    : n_core_rotations + p - input.n_orbitals +
-                                                          q * (n_bf - input.n_orbitals);
+                                                    : n_core_rotations + p - active_start +
+                                                          q * (n_bf - active_start);
                     rotation_map.row(row).noalias() += source[q] * component.transpose();
                     rotation_weights[row] = model.rotation_diagonal(p, source_offset + q);
                 }
@@ -1064,7 +1094,6 @@ void check_analytic_block_pullback(const OrbitalPreparationInput& input,
                     .norm() < 1.0e-10,
             "fused analytic positive inverse differs from reference");
     const double shift = spectrum.eigenvalues().minCoeff() - 1.0;
-    const bool full_frame = complete_active_space && input.orbital_type == kOrbitalTypeOeo;
     const Eigen::MatrixXd shifted_reference =
         full_frame
             ? Eigen::MatrixXd(rotation_map.transpose() *
@@ -1730,6 +1759,10 @@ int main() {
         check_analytic_block_pullback(frozen, false);
         check_analytic_block_pullback(oeo, true);
         check_analytic_block_pullback(oeo, false);
+        auto three_active = make_input(
+            c, {{0, 1, 2, 3, 4, 5}, {0, 1, 2, 3, 4, 5}, {0, 1, 2, 3, 4, 5}, {0, 1, 2, 3, 4, 5}}, 1);
+        three_active.orbital_type = kOrbitalTypeOeo;
+        check_analytic_block_pullback(three_active, false);
         check_preconditioner_geometry(partial);
         check_preconditioner_geometry(full);
         check_preconditioner_geometry(oeo, true);

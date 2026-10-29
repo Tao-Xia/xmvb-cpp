@@ -1898,8 +1898,41 @@ void AcceptedOrbitalChart::set_hessian_diagonal(const OrbitalGeometry& geometry,
                 cublasDnrm2_64(
                     ctx.blas(), rows * rows, block.ah_frame_inverse.data(), 1, &inverse_norm),
                 "cublasDnrm2 chart rotation inverse");
-            const double bound = 512.0 * DBL_EPSILON * std::max(1, p.basis) *
-                                 std::max(1.0, forward_norm * inverse_norm);
+            double bound = 512.0 * DBL_EPSILON * std::max(1, p.basis) *
+                           std::max(1.0, forward_norm * inverse_norm);
+            if (std::isfinite(residual) && residual > bound) {
+                // Preserve an already certified inverse. Otherwise refine the
+                // same map using its right residual E=F*B-I: B<-B-B*E.
+                auto correction =
+                    chart_product(ctx, block.ah_frame_inverse.view(), certificate.view());
+                const double minus_one = -1.0;
+                check_cublas(cublasDaxpy_64(ctx.blas(),
+                                            static_cast<std::int64_t>(rows) * rows,
+                                            &minus_one,
+                                            correction.data(),
+                                            1,
+                                            block.ah_frame_inverse.data(),
+                                            1),
+                             "cublasDaxpy chart inverse refinement");
+                gemm(ctx, certificate.view(), forward, block.ah_frame_inverse.view());
+                chart_subtract_identity<<<grid(rows), kThreads, 0, ctx.stream()>>>(
+                    certificate.data(), rows);
+                check_cuda(cudaGetLastError(), "CUDA chart refined inverse certificate");
+                check_cublas(cublasDnrm2_64(ctx.blas(),
+                                            static_cast<std::int64_t>(rows) * rows,
+                                            certificate.data(),
+                                            1,
+                                            &residual),
+                             "cublasDnrm2 chart refined inverse residual");
+                check_cublas(cublasDnrm2_64(ctx.blas(),
+                                            static_cast<std::int64_t>(rows) * rows,
+                                            block.ah_frame_inverse.data(),
+                                            1,
+                                            &inverse_norm),
+                             "cublasDnrm2 chart refined inverse");
+                bound = 512.0 * DBL_EPSILON * std::max(1, p.basis) *
+                        std::max(1.0, forward_norm * inverse_norm);
+            }
             if (!std::isfinite(residual) || residual > bound)
                 throw std::runtime_error(
                     "analytic rotation inverse failed its residual certificate");

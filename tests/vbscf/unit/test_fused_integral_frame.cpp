@@ -19,6 +19,7 @@
 #include "integrals/response/adjoint.hpp"
 #include "integrals/response/ri.hpp"
 #include "vbscf/structures/orthogonal_ci/integrals.hpp"
+#include "vbscf/orbitals/preparation/cholesky.hpp"
 
 namespace {
 
@@ -51,7 +52,7 @@ ActiveSpaceTwoElectronResult exact_at(const AoIntegralInput& ao,
                                       const Eigen::MatrixXd& coefficients) {
     const int n_basis = coefficients.rows();
     const int n_active = coefficients.cols();
-    std::vector<int> row_offsets(n_basis + 1, 0);
+    std::vector<std::size_t> row_offsets(n_basis + 1, 0);
     std::vector<int> orbital_indices;
     std::vector<double> values;
     for (int row = 0; row < n_basis; ++row) {
@@ -62,7 +63,7 @@ ActiveSpaceTwoElectronResult exact_at(const AoIntegralInput& ao,
                 values.push_back(value);
             }
         }
-        row_offsets[row + 1] = static_cast<int>(values.size());
+        row_offsets[row + 1] = values.size();
     }
     return xmvb::integrals::transform_exact_active_integrals(
         ao, row_offsets, orbital_indices, values, n_active);
@@ -85,7 +86,7 @@ void check_frame(bool ri_backend) {
                 std::sin(0.19 * (row + 1) * (column + 2));
     const Eigen::MatrixXd ao_kernel =
         ri.metric_whitened_ao_pair_factors.transpose() * ri.metric_whitened_ao_pair_factors;
-    std::vector<int> left, right;
+    std::vector<xmvb::integrals::PairAddress> left, right;
     std::vector<double> values;
     for (int p = 0; p < ao_pairs; ++p)
         for (int q = 0; q <= p; ++q) {
@@ -406,10 +407,44 @@ void check_frame(bool ri_backend) {
                   "framed pair-adjoint direction differs");
 }
 
+/** @brief A resolved near-dependent frame must retain its physical AO metric. */
+void check_conditioned_frame() {
+    Eigen::MatrixXd phi = Eigen::MatrixXd::Zero(5, 3);
+    phi.col(0) << 1, .2, .3, -.1, .4;
+    phi.col(1) = phi.col(0);
+    phi(1, 1) += 1e-4;
+    phi.col(2) << .1, -.4, .3, .6, -.2;
+    const Eigen::MatrixXd metric =
+        (Eigen::VectorXd(5) << 1., 1.5, 2., 2.5, 3.).finished().asDiagonal();
+    const Eigen::MatrixXd gram = phi.transpose() * metric * phi;
+    const auto frame = xmvb::vb::active_frame(phi, metric, gram);
+    require_close(frame.coefficients.transpose() * metric * frame.coefficients,
+                  Eigen::MatrixXd::Identity(3, 3),
+                  2e-13,
+                  "refined active frame lost orthogonality");
+    require_close(frame.coefficients * frame.upper,
+                  phi,
+                  2e-14,
+                  "refined active frame changed physical orbitals");
+    // Positive diagonal fixes the same smooth Cholesky gauge, including its VJP.
+    const Eigen::MatrixXd dphi = .01 * Eigen::MatrixXd::Identity(5, 3);
+    const Eigen::MatrixXd dgram = dphi.transpose() * metric * phi + phi.transpose() * metric * dphi;
+    const Eigen::MatrixXd analytic = xmvb::vb::overlap_upper_direction(frame.upper, dgram);
+    const double step = 1e-7;
+    const Eigen::MatrixXd plus = phi + step * dphi, minus = phi - step * dphi;
+    const auto rp = xmvb::vb::active_frame(plus, metric, plus.transpose() * metric * plus);
+    const auto rm = xmvb::vb::active_frame(minus, metric, minus.transpose() * metric * minus);
+    require_close((rp.upper - rm.upper) / (2 * step),
+                  analytic,
+                  2e-6,
+                  "refined frame direction differs from physical finite difference");
+}
+
 } // namespace
 
 int main() {
     try {
+        check_conditioned_frame();
         check_frame(false);
         check_frame(true);
         std::cout << "fused exact/RI integral frame: passed\n";

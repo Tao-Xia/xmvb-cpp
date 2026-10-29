@@ -111,11 +111,11 @@ inline int plan_pair_tile_extent(std::int64_t n_unique,
 
     // Three scalar directional matrices plus two directional occupied blocks.
     // Opposite-spin storage adds the occupied overlap block, sparse channel
-    // payload, and the raw/projected packed channels. The GEMM term accounts for
-    // its largest simultaneous RI block rather than relying on a fixed extent.
+    // payload, and three packed-channel arrays. The GEMM term accounts for its
+    // largest simultaneous RI block rather than relying on a fixed extent.
     doubles_per_pair += 3 + 2 * occupied_square;
     if (include_opposite_spin) {
-        doubles_per_pair += occupied_square + 2 * n_packed_pairs;
+        doubles_per_pair += occupied_square + 3 * n_packed_pairs;
         integers_per_pair += occupied_square;
         if (n_auxiliary > 0) {
             doubles_per_pair += 3 * n_packed_pairs + 2 * static_cast<std::size_t>(n_auxiliary);

@@ -14,6 +14,35 @@ inline Eigen::MatrixXd overlap_upper(const Eigen::Ref<const Eigen::MatrixXd>& ov
     return factor.matrixU();
 }
 
+/** @brief Metric QR with a second Cholesky pass, without factoring the AO metric.
+ * The second pass measures the physical frame rather than reusing its rounded
+ * Gram matrix. Both passes use triangular solves; no orbital rank is removed.
+ */
+struct ActiveFrame {
+    Eigen::MatrixXd upper;
+    Eigen::MatrixXd coefficients;
+};
+
+inline ActiveFrame active_frame(const Eigen::Ref<const Eigen::MatrixXd>& coefficients,
+                                const Eigen::Ref<const Eigen::MatrixXd>& ao_overlap,
+                                const Eigen::Ref<const Eigen::MatrixXd>& overlap) {
+    ActiveFrame frame;
+    frame.upper = overlap_upper(overlap);
+    frame.coefficients = frame.upper.transpose()
+                             .triangularView<Eigen::Lower>()
+                             .solve(coefficients.transpose())
+                             .transpose();
+    const Eigen::MatrixXd metric = frame.coefficients.transpose() * ao_overlap * frame.coefficients;
+    const Eigen::MatrixXd correction = overlap_upper(metric);
+    frame.coefficients = correction.transpose()
+                             .triangularView<Eigen::Lower>()
+                             .solve(frame.coefficients.transpose())
+                             .transpose()
+                             .eval();
+    frame.upper = (correction * frame.upper).eval();
+    return frame;
+}
+
 inline Eigen::MatrixXd upper_inverse(const Eigen::Ref<const Eigen::MatrixXd>& r) {
     return r.triangularView<Eigen::Upper>().solve(Eigen::MatrixXd::Identity(r.rows(), r.cols()));
 }

@@ -276,6 +276,9 @@ class OrbitalChart {
     /** @brief Full-AO diagonal model with inter-orbital basis mixing retained. */
     bool has_rotation_inverse_ = false;
     int rotation_core_count_ = 0;
+    std::vector<Eigen::MatrixXd> active_internal_bases_;
+    Eigen::VectorXd active_internal_eigenvalues_;
+    Eigen::MatrixXd active_internal_eigenvectors_;
     std::array<Eigen::MatrixXd, 2> rotation_diagonals_;
     std::array<Eigen::MatrixXd, 2> rotation_source_inverses_;
 };

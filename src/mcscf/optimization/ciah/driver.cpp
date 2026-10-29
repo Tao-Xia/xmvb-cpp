@@ -88,6 +88,7 @@ CiahMicroResult run_ciah_microsteps(CiahWorkspace& workspace,
         !callbacks.evaluate_keyframe || callbacks.orbital_size < 0 ||
         callbacks.orbital_size > initial_gradient.size())
         throw std::invalid_argument("CIAH microstep callbacks are incomplete");
+    workspace.set_step_limit(callbacks.maximum_component, detail::ciah_step_max_component);
     return detail::run_ciah_microsteps_core(
         HostDriverBackend{{}, callbacks, callbacks.orbital_size},
         workspace,

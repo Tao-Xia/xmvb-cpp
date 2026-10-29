@@ -4,6 +4,7 @@
 #include <Eigen/LU>
 
 #include <algorithm>
+#include <cmath>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -176,6 +177,31 @@ Eigen::MatrixXd build_first_order_cofactor_matrix(const DeterminantOverlapResult
     Eigen::MatrixXd cofactor_matrix =
         Eigen::MatrixXd::Zero(det_ovlp_result.n_electrons, det_ovlp_result.n_electrons);
     if (det_ovlp_result.n_electrons == 0) {
+        return cofactor_matrix;
+    }
+
+    // Degree-zero, -one and -two deleted minors do not require an inverse.
+    // In particular, det(X) * X^{-T} needlessly loses digits near singular X.
+    const auto& x = det_ovlp_result.overlap_submatrix;
+    const int n = det_ovlp_result.n_electrons;
+    if (n <= 3 && x.rows() == n && x.cols() == n) {
+        for (int i = 0; i < n; ++i) {
+            for (int j = 0; j < n; ++j) {
+                double value = 1.0;
+                if (n == 2) {
+                    value = x(1 - i, 1 - j);
+                } else if (n == 3) {
+                    const int r = i == 0 ? 1 : 0;
+                    const int s = i == 2 ? 1 : 2;
+                    const int c = j == 0 ? 1 : 0;
+                    const int d = j == 2 ? 1 : 2;
+                    const double product = x(r, d) * x(s, c);
+                    value =
+                        std::fma(x(r, c), x(s, d), -product) - std::fma(x(r, d), x(s, c), -product);
+                }
+                cofactor_matrix(i, j) = (i + j) % 2 ? -value : value;
+            }
+        }
         return cofactor_matrix;
     }
 
@@ -882,6 +908,18 @@ double calc_second_order_cofactor(const DeterminantOverlapResult& det_ovlp_resul
     }
     if (det_ovlp_result.n_electrons < 2) {
         return 0.0;
+    }
+
+    // These exterior derivatives have degree zero/one for n=2/3. Evaluate
+    // that identity directly, independently of a numerical rank classification.
+    // No cancellation followed by division by det X is needed.
+    const double minor_sign =
+        (right_first + right_second + left_first + left_second) % 2 ? -1.0 : 1.0;
+    if (det_ovlp_result.n_electrons == 2)
+        return minor_sign;
+    if (det_ovlp_result.n_electrons == 3) {
+        const Eigen::MatrixXd block = build_overlap_submatrix_from_result(det_ovlp_result);
+        return minor_sign * block(3 - right_first - right_second, 3 - left_first - left_second);
     }
 
     if (det_ovlp_result.nullity == 0 && det_ovlp_result.overlap_determinant != 0.0) {

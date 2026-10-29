@@ -15,6 +15,7 @@
 #include "integrals/response/ri.hpp"
 #include "integrals/active/one_electron.hpp"
 #include "vbscf/orbitals/preparation/preparer.hpp"
+#include "vbscf/orbitals/preparation/cholesky.hpp"
 #include "vbscf/integrals/ao/one_electron/builder.hpp"
 
 namespace xmvb::vb {
@@ -84,7 +85,9 @@ prepare_timed_active_space_context(const VbScfInput& input,
     stage_start_time = std::chrono::steady_clock::now();
     const int n_active_orbitals = input.orbital_preparation_input.n_active_orbitals;
     const int n_basis_functions = input.orbital_preparation_input.n_basis_functions;
-    Eigen::MatrixXd integral_frame;
+    const auto raw_active_coefficients = context.orbital_result.auxiliary_orbital_matrix.middleCols(
+        context.n_inactive_doubly_occupied_orbitals, n_active_orbitals);
+    Eigen::MatrixXd integral_frame, framed_active_coefficients;
     if (fixed_integral_frame != nullptr) {
         integral_frame = *fixed_integral_frame;
     } else {
@@ -96,24 +99,21 @@ prepare_timed_active_space_context(const VbScfInput& input,
         }
         const Eigen::Map<const Eigen::MatrixXd> active_overlap(
             overlap_storage.data(), n_active_orbitals, n_active_orbitals);
-        Eigen::LLT<Eigen::MatrixXd> cholesky(active_overlap);
-        if (cholesky.info() != Eigen::Success) {
-            throw std::runtime_error("active integral frame overlap is not positive definite");
-        }
-        integral_frame = cholesky.matrixU();
+        auto frame = active_frame(raw_active_coefficients,
+                                  input.orbital_preparation_input.ao_overlap_matrix,
+                                  active_overlap);
+        integral_frame = std::move(frame.upper);
+        framed_active_coefficients = std::move(frame.coefficients);
     }
-
-    const auto raw_active_coefficients = context.orbital_result.auxiliary_orbital_matrix.middleCols(
-        context.n_inactive_doubly_occupied_orbitals, n_active_orbitals);
-    Eigen::MatrixXd framed_active_coefficients;
-    if (integral_frame.size() != 0) {
+    if (fixed_integral_frame != nullptr && integral_frame.size() != 0) {
         if (integral_frame.rows() != n_active_orbitals ||
             integral_frame.cols() != n_active_orbitals || !integral_frame.allFinite()) {
             throw std::invalid_argument("fixed active integral frame is invalid");
         }
-        const Eigen::MatrixXd inverse_frame = integral_frame.triangularView<Eigen::Upper>().solve(
-            Eigen::MatrixXd::Identity(n_active_orbitals, n_active_orbitals));
-        framed_active_coefficients = raw_active_coefficients * inverse_frame;
+        framed_active_coefficients = integral_frame.transpose()
+                                         .triangularView<Eigen::Lower>()
+                                         .solve(raw_active_coefficients.transpose())
+                                         .transpose();
     }
     // Keep the shared frame preparation in the existing 2e timing bucket.
     const double frame_wall_time =

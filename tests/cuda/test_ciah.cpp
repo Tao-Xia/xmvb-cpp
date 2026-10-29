@@ -200,10 +200,75 @@ void check(bool indefinite, int n = 5) {
          "CUDA CIAH microstep last step differs from CPU");
 }
 
+/** @brief Scaled weak-reference AH roots retain host/device residual and image parity. */
+void check_scaled_hard_case() {
+    constexpr int n = 3;
+    const Matrix h = Vector((Vector(3) << -2, 1, 7).finished()).asDiagonal();
+    const Matrix mass = Vector((Vector(3) << 1, 2, .5).finished()).asDiagonal();
+    const Vector g = (Vector(3) << 0, .4, .2).finished();
+    const Vector seed = Vector::Ones(n);
+    int host_actions = 0, device_actions = 0;
+    const xmvb::mcscf::QuadraticProblem problem(
+        g,
+        [&](const Vector& x) {
+            ++host_actions;
+            return Vector(h * x);
+        },
+        [&](const Vector& x) { return Vector(mass * x); },
+        [](const Vector& x) { return x.norm(); });
+    xmvb::mcscf::CiahWorkspace host(problem, seed);
+    host.set_step_limit([](const Vector& x) { return x.cwiseAbs().maxCoeff(); }, .03);
+    xmvb::cuda::Context context(64ULL * 1024 * 1024);
+    xmvb::cuda::Matrix<double> dh(context, n, n), dm(context, n, n), dg(context, n, 1),
+        ds(context, n, 1);
+    xmvb::cuda::copy_to_device(context, dh.view(), h);
+    xmvb::cuda::copy_to_device(context, dm.view(), mass);
+    xmvb::cuda::copy_to_device(context, dg.view(), g);
+    xmvb::cuda::copy_to_device(context, ds.view(), seed);
+    xmvb::cuda::DeviceCiahOptions options;
+    options.max_cycle = n;
+    options.apply_images = [&](xmvb::linalg::ConstMatrixView x,
+                               xmvb::linalg::MatrixView hx,
+                               xmvb::linalg::MatrixView mx) {
+        ++device_actions;
+        xmvb::cuda::gemm(context, hx, dh.view(), x);
+        xmvb::cuda::gemm(context, mx, dm.view(), x);
+    };
+    xmvb::cuda::DeviceCiahWorkspace device(context, n, options, ds.view());
+    device.set_step_limit(
+        [&](xmvb::linalg::ConstMatrixView x) {
+            int index = 0;
+            xmvb::cuda::check_cublas(cublasIdamax(context.blas(), n, x.data, 1, &index),
+                                     "scaled AH maximum");
+            double value = 0;
+            context.copy_to_host(&value, x.data + index - 1, sizeof(value));
+            return std::abs(value);
+        },
+        .03);
+    bool scaled = false;
+    for (int j = 0; j < 4; ++j) {
+        const auto cpu = host.next(g);
+        const auto gpu = device.next(dg.view());
+        scaled = scaled || cpu.reference_scale > 1;
+        require(cpu.basis_size == gpu.basis_size && cpu.new_hvp_actions == gpu.new_hvp_actions,
+                "scaled CUDA AH changed its physical image schedule");
+        require(std::abs(cpu.reference_scale - gpu.reference_scale) <
+                    2e-9 * std::max(1.0, cpu.reference_scale),
+                "scaled CUDA AH lost its reference scale");
+        near(download(context, gpu.step), cpu.step, "scaled CUDA AH step differs");
+        near(download(context, gpu.residual),
+             cpu.residual,
+             "scaled CUDA AH complete residual differs");
+    }
+    require(scaled && host_actions == device_actions && host_actions == host.basis_size(),
+            "scaled CUDA AH was not exercised or repeated an image");
+}
+
 } // namespace
 
 int main() {
     try {
+        check_scaled_hard_case();
         check(false);
         check(true);
         check(false, 513);

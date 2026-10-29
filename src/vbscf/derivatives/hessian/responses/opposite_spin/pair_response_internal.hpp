@@ -33,7 +33,10 @@ struct DirectionalOppositeSpinPairTile {
     std::vector<DirectionalOppositeSpinPairData> pairs;
     /** Pair-major contiguous storage, with one packed channel per column. */
     Eigen::MatrixXd raw_channel_values;
+    /** Full derivative G delta_P + delta_G P, used by backward consumers. */
     Eigen::MatrixXd projected_channel_values;
+    /** G delta_P alone: the second spin factor must not count delta_G twice. */
+    Eigen::MatrixXd cofactor_projected_channel_values;
 
     const DirectionalOppositeSpinPairData& pair(Eigen::Index left_local,
                                                 Eigen::Index right_local) const;
@@ -57,6 +60,7 @@ class DirectionalOppositeSpinPairTileView {
     Eigen::Index right_size() const noexcept;
     ConstChannelMap raw_channel(int packed_pair) const;
     ConstChannelMap projected_channel(int packed_pair) const;
+    ConstChannelMap cofactor_projected_channel(int packed_pair) const;
 
     template <typename Consumer>
     void with_pair(Eigen::Index left_local, Eigen::Index right_local, Consumer&& consume) const {

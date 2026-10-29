@@ -3,6 +3,7 @@
 #include "mcscf/ci/canonical.hpp"
 
 #include <algorithm>
+#include <limits>
 #include <Eigen/LU>
 
 namespace xmvb::mcscf {
@@ -34,6 +35,27 @@ SimilarityHamiltonian::SimilarityHamiltonian(const ActiveIntegrals& integrals,
     change_ = change;
     const Eigen::MatrixXd first = change * coulomb;
     g_.noalias() = first * change.transpose();
+}
+
+bool SimilarityHamiltonian::preserves_physical_operator() const {
+    // Compare in the original orthogonal metric. An error bound scaled by the
+    // large canonical integrals would hide the cancellation being diagnosed.
+    const auto resolved = [](const Eigen::MatrixXd& recovered,
+                             const Eigen::MatrixXd& physical,
+                             Eigen::Index operations) {
+        const double u = std::numeric_limits<double>::epsilon();
+        const double gamma = operations * u / (1.0 - operations * u);
+        return recovered.allFinite() && (recovered - physical).norm() <= gamma * physical.norm();
+    };
+    if (!resolved(r_ * h_ * inverse_, physical_h_, 4 * n_))
+        return false;
+    Eigen::MatrixXd reverse(n_ * n_, n_ * n_);
+    for (int i = 0; i < n_; ++i)
+        for (int j = 0; j < n_; ++j)
+            for (int k = 0; k < n_; ++k)
+                for (int l = 0; l < n_; ++l)
+                    reverse(i * n_ + j, k * n_ + l) = r_(i, k) * inverse_(l, j);
+    return resolved(reverse * g_ * reverse.transpose(), physical_g_, 4 * n_ * n_);
 }
 
 double SimilarityHamiltonian::element(OccupationMask ta,

@@ -34,7 +34,7 @@ StructureAction::cross_overlap_transport_gradient(const Eigen::VectorXd& lambda,
     OverlapTransportGradient result{{Eigen::MatrixXd::Zero(n, n), Eigen::MatrixXd::Zero(n, n)},
                                     Eigen::VectorXd::Zero(n_structures_)};
     const auto da = oa.direction(direction), db = ob.direction(direction);
-    if (use_product_overlap(ca, cb, workspace_bytes, 5)) {
+    if (direct_ci_ && use_product_overlap(ca, cb, workspace_bytes, 5)) {
         // Broad support keeps the cheaper moment order, with five shared images
         // at peak. No new full-carrier residency requirement is introduced.
         auto left = expand_structure_block(lambda);

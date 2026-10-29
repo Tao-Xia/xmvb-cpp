@@ -285,20 +285,87 @@ solve_complete_structure_roots(const StructureAction& action,
     return result;
 }
 
+/** @brief Solve a resident selected Gram in its factored coordinates.
+ * M=L L^T, y=L^T C. Forming M*C and then C^T*(M*C) loses two
+ * cancellations when C is large. The identity-metric solve uses the same
+ * selected space, action, positive metric preconditioner and accuracy budgets.
+ */
+linalg::DavidsonResult
+solve_factored_structure_roots(const StructureAction& action,
+                               const SelectedMetric& metric,
+                               int n_roots,
+                               StructureSolveAccuracy accuracy,
+                               const Eigen::Ref<const Eigen::MatrixXd>& initial,
+                               const linalg::GeneralizedEigensolver& solver) {
+    const auto& diagonal = action.preconditioner_diagonal();
+    const Eigen::Index n = action.n_structures();
+    const auto options = structure_solve_options(n, n_roots, accuracy);
+    const bool recycled = initial.rows() == n && initial.cols() >= n_roots && initial.allFinite();
+    const Eigen::MatrixXd seeds = recycled
+                                      ? Eigen::MatrixXd(initial.leftCols(n_roots))
+                                      : linalg::make_davidson_initial_vectors(
+                                            diagonal.hamiltonian,
+                                            diagonal.overlap,
+                                            std::min(options.max_subspace_dimension, 2 * n_roots));
+    const Eigen::MatrixXd guess = metric.upper.triangularView<Eigen::Upper>() * seeds;
+    auto result = solve_selected_structure_roots(
+        [&action, &metric](const Eigen::Ref<const Eigen::MatrixXd>& y) {
+            profiling::ScopedPhase phase(profiling::Phase::CiSigma, true);
+            const Eigen::MatrixXd c = metric.upper.triangularView<Eigen::Upper>().solve(y);
+            return linalg::GeneralizedEigenActionResult{
+                metric.upper.transpose().triangularView<Eigen::Lower>().solve(
+                    action.apply_hamiltonian(c)),
+                {}};
+        },
+        diagonal.hamiltonian,
+        diagonal.overlap,
+        n,
+        n_roots,
+        accuracy,
+        guess,
+        solver,
+        {},
+        [](const Eigen::VectorXd& r, double) { return r; },
+        true);
+    const Eigen::Map<const Eigen::MatrixXd> y(
+        result.eigenpairs.eigenvector_matrix.data(), n, n_roots);
+    const Eigen::MatrixXd coefficients = metric.upper.triangularView<Eigen::Upper>().solve(y);
+    result.hamiltonian_eigenvectors =
+        metric.upper.transpose().triangularView<Eigen::Lower>() * result.hamiltonian_eigenvectors;
+    result.overlap_eigenvectors = metric.upper.transpose().triangularView<Eigen::Lower>() * y;
+    result.eigenpairs.eigenvector_matrix.assign(coefficients.data(),
+                                                coefficients.data() + coefficients.size());
+    return result;
+}
+
 /** @brief Riesz map for a bounded selected space, without a carrier projection.
  * The residual r is a covector; M^-1 r is its physical tangent representative.
  * This metric preconditioner is positive and invariant to basis congruences.
  */
 std::shared_ptr<const SelectedMetric> selected_ci_metric(const StructureAction& action,
                                                          const SameSpinPairCacheContext& topology,
-                                                         const std::vector<double>& overlap,
-                                                         int n) {
+                                                         const PreparedActiveSpaceContext& prepared,
+                                                         const OrbitalPreparationInput& orbitals) {
+    const int n = orbitals.n_active_orbitals;
     if (!RepresentationOverlap::PreparedMetric::fits_selected(action.n_structures()))
         return {};
     const auto& alpha = topology.alpha_reuse_table.unique_determinants;
     const auto& beta = topology.beta_reuse_table.unique_determinants;
-    const auto upper = overlap_upper(Eigen::Map<const Eigen::MatrixXd>(overlap.data(), n, n));
-    const auto metric = RepresentationOverlap(action, alpha, beta, n).prepare_metric(upper);
+    if (!alpha.basis(n).complete() || !beta.basis(n).complete())
+        return {};
+    const auto& integral_frame = prepared.active_space_two_electron_result.orbital_transform;
+    Eigen::MatrixXd raw_frame;
+    if (integral_frame.size() == 0) {
+        raw_frame =
+            active_frame(prepared.orbital_result.auxiliary_orbital_matrix.middleCols(
+                             prepared.n_inactive_doubly_occupied_orbitals, n),
+                         orbitals.ao_overlap_matrix,
+                         Eigen::Map<const Eigen::MatrixXd>(
+                             prepared.orbital_result.active_orbital_overlap_matrix.data(), n, n))
+                .upper;
+    }
+    const auto metric = RepresentationOverlap(action, alpha, beta, n)
+                            .prepare_metric(integral_frame.size() ? integral_frame : raw_frame);
     if (!metric.selected_matrix().size())
         return {};
     if (mcscf::diagnostics::ciah_event_trace_enabled()) {
@@ -503,27 +570,13 @@ void solve_structure_problem(
                 context);
         } else {
             profiling::ScopedPhase preconditioner_phase(profiling::Phase::CiPreconditioner, true);
-            auto metric =
-                structure_action.storage().orthogonal_direct_ci
-                    ? selected_ci_metric(structure_action,
-                                         context->same_spin_pair_cache,
-                                         prepared.orbital_result.active_orbital_overlap_matrix,
-                                         input.orbital_preparation_input.n_active_orbitals)
-                    : std::shared_ptr<const SelectedMetric>{};
+            auto metric = selected_ci_metric(structure_action,
+                                             context->same_spin_pair_cache,
+                                             prepared,
+                                             input.orbital_preparation_input);
             context->selected_metric = metric;
-            auto selected_action = action;
             std::function<Eigen::VectorXd(const Eigen::VectorXd&, double)> preconditioner;
-            if (metric) {
-                selected_action = [&structure_action,
-                                   metric](const Eigen::Ref<const Eigen::MatrixXd>& v) {
-                    profiling::ScopedPhase phase(profiling::Phase::CiSigma, true);
-                    return linalg::GeneralizedEigenActionResult{
-                        structure_action.apply_hamiltonian(v), metric->overlap * v};
-                };
-                preconditioner = [metric](const Eigen::VectorXd& r, double) {
-                    return Eigen::VectorXd(metric->factor.solve(r));
-                };
-            } else if (structure_action.storage().orthogonal_direct_ci) {
+            if (!metric && structure_action.storage().orthogonal_direct_ci) {
                 // W^T W is occupation-block diagonal for any VB selection, not only
                 // FULL. Remove spin recoupling from the preconditioner even when the
                 // physical nonorthogonal Gram must remain an exact streamed action.
@@ -560,17 +613,24 @@ void solve_structure_problem(
                 }
             }
             preconditioner_phase.stop();
-            retain_davidson_result(solve_selected_structure_roots(
-                                       selected_action,
-                                       structure_action.preconditioner_diagonal().hamiltonian,
-                                       structure_action.preconditioner_diagonal().overlap,
-                                       n_structures,
-                                       n_roots,
-                                       structure_solve_accuracy,
-                                       initial_eigenvectors,
-                                       generalized_eigensolver,
-                                       std::move(physical_residual),
-                                       std::move(preconditioner)),
+            retain_davidson_result(metric
+                                       ? solve_factored_structure_roots(structure_action,
+                                                                        *metric,
+                                                                        n_roots,
+                                                                        structure_solve_accuracy,
+                                                                        initial_eigenvectors,
+                                                                        generalized_eigensolver)
+                                       : solve_selected_structure_roots(
+                                             action,
+                                             structure_action.preconditioner_diagonal().hamiltonian,
+                                             structure_action.preconditioner_diagonal().overlap,
+                                             n_structures,
+                                             n_roots,
+                                             structure_solve_accuracy,
+                                             initial_eigenvectors,
+                                             generalized_eigensolver,
+                                             std::move(physical_residual),
+                                             std::move(preconditioner)),
                                    context);
         }
     }

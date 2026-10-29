@@ -42,6 +42,7 @@ class DeviceCiahWorkspace {
     DeviceCiahWorkspace(const DeviceCiahWorkspace&) = delete;
     DeviceCiahWorkspace& operator=(const DeviceCiahWorkspace&) = delete;
 
+    void set_step_limit(std::function<double(linalg::ConstMatrixView)> maximum, double cap);
     void reset_rhs() noexcept;
     int basis_size() const noexcept;
     Context& context() const noexcept;

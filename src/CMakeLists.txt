@@ -64,6 +64,7 @@ set(XMVB_LINALG_SOURCES
   core/memory.cpp
   core/pair_index.cpp
   linalg/exponential.cpp
+  linalg/qr.cpp
   linalg/eigensolver.cpp
   linalg/eigen_response.cpp
   linalg/minres.cpp)

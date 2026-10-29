@@ -61,6 +61,15 @@ void check(int n, int na, int nb, int selection) {
         throw std::runtime_error("raw CI oracle has an empty fixture");
     const RawCiPlan plan(ac, bc, products);
     const SimilarityHamiltonian h(integrals, r);
+    if (!h.preserves_physical_operator())
+        throw std::runtime_error("well-conditioned similarity lost physical accuracy");
+    if (selection == 0 && na == 2 && nb == 2) {
+        Eigen::MatrixXd singular = r;
+        singular(0, 1) = 1.0;
+        singular(1, 1) = 1e-6;
+        if (SimilarityHamiltonian(integrals, singular).preserves_physical_operator())
+            throw std::runtime_error("unresolved inverse-dependent similarity was accepted");
+    }
     const auto targets = plan.beta_columns();
     for (int b = 0; b < ub; ++b) {
         bool reachable = false;

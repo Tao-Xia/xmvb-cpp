@@ -267,6 +267,8 @@ void check_selected_transport(bool stationary) {
     auto accepted = std::make_shared<AcceptedPointContext>();
     accepted->complete_active_space = false;
     accepted->prepared_active_space.orbital_result = prepared;
+    accepted->prepared_active_space.active_space_two_electron_result.orbital_transform =
+        overlap_upper(active_overlap(prepared));
     accepted->same_spin_pair_cache = topology;
     accepted->n_active_orbitals = 3;
     accepted->n_structures = 3;
@@ -452,6 +454,8 @@ void check_multistate_transport(bool stationary) {
     const auto action = make_action(w, active_overlap(prepared), diagonal, &topology);
     auto accepted = std::make_shared<AcceptedPointContext>();
     accepted->prepared_active_space.orbital_result = prepared;
+    accepted->prepared_active_space.active_space_two_electron_result.orbital_transform =
+        overlap_upper(active_overlap(prepared));
     accepted->same_spin_pair_cache = topology;
     accepted->n_active_orbitals = accepted->n_structures = 3;
     accepted->selected_state_indices = {0, 1};

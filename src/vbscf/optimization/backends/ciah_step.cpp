@@ -86,7 +86,8 @@ bool build_ciah_macro_step(VbScfObjective* objective,
                            double* trust_radius,
                            CiahIterationRecord* record,
                            VbScfOptimizerResult* result,
-                           CiahMacroStep* accepted) {
+                           CiahMacroStep* accepted,
+                           bool seek_curvature) {
     xmvb::profiling::ScopedPhase macro_phase(xmvb::profiling::Phase::CiahMacro, true);
     xmvb::profiling::ScopedPhase setup_phase(xmvb::profiling::Phase::CiahSetup);
     const auto context = objective->second_order_context();
@@ -95,6 +96,9 @@ bool build_ciah_macro_step(VbScfObjective* objective,
     const Eigen::Index ns = use_structure_response ? structure.tangent_size() : 0;
     const Eigen::Index dimension = no + ns;
     const bool step_audit = diagnostics::orbital_step_audit_enabled();
+    if (step_audit)
+        diagnostics::audit_ciah_state(
+            orbitals, context->selected_state_eigenvectors, "origin", energy);
     std::unique_ptr<CiTransport> transport;
     if (ns)
         transport = std::make_unique<CiTransport>(
@@ -316,6 +320,9 @@ bool build_ciah_macro_step(VbScfObjective* objective,
             const auto& point = transport_at(displacement);
             const auto exact = objective->evaluate_coupled_keyframe(
                 parameters, point.coefficients, point.selected_metric.get());
+            if (step_audit)
+                diagnostics::audit_ciah_state(
+                    point.input, exact.normalized_structure_coefficients, "keyframe", exact.energy);
             auto model = transport->evaluate_model(point, exact);
             keyframe.gradient = std::move(model.gradient);
             keyframe.energy = model.energy;
@@ -449,8 +456,39 @@ bool build_ciah_macro_step(VbScfObjective* objective,
         };
     }
     setup_phase.stop();
-    auto micro = mcscf::run_ciah_microsteps(
-        workspace, initial_gradient, energy, options.gradient_tolerance, callbacks);
+    std::optional<mcscf::CiahOriginRay> curvature_ray;
+    if (seek_curvature) {
+        curvature_ray = workspace.find_negative_curvature(initial_gradient);
+        mcscf::diagnostics::ciah_trace("ciah_terminal_curvature",
+                                       "actions=%d,negative=%d",
+                                       record->orbital_hvp_actions,
+                                       static_cast<int>(curvature_ray.has_value()));
+        if (!curvature_ray) {
+            result->converged = true;
+            result->termination_reason = "ciah_projected_gradient_tolerance";
+            return false;
+        }
+    }
+    auto micro = [&]() {
+        if (!curvature_ray)
+            return mcscf::run_ciah_microsteps(
+                workspace, initial_gradient, energy, options.gradient_tolerance, callbacks);
+        mcscf::CiahMicroResult path(energy, initial_gradient);
+        // Use the existing bounded AH scale; a curvature witness need not be
+        // a converged eigenvector and does not justify a full-radius raw step.
+        const double scale = mcscf::ciah_max_component / curvature_ray->step.cwiseAbs().maxCoeff();
+        path.displacement = scale * curvature_ray->step;
+        path.hessian_displacement = scale * curvature_ray->hessian_step;
+        path.last_step = path.displacement;
+        path.energy_model.add(path.displacement, path.hessian_displacement);
+        path.candidate.negative_curvature = true;
+        path.candidate.eigenvalue = curvature_ray->eigenvalue;
+        path.candidate.residual_norm = curvature_ray->residual_norm;
+        path.candidate.basis_size = workspace.basis_size();
+        path.micro_steps = 1;
+        path.micro_iterations = workspace.basis_size();
+        return path;
+    }();
     record->micro_iterations += micro.micro_iterations;
     record->rejected_trial_count += micro.rejected_trial_count;
     auto& displacement = micro.displacement;
@@ -459,7 +497,7 @@ bool build_ciah_macro_step(VbScfObjective* objective,
     auto& candidate = micro.candidate;
     const int micro_steps = micro.micro_steps;
     const bool energy_model_stopped = micro.energy_model_stopped;
-    if (mcscf::diagnostics::ciah_trace_enabled()) {
+    if (mcscf::diagnostics::ciah_trace_enabled() && !candidate.negative_curvature) {
         // A diagnostic of the actual coupled trial space, not just its A block.
         // Neither inverse callback evaluates an HVP or changes the retained space.
         const auto base =
@@ -542,11 +580,21 @@ bool build_ciah_macro_step(VbScfObjective* objective,
                 orbitals, chart, scale * step.head(no), "macro_trial", micro_steps);
         accepted->parameters = build_nonredundant_lifted_trial_parameters(
             orbitals, chart, layout, scale * step.head(no));
-        return objective->evaluate_trial_energy_with_structure_guess(accepted->parameters,
-                                                                     coefficients(scale * step));
+        const Eigen::MatrixXd seed = coefficients(scale * step);
+        auto trial =
+            objective->evaluate_trial_energy_with_structure_guess(accepted->parameters, seed);
+        if (step_audit)
+            diagnostics::audit_ciah_state(trial.orbital_preparation_input,
+                                          seed,
+                                          "seed",
+                                          std::numeric_limits<double>::quiet_NaN());
+        return trial;
     };
     macro_callbacks.energy = [](const Trial& trial) { return trial.energy; };
     macro_callbacks.terminal = [&](Trial& trial) {
+        // A witnessed unstable point requires actual descent, not a tiny non-descent.
+        if (seek_curvature)
+            return false;
         objective->complete_trial(&trial);
         accepted->trial = std::move(trial);
         const bool converged = accepted->check_convergence(
@@ -598,9 +646,15 @@ bool build_ciah_macro_step(VbScfObjective* objective,
     if (!accepted->trial.gradient_ready)
         objective->complete_trial(&accepted->trial);
     completion_phase.stop();
-    if (step_audit)
+    if (step_audit) {
         diagnostics::audit_orbital_step(
             orbitals, chart, displacement.head(no), "macro_accepted", micro_steps);
+        diagnostics::audit_ciah_state(
+            accepted->trial.orbital_preparation_input,
+            accepted->trial.gradient_result.second_order_context->selected_state_eigenvectors,
+            "relaxed",
+            accepted->trial.energy);
+    }
     if (mcscf::diagnostics::ciah_event_trace_enabled()) {
         // r = g0 + H0*p is the unshifted frozen Newton residual of the actual
         // accepted displacement. It reuses accumulated images, adding no HVP.

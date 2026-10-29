@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <limits>
+#include <functional>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -14,6 +15,7 @@
 #include <Eigen/Eigenvalues>
 
 #include "core/timing.hpp"
+#include "mcscf/optimization/ciah/bounded.hpp"
 #include "mcscf/optimization/trace.hpp"
 
 namespace xmvb::mcscf::detail {
@@ -34,9 +36,10 @@ struct CiahProduct {
 template <class Vector> struct CiahCoreResult {
     double eigenvalue = 0.0;
     double reference_component = 0.0;
+    double reference_scale = 1.0;
     Vector step, hessian_step, metric_step, residual;
     double residual_norm = 0.0, model_gradient_norm = 0.0;
-    bool converged = false, exhaustion = false;
+    bool converged = false, exhaustion = false, negative_curvature = false;
     int basis_size = 0, new_hvp_actions = 0;
 };
 
@@ -71,6 +74,32 @@ inline void check_ciah_projected_symmetry(Eigen::Index dimension,
                 << ", dimension=" << dimension << ", subspace=" << action.rows();
         throw std::runtime_error(message.str());
     }
+}
+
+/** @brief Roundoff bound for a sampled Rayleigh quadratic, not a response-solve tolerance.
+ * Each projected entry is a physical-vector dot product. Bound its rounding
+ * with its cached absolute-product sum, then bound the two small contractions.
+ * A stiff direction absent from the ray contributes no uncertainty. The
+ * declared action accuracy remains in symmetry checks; it is not uncertainty
+ * in the sign of the already evaluated finite-CI model's quadratic form.
+ */
+inline double ciah_curvature_roundoff(Eigen::Index dimension,
+                                      const Eigen::VectorXd& coefficients,
+                                      const Eigen::MatrixXd& magnitude,
+                                      const Eigen::MatrixXd& projection) {
+    const double u = .5 * std::numeric_limits<double>::epsilon();
+    const auto gamma = [u](Eigen::Index n) {
+        const double nu = static_cast<double>(n) * u;
+        return nu / (1.0 - nu);
+    };
+    const double vector_gamma = gamma(dimension);
+    const double small_gamma = gamma(2 * coefficients.size() + 2);
+    const Eigen::VectorXd a = coefficients.cwiseAbs();
+    const double products = a.dot(magnitude * a);
+    const double quadratic = a.dot(projection.cwiseAbs() * a);
+    // Divide out the rounding in the nonnegative sums used for the bound.
+    return (vector_gamma / (1.0 - vector_gamma) * products + small_gamma * quadratic) /
+           (1.0 - small_gamma);
 }
 
 /** The sole CIAH Davidson iteration. Backend vectors may live on host or device. */
@@ -118,6 +147,14 @@ template <class Backend> class CiahCore {
     }
     const std::vector<Vector>& metric_images() const noexcept {
         return metric_images_;
+    }
+
+    /** @brief Attach the model's physical finite-step bound, without an operator call. */
+    void set_step_limit(std::function<double(const Vector&)> maximum, double cap) {
+        if (!maximum || !(cap > 0) || !std::isfinite(cap))
+            throw std::invalid_argument("invalid CIAH finite-step geometry");
+        maximum_component_ = std::move(maximum);
+        component_cap_ = cap;
     }
 
     void reset_rhs() noexcept {
@@ -198,6 +235,64 @@ template <class Backend> class CiahCore {
               backend_.dot(ray.step, ray.hessian_step) < 0.0))
             return std::nullopt;
         return std::optional<OriginRay>(std::move(ray));
+    }
+
+    /** Find a negative Rayleigh witness; a partial positive span is not a certificate.
+     * Uses the same action/images and subspace cap as ordinary CIAH. No gradient
+     * equation or lowest-eigenvector residual is oversolved after finding descent.
+     */
+    std::optional<OriginRay> find_negative_curvature(Vector direction, const Vector& gradient) {
+        const auto capacity = std::min<Eigen::Index>(numerics_.max_cycle, backend_.size());
+        std::optional<Vector> raw_residual;
+        while (basis_size() < capacity) {
+            if (!append(std::move(direction)) &&
+                (!raw_residual || !append(std::move(*raw_residual))))
+                break;
+            const auto m = basis_size();
+            const Eigen::MatrixXd raw = hessian_projection_.topLeftCorner(m, m);
+            const Eigen::MatrixXd h = 0.5 * (raw + raw.transpose());
+            const Eigen::MatrixXd raw_metric = metric_projection_.topLeftCorner(m, m);
+            projected_metric_ = 0.5 * (raw_metric + raw_metric.transpose());
+            check_ciah_projected_symmetry(backend_.size(),
+                                          std::sqrt(basis_squared_norm_),
+                                          std::sqrt(hessian_squared_norm_),
+                                          hessian_magnitude_.topLeftCorner(m, m),
+                                          raw,
+                                          "CIAH curvature action is not symmetric",
+                                          numerics_.operator_relative_accuracy);
+            const Eigen::GeneralizedSelfAdjointEigenSolver<Eigen::MatrixXd> spectrum(
+                h, projected_metric_);
+            if (spectrum.info() != Eigen::Success)
+                throw std::runtime_error("CIAH curvature projection failed");
+            const Eigen::VectorXd coefficients = spectrum.eigenvectors().col(0);
+            OriginRay ray;
+            ray.eigenvalue = spectrum.eigenvalues()[0];
+            ray.step = combine(basis_, coefficients);
+            ray.hessian_step = combine(hessian_images_, coefficients);
+            const Vector metric_step = combine(metric_images_, coefficients);
+            Vector residual = backend_.clone(ray.hessian_step);
+            backend_.axpy(residual, -ray.eigenvalue, metric_step);
+            ray.residual_norm = backend_.stable_norm(residual);
+            const double uncertainty = ciah_curvature_roundoff(
+                backend_.size(), coefficients, hessian_magnitude_.topLeftCorner(m, m), raw);
+            if (coefficients.dot(h * coefficients) < -uncertainty) {
+                if (backend_.dot(gradient, ray.step) > 0) {
+                    backend_.scal(ray.step, -1);
+                    backend_.scal(ray.hessian_step, -1);
+                }
+                return std::optional<OriginRay>(std::move(ray));
+            }
+            const double residual_scale =
+                backend_.stable_norm(ray.hessian_step) +
+                std::abs(ray.eigenvalue) * backend_.stable_norm(metric_step);
+            if (ray.residual_norm <= std::sqrt(numerics_.lindep) * residual_scale)
+                break;
+            raw_residual = backend_.clone(residual);
+            // An eigenvalue Ritz shift makes the exact coarse operator singular.
+            // Use the positive coordinate Riesz model on its orthogonal residual.
+            direction = backend_.residual_direction(residual);
+        }
+        return std::nullopt;
     }
 
     Result next(const Vector& current_gradient) {
@@ -284,18 +379,105 @@ template <class Backend> class CiahCore {
                                                                            augmented_metric);
         if (spectrum.info() != Eigen::Success)
             throw std::runtime_error("CIAH augmented eigensolver failed");
-        Eigen::Index selected = -1;
-        for (Eigen::Index i = 0; i < spectrum.eigenvalues().size(); ++i)
-            if (std::abs(spectrum.eigenvectors()(0, i)) > 0.1) {
-                selected = i;
-                break;
+        const double first_alpha = spectrum.eigenvectors()(0, 0);
+        const Eigen::VectorXd first_tail = spectrum.eigenvectors().col(0).tail(m);
+        const double first_curvature = first_tail.dot(projected_hessian * first_tail);
+        const double curvature_error = ciah_curvature_roundoff(
+            backend_.size(), first_tail, hessian_magnitude_.topLeftCorner(m, m), projected_hessian);
+        if (trace)
+            diagnostics::ciah_trace(
+                "ciah_curvature_gate",
+                "basis=%d,lowest=%.17g,reference=%.17g,curvature=%.17g,error=%.17g,"
+                "hessian_norm=%.17g,tail_squared=%.17g,metric_min=%.17g,metric_max=%.17g",
+                basis_size(),
+                spectrum.eigenvalues()[0],
+                first_alpha,
+                first_curvature,
+                curvature_error,
+                projected_hessian.norm(),
+                first_tail.squaredNorm(),
+                metric_spectrum.eigenvalues()[0],
+                metric_spectrum.eigenvalues().tail(1)[0]);
+        const bool curvature_ray =
+            std::abs(first_alpha) <= 0.1 && first_curvature < -curvature_error;
+        const bool can_restrict = maximum_component_ && projected_gradient.stableNorm() > 0;
+        if (curvature_ray && !can_restrict) {
+            // This is a curvature ray, not a quotient tail/alpha. It must not
+            // enter Newton residual preconditioning or the gradient-growth test.
+            result.eigenvalue = spectrum.eigenvalues()[0];
+            result.reference_component = std::abs(first_alpha);
+            result.step = combine(basis_, first_tail);
+            result.hessian_step = combine(hessian_images_, first_tail);
+            result.metric_step = combine(metric_images_, first_tail);
+            result.residual = backend_.clone(result.hessian_step);
+            backend_.axpy(result.residual, -result.eigenvalue, result.metric_step);
+            backend_.axpy(result.residual, first_alpha, current_gradient);
+            if (backend_.dot(current_gradient, result.step) > 0) {
+                backend_.scal(result.step, -1);
+                backend_.scal(result.hessian_step, -1);
+                backend_.scal(result.metric_step, -1);
+                backend_.scal(result.residual, -1);
             }
+            result.residual_norm = backend_.stable_norm(result.residual);
+            result.basis_size = basis_size();
+            result.negative_curvature = true;
+            pending_residual_.reset();
+            return result;
+        }
+        Eigen::Index selected = curvature_ray ? 0 : -1;
+        if (!curvature_ray)
+            for (Eigen::Index i = 0; i < spectrum.eigenvalues().size(); ++i)
+                if (std::abs(spectrum.eigenvectors()(0, i)) > 0.1) {
+                    selected = i;
+                    break;
+                }
         if (selected < 0)
             throw std::runtime_error(
                 "CIAH found no augmented root with sufficient reference weight");
-        const double alpha = spectrum.eigenvectors()(0, selected);
-        const Eigen::VectorXd coefficients = spectrum.eigenvectors().col(selected).tail(m) / alpha;
+        double alpha = spectrum.eigenvectors()(0, selected);
+        Eigen::VectorXd coefficients = Eigen::VectorXd::Zero(m);
+        if (!curvature_ray)
+            coefficients = spectrum.eigenvectors().col(selected).tail(m) / alpha;
         result.eigenvalue = spectrum.eigenvalues()[selected];
+        // Ordinary connected roots retain the established CIAH continuation.
+        // Resolve only the weak-reference saddle at its actual finite bound.
+        if (can_restrict && curvature_ray) {
+            if (bounded_eigenvalues_.size() != m) {
+                const Eigen::GeneralizedSelfAdjointEigenSolver<Eigen::MatrixXd> model(
+                    projected_hessian, projected_metric);
+                if (model.info() != Eigen::Success)
+                    throw std::runtime_error("CIAH finite-step model factorization failed");
+                bounded_eigenvalues_ = model.eigenvalues();
+                bounded_eigenvectors_ = model.eigenvectors();
+            }
+            Vector trial = backend_.zeros();
+            const auto maximum = [&](const Eigen::VectorXd& v) {
+                backend_.scal(trial, 0.0);
+                accumulate_combination(basis_, v, trial);
+                return maximum_component_(trial);
+            };
+            const auto bounded = bound_ciah_step(bounded_eigenvalues_,
+                                                 bounded_eigenvectors_,
+                                                 projected_gradient,
+                                                 maximum,
+                                                 component_cap_,
+                                                 std::max(0.0, -spectrum.eigenvalues()[0]));
+            coefficients = bounded.coefficients;
+            result.eigenvalue = -bounded.shift;
+            const double linear = projected_gradient.dot(coefficients);
+            if (!(linear < 0) || !(bounded.shift > 0))
+                throw std::runtime_error("CIAH finite-step scaling has no connected descent root");
+            const double scale_squared = bounded.shift / -linear;
+            const double norm_squared = coefficients.dot(projected_metric * coefficients);
+            result.reference_scale = std::sqrt(scale_squared);
+            alpha = 1.0 / std::sqrt(1.0 + scale_squared * norm_squared);
+            diagnostics::ciah_trace("ciah_finite_step",
+                                    "basis=%d,scale=%.17g,shift=%.17g,maximum=%.17g",
+                                    basis_size(),
+                                    result.reference_scale,
+                                    bounded.shift,
+                                    maximum(coefficients));
+        }
         result.reference_component = alpha;
         result.step = combine(basis_, coefficients);
         result.hessian_step = combine(hessian_images_, coefficients);
@@ -304,7 +486,7 @@ template <class Backend> class CiahCore {
         backend_.axpy(model_gradient, 1.0, result.hessian_step);
         result.residual = backend_.clone(model_gradient);
         backend_.axpy(result.residual, -result.eigenvalue, result.metric_step);
-        backend_.scal(result.residual, alpha);
+        backend_.scal(result.residual, alpha * result.reference_scale);
         spectrum_phase.stop();
         xmvb::profiling::ScopedPhase residual_phase(xmvb::profiling::Phase::NeoProjectionResidual);
         const auto norm_start =
@@ -338,8 +520,9 @@ template <class Backend> class CiahCore {
         result.exhaustion =
             exhausted_ || basis_size() >= std::min<int>(numerics_.max_cycle, backend_.size());
         const double residual_scale =
-            backend_.stable_norm(current_gradient) + backend_.stable_norm(result.hessian_step) +
-            std::abs(result.eigenvalue) * backend_.stable_norm(result.metric_step);
+            std::abs(alpha * result.reference_scale) *
+            (backend_.stable_norm(current_gradient) + backend_.stable_norm(result.hessian_step) +
+             std::abs(result.eigenvalue) * backend_.stable_norm(result.metric_step));
         const bool residual_nonzero = result.residual_norm > numerics_.lindep * residual_scale;
         if (!residual_nonzero && !result.converged)
             result.exhaustion = true;
@@ -360,10 +543,15 @@ template <class Backend> class CiahCore {
         backend_.scal(result, -1.0);
         return result;
     }
-    Vector combine(const std::vector<Vector>& images, const Eigen::VectorXd& coefficients) const {
-        Vector result = backend_.zeros();
+    void accumulate_combination(const std::vector<Vector>& images,
+                                const Eigen::VectorXd& coefficients,
+                                Vector& result) const {
         for (Eigen::Index i = 0; i < coefficients.size(); ++i)
             backend_.axpy(result, coefficients[i], images[i]);
+    }
+    Vector combine(const std::vector<Vector>& images, const Eigen::VectorXd& coefficients) const {
+        Vector result = backend_.zeros();
+        accumulate_combination(images, coefficients, result);
         return result;
     }
     Vector precondition(const Vector& residual, double eigenvalue) const {
@@ -531,6 +719,10 @@ template <class Backend> class CiahCore {
         return true;
     }
 
+    std::function<double(const Vector&)> maximum_component_;
+    double component_cap_ = 0;
+    Eigen::VectorXd bounded_eigenvalues_;
+    Eigen::MatrixXd bounded_eigenvectors_;
     Backend backend_;
     CiahNumerics numerics_;
     std::optional<Vector> initial_direction_, pending_residual_;

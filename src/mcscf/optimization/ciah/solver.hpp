@@ -47,11 +47,11 @@ template <class Result>
 bool ciah_result_resolved(const Result& result,
                           double rhs_norm,
                           double relative_accuracy) noexcept {
-    const double alpha = std::abs(result.reference_component);
-    return std::isfinite(result.residual_norm) && result.residual_norm >= 0.0 &&
-           std::isfinite(alpha) && alpha > 0.0 && std::isfinite(rhs_norm) && rhs_norm >= 0.0 &&
-           std::isfinite(relative_accuracy) && relative_accuracy >= 0.0 &&
-           result.residual_norm <= alpha * relative_accuracy * rhs_norm;
+    const double alpha = std::abs(result.reference_scale * result.reference_component);
+    return !result.negative_curvature && std::isfinite(result.residual_norm) &&
+           result.residual_norm >= 0.0 && std::isfinite(alpha) && alpha > 0.0 &&
+           std::isfinite(rhs_norm) && rhs_norm >= 0.0 && std::isfinite(relative_accuracy) &&
+           relative_accuracy >= 0.0 && result.residual_norm <= alpha * relative_accuracy * rhs_norm;
 }
 
 template <class Ops> class CiahEnergyModelT {
@@ -137,16 +137,23 @@ struct CiahResult {
     double eigenvalue = 0.0;
     /** Signed reference component of the generalized-normalized Ritz vector. */
     double reference_component = 0.0;
+    /** Reference-row coupling scale; one is the unrestricted AH model. */
+    double reference_scale = 1.0;
     Eigen::VectorXd step;
     Eigen::VectorXd hessian_step;
     Eigen::VectorXd metric_step;
-    /** alpha * (gradient + H * step - eigenvalue * G * step). */
+    /** AH eigenpair residual. For Newton steps:
+     * reference_scale * alpha * (g + H p - eigenvalue * G p).
+     * For curvature rays: alpha * g + H p - eigenvalue * G p; p is the undivided tail.
+     */
     Eigen::VectorXd residual;
     /** @brief Coordinate dual norm of the full residual, including outside the trial space. */
     double residual_norm = 0.0;
     /** @brief Coordinate dual norm of gradient + H * step, before clipping. */
     double model_gradient_norm = 0.0;
     bool converged = false;
+    /** Undivided AH tail with negative curvature; not a resolved Newton step. */
+    bool negative_curvature = false;
     int basis_size = 0;
     /** Hessian actions made by this call; zero or one. */
     int new_hvp_actions = 0;
@@ -189,12 +196,13 @@ template <class Result, class Ops> class CiahStepPathT {
     }
 
     /** @brief Current AH residual of the unused step, using cached H/G images.
-   * With s=remaining*p, choose omega=g^T*s to satisfy the reference row.
+   * With s=remaining*p, omega=reference_scale^2*g^T*s satisfies the reference row.
    * The remaining row is g+H*s-omega*G*s. Its source Ritz residual is not
    * a certificate after the gradient changes, even for a quadratic model.
    */
     Vector residual_at(const Vector& gradient) const {
-        const double omega = remaining_ * ops_.dot(gradient, proposal_->step);
+        const double omega = proposal_->reference_scale * proposal_->reference_scale * remaining_ *
+                             ops_.dot(gradient, proposal_->step);
         Vector residual = ops_.clone(gradient);
         ops_.axpy(residual, remaining_, proposal_->hessian_step);
         ops_.axpy(residual, -omega * remaining_, proposal_->metric_step);
@@ -333,6 +341,9 @@ class CiahWorkspace {
     explicit CiahWorkspace(const QuadraticProblem& problem, CiahOptions options)
         : CiahWorkspace(problem, std::nullopt, std::move(options)) {}
 
+    /** @brief Use the existing physical component cap in the projected AH solve. */
+    void set_step_limit(std::function<double(const Eigen::VectorXd&)> maximum, double cap);
+
     /** @brief Mark a changed RHS for a cached-space Ritz solve before expansion.
    * Retains every direction and its H/G images, but discards the old equation's
    * residual and eigenvalue-settling history. With a nonempty retained space,
@@ -345,6 +356,12 @@ class CiahWorkspace {
    * reprojects cached images. Subsequent calls may admit one HVP direction.
    */
     CiahResult next(const Eigen::VectorXd& current_gradient);
+
+    /** @brief Probe outside a gradient-only span, stopping at the first negative witness.
+     * No negative direction found does not certify global positive curvature.
+     * Retains all generated images for subsequent macro globalization.
+     */
+    std::optional<CiahOriginRay> find_negative_curvature(const Eigen::VectorXd& gradient);
 
     /** @brief Re-solve the lowest AH root at an origin gradient using cached data.
    *

@@ -81,7 +81,7 @@ calc_same_spin_hamiltonian_impl(const std::vector<int>& occ_L,
 
     // 2-electron
     if (packed_kernel != nullptr) {
-        if (res.nullity == 0) {
+        if (res.nullity == 0 && n_elec > 3) {
             const double inv_S_det = 1.0 / det_ovlp_result.overlap_determinant;
             double two_electron_hamiltonian = 0.0;
 
@@ -122,8 +122,10 @@ calc_same_spin_hamiltonian_impl(const std::vector<int>& occ_L,
             }
             res.total_hamiltonian += two_electron_hamiltonian * inv_S_det;
         } else {
-            // Singular pairs still need the exact second-order cofactor formulas, but
-            // the packed-GGO path can still avoid the generic kernel callback and use
+            // Singular and small pairs use deleted cofactors directly. For two or
+            // three electrons these have degree zero or one, so dividing
+            // products of first cofactors by det X is unnecessary. The
+            // packed-GGO path can still avoid the generic kernel callback and use
             // unchecked packed-index arithmetic plus direct table loads.
             for (int left_first = 0; left_first < n_elec - 1; ++left_first) {
                 const int orbital_left_first = occ_L[left_first];
@@ -161,7 +163,7 @@ calc_same_spin_hamiltonian_impl(const std::vector<int>& occ_L,
         return res;
     }
 
-    if (res.nullity == 0) {
+    if (res.nullity == 0 && n_elec > 3) {
         const double inv_S_det = 1.0 / det_ovlp_result.overlap_determinant;
         double two_electron_hamiltonian = 0.0;
 

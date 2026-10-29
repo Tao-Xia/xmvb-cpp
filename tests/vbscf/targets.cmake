@@ -54,6 +54,17 @@ foreach(target_name IN LISTS _xmvb_vbscf_unit_targets)
   target_link_libraries(${target_name} PRIVATE xmvb_vbscf)
 endforeach()
 
+# Same-orbital molecular reference: direct-CI versus nonorthogonal cofactors.
+add_executable(test_action_parity EXCLUDE_FROM_ALL
+  ${CMAKE_SOURCE_DIR}/tests/vbscf/diagnostics/action_parity.cpp)
+target_link_libraries(test_action_parity PRIVATE xmvb_input xmvb_vbscf)
+
+# Bounded independent cofactor reference. QR is applied before H/M contraction,
+# so nearly cancelling selected structures do not become raw dense H/M inputs.
+add_executable(test_cofactor_point EXCLUDE_FROM_ALL
+  ${CMAKE_SOURCE_DIR}/tests/vbscf/diagnostics/cofactor_point.cpp)
+target_link_libraries(test_cofactor_point PRIVATE xmvb_input xmvb_vbscf)
+
 # Independent symbolic schedule census; does not alter a numerical backend.
 add_executable(test_metric_order EXCLUDE_FROM_ALL
   ${CMAKE_SOURCE_DIR}/tests/vbscf/diagnostics/metric_order.cpp)
@@ -429,3 +440,15 @@ if (BUILD_TESTING)
 endif()
 
 unset(_xmvb_vbscf_unit_targets)
+
+# Fixed-reference gradient/HVP/keyframe audit at prescribed molecular orbitals.
+add_executable(check_ciah_derivatives EXCLUDE_FROM_ALL ${PROJECT_SOURCE_DIR}/tests/vbscf/diagnostics/ciah_derivatives.cpp)
+target_link_libraries(check_ciah_derivatives PRIVATE xmvb_input xmvb_vbscf)
+
+add_executable(check_ciah_conditioning EXCLUDE_FROM_ALL
+  ${PROJECT_SOURCE_DIR}/tests/vbscf/diagnostics/ciah_conditioning.cpp)
+target_link_libraries(check_ciah_conditioning PRIVATE xmvb_input xmvb_vbscf)
+
+add_executable(check_structure_accuracy EXCLUDE_FROM_ALL
+  ${PROJECT_SOURCE_DIR}/tests/vbscf/diagnostics/structure_accuracy.cpp)
+target_link_libraries(check_structure_accuracy PRIVATE xmvb_input xmvb_vbscf)
