@@ -187,6 +187,8 @@ class StructureAction {
 
     /** @brief Export the retained orthogonal representation without rebuilding it. */
     OrthogonalView orthogonal_view() const;
+    /** @brief Whether overlap RHSs share coefficient-independent source factors. */
+    bool shared_overlap_sources() const noexcept;
     /** Immutable orthonormal physical integrals, without VB transformation metadata. */
     const mcscf::ActiveIntegrals& orthogonal_integrals() const;
 
@@ -573,13 +575,6 @@ class StructureAction {
                             Eigen::Ref<Eigen::MatrixXd> generator) const;
     /** @brief Includes both residual-generator contractions and the H/M images. */
     bool prefer_factor_response(const mcscf::DirectCiSigmaAction& sigma) const;
-    /** @brief Exact overlap order from shear/dot work and shared-image storage.
-   * Zero extension to the product workspace does not require selected closure.
-   */
-    bool use_product_overlap(const ExteriorOrbitalTransform& alpha,
-                             const ExteriorOrbitalTransform& beta,
-                             std::size_t workspace_bytes,
-                             int images) const;
     /** @brief Coupled coefficient response directly from structure-space columns. */
     StructureResponseSweep source_response(const StructureAdjointState& state,
                                            const Eigen::Ref<const Eigen::MatrixXd>& coefficients,

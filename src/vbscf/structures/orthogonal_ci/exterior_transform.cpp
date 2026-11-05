@@ -867,13 +867,46 @@ ExteriorOrbitalTransform::generator_pullback(std::span<const ExteriorGeneratorTe
     Eigen::MatrixXd dg = g;
     workspace::Temporary g_temporary(sizeof(double) * g.size());
     workspace::Temporary dg_temporary(sizeof(double) * dg.size());
-    const auto contract = [&](int target, int source, bool tangent) -> double {
+    const auto contract =
+        [&](mcscf::StringIndex target, mcscf::StringIndex source, bool tangent) -> double {
         double value = 0;
         for (const auto& term : terms)
             value +=
                 term.scale * (tangent ? term.delta_seed->row(target).dot(term.image.row(source)) +
                                             term.seed.row(target).dot(term.delta_image->row(source))
                                       : term.seed.row(target).dot(term.image.row(source)));
+        return value;
+    };
+    // Sum RHS columns before moving to another generator. Each column is
+    // contiguous, while a row dot in a column-major panel strides by the whole
+    // spin-space dimension. Interchanging the two finite sums changes neither
+    // the generator nor either oriented metric term and needs no packed copy.
+    const auto contract_edges = [&](const Shear& shear, bool tangent) {
+        double value = 0.0;
+        for (const auto& term : terms) {
+            double sum = 0.0;
+            for (Eigen::Index column = 0; column < term.seed.cols(); ++column) {
+                const double* seed = term.seed.col(column).data();
+                const double* image = term.image.col(column).data();
+                if (tangent) {
+                    const double* ds = term.delta_seed->col(column).data();
+                    const double* di = term.delta_image->col(column).data();
+#pragma omp simd reduction(+ : sum)
+                    for (std::size_t k = 0; k < shear.pairs.size(); ++k) {
+                        const auto& edge = shear.pairs[k];
+                        sum += edge.sign * (ds[edge.target] * image[edge.source] +
+                                            seed[edge.target] * di[edge.source]);
+                    }
+                } else {
+#pragma omp simd reduction(+ : sum)
+                    for (std::size_t k = 0; k < shear.pairs.size(); ++k) {
+                        const auto& edge = shear.pairs[k];
+                        sum += edge.sign * seed[edge.target] * image[edge.source];
+                    }
+                }
+            }
+            value += term.scale * sum;
+        }
         return value;
     };
     const int workers = coarse_openmp_thread_count(
@@ -903,15 +936,9 @@ ExteriorOrbitalTransform::generator_pullback(std::span<const ExteriorGeneratorTe
             for (int inserted = removed - 1; inserted >= 0; --inserted, ++shear) {
                 if (shear % workers != part)
                     continue;
-                double value = 0, derivative = 0;
-                for (const auto& pair : shears_[shear].pairs) {
-                    value += pair.sign * contract(pair.target, pair.source, false);
-                    if (directional)
-                        derivative += pair.sign * contract(pair.target, pair.source, true);
-                }
-                g(inserted, removed) = value;
+                g(inserted, removed) = contract_edges(shears_[shear], false);
                 if (directional)
-                    dg(inserted, removed) = derivative;
+                    dg(inserted, removed) = contract_edges(shears_[shear], true);
             }
     });
     for (const auto& diagonal : diagonals) {

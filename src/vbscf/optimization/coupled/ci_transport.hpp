@@ -3,6 +3,7 @@
 #include <memory>
 #include <optional>
 #include <Eigen/Core>
+#include <Eigen/Cholesky>
 
 #include "vbscf/orbitals/charts/chart.hpp"
 #include "vbscf/orbitals/preparation/overlap_pullback.hpp"
@@ -76,6 +77,9 @@ class CiTransport {
     mutable Eigen::MatrixXd metric_upper_;
     mutable std::optional<RepresentationOverlap::PreparedMetric> prepared_metric_;
     mutable std::shared_ptr<const SelectedMetric> selected_metric_;
+    /** Trial-local Gram model used only as an inverse; the tile action certifies it. */
+    mutable workspace::Reservation preconditioner_memory_;
+    mutable std::optional<Eigen::LLT<Eigen::MatrixXd>> preconditioner_;
 };
 
 } // namespace xmvb::vb

@@ -227,7 +227,12 @@ BackendRunResult run_ciah_backend(VbScfObjective* objective,
                                         next_geometry,
                                         next_projected.reduced_gradient,
                                         options.gradient_tolerance))) {
-            seek_curvature = true;
+            // The ordinary AH iterations already retain negative-curvature rays.
+            // These are the existing energy/true-gradient stopping conditions;
+            // a fresh independent terminal eigensearch is neither necessary
+            // for them nor a certificate of positive curvature outside its span.
+            result->converged = true;
+            result->termination_reason = "ciah_projected_gradient_tolerance";
         }
         chart = std::move(next_geometry);
         projected = std::move(next_projected);

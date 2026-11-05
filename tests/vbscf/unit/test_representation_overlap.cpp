@@ -541,6 +541,12 @@ void check_parallel_transport() {
                         std::sin(0.37 * (bi + 1) * (s + 2));
         }
         const auto action = make_action(alpha, beta, w);
+        require(action.shared_overlap_sources() == sparse,
+                "shared overlap sources do not match the exact singleton support");
+        if (sparse)
+            require(relative_error(action.cross_overlap(Eigen::Matrix3d::Identity(), a, b, a, b),
+                                   reference_cross(r, r, w, alpha, beta)) < 3e-12,
+                    "shared-source metric block differs from independent compound minors");
         const auto reference_d = action.cross_overlap_adjoint(x, y, a, b, a, b, &zero, &dr);
         const auto reference_q = action.cross_overlap_adjoint(x, q, a, b, a, b);
         const auto da = a.direction(dr), db = b.direction(dr), za = a.direction(zero),

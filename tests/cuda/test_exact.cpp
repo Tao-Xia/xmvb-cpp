@@ -922,7 +922,7 @@ void check_exchange_row_graph() {
     auto graph = xmvb::integrals::build_ao_pair_graph(left, right, values, fixture.n_bf);
     // No auxiliary unique list is part of the GPU row-graph contract.
     graph.integral_rows.clear();
-    graph.integral_edges.clear();
+    graph.integral_offsets.clear();
     xmvb::cuda::Context context(128ULL * 1024 * 1024);
     const auto before = context.counters().current_device_bytes;
     const xmvb::cuda::ExactAoPairOperator gpu(context, graph, fixture.n_bf);

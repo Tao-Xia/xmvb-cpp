@@ -34,36 +34,6 @@ StructureAction::cross_overlap_transport_gradient(const Eigen::VectorXd& lambda,
     OverlapTransportGradient result{{Eigen::MatrixXd::Zero(n, n), Eigen::MatrixXd::Zero(n, n)},
                                     Eigen::VectorXd::Zero(n_structures_)};
     const auto da = oa.direction(direction), db = ob.direction(direction);
-    if (direct_ci_ && use_product_overlap(ca, cb, workspace_bytes, 5)) {
-        // Broad support keeps the cheaper moment order, with five shared images
-        // at peak. No new full-carrier residency requirement is introduced.
-        auto left = expand_structure_block(lambda);
-        ca.apply_left(&left);
-        cb.apply_right(&left);
-        auto current = expand_structure_block(transported);
-        ca.apply_left(&current);
-        cb.apply_right(&current);
-        auto origin = expand_structure_block(reference);
-        Eigen::MatrixXd tangent = Eigen::MatrixXd::Zero(origin.rows(), origin.cols());
-        oa.apply_directional_left(da, &origin, &tangent);
-        ob.apply_directional_right(db, &origin, &tangent);
-        auto target = expand_structure_block(base);
-        oa.apply_left(&target);
-        ob.apply_right(&target);
-        target += tangent - current;
-        tangent.resize(0, 0);
-        result.charts.left = ca.moment_pullback(carrier_generator_adjoint(target, left) -
-                                                carrier_generator_adjoint(left, current));
-        result.charts.right = oa.moment_pullback(carrier_generator_adjoint(left, origin));
-        current.resize(0, 0);
-        origin.resize(0, 0);
-        target.resize(0, 0);
-        ob.apply_adjoint_right(&left);
-        oa.apply_adjoint_left(&left);
-        result.image = contract_spin_product_block(left).col(0);
-        return result;
-    }
-
     const auto& sources = *sources_;
     // All consumers share one panel budget. Workers own rows, never panel copies.
     const std::size_t row_bytes =

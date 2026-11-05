@@ -25,7 +25,8 @@ std::size_t matrix_size(const AoIntegralInput& ao) {
     const AoPairGraph& graph = ao.pair_graph;
     const bool valid_row_graph = graph.has_row_graph() && graph.row_offsets.size() == n_pairs + 1 &&
                                  graph.columns.size() == graph.values.size() &&
-                                 graph.integral_rows.size() == graph.integral_edges.size();
+                                 graph.integral_offsets.size() == n_pairs + 1 &&
+                                 graph.integral_offsets.front() == 0 && graph.integral_rows.empty();
     const bool valid_compact_stream =
         graph.has_compact_integral_stream() && graph.valid_unique_storage();
     if ((!valid_row_graph && !valid_compact_stream) || graph.pair_first.size() != n_pairs ||
@@ -54,8 +55,9 @@ void contract_integrals(const AoIntegralInput& ao,
                         double* transpose) {
     const AoPairGraph& graph = ao.pair_graph;
     const Eigen::Index n_bf = ao.n_basis_functions;
+    AoPairGraph::Cursor cursor(graph, begin);
     while (begin < end) {
-        const PairAddress left = graph.integral(begin).left_pair;
+        const PairAddress left = cursor.value().left_pair;
         const int i = graph.pair_first[left];
         const int j = graph.pair_second[left];
         const Eigen::Index i_column = i * n_bf;
@@ -69,7 +71,7 @@ void contract_integrals(const AoIntegralInput& ao,
             adjoint_ij = adjoint[ij];
         double forward_coulomb = 0.0, transpose_coulomb = 0.0;
         do {
-            const auto eri = graph.integral(begin);
+            const auto eri = cursor.value();
             const PairAddress right = eri.right_pair;
             const int k = graph.pair_first[right];
             const int l = graph.pair_second[right];
@@ -103,7 +105,8 @@ void contract_integrals(const AoIntegralInput& ao,
                 transpose[li] -= value * adjoint[jk];
             }
             ++begin;
-        } while (begin < end && graph.integral(begin).left_pair == left);
+            cursor.advance();
+        } while (begin < end && cursor.value().left_pair == left);
         // Exchange terms can also touch ij. Keeping the Coulomb sum separate is
         // algebraically exact even for coincident indices; only sum order changes.
         if constexpr (Forward)
@@ -132,15 +135,16 @@ void contract_symmetric_integrals(const AoIntegralInput& ao,
     using Channels = Eigen::Map<Eigen::Array2d>;
     const auto& graph = ao.pair_graph;
     const Eigen::Index n_bf = ao.n_basis_functions;
+    AoPairGraph::Cursor cursor(graph, begin);
     while (begin < end) {
-        const PairAddress left = graph.integral(begin).left_pair;
+        const PairAddress left = cursor.value().left_pair;
         const int i = graph.pair_first[left], j = graph.pair_second[left];
         const Eigen::Index ij = j * n_bf + i;
         const double scale = i == j ? 0.5 : 1.0;
         const Eigen::Array2d source_ij = ConstChannels(source + 2 * ij);
         Eigen::Array2d coulomb = Eigen::Array2d::Zero();
         do {
-            const auto eri = graph.integral(begin);
+            const auto eri = cursor.value();
             const PairAddress right = eri.right_pair;
             const int k = graph.pair_first[right], l = graph.pair_second[right];
             double value = eri.value * scale;
@@ -160,7 +164,8 @@ void contract_symmetric_integrals(const AoIntegralInput& ao,
             Channels(target + 2 * il) -= value * ConstChannels(source + 2 * kj);
             Channels(target + 2 * jk) -= value * ConstChannels(source + 2 * li);
             ++begin;
-        } while (begin < end && graph.integral(begin).left_pair == left);
+            cursor.advance();
+        } while (begin < end && cursor.value().left_pair == left);
         Channels(target + 2 * ij) += coulomb;
     }
 }
@@ -182,14 +187,15 @@ void contract_symmetric_block(
         } else
             return (column * n_bf + row) * width;
     };
+    AoPairGraph::Cursor cursor(graph, begin);
     while (begin < end) {
-        const PairAddress left = graph.integral(begin).left_pair;
+        const PairAddress left = cursor.value().left_pair;
         const int i = graph.pair_first[left], j = graph.pair_second[left];
         const Eigen::Index ij = (j * n_bf + i) * width;
         const double scale = i == j ? 0.5 : 1.0;
         std::fill_n(coulomb, width, 0.0);
         do {
-            const auto eri = graph.integral(begin);
+            const auto eri = cursor.value();
             const PairAddress right = eri.right_pair;
             const int k = graph.pair_first[right], l = graph.pair_second[right];
             double value = eri.value * scale;
@@ -212,7 +218,8 @@ void contract_symmetric_block(
                 target[tjk + channel] -= value * source[li + channel];
             }
             ++begin;
-        } while (begin < end && graph.integral(begin).left_pair == left);
+            cursor.advance();
+        } while (begin < end && cursor.value().left_pair == left);
 #pragma omp simd
         for (Eigen::Index channel = 0; channel < width; ++channel)
             target[output(i, j) + channel] += coulomb[channel];

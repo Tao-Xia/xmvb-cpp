@@ -90,6 +90,26 @@ Eigen::MatrixXd CiTransport::solve(const Eigen::MatrixXd& upper,
             prepared_metric_.emplace(overlap_.prepare_metric(upper));
             selected_metric_ = prepared_metric_->selected_metric();
         }
+        preconditioner_.reset();
+        preconditioner_memory_.try_resize(0);
+        // Singleton source columns share all exterior maps across the identity
+        // RHS block. Build this inexpensive Gram once at the trial chart, not
+        // once for every CG direction or its subsequent adjoint RHS. It is only
+        // a preconditioner: true residuals always use the physical tile action.
+        const auto n = static_cast<std::size_t>(rhs.rows());
+        if (!selected_metric_ && action_.shared_overlap_sources() &&
+            RepresentationOverlap::PreparedMetric::fits_selected(rhs.rows())) {
+            const auto square = core::checked_multiply(n, n);
+            const auto bytes = core::checked_multiply(4 * sizeof(double), square);
+            if (preconditioner_memory_.try_resize(bytes)) {
+                const workspace::Temporary temporary(bytes);
+                const Eigen::MatrixXd gram = (*prepared_metric_)(Eigen::MatrixXd::Identity(n, n));
+                Eigen::LLT<Eigen::MatrixXd> factor(gram);
+                if (factor.info() == Eigen::Success)
+                    preconditioner_.emplace(std::move(factor));
+            }
+            preconditioner_memory_.try_resize(preconditioner_ ? square * sizeof(double) : 0);
+        }
         metric_upper_ = upper;
     }
     // Reuse the exact bounded Gram factor, including at its own trial chart.
@@ -119,6 +139,8 @@ Eigen::MatrixXd CiTransport::solve(const Eigen::MatrixXd& upper,
                 [&](const Eigen::VectorXd& x) {
                     if (selected_metric_)
                         return Eigen::VectorXd(selected_metric_->solve(x));
+                    if (preconditioner_)
+                        return Eigen::VectorXd(preconditioner_->solve(x));
                     if (origin_.spin_metric)
                         return origin_.spin_metric->precondition(x, diagonal_);
                     return Eigen::VectorXd(x.cwiseQuotient(diagonal_));

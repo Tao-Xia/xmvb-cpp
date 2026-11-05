@@ -65,7 +65,7 @@ bool retain_dense_pair_products(const AoPairGraph& graph,
         static_cast<long double>(graph.columns.size()) * sizeof(PairAddress) +
         static_cast<long double>(graph.values.size()) * sizeof(double) +
         static_cast<long double>(graph.integral_rows.size()) * sizeof(PairAddress) +
-        static_cast<long double>(graph.integral_edges.size()) * sizeof(PairAddress) +
+        static_cast<long double>(graph.integral_offsets.size()) * sizeof(PairAddress) +
         static_cast<long double>(graph.integral_columns.size()) * sizeof(PairAddress) +
         static_cast<long double>(graph.integral_values.size()) * sizeof(double) +
         static_cast<long double>(graph.pair_first.size()) * sizeof(int) +
@@ -425,61 +425,69 @@ ActiveSpaceTwoElectronResult build_packed_active_two_electron_integrals_sparse(
 #endif
         auto& local_packed_integrals = partial_packed_integrals[thread_index];
 
-#pragma omp for schedule(guided, 256)
-        for (std::ptrdiff_t integral_offset = 0;
-             integral_offset < static_cast<std::ptrdiff_t>(graph.integral_count());
-             ++integral_offset) {
-            const AoPairIntegral eri = graph.integral(integral_offset);
-            const std::size_t left_ao_pair_index = eri.left_pair;
-            const std::size_t right_ao_pair_index = eri.right_pair;
-            const double ao_integral_value = eri.value;
-            const auto left_begin = sparse_pair_coefficients.row_offsets[left_ao_pair_index];
-            const auto left_end = sparse_pair_coefficients.row_offsets[left_ao_pair_index + 1];
-            const auto right_begin = sparse_pair_coefficients.row_offsets[right_ao_pair_index];
-            const auto right_end = sparse_pair_coefficients.row_offsets[right_ao_pair_index + 1];
-            if (left_begin == left_end || right_begin == right_end) {
-                continue;
-            }
+#pragma omp for schedule(guided, 1)
+        for (std::ptrdiff_t first = 0; first < static_cast<std::ptrdiff_t>(graph.integral_count());
+             first += 256) {
+            AoPairGraph::Cursor cursor(graph, first);
+            const auto end =
+                std::min(first + 256, static_cast<std::ptrdiff_t>(graph.integral_count()));
+            for (auto integral_offset = first; integral_offset < end;
+                 ++integral_offset, cursor.advance()) {
+                const AoPairIntegral eri = cursor.value();
+                const std::size_t left_ao_pair_index = eri.left_pair;
+                const std::size_t right_ao_pair_index = eri.right_pair;
+                const double ao_integral_value = eri.value;
+                const auto left_begin = sparse_pair_coefficients.row_offsets[left_ao_pair_index];
+                const auto left_end = sparse_pair_coefficients.row_offsets[left_ao_pair_index + 1];
+                const auto right_begin = sparse_pair_coefficients.row_offsets[right_ao_pair_index];
+                const auto right_end =
+                    sparse_pair_coefficients.row_offsets[right_ao_pair_index + 1];
+                if (left_begin == left_end || right_begin == right_end) {
+                    continue;
+                }
 
-            if (left_ao_pair_index == right_ao_pair_index) {
+                if (left_ao_pair_index == right_ao_pair_index) {
+                    for (auto left_offset = left_begin; left_offset < left_end; ++left_offset) {
+                        const auto left_active_pair_index =
+                            sparse_pair_coefficients.packed_active_pair_indices[left_offset];
+                        const double left_value = sparse_pair_coefficients.values[left_offset];
+                        for (auto right_offset = left_begin; right_offset <= left_offset;
+                             ++right_offset) {
+                            const auto right_active_pair_index =
+                                sparse_pair_coefficients.packed_active_pair_indices[right_offset];
+                            const double coefficient =
+                                left_value * sparse_pair_coefficients.values[right_offset];
+                            if (coefficient == 0.0) {
+                                continue;
+                            }
+                            const auto packed_index =
+                                xmvb::core::PairIndex::packed_pair_of_pairs_index(
+                                    left_active_pair_index, right_active_pair_index);
+                            local_packed_integrals[packed_index] += ao_integral_value * coefficient;
+                        }
+                    }
+                    continue;
+                }
+
                 for (auto left_offset = left_begin; left_offset < left_end; ++left_offset) {
                     const auto left_active_pair_index =
                         sparse_pair_coefficients.packed_active_pair_indices[left_offset];
                     const double left_value = sparse_pair_coefficients.values[left_offset];
-                    for (auto right_offset = left_begin; right_offset <= left_offset;
+                    for (auto right_offset = right_begin; right_offset < right_end;
                          ++right_offset) {
-                        const auto right_active_pair_index =
-                            sparse_pair_coefficients.packed_active_pair_indices[right_offset];
                         const double coefficient =
                             left_value * sparse_pair_coefficients.values[right_offset];
                         if (coefficient == 0.0) {
                             continue;
                         }
+                        const auto right_active_pair_index =
+                            sparse_pair_coefficients.packed_active_pair_indices[right_offset];
                         const auto packed_index = xmvb::core::PairIndex::packed_pair_of_pairs_index(
                             left_active_pair_index, right_active_pair_index);
-                        local_packed_integrals[packed_index] += ao_integral_value * coefficient;
+                        local_packed_integrals[packed_index] +=
+                            ao_integral_value * coefficient *
+                            (left_active_pair_index == right_active_pair_index ? 2.0 : 1.0);
                     }
-                }
-                continue;
-            }
-
-            for (auto left_offset = left_begin; left_offset < left_end; ++left_offset) {
-                const auto left_active_pair_index =
-                    sparse_pair_coefficients.packed_active_pair_indices[left_offset];
-                const double left_value = sparse_pair_coefficients.values[left_offset];
-                for (auto right_offset = right_begin; right_offset < right_end; ++right_offset) {
-                    const double coefficient =
-                        left_value * sparse_pair_coefficients.values[right_offset];
-                    if (coefficient == 0.0) {
-                        continue;
-                    }
-                    const auto right_active_pair_index =
-                        sparse_pair_coefficients.packed_active_pair_indices[right_offset];
-                    const auto packed_index = xmvb::core::PairIndex::packed_pair_of_pairs_index(
-                        left_active_pair_index, right_active_pair_index);
-                    local_packed_integrals[packed_index] +=
-                        ao_integral_value * coefficient *
-                        (left_active_pair_index == right_active_pair_index ? 2.0 : 1.0);
                 }
             }
         }

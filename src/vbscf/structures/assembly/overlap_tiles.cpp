@@ -40,43 +40,6 @@ void transform(const ExteriorOrbitalTransform& map,
     }
 }
 
-void transform_right(const ExteriorOrbitalTransform& map,
-                     const ExteriorTransformDirection* direction,
-                     Factor& factor,
-                     bool adjoint = false) {
-    if (direction) {
-        if (adjoint)
-            map.apply_directional_adjoint_right(*direction, &factor.value, &factor.tangent);
-        else
-            map.apply_directional_right(*direction, &factor.value, &factor.tangent);
-    } else {
-        if (adjoint)
-            map.apply_adjoint_right(&factor.value);
-        else
-            map.apply_right(&factor.value);
-    }
-}
-
-Factor physical_product(const StructureAction& action,
-                        const Eigen::Ref<const Eigen::VectorXd>& coefficients,
-                        const ExteriorOrbitalTransform& alpha,
-                        const ExteriorOrbitalTransform& beta,
-                        const ExteriorTransformDirection* da = nullptr,
-                        const ExteriorTransformDirection* db = nullptr) {
-    Factor result(0, 0, false);
-    result.value = action.expand_structure_block(coefficients);
-    if (da)
-        result.tangent = Eigen::MatrixXd::Zero(result.value.rows(), result.value.cols());
-    transform(alpha, da, result);
-    transform_right(beta, db, result);
-    return result;
-}
-
-bool same_chart(const ExteriorOrbitalTransform& a, const ExteriorOrbitalTransform& b) {
-    return a.n_orbitals() == b.n_orbitals() &&
-           (a.orbital_transform().array() == b.orbital_transform().array()).all();
-}
-
 int panel_width(std::size_t bytes, int na, int nb, int columns, int copies) {
     const std::size_t row_bytes = copies * sizeof(double) * (static_cast<std::size_t>(na) + nb);
     if (bytes < row_bytes)
@@ -91,22 +54,9 @@ int panel_width(std::size_t bytes, int na, int nb, int columns, int copies) {
 
 } // namespace
 
-bool StructureAction::use_product_overlap(const ExteriorOrbitalTransform& alpha,
-                                          const ExteriorOrbitalTransform& beta,
-                                          std::size_t workspace_bytes,
-                                          int images) const {
-    const std::size_t products = static_cast<std::size_t>(n_unique_alpha_) * n_unique_beta_;
-    if (products > workspace_bytes / (images * sizeof(double)))
-        return false;
-    if (spin_products_.size() == products)
-        return true;
-    const double a = n_unique_alpha_, b = n_unique_beta_, r = sources_->columns.size();
-    const double sa = alpha.shear_pair_count(), sb = beta.shear_pair_count();
-    // Common W expansion/projection work cancels. Compare ordered exterior
-    // maps with source maps plus a length-r dot at each touched product.
-    const double product = 2 * (sa * b + sb * a) + 4 * a * b;
-    const double factor = 2 * (sa + sb) * r + 2 * (a + b) * r + spin_products_.size() * r;
-    return product <= factor;
+bool StructureAction::shared_overlap_sources() const noexcept {
+    return sources_ && std::all_of(sources_->columns.begin(), sources_->columns.end(),
+                                  [&](Eigen::Index b) { return sources_->beta_groups[b].size() == 1; });
 }
 
 Eigen::MatrixXd StructureAction::cross_overlap(const Eigen::Ref<const Eigen::MatrixXd>& vectors,
@@ -126,23 +76,10 @@ Eigen::MatrixXd StructureAction::cross_overlap(const Eigen::Ref<const Eigen::Mat
         (directional && !(dla && dlb && dra && drb)))
         throw std::invalid_argument("invalid selected cross overlap");
     const auto& sources = *sources_;
-    if (use_product_overlap(la, lb, workspace_bytes, directional ? 2 : 1)) {
-        Eigen::MatrixXd result(n_structures_, vectors.cols());
-        for (Eigen::Index column = 0; column < vectors.cols(); ++column) {
-            auto image = physical_product(*this, vectors.col(column), ra, rb, dra, drb);
-            transform_right(lb, dlb, image, true);
-            transform(la, dla, image, true);
-            result.col(column) =
-                contract_spin_product_block(directional ? image.tangent : image.value);
-        }
-        return result;
-    }
     // Column-singleton support (including covalent structures) has one alpha string
     // per touched beta. Its scalar coefficient commutes with both exterior
     // maps. Generate each common basis image once, not once per CI RHS.
-    const bool singleton = std::all_of(sources.columns.begin(), sources.columns.end(), [&](int b) {
-        return sources.beta_groups[b].size() == 1;
-    });
+    const bool singleton = shared_overlap_sources();
     if (singleton && vectors.cols() > 1) {
         const std::size_t groups = spin_products_.size();
         const std::size_t factor_rows =
@@ -292,43 +229,6 @@ UpperPair StructureAction::cross_overlap_adjoint(const Eigen::VectorXd& left,
         return {std::move(swapped.right), {}};
     }
     const bool left_requested = side == OverlapSide::Both;
-    const bool dl = directional && !delta_left->isZero(0.0);
-    const bool dr = directional && !delta_right->isZero(0.0);
-    if (direct_ci_ && same_chart(la, lb) && same_chart(ra, rb) &&
-        use_product_overlap(
-            la, lb, workspace_bytes, 2 + static_cast<int>(dl) + static_cast<int>(dr))) {
-        if (directional && !dl && !dr)
-            return {left_requested ? Eigen::MatrixXd::Zero(la.n_orbitals(), la.n_orbitals()).eval()
-                                   : Eigen::MatrixXd{},
-                    Eigen::MatrixXd::Zero(ra.n_orbitals(), ra.n_orbitals())};
-        ExteriorTransformDirection dla, dlb, dra, drb;
-        if (dl) {
-            dla = la.direction(*delta_left);
-            dlb = lb.direction(*delta_left);
-        }
-        if (dr) {
-            dra = ra.direction(*delta_right);
-            drb = rb.direction(*delta_right);
-        }
-        const auto l =
-            physical_product(*this, left, la, lb, dl ? &dla : nullptr, dl ? &dlb : nullptr);
-        const auto r =
-            physical_product(*this, right, ra, rb, dr ? &dra : nullptr, dr ? &drb : nullptr);
-        // D(R,L)_{pq}=<R|E_pq|L>; the opposite orientation is D(R,L)^T.
-        const Eigen::MatrixXd moment = carrier_generator_adjoint(r.value, l.value);
-        const Eigen::MatrixXd transpose = moment.transpose();
-        if (!directional)
-            return {left_requested ? la.moment_pullback(moment) : Eigen::MatrixXd{},
-                    ra.moment_pullback(transpose)};
-        Eigen::MatrixXd delta = Eigen::MatrixXd::Zero(moment.rows(), moment.cols());
-        if (dl)
-            delta += carrier_generator_adjoint(r.value, l.tangent);
-        if (dr)
-            delta += carrier_generator_adjoint(r.tangent, l.value);
-        const Eigen::MatrixXd delta_transpose = delta.transpose();
-        return {left_requested ? la.moment_pullback(moment, &delta, delta_left) : Eigen::MatrixXd{},
-                ra.moment_pullback(transpose, &delta_transpose, delta_right)};
-    }
     const auto& sources = *sources_;
     const int extent = panel_width(workspace_bytes,
                                    n_unique_alpha_,
