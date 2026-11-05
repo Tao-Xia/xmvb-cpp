@@ -178,7 +178,7 @@ ExactPackedActiveTwoElectronAdjointCache build_exact_packed_active_two_electron_
 
     const auto active_pairs = build_active_pair_list(n_ao);
     const std::size_t n_active_pairs = active_pairs.size();
-    const std::size_t n_bf_pairs = n_bf * (n_bf + 1) / 2;
+    const std::size_t n_bf_pairs = static_cast<std::size_t>(n_bf) * (n_bf + 1ULL) / 2;
     const std::size_t expected_packed_gradient_size = n_active_pairs * (n_active_pairs + 1) / 2;
     if (packed_active_two_electron_gradient.size() != expected_packed_gradient_size) {
         throw std::invalid_argument("packed active two-electron gradient size mismatch");
@@ -357,7 +357,7 @@ void apply_exact_active_two_electron_jet_impl(
     const Eigen::Index n_tiles = (n_bf_pairs + tile_rows - 1) / tile_rows;
     int n_threads = 1;
 #ifdef _OPENMP
-    n_threads = std::min(xmvb::effective_openmp_thread_count(), static_cast<int>(n_tiles));
+    n_threads = bounded_openmp_thread_count(effective_openmp_thread_count(), n_tiles);
 #endif
     std::vector<Eigen::MatrixXd> thread_gradients;
     thread_gradients.reserve(n_threads);

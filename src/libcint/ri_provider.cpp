@@ -9,6 +9,7 @@
 #include "lapacke.h"
 
 #include "libcint/direct_shell.hpp"
+#include "core/index.hpp"
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -18,7 +19,7 @@ namespace xmvb::libcint {
 
 namespace {
 
-constexpr int kWhitenColumnBlockSize = 256;
+constexpr Eigen::Index kWhitenColumnBlockSize = 256;
 
 struct ThreeCenterShellTask {
     int primary_left_shell = 0;
@@ -26,17 +27,15 @@ struct ThreeCenterShellTask {
     int auxiliary_shell = 0;
 };
 
-int ao_pair_index(int first, int second) {
-    if (first >= second) {
-        return first * (first + 1) / 2 + second;
-    }
-    return second * (second + 1) / 2 + first;
+Eigen::Index ao_pair_index(int first, int second) {
+    const Eigen::Index hi = std::max(first, second), lo = std::min(first, second);
+    return hi * (hi + 1) / 2 + lo;
 }
 
 std::vector<ThreeCenterShellTask> build_three_center_shell_tasks(int n_primary_shells,
                                                                  int n_auxiliary_shells) {
     std::vector<ThreeCenterShellTask> tasks;
-    tasks.reserve(n_auxiliary_shells * n_primary_shells * (n_primary_shells + 1) / 2);
+    tasks.reserve(core::checked_multiply(n_auxiliary_shells, core::triangular_count(n_primary_shells)));
     for (int primary_left_shell = 0; primary_left_shell < n_primary_shells; ++primary_left_shell) {
         for (int primary_right_shell = 0; primary_right_shell <= primary_left_shell;
              ++primary_right_shell) {
@@ -66,7 +65,7 @@ void scatter_three_center_shell_block(const LibcintThreeCenterShellBlock& block,
                 if (right_index > left_index) {
                     continue;
                 }
-                const int packed_pair_index = ao_pair_index(left_index, right_index);
+                const auto packed_pair_index = ao_pair_index(left_index, right_index);
                 const std::size_t local_index =
                     left_local + right_local * block.primary_left_ao_count +
                     auxiliary_local * block.primary_left_ao_count * block.primary_right_ao_count;
@@ -93,7 +92,7 @@ build_libcint_ri_factorization(const xmvb::integrals::LibcintInput& primary_inpu
 
     result.n_basis_functions = evaluator.n_basis_functions();
     result.n_auxiliary_functions = evaluator.n_auxiliary_basis_functions();
-    result.n_packed_ao_pairs = result.n_basis_functions * (result.n_basis_functions + 1) / 2;
+    result.n_packed_ao_pairs = core::checked_index<Eigen::Index>(core::triangular_count(result.n_basis_functions));
     if (result.n_auxiliary_functions <= 0 || result.n_packed_ao_pairs <= 0) {
         throw std::runtime_error("invalid RI dimensions inferred from libcint inputs");
     }
@@ -192,9 +191,9 @@ build_libcint_ri_factorization(const xmvb::integrals::LibcintInput& primary_inpu
                                                   result.n_packed_ao_pairs);
 
 #pragma omp parallel for schedule(static)
-    for (int pair_column_offset = 0; pair_column_offset < result.n_packed_ao_pairs;
+    for (Eigen::Index pair_column_offset = 0; pair_column_offset < result.n_packed_ao_pairs;
          pair_column_offset += kWhitenColumnBlockSize) {
-        const int block_column_count =
+        const Eigen::Index block_column_count =
             std::min(kWhitenColumnBlockSize, result.n_packed_ao_pairs - pair_column_offset);
         auto output = result.metric_whitened_ao_pair_factors.middleCols(pair_column_offset,
                                                                         block_column_count);

@@ -966,6 +966,15 @@ void check_exchange_row_graph() {
                  reference_jk(fixture, batch.middleCols(c * fixture.n_bf, fixture.n_bf)),
                  "CUDA shared-memory channel-tiled exchange differs from oracle");
     }
+    // The low 32 bits name a valid column. Check the original address before narrowing.
+    graph.columns.front() = (std::int64_t{1} << 32) + 1;
+    bool rejected = false;
+    try {
+        const xmvb::cuda::ExactAoPairOperator invalid(context, graph, fixture.n_bf);
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    require(rejected, "CUDA accepted an out-of-range 64-bit CSR column");
 }
 
 void check_symmetric_tiles() {

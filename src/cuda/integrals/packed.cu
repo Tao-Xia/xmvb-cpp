@@ -41,13 +41,13 @@ std::size_t checked_bytes(std::int64_t count) {
 
 std::size_t staging_bytes(std::int64_t rows, std::int64_t edges) {
     const auto limit = std::numeric_limits<std::size_t>::max();
-    if (rows < 0 || edges < 0 || static_cast<std::uint64_t>(rows + 1) > limit / sizeof(int) ||
+    if (rows < 0 || edges < 0 || static_cast<std::uint64_t>(rows + 1) > limit / sizeof(std::int64_t) ||
         static_cast<std::uint64_t>(edges) >
-            (limit - static_cast<std::size_t>(rows + 1) * sizeof(int)) /
-                (sizeof(int) + sizeof(double)))
+            (limit - static_cast<std::size_t>(rows + 1) * sizeof(std::int64_t)) /
+                (sizeof(std::int64_t) + sizeof(double)))
         throw std::overflow_error("packed AO-pair staging size overflow");
-    return static_cast<std::size_t>(rows + 1) * sizeof(int) +
-           static_cast<std::size_t>(edges) * (sizeof(int) + sizeof(double));
+    return static_cast<std::size_t>(rows + 1) * sizeof(std::int64_t) +
+           static_cast<std::size_t>(edges) * (sizeof(std::int64_t) + sizeof(double));
 }
 
 __device__ void add_double(double* address, double value) {
@@ -311,7 +311,7 @@ PackedAoPairMatrix::PackedAoPairMatrix(Context& context,
                                        sizeof(std::int64_t));
             context.copy_to_device(columns.data(),
                                    graph.columns.data() + first_edge,
-                                   static_cast<std::size_t>(edge_count) * sizeof(int));
+                                   static_cast<std::size_t>(edge_count) * sizeof(std::int64_t));
             context.copy_to_device(staging_values.data(),
                                    graph.values.data() + first_edge,
                                    static_cast<std::size_t>(edge_count) * sizeof(double));

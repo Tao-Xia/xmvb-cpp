@@ -365,7 +365,7 @@ void validate_ri_factorization(const RiAoFactorization& ri_factorization, int n_
 
     const std::size_t n_packed_pairs = packed_pair_count(n_basis_functions);
     if (ri_factorization.n_packed_ao_pairs != 0 &&
-        ri_factorization.n_packed_ao_pairs != static_cast<int>(n_packed_pairs)) {
+        ri_factorization.n_packed_ao_pairs != static_cast<Eigen::Index>(n_packed_pairs)) {
         throw std::invalid_argument("RI packed AO pair count mismatch");
     }
     if (ri_factorization.metric_whitened_ao_pair_factors.rows() !=
@@ -494,8 +494,10 @@ std::vector<double> apply_low_rank_ri_operator(const RiAoFactorization& ri_facto
     }
     const std::size_t per_auxiliary_elements =
         static_cast<std::size_t>(n_basis_functions) * (rank + n_threads) + n_threads;
+    // The transformed tile leading dimension also enters the CBLAS interface.
+    const int max_blas_tile = std::numeric_limits<int>::max() / rank;
     const int tile_width = static_cast<int>(std::min<std::size_t>(
-        std::max(1, n_auxiliary),
+        std::min(std::max(1, n_auxiliary), max_blas_tile),
         std::max<std::size_t>(1, workspace_bytes / sizeof(double) / per_auxiliary_elements)));
     Eigen::VectorXd auxiliary_projection;
     if (coulomb_weight != 0.0)

@@ -60,7 +60,7 @@ void compute_exact_packed_active_two_electron_integral_directional_derivative(
     if (accepted_cache.active_pair_second_indices.size() != n_active_pairs) {
         throw std::invalid_argument("exact packed delta GGO cache pair-index mismatch");
     }
-    const std::size_t n_bf_pairs = n_bf * (n_bf + 1) / 2;
+    const std::size_t n_bf_pairs = static_cast<std::size_t>(n_bf) * (n_bf + 1ULL) / 2;
     if (accepted_cache.active_pair_gradient_matrix.rows() !=
             static_cast<Eigen::Index>(n_active_pairs) ||
         accepted_cache.active_pair_gradient_matrix.cols() !=
@@ -168,8 +168,7 @@ void compute_exact_packed_active_two_electron_integral_directional_derivative(
              right_active_pair_index <= left_active_pair_index;
              ++right_active_pair_index) {
             const auto packed_index = xmvb::core::PairIndex::packed_pair_of_pairs_index(
-                static_cast<int>(left_active_pair_index),
-                static_cast<int>(right_active_pair_index));
+                left_active_pair_index, right_active_pair_index);
             (*delta_packed_active_two_electron_integrals)[packed_index] =
                 workspace->active_pair_contraction(
                     static_cast<Eigen::Index>(left_active_pair_index),

@@ -42,7 +42,7 @@ void ExactAoPairOperator::upload_unique(const integrals::AoPairGraph& graph) {
     std::size_t largest_chunk = 0;
     graph.for_each_chunk([&](auto rows, auto, auto values) {
         largest_chunk = std::max(largest_chunk, values.size());
-        for (const int row : rows)
+        for (const auto row : rows)
             ++prefix[row + 1];
     });
     for (int row = 0; row < n_pairs_; ++row)

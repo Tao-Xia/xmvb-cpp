@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <limits>
 #include <stdexcept>
 #include <vector>
 
@@ -12,6 +11,7 @@
 
 #include "parallel/openmp.hpp"
 #include "core/timing.hpp"
+#include "core/index.hpp"
 #include "parallel/workers.hpp"
 
 namespace xmvb::integrals::detail {
@@ -97,7 +97,9 @@ void apply_exact_ao_pair_graph(const AoPairGraph& graph,
         throw std::invalid_argument("AO-pair result must not be null");
     }
 
-    const std::size_t n_bf_pairs = n_bf * (n_bf + 1) / 2;
+    if (n_bf <= 0)
+        throw std::invalid_argument("AO-pair basis dimension must be positive");
+    const auto n_bf_pairs = core::triangular_count(n_bf);
     if (coefficients.rows() != static_cast<Eigen::Index>(n_bf_pairs) ||
         coefficients.cols() != static_cast<Eigen::Index>(n_active_pairs)) {
         throw std::invalid_argument("AO-pair coefficient shape mismatch");
@@ -119,12 +121,7 @@ void apply_exact_ao_pair_graph(const AoPairGraph& graph,
         if (!graph.valid_unique_storage()) {
             throw std::invalid_argument("invalid compact AO integral stream");
         }
-        n_threads =
-            std::min(n_threads,
-                     std::max(1,
-                              static_cast<int>(std::min<std::size_t>(
-                                  graph.integral_count(),
-                                  static_cast<std::size_t>(std::numeric_limits<int>::max())))));
+        n_threads = bounded_openmp_thread_count(n_threads, graph.integral_count());
         std::vector<ExactCtxPairMatrix> partial_products(n_threads);
 #pragma omp parallel num_threads(n_threads)
         {
@@ -180,8 +177,8 @@ void apply_exact_ao_pair_graph(const AoPairGraph& graph,
         throw std::invalid_argument("invalid AO-pair graph");
     }
 
-    n_threads = std::min(n_threads, static_cast<int>(n_bf_pairs));
-    const int n_pieces = static_cast<int>(openmp_work_pieces(n_bf_pairs, n_threads));
+    n_threads = bounded_openmp_thread_count(n_threads, n_bf_pairs);
+    const int n_pieces = core::checked_index<int>(openmp_work_pieces(n_bf_pairs, n_threads));
     const auto row_boundaries = graph.balanced_row_boundaries(n_pieces);
 
     ::xmvb::parallel::WorkerLoopTimes work(n_threads);

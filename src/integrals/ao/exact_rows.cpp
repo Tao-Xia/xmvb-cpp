@@ -43,8 +43,8 @@ void contract_row(const AoIntegralInput& ao, int mu, const double* source,
         double* sum = core_width ? coulomb + j * coulomb_stride : nullptr;
         if (sum)
             std::fill_n(sum, core_width, 0.0);
-        const int hi = std::max(mu, j), lo = std::min(mu, j);
-        const int pair = hi * (hi + 1) / 2 + lo;
+        const PairAddress hi = std::max(mu, j), lo = std::min(mu, j);
+        const PairAddress pair = hi * (hi + 1) / 2 + lo;
         for (PairAddress edge = graph.row_offsets[pair]; edge < graph.row_offsets[pair + 1];
              ++edge) {
             const auto right = graph.columns[edge];

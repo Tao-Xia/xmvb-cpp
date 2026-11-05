@@ -35,15 +35,16 @@ __global__ void core_exchange_rows(const Index* offsets,
                                    const double* values,
                                    const int* first,
                                    const int* second,
-                                   int begin,
+                                   std::int64_t begin,
                                    int count,
                                    int n_bf,
                                    double* rows) {
     const auto ld = static_cast<std::int64_t>(n_bf) * count;
     for (int row = blockIdx.x; row < count; row += gridDim.x) {
-        const int u = begin + row;
+        const auto u = begin + row;
         for (auto edge = offsets[u] + threadIdx.x; edge < offsets[u + 1]; edge += blockDim.x) {
-            const int v = static_cast<int>(columns[edge]), k = first[v], l = second[v];
+            const auto v = columns[edge];
+            const int k = first[v], l = second[v];
             atomicAdd(rows + static_cast<std::int64_t>(row) * n_bf + k + ld * l, values[edge]);
             if (k != l)
                 atomicAdd(rows + static_cast<std::int64_t>(row) * n_bf + l + ld * k, values[edge]);
@@ -68,7 +69,7 @@ __global__ void core_exchange_scatter(linalg::ConstMatrixView factors,
                                       const int* first,
                                       const int* second,
                                       const double* diagonal,
-                                      int begin,
+                                      std::int64_t begin,
                                       int count,
                                       linalg::MatrixView output) {
     const int n_bf = static_cast<int>(factors.rows);
@@ -76,7 +77,8 @@ __global__ void core_exchange_scatter(linalg::ConstMatrixView factors,
     for (auto cell = blockIdx.x * static_cast<std::int64_t>(blockDim.x) + threadIdx.x; cell < cells;
          cell += gridDim.x * static_cast<std::int64_t>(blockDim.x)) {
         const int k = cell % n_bf, row = cell / n_bf % count, channel = cell / images.rows;
-        const int u = begin + row, i = first[u], j = second[u];
+        const auto u = begin + row;
+        const int i = first[u], j = second[u];
         const double ci = factors.data[i + factors.ld * channel];
         const double cj = factors.data[j + factors.ld * channel];
         const double t = images.data[cell], d = diagonal[u];
@@ -158,7 +160,7 @@ void ExactAoPairOperator::rank_one_exchange(linalg::ConstMatrixView factors,
         throw std::runtime_error("CUDA core exchange budget cannot hold one pair row");
     Matrix<double> rows(*context_, static_cast<std::int64_t>(n_bf_) * width, n_bf_);
     Matrix<double> images(*context_, rows.rows(), factors.cols);
-    for (int begin = 0; begin < n_pairs_; begin += width) {
+    for (std::int64_t begin = 0; begin < n_pairs_; begin += width) {
         const int count = static_cast<int>(std::min<std::int64_t>(width, n_pairs_ - begin));
         const auto height = static_cast<std::int64_t>(n_bf_) * count;
         const linalg::MatrixView a{rows.data(), height, n_bf_, height};

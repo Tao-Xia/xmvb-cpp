@@ -16,7 +16,7 @@ struct RiAoFactorization {
     int n_basis_functions = 0;
     /** Number of retained fitting directions (factor rows), not basis size. */
     int n_auxiliary_functions = 0;
-    int n_packed_ao_pairs = 0;
+    Eigen::Index n_packed_ao_pairs = 0;
 
     /** Untruncated Coulomb metric in unit-radial Cartesian auxiliary AOs.
    * Its dimension is the auxiliary basis size and can exceed the factor rank.

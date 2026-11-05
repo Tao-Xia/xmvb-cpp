@@ -14,16 +14,16 @@ std::vector<double>
 pack_ri_active_integrals(const Eigen::Ref<const Eigen::MatrixXd>& active_pair_factors) {
     if (active_pair_factors.rows() <= 0 || active_pair_factors.cols() <= 0)
         throw std::invalid_argument("RI active kernel requires nonempty pair factors");
-    const int pairs = static_cast<int>(active_pair_factors.cols());
+    const Eigen::Index pairs = active_pair_factors.cols();
     std::vector<double> packed(static_cast<std::size_t>(pairs) * (pairs + 1) / 2);
-    constexpr int panel_rows = 64;
-    for (int first = 0; first < pairs; first += panel_rows) {
-        const int count = std::min(panel_rows, pairs - first);
+    constexpr Eigen::Index panel_rows = 64;
+    for (Eigen::Index first = 0; first < pairs; first += panel_rows) {
+        const Eigen::Index count = std::min(panel_rows, pairs - first);
         const Eigen::MatrixXd panel = active_pair_factors.middleCols(first, count).transpose() *
                                       active_pair_factors.leftCols(first + count);
-        for (int row = 0; row < count; ++row) {
-            const int p = first + row;
-            for (int q = 0; q <= p; ++q)
+        for (Eigen::Index row = 0; row < count; ++row) {
+            const Eigen::Index p = first + row;
+            for (Eigen::Index q = 0; q <= p; ++q)
                 packed[static_cast<std::size_t>(p) * (p + 1) / 2 + q] = panel(row, q);
         }
     }
@@ -42,7 +42,7 @@ transform_ri_active_integrals(const RiAoFactorization& ao_ri_result,
         throw std::invalid_argument("AO RI result basis-function count mismatch");
     }
 
-    const std::size_t n_ao_pairs = n_basis_functions * (n_basis_functions + 1) / 2;
+    const std::size_t n_ao_pairs = static_cast<std::size_t>(n_basis_functions) * (n_basis_functions + 1ULL) / 2;
     if (ao_ri_result.metric_whitened_ao_pair_factors.rows() != ao_ri_result.n_auxiliary_functions ||
         ao_ri_result.metric_whitened_ao_pair_factors.cols() !=
             static_cast<Eigen::Index>(n_ao_pairs)) {
@@ -53,7 +53,7 @@ transform_ri_active_integrals(const RiAoFactorization& ao_ri_result,
     result.representation = ActiveSpaceTwoElectronRepresentation::ResolutionOfIdentity;
     result.n_auxiliary_functions = ao_ri_result.n_auxiliary_functions;
     const int n_aux = ao_ri_result.n_auxiliary_functions;
-    const int pairs = n_active_orbitals * (n_active_orbitals + 1) / 2;
+    const Eigen::Index pairs = static_cast<Eigen::Index>(n_active_orbitals) * (n_active_orbitals + 1LL) / 2;
     result.ri_active_pair_factors.resize(n_aux, pairs);
     const int workers = std::min(effective_openmp_thread_count(), n_basis_functions);
     const std::size_t per_aux =
@@ -79,11 +79,12 @@ transform_ri_active_integrals(const RiAoFactorization& ao_ri_result,
         const Eigen::MatrixXd active = one_index * dense_active_coefficients;
         for (int a = 0; a < n_active_orbitals; ++a) {
             if (resident)
-                resident->middleRows(a * n_aux + first, count) =
-                    one_index.middleRows(a * count, count);
+                resident->middleRows(static_cast<Eigen::Index>(a) * n_aux + first, count) =
+                    one_index.middleRows(static_cast<Eigen::Index>(a) * count, count);
+            const Eigen::Index pair_begin = static_cast<Eigen::Index>(a) * (a + 1LL) / 2;
             for (int b = 0; b <= a; ++b)
-                result.ri_active_pair_factors.col(a * (a + 1) / 2 + b).segment(first, count) =
-                    active.col(b).segment(a * count, count);
+                result.ri_active_pair_factors.col(pair_begin + b).segment(first, count) =
+                    active.col(b).segment(static_cast<Eigen::Index>(a) * count, count);
         }
     }
     result.ri_one_index_factors = std::move(resident);

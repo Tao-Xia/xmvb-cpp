@@ -113,8 +113,9 @@ void add_coulomb(const Eigen::MatrixXd& factors,
                  const Eigen::VectorXd& charge,
                  Eigen::MatrixXd& output) {
     profiling::ScopedPhase phase(profiling::Phase::RiAoCoulomb);
-    const int n = output.rows(), pairs = factors.cols();
-    const int workers = std::min(effective_openmp_thread_count(), pairs);
+    const int n = output.rows();
+    const Eigen::Index pairs = factors.cols();
+    const int workers = bounded_openmp_thread_count(effective_openmp_thread_count(), pairs);
     Eigen::VectorXd packed(pairs);
 #pragma omp parallel num_threads(workers)
     {
@@ -124,8 +125,8 @@ void add_coulomb(const Eigen::MatrixXd& factors,
         worker = omp_get_thread_num();
         team_size = omp_get_num_threads();
 #endif
-        const int begin = worker * pairs / team_size;
-        const int end = (worker + 1) * pairs / team_size;
+        const Eigen::Index begin = worker * pairs / team_size;
+        const Eigen::Index end = (worker + 1) * pairs / team_size;
         packed.segment(begin, end - begin).noalias() =
             2 * factors.middleCols(begin, end - begin).transpose() * charge;
 #pragma omp barrier
@@ -242,7 +243,7 @@ apply_ri_projected_ao_response_batch(const RiActiveTwoElectronResponseCache& act
         }
     }
 
-    const int active_pairs = na * (na + 1) / 2;
+    const Eigen::Index active_pairs = static_cast<Eigen::Index>(na) * (na + 1LL) / 2;
     if (fixed_hvp != nullptr &&
         (fixed_hvp->weight.rows() != na || fixed_hvp->weight.cols() != na ||
          active.accepted_active_pair_factors == nullptr ||
@@ -328,16 +329,18 @@ apply_ri_projected_ao_response_batch(const RiActiveTwoElectronResponseCache& act
     const auto& c = *active.accepted_active_coefficients;
     for (int first = 0; first < n_aux; first += tile) {
         const int count = std::min(tile, n_aux - first);
-        const int leading = count * rank, moving_rows = count * nm;
+        const Eigen::Index stride = count;
+        const Eigen::Index leading = stride * rank, moving_rows = stride * nm;
         {
             profiling::ScopedPhase phase(profiling::Phase::RiAoAccepted);
             workspace.accepted.resize(leading, n);
             if (nm != 0) {
                 if (inactive.factors != nullptr) {
-                    for (int moving = 0; moving < nm; ++moving)
-                        workspace.accepted.middleRows(moving * count, count) =
-                            inactive.factors->middleRows(inactive.orbitals[moving] * n_aux + first,
-                                                         count);
+                    for (int moving = 0; moving < nm; ++moving) {
+                        const Eigen::Index orbital = inactive.orbitals[moving];
+                        workspace.accepted.middleRows(moving * stride, count) =
+                            inactive.factors->middleRows(orbital * n_aux + first, count);
+                    }
                 } else {
                     transform_ri_one_index(*active.metric_whitened_ao_pair_factors,
                                            moving_inactive_duals,
@@ -347,8 +350,8 @@ apply_ri_projected_ao_response_batch(const RiActiveTwoElectronResponseCache& act
                 }
             }
             if (active.accepted_one_index_factors) {
-                for (int orbital = 0; orbital < na; ++orbital)
-                    workspace.accepted.middleRows((nm + orbital) * count, count) =
+                for (Eigen::Index orbital = 0; orbital < na; ++orbital)
+                    workspace.accepted.middleRows((nm + orbital) * stride, count) =
                         active.accepted_one_index_factors->middleRows(orbital * n_aux + first,
                                                                       count);
             } else {
@@ -356,7 +359,7 @@ apply_ri_projected_ao_response_batch(const RiActiveTwoElectronResponseCache& act
                                        c,
                                        first,
                                        count,
-                                       workspace.accepted.bottomRows(count * na));
+                                       workspace.accepted.bottomRows(stride * na));
             }
         }
         Eigen::MatrixXd accepted_factor_adjoint;
@@ -381,7 +384,7 @@ apply_ri_projected_ao_response_batch(const RiActiveTwoElectronResponseCache& act
             }
             if (fixed_hvp != nullptr) {
                 const Eigen::Ref<const Eigen::MatrixXd> active_factors(
-                    workspace.accepted.bottomRows(count * na));
+                    workspace.accepted.bottomRows(stride * na));
                 detail::fill_ri_factor_direction_tile(active,
                                                       active_factors,
                                                       *request.active_direction,
@@ -395,14 +398,14 @@ apply_ri_projected_ao_response_batch(const RiActiveTwoElectronResponseCache& act
                     active_factors,
                     count,
                     0,
-                    workspace.direction.bottomRows(count * na),
+                    workspace.direction.bottomRows(stride * na),
                     count,
                     0,
                     accepted_factor_adjoint,
                     directional_factor_adjoint,
                     0,
                     count,
-                    sizeof(double) * static_cast<std::size_t>(na) * na * count,
+                    sizeof(double) * static_cast<std::size_t>(na) * na * stride,
                     result.fixed_two_electron);
                 // Each AO column stores a [auxiliary,active] slab. The fixed jet has
                 // consumed L D, so this in-place small-matrix action now supplies L Wbar.
@@ -427,16 +430,16 @@ apply_ri_projected_ao_response_batch(const RiActiveTwoElectronResponseCache& act
                 worker = omp_get_thread_num();
                 team_size = omp_get_num_threads();
 #endif
-                const int begin = worker * leading / team_size;
-                const int end = (worker + 1) * leading / team_size;
-                const int size = end - begin;
+                const Eigen::Index begin = worker * leading / team_size;
+                const Eigen::Index end = (worker + 1) * leading / team_size;
+                const Eigen::Index size = end - begin;
                 if (size) {
                     if (direction_index == 0) {
                         // The first direction fills the accepted projection; later directions
                         // reuse it without launching another worker team for width one.
                         workspace.accepted_projection.block(begin, 0, size, nf).noalias() =
                             workspace.accepted.middleRows(begin, size) * full_inactive_duals;
-                        const int moving_end = std::min(end, moving_rows);
+                        const Eigen::Index moving_end = std::min(end, moving_rows);
                         if (moving_end > begin && inactive.orbitals.empty())
                             workspace.accepted_projection.block(begin, nf, moving_end - begin, na)
                                 .noalias() =
@@ -444,24 +447,24 @@ apply_ri_projected_ao_response_batch(const RiActiveTwoElectronResponseCache& act
                         if (moving_end > begin)
                             workspace.accepted_projection.block(begin, 0, moving_end - begin, nf) *=
                                 -4;
-                        const int active_begin = std::max(begin, moving_rows);
+                        const Eigen::Index active_begin = std::max(begin, moving_rows);
                         if (end > active_begin)
                             workspace.accepted_projection.block(
                                 active_begin, 0, end - active_begin, nf) *= -1;
                     }
                     workspace.direction_projection.block(begin, 0, size, nf).noalias() =
                         workspace.direction.middleRows(begin, size) * full_inactive_duals;
-                    const int moving_end = std::min(end, moving_rows);
+                    const Eigen::Index moving_end = std::min(end, moving_rows);
                     if (moving_end > begin) {
-                        const int moving_size = moving_end - begin;
+                        const Eigen::Index moving_size = moving_end - begin;
                         workspace.direction_projection.block(begin, nf, moving_size, na).noalias() =
                             -workspace.direction.middleRows(begin, moving_size) * c;
                     }
-                    const int inactive_end = std::min(end, moving_rows);
+                    const Eigen::Index inactive_end = std::min(end, moving_rows);
                     if (inactive_end > begin)
                         workspace.direction_projection.block(begin, 0, inactive_end - begin, nf) *=
                             -4;
-                    const int active_begin = std::max(begin, moving_rows);
+                    const Eigen::Index active_begin = std::max(begin, moving_rows);
                     if (end > active_begin)
                         workspace.direction_projection.block(
                             active_begin, 0, end - active_begin, nf) *= -1;
@@ -473,15 +476,15 @@ apply_ri_projected_ao_response_batch(const RiActiveTwoElectronResponseCache& act
                     for (int moving = 0; moving < nm; ++moving)
                         for (int auxiliary = 0; auxiliary < count; ++auxiliary)
                             for (int orbital = 0; orbital < na; ++orbital)
-                                workspace.accepted_projection(moving * count + auxiliary,
+                                workspace.accepted_projection(moving * stride + auxiliary,
                                                               nf + orbital) =
-                                    workspace.accepted_projection((nm + orbital) * count +
+                                    workspace.accepted_projection((nm + orbital) * stride +
                                                                       auxiliary,
                                                                   inactive.orbitals[moving]);
                 }
-                const int aux_begin = worker * count / team_size;
-                const int aux_end = (worker + 1) * count / team_size;
-                const int aux_size = aux_end - aux_begin;
+                const Eigen::Index aux_begin = worker * stride / team_size;
+                const Eigen::Index aux_end = (worker + 1) * stride / team_size;
+                const Eigen::Index aux_size = aux_end - aux_begin;
                 if (aux_size) {
                     auto rho_d = workspace.charges.col(2 * direction_index)
                                      .segment(first + aux_begin, aux_size);
@@ -490,10 +493,10 @@ apply_ri_projected_ao_response_batch(const RiActiveTwoElectronResponseCache& act
                     if (!inactive.orbitals.empty()) {
                         // The moving diagonal of -4 (L X)^T A0 is already present.
                         for (int orbital = 0; orbital < nm; ++orbital)
-                            for (int auxiliary = aux_begin; auxiliary < aux_end; ++auxiliary)
+                            for (Eigen::Index auxiliary = aux_begin; auxiliary < aux_end; ++auxiliary)
                                 rho_d[auxiliary - aux_begin] -=
                                     0.5 *
-                                    workspace.direction_projection(orbital * count + auxiliary,
+                                    workspace.direction_projection(orbital * stride + auxiliary,
                                                                    inactive.orbitals[orbital]);
                     }
                     for (int mu = 0; mu < n; ++mu) {
@@ -503,13 +506,13 @@ apply_ri_projected_ao_response_batch(const RiActiveTwoElectronResponseCache& act
                                     rho_d.noalias() += 2 *
                                                        request.horizontal_direction(mu, orbital) *
                                                        workspace.accepted.col(mu).segment(
-                                                           orbital * count + aux_begin, aux_size);
+                                                           orbital * stride + aux_begin, aux_size);
                         for (int orbital = 0; orbital < na; ++orbital)
                             if (request.weighted_active(mu, orbital) != 0)
                                 rho_r.noalias() +=
                                     request.weighted_active(mu, orbital) *
                                     workspace.accepted.col(mu).segment(
-                                        (nm + orbital) * count + aux_begin, aux_size);
+                                        (nm + orbital) * stride + aux_begin, aux_size);
                     }
                     rho_r += 2 * rho_d;
                 }
@@ -554,7 +557,7 @@ apply_ri_projected_ao_response_batch(const RiActiveTwoElectronResponseCache& act
                         for (int orbital = 0; orbital < na; ++orbital)
                             result.active(mu, orbital) +=
                                 2 * workspace.accepted.col(mu)
-                                        .segment((nm + orbital) * count, count)
+                                        .segment((nm + orbital) * stride, count)
                                         .dot(workspace.charges.col(2 * direction_index)
                                                  .segment(first, count));
                     }
@@ -571,7 +574,7 @@ apply_ri_projected_ao_response_batch(const RiActiveTwoElectronResponseCache& act
 #pragma omp parallel for schedule(static) num_threads(std::min(workers, nf))
             for (int orbital = 0; orbital < nf; ++orbital) {
                 result.inactive.col(orbital).noalias() +=
-                    4.0 * inactive.factors->middleRows(orbital * n_aux, n_aux).transpose() *
+                    4.0 * inactive.factors->middleRows(static_cast<Eigen::Index>(orbital) * n_aux, n_aux).transpose() *
                     workspace.charges.col(2 * direction_index + 1);
             }
         } else {

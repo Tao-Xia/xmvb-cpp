@@ -53,14 +53,14 @@ void contract_integrals(const AoIntegralInput& ao,
                         double* forward,
                         double* transpose) {
     const AoPairGraph& graph = ao.pair_graph;
-    const int n_bf = ao.n_basis_functions;
+    const Eigen::Index n_bf = ao.n_basis_functions;
     while (begin < end) {
-        const int left = graph.integral(begin).left_pair;
+        const PairAddress left = graph.integral(begin).left_pair;
         const int i = graph.pair_first[left];
         const int j = graph.pair_second[left];
-        const int i_column = i * n_bf;
-        const int j_column = j * n_bf;
-        const int ij = j_column + i;
+        const Eigen::Index i_column = i * n_bf;
+        const Eigen::Index j_column = j * n_bf;
+        const Eigen::Index ij = j_column + i;
         const double left_scale = i == j ? 0.5 : 1.0;
         double source_ij = 0.0, adjoint_ij = 0.0;
         if constexpr (Forward)
@@ -70,7 +70,7 @@ void contract_integrals(const AoIntegralInput& ao,
         double forward_coulomb = 0.0, transpose_coulomb = 0.0;
         do {
             const auto eri = graph.integral(begin);
-            const int right = eri.right_pair;
+            const PairAddress right = eri.right_pair;
             const int k = graph.pair_first[right];
             const int l = graph.pair_second[right];
             double value = eri.value * left_scale;
@@ -78,13 +78,13 @@ void contract_integrals(const AoIntegralInput& ao,
                 value *= 0.5;
             if (left == right)
                 value *= 0.5;
-            const int k_column = k * n_bf;
-            const int l_column = l * n_bf;
-            const int kl = l_column + k;
-            const int ik = k_column + i, jl = l_column + j;
-            const int il = l_column + i, jk = k_column + j;
-            const int lj = j_column + l, ki = i_column + k;
-            const int kj = j_column + k, li = i_column + l;
+            const Eigen::Index k_column = k * n_bf;
+            const Eigen::Index l_column = l * n_bf;
+            const Eigen::Index kl = l_column + k;
+            const Eigen::Index ik = k_column + i, jl = l_column + j;
+            const Eigen::Index il = l_column + i, jk = k_column + j;
+            const Eigen::Index lj = j_column + l, ki = i_column + k;
+            const Eigen::Index kj = j_column + k, li = i_column + l;
             const double coulomb = 4.0 * value;
             if constexpr (Forward) {
                 forward_coulomb += coulomb * source[kl];
@@ -131,28 +131,28 @@ void contract_symmetric_integrals(const AoIntegralInput& ao,
     using ConstChannels = Eigen::Map<const Eigen::Array2d>;
     using Channels = Eigen::Map<Eigen::Array2d>;
     const auto& graph = ao.pair_graph;
-    const int n_bf = ao.n_basis_functions;
+    const Eigen::Index n_bf = ao.n_basis_functions;
     while (begin < end) {
-        const int left = graph.integral(begin).left_pair;
+        const PairAddress left = graph.integral(begin).left_pair;
         const int i = graph.pair_first[left], j = graph.pair_second[left];
-        const int ij = j * n_bf + i;
+        const Eigen::Index ij = j * n_bf + i;
         const double scale = i == j ? 0.5 : 1.0;
         const Eigen::Array2d source_ij = ConstChannels(source + 2 * ij);
         Eigen::Array2d coulomb = Eigen::Array2d::Zero();
         do {
             const auto eri = graph.integral(begin);
-            const int right = eri.right_pair;
+            const PairAddress right = eri.right_pair;
             const int k = graph.pair_first[right], l = graph.pair_second[right];
             double value = eri.value * scale;
             if (k == l)
                 value *= 0.5;
             if (left == right)
                 value *= 0.5;
-            const int kl = l * n_bf + k;
-            const int ik = k * n_bf + i, jl = l * n_bf + j;
-            const int il = l * n_bf + i, jk = k * n_bf + j;
-            const int lj = j * n_bf + l, ki = i * n_bf + k;
-            const int kj = j * n_bf + k, li = i * n_bf + l;
+            const Eigen::Index kl = l * n_bf + k;
+            const Eigen::Index ik = k * n_bf + i, jl = l * n_bf + j;
+            const Eigen::Index il = l * n_bf + i, jk = k * n_bf + j;
+            const Eigen::Index lj = j * n_bf + l, ki = i * n_bf + k;
+            const Eigen::Index kj = j * n_bf + k, li = i * n_bf + l;
             coulomb += (4.0 * value) * ConstChannels(source + 2 * kl);
             Channels(target + 2 * kl) += (4.0 * value) * source_ij;
             Channels(target + 2 * ik) -= value * ConstChannels(source + 2 * lj);
@@ -174,7 +174,7 @@ void contract_symmetric_block(
     const AoIntegralInput& ao, std::size_t begin, std::size_t end,
     const double* source, double* target, Eigen::Index width, double* coulomb) {
     const auto& graph = ao.pair_graph;
-    const int n_bf = ao.n_basis_functions;
+    const Eigen::Index n_bf = ao.n_basis_functions;
     const auto output = [&](int row, int column) -> Eigen::Index {
         if constexpr (Packed) {
             const Eigen::Index hi = std::max(row, column), lo = std::min(row, column);
@@ -183,14 +183,14 @@ void contract_symmetric_block(
             return (column * n_bf + row) * width;
     };
     while (begin < end) {
-        const int left = graph.integral(begin).left_pair;
+        const PairAddress left = graph.integral(begin).left_pair;
         const int i = graph.pair_first[left], j = graph.pair_second[left];
         const Eigen::Index ij = (j * n_bf + i) * width;
         const double scale = i == j ? 0.5 : 1.0;
         std::fill_n(coulomb, width, 0.0);
         do {
             const auto eri = graph.integral(begin);
-            const int right = eri.right_pair;
+            const PairAddress right = eri.right_pair;
             const int k = graph.pair_first[right], l = graph.pair_second[right];
             double value = eri.value * scale;
             if (k == l)
