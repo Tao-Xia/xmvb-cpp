@@ -510,11 +510,19 @@ bool run_bounded_multiroot_restart_case(bool identity_overlap = false) {
 bool run_default_option_cases() {
     const auto small = xmvb::linalg::make_davidson_options(3, 2, 1.0e-7, 1.0e-3, 1.0e-7);
     const auto large = xmvb::linalg::make_davidson_options(10000, 4, 1.0e-7, 1.0e-3, 1.0e-7);
+    constexpr Eigen::Index n = 2760615;
+    const auto constrained =
+        xmvb::linalg::make_davidson_options(n, 1, 1e-7, 1e-3, 1e-7, 2ULL << 30);
+    const auto roomy =
+        xmvb::linalg::make_davidson_options(n, 1, 1e-7, 1e-3, 1e-7, 4ULL << 30, true);
     const bool passed =
         small.n_roots == 2 && small.max_subspace_dimension == 3 && small.max_iterations >= 3 &&
         small.energy_tolerance == 1.0e-7 && small.residual_tolerance == 1.0e-3 &&
         small.stationarity_tolerance == 1.0e-7 && large.n_roots == 4 &&
-        large.max_subspace_dimension < 10000 && large.max_subspace_dimension >= 2 * large.n_roots;
+        large.max_subspace_dimension < 10000 && large.max_subspace_dimension >= 2 * large.n_roots &&
+        constrained.max_subspace_dimension < roomy.max_subspace_dimension && roomy.identity_overlap &&
+        xmvb::linalg::davidson_workspace_bytes(n, constrained) <= (2ULL << 30) &&
+        xmvb::linalg::davidson_workspace_bytes(n, roomy) <= (4ULL << 30);
     std::cout << "default Davidson budgets"
               << " small_subspace=" << small.max_subspace_dimension
               << " large_subspace=" << large.max_subspace_dimension

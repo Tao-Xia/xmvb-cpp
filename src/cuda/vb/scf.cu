@@ -158,8 +158,15 @@ ScfResult solve_scf(Context& context,
         return std::make_unique<VbPoint>(
             context, orbital, action, ao, core.view(), ao_metric.overlap(), nuclear);
     };
-    auto ci_options = linalg::make_davidson_options(
-        nstr, 1, 1.0e-7, options.gradient_tolerance, options.energy_tolerance);
+    const auto ci_options = [&] {
+        return linalg::make_davidson_options(nstr,
+                                             1,
+                                             1.0e-7,
+                                             options.gradient_tolerance,
+                                             options.energy_tolerance,
+                                             context.available_device_bytes() / 2,
+                                             ci_solver.identity_overlap());
+    };
     ScfResult result;
     result.ao_upload_seconds = upload_seconds;
     result.host_integral_release_seconds = release_seconds;
@@ -201,8 +208,8 @@ ScfResult solve_scf(Context& context,
         {
             AllocationPhase phase(context, "CI relaxation");
             const auto ci_start = Clock::now();
-            trial.ci = guess.data ? ci_solver.solve_device(guess, ci_options)
-                                  : ci_solver.solve_device(ci_options);
+            trial.ci = guess.data ? ci_solver.solve_device(guess, ci_options())
+                                  : ci_solver.solve_device(ci_options());
             if (!guess.data)
                 result.initial_ci_seconds =
                     std::chrono::duration<double>(Clock::now() - ci_start).count();
@@ -563,7 +570,7 @@ ScfResult solve_scf(Context& context,
             trial.point->activate();
             if (frame.ci_point)
                 ci_solver.bind_point(frame.ci_point);
-            trial.ci = ci_solver.solve_device(guess, ci_options);
+            trial.ci = ci_solver.solve_device(guess, ci_options());
             result.ci_actions += trial.ci.block_actions;
             finish(trial, guess);
             cache.reset();

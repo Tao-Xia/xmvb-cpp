@@ -10,6 +10,16 @@
 #include "vbscf/structures/orthogonal_ci/exterior_transform.hpp"
 
 namespace xmvb::vb {
+namespace {
+
+std::size_t carrier_column_bytes(Eigen::Index structures, std::size_t alpha, std::size_t beta) {
+    return core::checked_multiply(
+        sizeof(double),
+        core::checked_add(core::checked_multiply(alpha, beta),
+                          core::checked_multiply(4, core::checked_index<std::size_t>(structures))));
+}
+
+} // namespace
 
 bool StructureMetricInverse::fits(const StructureAction& action,
                                   const xmvb::mcscf::StringTable& alpha_strings,
@@ -18,14 +28,30 @@ bool StructureMetricInverse::fits(const StructureAction& action,
                                   std::size_t workspace_byte_limit) {
     if (!action.storage().orthogonal_direct_ci)
         return false;
-    const std::size_t column_bytes = core::checked_multiply(
-        sizeof(double),
-        core::checked_add(
-            core::checked_multiply(alpha_strings.size(), beta_strings.size()),
-            core::checked_multiply(4, core::checked_index<std::size_t>(action.n_structures_))));
+    const auto column_bytes =
+        carrier_column_bytes(action.n_structures_, alpha_strings.size(), beta_strings.size());
     if (column_bytes == 0 || column_bytes > workspace_byte_limit)
         return false;
     return SpinMetric::fits(action, alpha_strings, beta_strings, factor_byte_limit);
+}
+
+std::unique_ptr<StructureMetricInverse> StructureMetricInverse::try_build(
+    const StructureAction& action,
+    const xmvb::mcscf::StringTable& alpha_strings,
+    const xmvb::mcscf::StringTable& beta_strings,
+    std::size_t other_work_bytes) {
+    const auto column =
+        carrier_column_bytes(action.n_structures_, alpha_strings.size(), beta_strings.size());
+    // The Hamiltonian application holds one input and one output carrier.
+    const auto scratch = core::checked_multiply(2, column);
+    const auto available = workspace::available();
+    if (other_work_bytes >= available || scratch >= available - other_work_bytes)
+        return {};
+    const auto factors = available - other_work_bytes - scratch;
+    if (!fits(action, alpha_strings, beta_strings, factors, scratch))
+        return {};
+    return std::make_unique<StructureMetricInverse>(
+        action, alpha_strings, beta_strings, true, factors, scratch);
 }
 
 StructureMetricInverse::StructureMetricInverse(const StructureAction& action,
@@ -37,14 +63,15 @@ StructureMetricInverse::StructureMetricInverse(const StructureAction& action,
     : action_(&action), spin_(action, alpha_strings, beta_strings, factor_byte_limit) {
     if (!complete_space || !action.storage().orthogonal_direct_ci)
         throw std::invalid_argument("factorized metric inverse requires a complete spin sector");
-    const std::size_t column_bytes = (alpha_strings.size() * beta_strings.size() +
-                                      4 * static_cast<std::size_t>(action.n_structures_)) *
-                                     sizeof(double);
+    const auto column_bytes =
+        carrier_column_bytes(action.n_structures_, alpha_strings.size(), beta_strings.size());
     if (column_bytes == 0 || workspace_byte_limit < column_bytes)
         throw std::length_error("structure metric workspace cannot hold one carrier column");
     chunk_width_ = core::checked_index<Eigen::Index>(
         std::min<std::size_t>(workspace_byte_limit / column_bytes,
                               std::numeric_limits<Eigen::Index>::max() / action.n_unique_beta_));
+    if (!carrier_workspace_.try_resize(core::checked_multiply(column_bytes, chunk_width_)))
+        throw std::length_error("structure metric carrier exceeds shared workspace");
 }
 
 Eigen::MatrixXd StructureMetricInverse::apply(const Eigen::Ref<const Eigen::MatrixXd>& rhs) const {

@@ -5,6 +5,7 @@
 #include <span>
 
 #include <functional>
+#include <optional>
 #include <vector>
 
 #include <Eigen/Core>
@@ -89,7 +90,8 @@ struct DavidsonOptions {
 /**
  * @brief Builds dimension-scaled Davidson budgets for consecutive low roots.
  *
- * The basis and projected matrix are bounded by a fixed workspace budget.
+ * The byte allowance can shrink the preferred restart dimension. Without an
+ * explicit allowance, use the shared CPU workspace headroom.
  * Accuracy is mandatory:
  * this core routine does not invent a machine-precision stopping target.
  */
@@ -97,7 +99,12 @@ DavidsonOptions make_davidson_options(Eigen::Index dimension,
                                       int n_roots,
                                       double energy_tolerance,
                                       double relative_residual_tolerance,
-                                      double stationarity_tolerance);
+                                      double stationarity_tolerance,
+                                      std::optional<std::size_t> workspace_bytes = {},
+                                      bool identity_overlap = false);
+
+/** @brief Upper estimate for simultaneous Davidson vector and projected storage. */
+std::size_t davidson_workspace_bytes(Eigen::Index dimension, const DavidsonOptions& options);
 
 /** @brief Deterministic diagonal/random initial block, before any coordinate map. */
 Eigen::MatrixXd

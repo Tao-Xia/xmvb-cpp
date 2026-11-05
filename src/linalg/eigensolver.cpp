@@ -1,6 +1,8 @@
 #include "core/index.hpp"
 #include "linalg/eigensolver.hpp"
 
+#include "core/workspace.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -201,11 +203,25 @@ make_davidson_initial_vectors(const Eigen::Ref<const Eigen::VectorXd>& hamiltoni
     return vectors;
 }
 
+std::size_t davidson_workspace_bytes(Eigen::Index dimension, const DavidsonOptions& options) {
+    const auto n = core::checked_index<std::size_t>(dimension);
+    const auto m = core::checked_index<std::size_t>(options.max_subspace_dimension);
+    const auto roots = core::checked_index<std::size_t>(options.n_roots);
+    const std::size_t images = options.identity_overlap ? 2 : 3;
+    // Live basis and restart copies, plus seeds, Ritz images and corrections.
+    const auto vectors = core::checked_multiply(images, 2 * m + 6 * roots + 4);
+    const auto projected = core::checked_multiply(12, core::checked_multiply(m, m));
+    return core::checked_multiply(
+        sizeof(double), core::checked_add(core::checked_multiply(n, vectors), projected));
+}
+
 DavidsonOptions make_davidson_options(Eigen::Index dimension,
                                       int n_roots,
                                       double energy_tolerance,
                                       double relative_residual_tolerance,
-                                      double stationarity_tolerance) {
+                                      double stationarity_tolerance,
+                                      std::optional<std::size_t> workspace_bytes,
+                                      bool identity_overlap) {
     if (dimension <= 0 || n_roots <= 0 || n_roots > dimension) {
         throw std::invalid_argument("invalid Davidson eigenproblem dimensions");
     }
@@ -214,23 +230,33 @@ DavidsonOptions make_davidson_options(Eigen::Index dimension,
         !std::isfinite(stationarity_tolerance) || stationarity_tolerance <= 0.0) {
         throw std::invalid_argument("Davidson accuracy tolerances must be positive");
     }
-    constexpr long double kBasisBudgetDoubles =
-        static_cast<long double>(512ULL * 1024ULL * 1024ULL) / sizeof(double);
-    const long double n = static_cast<long double>(dimension);
-    const long double capacity = 2.0L * kBasisBudgetDoubles /
-                                 (std::sqrt(9.0L * n * n + 4.0L * kBasisBudgetDoubles) + 3.0L * n);
-    const int max_subspace = core::checked_index<int>(
-        std::min<Eigen::Index>(dimension, static_cast<int>(std::floor(capacity))));
-    if (max_subspace < std::min<Eigen::Index>(dimension, 2LL * n_roots)) {
-        throw std::runtime_error("Davidson selected-root block exceeds the basis workspace budget");
-    }
-    return DavidsonOptions{n_roots,
+    const auto bytes = workspace_bytes ? *workspace_bytes : workspace::available();
+    const int minimum = core::checked_index<int>(std::min<Eigen::Index>(dimension, 2LL * n_roots));
+    // Cap projected work by a restart dimension, independently of memory.
+    // Keep at least four blocks of room beyond the retained Ritz subspace.
+    const int preferred = core::checked_index<int>(
+        std::min<Eigen::Index>({dimension, std::max(32LL, 8LL * n_roots),
+                               std::numeric_limits<int>::max()}));
+    DavidsonOptions options{n_roots,
                            core::checked_index<Eigen::Index>(core::checked_multiply(
                                2, core::checked_index<std::size_t>(dimension))),
-                           max_subspace,
+                           minimum,
                            energy_tolerance,
                            relative_residual_tolerance,
                            stationarity_tolerance};
+    options.identity_overlap = identity_overlap;
+    if (davidson_workspace_bytes(dimension, options) > bytes)
+        throw std::length_error("Davidson workspace cannot hold the selected-root expansion");
+    int lo = minimum, hi = preferred;
+    while (lo < hi) {
+        options.max_subspace_dimension = lo + (hi - lo) / 2 + 1;
+        if (davidson_workspace_bytes(dimension, options) <= bytes)
+            lo = options.max_subspace_dimension;
+        else
+            hi = options.max_subspace_dimension - 1;
+    }
+    options.max_subspace_dimension = lo;
+    return options;
 }
 
 GeneralizedEigenResult

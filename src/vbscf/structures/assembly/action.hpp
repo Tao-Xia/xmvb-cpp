@@ -365,7 +365,7 @@ class StructureAction {
                                               const Eigen::Ref<const Eigen::MatrixXd>& right) const;
 
     /** @brief Whether the carrier diagonal and one-column workspace fit the action budget. */
-    bool supports_carrier_diagonal() const noexcept;
+    bool supports_carrier_diagonal() const;
 
     /** @brief Physical Ritz residual in the orthogonal spin-string carrier.
    * Valid as a structure-space certificate only for a complete variational

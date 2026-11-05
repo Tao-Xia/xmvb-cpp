@@ -7,6 +7,7 @@
 
 #include <Eigen/Core>
 
+#include "core/workspace.hpp"
 #include "vbscf/structures/overlap/spin_metric.hpp"
 
 namespace xmvb::vb {
@@ -86,9 +87,17 @@ class StructureMetricInverse {
                      std::size_t factor_byte_limit,
                      std::size_t workspace_byte_limit);
 
+    /** @brief Build FULL coordinates within the shared allowance. */
+    static std::unique_ptr<StructureMetricInverse> try_build(
+        const StructureAction& action,
+        const xmvb::mcscf::StringTable& alpha_strings,
+        const xmvb::mcscf::StringTable& beta_strings,
+        std::size_t other_work_bytes = 0);
+
   private:
     const StructureAction* action_;
     SpinMetric spin_;
+    workspace::Reservation carrier_workspace_;
     Eigen::Index chunk_width_ = 0;
 };
 

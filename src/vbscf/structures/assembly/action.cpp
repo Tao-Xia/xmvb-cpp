@@ -321,6 +321,7 @@ struct StructureAction::OrthogonalDirectCiData {
     ExteriorOrbitalTransform alpha_transform;
     std::unique_ptr<ExteriorOrbitalTransform> distinct_beta_transform;
     xmvb::mcscf::DirectCiSigmaAction sigma;
+    mutable workspace::Reservation carrier_diagonal_memory;
     mutable std::optional<Eigen::MatrixXd> carrier_diagonal;
 
     OrthogonalDirectCiData(const mcscf::SpinStrings& alpha_determinants,
@@ -833,7 +834,7 @@ StructureAction::expand_structure_tile(const Eigen::Ref<const Eigen::MatrixXd>& 
     return tile;
 }
 
-bool StructureAction::supports_carrier_diagonal() const noexcept {
+bool StructureAction::supports_carrier_diagonal() const {
     if (!direct_ci_)
         return false;
     const double n_active = direct_ci_->integrals.one_electron.rows();
@@ -843,7 +844,8 @@ bool StructureAction::supports_carrier_diagonal() const noexcept {
         4.0 * n_unique_alpha_ * n_unique_beta_ +
         3.0 * (n_unique_alpha_ + static_cast<double>(n_unique_beta_)) * n_active +
         2.0 * n_active * n_active;
-    return sizeof(double) * elements <= static_cast<double>(kStructureActionWorkspaceBytes);
+    return direct_ci_->carrier_diagonal.has_value() ||
+           sizeof(double) * elements <= static_cast<double>(workspace::available());
 }
 
 void StructureAction::divide_carrier_diagonal(Eigen::Ref<Eigen::MatrixXd> carrier,
@@ -853,9 +855,14 @@ void StructureAction::divide_carrier_diagonal(Eigen::Ref<Eigen::MatrixXd> carrie
         carrier.cols() != energies.size() * n_unique_beta_ || !energies.allFinite() ||
         !std::isfinite(eigenvalue))
         throw std::invalid_argument("invalid carrier diagonal input");
-    if (!direct_ci_->carrier_diagonal)
+    if (!direct_ci_->carrier_diagonal) {
+        const auto bytes = core::checked_multiply(
+            sizeof(double), core::checked_multiply(n_unique_alpha_, n_unique_beta_));
+        if (!direct_ci_->carrier_diagonal_memory.try_resize(bytes))
+            throw std::length_error("carrier diagonal exceeds shared workspace");
         direct_ci_->carrier_diagonal =
             direct_ci_->sigma.diagonal(direct_ci_->integrals.one_electron);
+    }
     for (Eigen::Index state = 0; state < energies.size(); ++state)
         for (std::int64_t j = 0; j < n_unique_beta_; ++j)
             for (std::int64_t i = 0; i < n_unique_alpha_; ++i) {
