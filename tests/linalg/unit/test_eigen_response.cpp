@@ -1245,9 +1245,9 @@ bool test_orbital_gauge_projection() {
     const Eigen::MatrixXd dh = directional_test_matrix(n) * states;
     const Eigen::MatrixXd dm = symmetric_test_matrix(n, 0.0) * states;
     const auto full = xmvb::linalg::prepare_equal_weight_generalized_eigen_coupling(
-        energies, states, overlap, residual, dh, dm);
+        energies, states, overlap, states.transpose() * overlap, residual, dh, dm);
     const auto orbital = xmvb::linalg::prepare_equal_weight_generalized_eigen_coupling(
-        energies, states, overlap, residual, dh, dm, false);
+        energies, states, overlap, states.transpose() * overlap, residual, dh, dm, false);
     const double error =
         (full.gauge_selected_matrix_response - orbital.gauge_selected_matrix_response).norm() +
         (full.metric * full.gauge_frame - full.gauge_target).norm() +

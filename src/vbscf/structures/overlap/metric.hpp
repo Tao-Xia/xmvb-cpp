@@ -54,6 +54,12 @@ struct SelectedMetric {
         return upper.transpose() * (upper * c);
     }
 
+    /** @brief Physical state Gram, without cancellation through C^T M C. */
+    Eigen::MatrixXd gram(const Eigen::Ref<const Eigen::MatrixXd>& c) const {
+        const Eigen::MatrixXd images = upper * c;
+        return images.transpose() * images;
+    }
+
     Eigen::MatrixXd solve(const Eigen::Ref<const Eigen::MatrixXd>& rhs) const {
         const Eigen::MatrixXd first = upper.transpose().triangularView<Eigen::Lower>().solve(rhs);
         return upper.triangularView<Eigen::Upper>().solve(first);

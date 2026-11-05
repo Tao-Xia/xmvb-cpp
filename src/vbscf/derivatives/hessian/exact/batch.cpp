@@ -418,6 +418,7 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch_impl(
                             eigen.selected_eigenvalues,
                             eigen.selected_eigenvectors,
                             eigen.overlap_selected,
+                            eigen.selected_metric,
                             eigen.selected_residuals,
                             images.delta_hamiltonian_selected,
                             images.delta_overlap_selected);

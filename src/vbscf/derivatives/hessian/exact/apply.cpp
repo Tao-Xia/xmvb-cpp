@@ -205,8 +205,7 @@ StructureResponseBlock ExactHvpOperator::State::solve_structure_response_block(
     result.coefficient_responses.reserve(scaled_structure_forcing.size());
     result.adjoint_multipliers.reserve(scaled_structure_forcing.size());
     result.scaled_equation_residuals.reserve(scaled_structure_forcing.size());
-    const Eigen::MatrixXd selected_metric =
-        response_operator.selected_eigenvectors.transpose() * response_operator.overlap_selected;
+    const Eigen::MatrixXd& selected_metric = response_operator.selected_metric;
     for (int direction = 0; direction < n_directions; ++direction) {
         Eigen::MatrixXd raw =
             response.delta_selected_eigenvector_matrix.middleCols(direction * n_states, n_states);
@@ -622,6 +621,7 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
                             eigen.selected_eigenvalues,
                             eigen.selected_eigenvectors,
                             eigen.overlap_selected,
+                            eigen.selected_metric,
                             eigen.selected_residuals,
                             images.delta_hamiltonian_selected,
                             images.delta_overlap_selected,

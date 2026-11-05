@@ -29,6 +29,7 @@
 #include "vbscf/orbitals/charts/layout.hpp"
 #include "vbscf/structures/assembly/action.hpp"
 #include "vbscf/structures/orthogonal_ci/metric.hpp"
+#include "vbscf/structures/overlap/metric.hpp"
 #include "linalg/metric_solve.hpp"
 
 namespace {
@@ -197,6 +198,8 @@ accepted_point(const StructureFixture& fixture, int n_states, std::vector<double
     }
     accepted->normalized_state_weights = std::move(weights);
     accepted->selected_state_eigenvectors = fixture.eigenvectors.leftCols(n_states);
+    accepted->selected_metric =
+        std::make_shared<xmvb::vb::SelectedMetric>(fixture.overlap);
     accepted->selected_state_structure_images =
         xmvb::vb::StructureActionResult{fixture.hamiltonian * accepted->selected_state_eigenvectors,
                                         fixture.overlap * accepted->selected_state_eigenvectors};

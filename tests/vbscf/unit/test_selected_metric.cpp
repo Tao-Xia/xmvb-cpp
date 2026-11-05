@@ -477,7 +477,33 @@ void check_metric_resources() {
     require(xmvb::workspace::retained() == before, "selected metric residency leaked");
 }
 
+/** A resolved physical image must not be checked through squared conditioning. */
+void check_state_gram() {
+    Eigen::Matrix2d upper;
+    upper << 1.0, 1.0, 0.0, 1e-8;
+    Eigen::Matrix2d coefficients;
+    coefficients << 1.0, -1e8, 0.0, 1e8;
+    const auto metric = xmvb::vb::SelectedMetric::from_upper(upper);
+    const Eigen::Matrix2d gram = metric.gram(coefficients);
+    const Eigen::Matrix2d normal = coefficients.transpose() * metric.overlap * coefficients;
+    require((gram - Eigen::Matrix2d::Identity()).norm() < 1e-14,
+            "physical factor lost orthonormal selected-state images");
+    require((normal - gram).norm() > .5,
+            "state Gram fixture does not expose normal-equation cancellation");
+    xmvb::vb::AcceptedPointContext point;
+    point.selected_metric = std::make_shared<xmvb::vb::SelectedMetric>(
+        xmvb::vb::SelectedMetric::from_upper(upper));
+    point.selected_state_eigenvectors = coefficients;
+    const auto* cached = &point.state_gram();
+    require((point.state_gram() - gram).norm() < 1e-14 && &point.state_gram() == cached,
+            "accepted consumers did not share the factored selected-state Gram");
+    coefficients.col(1) *= 2.0;
+    require(std::abs(metric.gram(coefficients)(1, 1) - 4.0) < 1e-14,
+            "physical Gram concealed a genuinely unnormalized state");
+}
+
 int main() {
+    check_state_gram();
     check_metric_resources();
     check_physical_qr_factor();
     check_parallel_qr_factor();

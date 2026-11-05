@@ -101,6 +101,7 @@ build_accepted_selected_state_generalized_eigen_response_operator(
         selected_images.hamiltonian -
         selected_images.overlap * response_operator.selected_eigenvalues.asDiagonal();
     response_operator.overlap_selected = selected_images.overlap;
+    response_operator.selected_metric = accepted_point_context.state_gram();
     response_operator.use_equal_weight_subspace_response =
         weights_are_equal(accepted_point_context.normalized_state_weights);
     response_operator.response_recycle_spaces.resize(selected_state_count);

@@ -1448,6 +1448,7 @@ EqualWeightEigenCoupling prepare_equal_weight_generalized_eigen_coupling(
     const Eigen::Ref<const Eigen::VectorXd>& selected_eigenvalues,
     const Eigen::Ref<const Eigen::MatrixXd>& selected_eigenvectors,
     const Eigen::Ref<const Eigen::MatrixXd>& overlap_selected,
+    const Eigen::Ref<const Eigen::MatrixXd>& selected_metric,
     const Eigen::Ref<const Eigen::MatrixXd>& selected_residuals,
     const Eigen::Ref<const Eigen::MatrixXd>& delta_hamiltonian_selected,
     const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_selected,
@@ -1464,7 +1465,10 @@ EqualWeightEigenCoupling prepare_equal_weight_generalized_eigen_coupling(
     }
 
     EqualWeightEigenCoupling data;
-    data.metric = selected_eigenvectors.transpose() * overlap_selected;
+    if (selected_metric.rows() != selected_eigenvalues.size() ||
+        selected_metric.cols() != selected_eigenvalues.size())
+        throw std::invalid_argument("equal-weight coupling state metric dimensions are inconsistent");
+    data.metric = selected_metric;
     const Eigen::MatrixXd identity =
         Eigen::MatrixXd::Identity(data.metric.rows(), data.metric.cols());
     const double metric_error = (data.metric - identity).norm();
@@ -1565,6 +1569,8 @@ solve_equal_weight_generalized_eigen_subspace_response_from_full_spectrum(
         prepare_equal_weight_generalized_eigen_coupling(selected_eigenvalues,
                                                         selected_eigenvectors,
                                                         overlap_selected,
+                                                        selected_eigenvectors.transpose() *
+                                                            overlap_selected,
                                                         ritz_residuals,
                                                         delta_hamiltonian_selected,
                                                         delta_overlap_selected);
@@ -1647,6 +1653,8 @@ EigenSubspaceResponseResult solve_equal_weight_generalized_eigen_subspace_respon
         prepare_equal_weight_generalized_eigen_coupling(selected_eigenvalues,
                                                         selected_eigenvectors,
                                                         overlap_selected,
+                                                        selected_eigenvectors.transpose() *
+                                                            overlap_selected,
                                                         ritz_residuals,
                                                         delta_hamiltonian_selected,
                                                         delta_overlap_selected);
@@ -1943,6 +1951,8 @@ EigenSubspaceResponseResult evaluate_frozen_equal_weight_generalized_eigen_subsp
         prepare_equal_weight_generalized_eigen_coupling(selected_eigenvalues,
                                                         selected_eigenvectors,
                                                         overlap_selected,
+                                                        selected_eigenvectors.transpose() *
+                                                            overlap_selected,
                                                         ritz_residuals,
                                                         delta_hamiltonian_selected,
                                                         delta_overlap_selected);

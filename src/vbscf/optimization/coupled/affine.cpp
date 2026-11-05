@@ -24,7 +24,7 @@ AffineCoupling::AffineCoupling(const AcceptedPointContext& context,
         residual_.col(i) -= context.selected_state_energies[i] * images.overlap.col(i);
         scales_[i] = std::sqrt(2.0 * context.normalized_state_weights[i]);
     }
-    const Eigen::MatrixXd gram = c.transpose() * images.overlap;
+    const Eigen::MatrixXd& gram = context.state_gram();
     metric_inverse_ = gram.llt().solve(Eigen::MatrixXd::Identity(c.cols(), c.cols()));
 }
 

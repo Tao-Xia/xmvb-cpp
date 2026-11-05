@@ -45,6 +45,7 @@ struct AcceptedSelectedStateGeneralizedEigenResponseOperator {
     Eigen::VectorXd selected_eigenvalues;
     Eigen::MatrixXd selected_eigenvectors;
     Eigen::MatrixXd overlap_selected;
+    Eigen::MatrixXd selected_metric;
     /** @brief Accepted Ritz residuals H C - S C E, retained without extra actions. */
     Eigen::MatrixXd selected_residuals;
     const std::vector<double>* full_eigenvalues = nullptr;
