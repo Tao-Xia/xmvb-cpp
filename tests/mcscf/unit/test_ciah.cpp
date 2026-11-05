@@ -1340,6 +1340,62 @@ void check_gradient_independent_curvature() {
     require(!stable.find_negative_curvature(g), "positive Hessian generated negative curvature");
 }
 
+/** @brief Normal AH residual expansion exposes coupling-induced negative curvature.
+ * Both diagonal entries are positive. No independent probe or known negative
+ * seed is supplied; the off-diagonal coupling must enter through the residual.
+ */
+void check_coupled_curvature_macro() {
+    using namespace xmvb::mcscf;
+    using Ops = detail::HostCiahVectorOps;
+    Eigen::Matrix2d h;
+    h << 2.0, 3.0, 3.0, 2.0;
+    const Eigen::Matrix2d metric = Eigen::Vector2d(1.0, 3.0).asDiagonal();
+    const Eigen::Vector2d gradient(1e-4, 0.0);
+    int actions = 0;
+    const auto problem = dense_problem(h, metric, gradient, &actions);
+    CiahOptions options;
+    options.max_cycle = 2;
+    CiahWorkspace workspace(problem, options);
+    const auto maximum = [](const Eigen::VectorXd& x) { return x.cwiseAbs().maxCoeff(); };
+    workspace.set_step_limit(maximum, ciah_max_component);
+    const auto first = workspace.next(gradient);
+    require(first.step.dot(h * first.step) > 0.0 && actions == 1,
+            "coupled curvature fixture is not initially gradient restricted");
+    auto candidate = workspace.next(gradient);
+    require(actions == 2 && candidate.basis_size == 2 &&
+                candidate.step.dot(h * candidate.step) < 0.0 &&
+                gradient.dot(candidate.step) < 0.0 &&
+                maximum(candidate.step) <= ciah_max_component * (1.0 + 1e-12),
+            "normal AH expansion missed or incorrectly scaled the coupled unstable mode");
+    require_close(candidate.hessian_step, h * candidate.step, 1e-12,
+                  "bounded curvature step has an inconsistent physical image");
+    require_close(candidate.metric_step, metric * candidate.step, 1e-12,
+                  "bounded curvature step has an inconsistent metric image");
+    CiahMicroResult micro(0.0, gradient);
+    micro.displacement = candidate.step;
+    micro.hessian_displacement = candidate.hessian_step;
+    micro.last_step = candidate.step;
+    micro.energy_model.add(candidate.step, candidate.hessian_step);
+    micro.candidate = std::move(candidate);
+    struct Trial {
+        double energy;
+    };
+    CiahMacroCallbacks<Ops, Trial> callbacks;
+    callbacks.maximum_component = maximum;
+    callbacks.step_norm = [](const Eigen::VectorXd& x) { return x.norm(); };
+    callbacks.changes_parameters = [](const Eigen::VectorXd& x) { return !x.isZero(0.0); };
+    callbacks.evaluate = [&](const Eigen::VectorXd& p, double scale) {
+        const Eigen::VectorXd x = scale * p;
+        return Trial{gradient.dot(x) + .5 * x.dot(h * x) + .25 * x.array().pow(4).sum()};
+    };
+    callbacks.energy = [](const Trial& t) { return t.energy; };
+    callbacks.terminal = [](Trial&) { return false; };
+    const auto result = run_ciah_macro(workspace, micro, gradient, 0.0, 1e-7, 1e-12,
+                                      Ops{}, callbacks);
+    require(result.trial && result.trial->energy < 0.0 && actions == 2,
+            "ordinary curvature descent required an additional search or lost true-energy descent");
+}
+
 void check_curvature_microstep() {
     using namespace xmvb::mcscf;
     const Eigen::Matrix2d h = Eigen::Vector2d(-2.0, 1.0).asDiagonal();
@@ -1465,6 +1521,7 @@ int main() {
         check_coarse_physical_scaling();
         check_coarse_shift_pole();
         check_curvature_microstep();
+        check_coupled_curvature_macro();
         check_invalid_model_checkpoint();
         check_curvature_macro_candidate();
         check_gradient_independent_curvature();

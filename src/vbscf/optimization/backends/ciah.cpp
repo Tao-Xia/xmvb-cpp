@@ -81,8 +81,7 @@ bool build_accepted_ciah_keyframe(VbScfObjective* objective,
                                   double* trust_radius,
                                   CiahIterationRecord* record,
                                   VbScfOptimizerResult* result,
-                                  CiahMacroStep* accepted,
-                                  bool seek_curvature) {
+                                  CiahMacroStep* accepted) {
     const OrbitalPreparationInput accepted_orbitals = objective->input().orbital_preparation_input;
     NonredundantRetractionMetric orbital_metric(chart, parameter_view, accepted_orbitals);
     record->source_gradient_norm = chart.coordinate_dual_norm(reduced_gradient);
@@ -115,8 +114,7 @@ bool build_accepted_ciah_keyframe(VbScfObjective* objective,
                                  trust_radius,
                                  record,
                                  result,
-                                 accepted,
-                                 seek_curvature);
+                                 accepted);
 }
 
 } // namespace
@@ -142,7 +140,6 @@ BackendRunResult run_ciah_backend(VbScfObjective* objective,
     double final_gradient_l2 = chart.coordinate_dual_norm(projected.reduced_gradient);
     Eigen::VectorXd orbital_guess_packed;
     Eigen::MatrixXd structure_guess;
-    bool seek_curvature = false;
 
     while (run_result.n_iterations < options.max_iterations) {
         if (chart.reduced_size() == 0) {
@@ -157,10 +154,10 @@ BackendRunResult run_ciah_backend(VbScfObjective* objective,
                                        chart,
                                        projected.reduced_gradient,
                                        options.gradient_tolerance)) {
-            seek_curvature = true;
+            result->converged = true;
+            result->termination_reason = "ciah_projected_gradient_tolerance";
+            break;
         }
-        // Independent probing is reserved for a point meeting the ordinary
-        // energy/gradient criteria; normal steps reuse their current AH span.
         prepare_orbital_curvature(*objective, chart, preconditioner, true);
 
         CiahIterationRecord iteration_record;
@@ -178,14 +175,10 @@ BackendRunResult run_ciah_backend(VbScfObjective* objective,
                                           &trust_radius,
                                           &iteration_record,
                                           result,
-                                          &accepted,
-                                          seek_curvature)) {
-            if (seek_curvature)
-                result->ciah_terminal_probe_hvp_actions += iteration_record.orbital_hvp_actions;
+                                          &accepted)) {
             break;
         }
 
-        seek_curvature = false;
         if (!accepted.trial.gradient_ready)
             objective->complete_trial(&accepted.trial);
         accepted.parameters = parameter_view.pack(accepted.trial.orbital_preparation_input);
@@ -227,7 +220,8 @@ BackendRunResult run_ciah_backend(VbScfObjective* objective,
                                         next_geometry,
                                         next_projected.reduced_gradient,
                                         options.gradient_tolerance))) {
-            seek_curvature = true;
+            result->converged = true;
+            result->termination_reason = "ciah_projected_gradient_tolerance";
         }
         chart = std::move(next_geometry);
         projected = std::move(next_projected);

@@ -49,8 +49,7 @@ bool build_ciah_macro_step(VbScfObjective* objective,
                            double* trust_radius,
                            CiahIterationRecord* record,
                            VbScfOptimizerResult* result,
-                           CiahMacroStep* accepted,
-                           bool seek_curvature);
+                           CiahMacroStep* accepted);
 
 } // namespace optimizer_detail
 } // namespace xmvb::vb
