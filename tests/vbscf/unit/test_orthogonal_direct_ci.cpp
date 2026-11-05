@@ -161,7 +161,7 @@ void check_generated_exterior_rows() {
         upper(0, 1) = -1e-250;
         upper(0, 2) = 1e-180;
         const xmvb::vb::ExteriorOrbitalTransform transform(complete_space(3, 1), upper);
-        const std::vector<int> selected{0, 1, 2};
+        const std::vector<xmvb::mcscf::StringIndex> selected{0, 1, 2};
         const auto factors = transform.generate_rows(selected);
         require(factors.nonZeros() == 5 && factors.coeff(0, 1) == -1e-250 &&
                     factors.coeff(0, 2) == 1e-180,
@@ -179,7 +179,7 @@ void check_generated_exterior_rows() {
             }
             const xmvb::vb::ExteriorOrbitalTransform transform(strings, upper);
             const Eigen::MatrixXd reference = explicit_exterior(strings, upper);
-            std::vector<int> selected{
+            std::vector<xmvb::mcscf::StringIndex> selected{
                 static_cast<int>(strings.size()) - 1, 0, static_cast<int>(strings.size() / 2)};
             const Eigen::MatrixXd rows = transform.generate_rows(selected);
             for (int i = 0; i < static_cast<int>(selected.size()); ++i)
@@ -1710,14 +1710,14 @@ void check_streamed_generator_adjoint_requests() {
     // Both readers borrow this storage. Every tile or column request overwrites
     // it, including requests belonging to the other right argument.
     std::vector<double> borrowed_values(n_alpha);
-    std::vector<int> borrowed_rows;
+    std::vector<xmvb::mcscf::StringIndex> borrowed_rows;
     const auto request = [&](const Eigen::MatrixXd& right,
                              double scale,
                              bool transpose,
                              bool compact) -> xmvb::mcscf::DirectCiStreamedGeneratorRequest {
         const Eigen::MatrixXd* carrier = &right;
-        xmvb::mcscf::DirectCiTileReader read = [&, carrier](const std::vector<int>& betas,
-                                                            const std::vector<int>& rows,
+        xmvb::mcscf::DirectCiTileReader read = [&, carrier](const std::vector<xmvb::mcscf::StringIndex>& betas,
+                                                            const std::vector<xmvb::mcscf::StringIndex>& rows,
                                                             Eigen::Ref<Eigen::MatrixXd> values,
                                                             xmvb::mcscf::DirectCiRead mode) {
             borrowed_values.assign(n_alpha, -97.0);
@@ -1781,7 +1781,7 @@ void check_streamed_generator_adjoint_requests() {
     // right argument uses sparse sorted rows; the second borrows dense Eigen
     // columns directly. Neither reader changes a returned column or row list.
     std::vector<std::vector<double>> retained_values(n_beta);
-    std::vector<std::vector<int>> retained_rows(n_beta);
+    std::vector<std::vector<xmvb::mcscf::StringIndex>> retained_rows(n_beta);
     for (int b = 0; b < n_beta; ++b)
         for (int a = 0; a < n_alpha; ++a)
             if (right_a(a, b) != 0.0) {
@@ -1794,8 +1794,8 @@ void check_streamed_generator_adjoint_requests() {
             bool transpose,
             bool compact) -> xmvb::mcscf::DirectCiStreamedGeneratorRequest {
         const Eigen::MatrixXd* carrier = &right;
-        xmvb::mcscf::DirectCiTileReader read = [carrier](const std::vector<int>& betas,
-                                                         const std::vector<int>& rows,
+        xmvb::mcscf::DirectCiTileReader read = [carrier](const std::vector<xmvb::mcscf::StringIndex>& betas,
+                                                         const std::vector<xmvb::mcscf::StringIndex>& rows,
                                                          Eigen::Ref<Eigen::MatrixXd> values,
                                                          xmvb::mcscf::DirectCiRead mode) {
             for (int b = 0; b < static_cast<int>(betas.size()); ++b)
@@ -1899,7 +1899,7 @@ void check_generated_generator_panels() {
         for (int q = 0; q < n; ++q)
             for (int p = 0; p < n; ++p)
                 generator(p, q) = std::cos(0.13 * (p + 1) * (q + 3));
-        std::vector<std::vector<int>> rows(nb);
+        std::vector<std::vector<xmvb::mcscf::StringIndex>> rows(nb);
         std::vector<std::vector<double>> values(nb);
         for (int b = 0; b < nb; ++b)
             for (int a = 0; a < na; ++a)
@@ -1959,8 +1959,8 @@ void check_exchange_reduced_generator() {
         const Eigen::MatrixXd other = (0.37 * left + 0.19 * right_a).eval();
         const auto request = [&](const Eigen::MatrixXd& right, double scale, bool transpose) {
             const auto* carrier = &right;
-            xmvb::mcscf::DirectCiTileReader read = [carrier](const std::vector<int>& betas,
-                                                             const std::vector<int>& rows,
+            xmvb::mcscf::DirectCiTileReader read = [carrier](const std::vector<xmvb::mcscf::StringIndex>& betas,
+                                                             const std::vector<xmvb::mcscf::StringIndex>& rows,
                                                              Eigen::Ref<Eigen::MatrixXd> values,
                                                              xmvb::mcscf::DirectCiRead mode) {
                 for (int b = 0; b < static_cast<int>(betas.size()); ++b)
@@ -2437,8 +2437,8 @@ void check_tiled_integral_direction_case(const std::vector<std::vector<int>>& al
     const auto reader =
         [width, n_beta](const Eigen::MatrixXd& carrier) -> xmvb::mcscf::DirectCiTileReader {
         const Eigen::MatrixXd* source = &carrier;
-        return [source, width, n_beta](const std::vector<int>& betas,
-                                       const std::vector<int>& rows,
+        return [source, width, n_beta](const std::vector<xmvb::mcscf::StringIndex>& betas,
+                                       const std::vector<xmvb::mcscf::StringIndex>& rows,
                                        Eigen::Ref<Eigen::MatrixXd> tile,
                                        xmvb::mcscf::DirectCiRead mode) {
             for (int b = 0; b < static_cast<int>(betas.size()); ++b)
@@ -2452,8 +2452,8 @@ void check_tiled_integral_direction_case(const std::vector<std::vector<int>>& al
         [width, n_beta, compact_output](Eigen::MatrixXd& image) -> xmvb::mcscf::DirectCiTileWriter {
         Eigen::MatrixXd* target = &image;
         return [target, width, n_beta, compact_output](
-                   const std::vector<int>& betas,
-                   const std::vector<int>& rows,
+                   const std::vector<xmvb::mcscf::StringIndex>& betas,
+                   const std::vector<xmvb::mcscf::StringIndex>& rows,
                    const xmvb::mcscf::DirectCiColumnAccumulator& accumulate) {
             for (int b = 0; b < static_cast<int>(betas.size()); ++b)
                 for (int vector = 0; vector < width; ++vector) {
@@ -2461,7 +2461,7 @@ void check_tiled_integral_direction_case(const std::vector<std::vector<int>>& al
                         // Two disjoint, sorted output subsets with holes. Each receives
                         // three halo-range chunks, exercising bounds across sparse rows.
                         for (int part = 0; part < 2; ++part) {
-                            std::vector<int> selected;
+                            std::vector<xmvb::mcscf::StringIndex> selected;
                             for (int i = part; i < static_cast<int>(rows.size()); i += 2)
                                 selected.push_back(rows[i]);
                             if (selected.empty())
@@ -2527,8 +2527,8 @@ void check_tiled_integral_direction_case(const std::vector<std::vector<int>>& al
     const auto counted_reader = [&](const Eigen::MatrixXd& carrier,
                                     int& count) -> xmvb::mcscf::DirectCiTileReader {
         const auto base = reader(carrier);
-        return [base, &count](const std::vector<int>& betas,
-                              const std::vector<int>& rows,
+        return [base, &count](const std::vector<xmvb::mcscf::StringIndex>& betas,
+                              const std::vector<xmvb::mcscf::StringIndex>& rows,
                               Eigen::Ref<Eigen::MatrixXd> tile,
                               xmvb::mcscf::DirectCiRead mode) {
             ++count;
@@ -2706,8 +2706,8 @@ void check_full_square_tiled_gram() {
     const auto reader = [u,
                          width](const Eigen::MatrixXd& carrier) -> xmvb::mcscf::DirectCiTileReader {
         const Eigen::MatrixXd* source = &carrier;
-        return [source, u, width](const std::vector<int>& betas,
-                                  const std::vector<int>& rows,
+        return [source, u, width](const std::vector<xmvb::mcscf::StringIndex>& betas,
+                                  const std::vector<xmvb::mcscf::StringIndex>& rows,
                                   Eigen::Ref<Eigen::MatrixXd> tile,
                                   xmvb::mcscf::DirectCiRead mode) {
             for (int b = 0; b < static_cast<int>(betas.size()); ++b)
@@ -2718,8 +2718,8 @@ void check_full_square_tiled_gram() {
     };
     const auto writer = [u, width](Eigen::MatrixXd& image) -> xmvb::mcscf::DirectCiTileWriter {
         Eigen::MatrixXd* target = &image;
-        return [target, u, width](const std::vector<int>& betas,
-                                  const std::vector<int>& rows,
+        return [target, u, width](const std::vector<xmvb::mcscf::StringIndex>& betas,
+                                  const std::vector<xmvb::mcscf::StringIndex>& rows,
                                   const xmvb::mcscf::DirectCiColumnAccumulator& accumulate) {
             for (int b = 0; b < static_cast<int>(betas.size()); ++b)
                 for (int v = 0; v < width; ++v)
