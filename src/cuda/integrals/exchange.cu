@@ -38,12 +38,14 @@ __global__ void exchange_half(View c,
                               int mu,
                               double* half) {
     const int nu = blockIdx.y, n = static_cast<int>(c.cols), nbf = static_cast<int>(c.rows);
-    const int p = pair(mu, nu), begin = offsets[p], end = offsets[p + 1];
-    const auto work = static_cast<std::int64_t>(end - begin) * n;
+    const int p = pair(mu, nu);
+    const std::int64_t begin = offsets[p], end = offsets[p + 1];
+    const auto work = (end - begin) * n;
     for (std::int64_t k = blockIdx.x * static_cast<std::int64_t>(blockDim.x) + threadIdx.x;
          k < work;
          k += gridDim.x * static_cast<std::int64_t>(blockDim.x)) {
-        const int edge = begin + static_cast<int>(k / n), b = static_cast<int>(k % n);
+        const std::int64_t edge = begin + k / n;
+        const int b = static_cast<int>(k % n);
         const int q = columns[edge], i = first[q], j = second[q];
         const double value = values[edge];
         atomicAdd(half + (static_cast<std::int64_t>(nu) * nbf + i) * n + b,

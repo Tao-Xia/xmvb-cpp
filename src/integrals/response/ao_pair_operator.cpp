@@ -15,7 +15,6 @@
 #include "parallel/workers.hpp"
 
 namespace xmvb::integrals::detail {
-namespace {
 
 /**
  * @brief Contracts disjoint CSR rows with shared inputs and no private image.
@@ -33,8 +32,8 @@ void contract_rows(const PairAddress* offsets, const PairAddress* columns, const
     for (std::size_t row = first_row; row < end_row; ++row) {
         double* output = target + row * width;
         std::fill_n(output, width, 0.0);
-        int edge = offsets[row];
-        const int end = offsets[row + 1];
+        PairAddress edge = offsets[row];
+        const PairAddress end = offsets[row + 1];
         // Consume eight consecutive edges before writing the output row again.
         // CSR metadata is still read once and additions retain their edge order.
         for (; end - edge >= 8; edge += 8) {
@@ -77,8 +76,6 @@ void contract_rows(const PairAddress* offsets, const PairAddress* columns, const
         }
     }
 }
-
-} // namespace
 
 void apply_exact_ao_pair_kernel(const AoIntegralInput& ao,
                                 const Eigen::Ref<const ExactCtxPairMatrix>& coefficients,

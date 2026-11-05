@@ -9,6 +9,16 @@
 
 namespace xmvb::integrals::detail {
 
+/** @brief Contracts a disjoint row range using global CSR edge offsets. */
+void contract_rows(const PairAddress* offsets,
+                   const PairAddress* columns,
+                   const double* values,
+                   const double* source,
+                   double* target,
+                   std::size_t width,
+                   std::size_t first_row,
+                   std::size_t end_row);
+
 /** @brief Exact accepted/directional row contraction from compact orbital factors. */
 void apply_generated_ao_pair_rows(const AoIntegralInput&,
                                   const Eigen::Ref<const Eigen::MatrixXd>&,
