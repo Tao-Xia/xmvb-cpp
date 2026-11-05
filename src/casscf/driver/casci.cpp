@@ -8,34 +8,34 @@
 #include <utility>
 #include "mcscf/ci/sigma.hpp"
 #include "mcscf/ci/spin.hpp"
+#include "mcscf/ci/workspace.hpp"
 
 namespace xmvb::casscf {
 namespace {
 
 // Keep the resource check ahead of determinant-string and product-carrier
 // construction for the integrals entry point.
-linalg::DavidsonOptions casci_budget(int dimension, const CasciOptions& options) {
+struct CasciBudget {
+    linalg::DavidsonOptions davidson;
+    std::size_t solver_bytes = 0;
+};
+
+CasciBudget
+casci_budget(int dimension, int pairs, const CasciOptions& options, std::size_t action_bytes) {
     if (dimension < 1 || options.n_roots < 1)
         throw std::invalid_argument("invalid pure-spin CASCI problem");
-    constexpr std::size_t sigma_bytes = 64ULL * 1024 * 1024;
-    const std::size_t bytes_per_vector = sizeof(double) * static_cast<std::size_t>(dimension);
-    const std::size_t fixed_vectors = 12ULL + 8ULL * options.n_roots;
-    if (options.workspace_bytes <= sigma_bytes ||
-        fixed_vectors > (options.workspace_bytes - sigma_bytes) / bytes_per_vector)
+    const std::size_t minimum_sigma = 2ULL * pairs * sizeof(double);
+    if (minimum_sigma >= action_bytes)
         throw std::length_error("CASCI exceeds its solver-workspace budget");
-    const auto available =
-        (options.workspace_bytes - sigma_bytes) / bytes_per_vector - fixed_vectors;
-    const int maximum_basis = static_cast<int>(std::min<std::size_t>(dimension, available / 4));
     auto budget = linalg::make_davidson_options(dimension,
                                                 options.n_roots,
                                                 options.energy_tolerance,
                                                 options.residual_tolerance,
-                                                options.stationarity_tolerance);
-    budget.max_subspace_dimension = std::min(budget.max_subspace_dimension, maximum_basis);
-    if (budget.max_subspace_dimension < options.n_roots)
-        throw std::length_error("CASCI budget leaves no Davidson expansion space");
-    budget.identity_overlap = true;
-    return budget;
+                                                options.stationarity_tolerance,
+                                                action_bytes - minimum_sigma,
+                                                true);
+    const auto solver_bytes = linalg::davidson_workspace_bytes(dimension, budget);
+    return {std::move(budget), solver_bytes};
 }
 
 } // namespace
@@ -52,7 +52,9 @@ solve_casci(const CasIntegrals& integrals, int electrons, int spin, const CasciO
     if (b && a > static_cast<std::size_t>(std::numeric_limits<int>::max()) / b)
         throw std::length_error("CASCI product space exceeds index range");
     const int dimension = static_cast<int>(a * b);
-    (void)casci_budget(dimension, options);
+    const int pairs = n * (n + 1) / 2;
+    (void)casci_budget(
+        dimension, pairs, options, std::min(options.workspace_bytes, workspace::available()));
     mcscf::SpinSpace space(n, na, nb);
     mcscf::DirectCiSigmaAction sigma(space.alpha(), space.beta(), integrals.active);
     return solve_casci(
@@ -73,7 +75,13 @@ CasciResult solve_casci(const mcscf::DirectCiSigmaAction& sigma,
             static_cast<std::size_t>(std::numeric_limits<int>::max()) / nb)
         throw std::invalid_argument("invalid operator-backed pure-spin CASCI problem");
     const int dimension = na * nb;
-    auto budget = casci_budget(dimension, options);
+    const mcscf::CiWorkspace operation(options.workspace_bytes, false);
+    auto resources =
+        casci_budget(dimension, sigma.channel_kernel().rows(), options, operation.bytes());
+    workspace::Reservation solver_capacity;
+    if (!solver_capacity.try_resize(resources.solver_bytes))
+        throw std::length_error("CASCI solver reservation exceeds shared workspace");
+    auto budget = std::move(resources.davidson);
     const int spin_dimension = space.dimension(spin);
     if (options.n_roots > spin_dimension)
         throw std::invalid_argument("more CASCI roots requested than the target-spin dimension");

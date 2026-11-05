@@ -22,7 +22,39 @@ namespace xmvb::vb {
 namespace {
 
 using Strings = mcscf::StringTable;
-constexpr std::size_t kRowWorkspaceBytes = 8 * 1024 * 1024;
+/** Compare one exact selected CG solve with a physical-image QR construction.
+ * A selected metric can require n independent Krylov directions. Each streamed
+ * application performs F and F^T. Factoring F performs n forward images plus
+ * the Householder reduction. This is a work estimate, not an accuracy gate.
+ */
+bool prefer_selected_factor(const StructureAction& action,
+                            const ExteriorOrbitalTransform& alpha,
+                            const ExteriorOrbitalTransform& beta) {
+    const auto dimension = core::checked_index<std::size_t>(action.n_structures());
+    const auto square = core::checked_multiply(dimension, dimension);
+    const auto minimum = core::checked_add(
+        core::checked_add(core::checked_multiply(5, square), dimension),
+        std::max({core::checked_multiply(4, dimension),
+                  core::checked_multiply(4, static_cast<std::size_t>(beta.dimension())),
+                  core::checked_multiply(2, static_cast<std::size_t>(alpha.dimension()))}));
+    if (minimum > workspace::available() / sizeof(double))
+        return false;
+    const long double n = dimension;
+    const long double na = alpha.dimension(), nb = beta.dimension();
+    const long double forward = 2 * na * nb +
+                                2 * (alpha.shear_pair_count() * nb + beta.shear_pair_count() * na) +
+                                action.storage().expansion_bytes / sizeof(double);
+    const long double qr = n * forward + 2 * na * nb * n * n - (2.0L / 3) * n * n * n;
+    // A dense selected inverse model takes two triangular solves per direction.
+    const long double streamed = 2 * n * forward + 2 * n * n * n;
+    return qr <= streamed;
+}
+
+Eigen::Index row_extent(std::size_t bytes, std::size_t row_bytes, Eigen::Index rows) {
+    if (!row_bytes || bytes < row_bytes)
+        throw std::length_error("overlap workspace cannot hold one spin-string row");
+    return static_cast<Eigen::Index>(std::min<std::size_t>(rows, bytes / row_bytes));
+}
 
 bool validate_strings(const Strings& strings, int orbitals) {
     if (strings.empty())
@@ -160,11 +192,21 @@ Eigen::MatrixXd apply_pair_kernel(const StructureAction& action,
                                   const Eigen::Ref<const Eigen::MatrixXd>& coeff) {
     const Eigen::Index na = core::checked_index<Eigen::Index>(alpha.size());
     const Eigen::Index nb = core::checked_index<Eigen::Index>(beta.size());
-    Eigen::MatrixXd result(action.n_structures(), coeff.cols());
+    const std::size_t fixed_bytes =
+        sizeof(double) * (static_cast<std::size_t>(action.n_structures()) * (coeff.cols() + 2) +
+                          2 * nb + 6 * kernel.size());
+    const auto available = workspace::available();
+    if (fixed_bytes >= available)
+        throw std::length_error("overlap outputs exceed shared workspace");
     const std::size_t denominator =
         sizeof(double) * static_cast<std::size_t>(std::max<Eigen::Index>(1, 2 * nb + 1));
-    const Eigen::Index rows_per_tile = std::max<Eigen::Index>(
-        1, std::min<Eigen::Index>(na, static_cast<int>(kRowWorkspaceBytes / denominator)));
+    const Eigen::Index rows_per_tile = row_extent(available - fixed_bytes, denominator, na);
+    workspace::Reservation capacity;
+    const auto bytes = fixed_bytes + rows_per_tile * denominator;
+    if (!capacity.try_resize(bytes))
+        throw std::length_error("overlap rows exceed shared workspace");
+    const workspace::Temporary temporary(bytes);
+    Eigen::MatrixXd result(action.n_structures(), coeff.cols());
     for (int col = 0; col < coeff.cols(); ++col) {
         Eigen::MatrixXd one_coeff = coeff.col(col);
         Eigen::MatrixXd one_result = Eigen::MatrixXd::Zero(action.n_structures(), 1);
@@ -212,9 +254,11 @@ RepresentationOverlap::RepresentationOverlap(const StructureAction& action,
         throw std::invalid_argument("spin strings do not match action carrier");
 }
 
-bool RepresentationOverlap::PreparedMetric::fits_selected(Eigen::Index dimension) noexcept {
+bool RepresentationOverlap::PreparedMetric::fits_selected(Eigen::Index dimension,
+                                                          std::size_t bytes) noexcept {
     const std::size_t n = dimension > 0 ? static_cast<std::size_t>(dimension) : 0;
-    return n && n <= kRowWorkspaceBytes / (4 * sizeof(double)) / n;
+    // Two retained matrices and the minimum QR factor/work panel coexist.
+    return n && n <= bytes / (6 * sizeof(double)) / n;
 }
 
 RepresentationOverlap::PreparedMetric::PreparedMetric(
@@ -233,8 +277,12 @@ RepresentationOverlap::PreparedMetric::PreparedMetric(
         }
         // F=Q R, M=R^T R. Factoring F avoids the squared conditioning and
         // rounding loss of forming M before its factor. Only R is retained.
-        if (fits_selected(action.n_structures())) {
+        if (fits_selected(action.n_structures()) &&
+            prefer_selected_factor(action, *alpha_transform_, *beta_transform_)) {
             const auto n = static_cast<std::size_t>(action.n_structures());
+            workspace::Reservation retained;
+            if (!retained.try_resize(2 * sizeof(double) * n * n))
+                throw std::length_error("selected metric exceeds shared workspace");
             // Request only enough shared workspace to consume a complete
             // alpha panel once per beta row. A small selected-Gram admission
             // budget must not force repeated exterior transforms over alpha
@@ -251,7 +299,8 @@ RepresentationOverlap::PreparedMetric::PreparedMetric(
                 workspace::available(),
                 core::checked_multiply(core::checked_multiply(elements, workers), sizeof(double)));
             selected_metric_ = std::make_shared<SelectedMetric>(SelectedMetric::from_upper(
-                action.selected_overlap_factor(*alpha_transform_, *beta_transform_, bytes)));
+                action.selected_overlap_factor(*alpha_transform_, *beta_transform_, bytes),
+                std::move(retained)));
             alpha_transform_.reset();
             beta_transform_.reset();
         }
@@ -292,7 +341,6 @@ Eigen::MatrixXd RepresentationOverlap::apply(const Eigen::Ref<const Eigen::Matri
     validate_chart(right_upper, n_active_);
     if (coeff.rows() != action_->n_structures() || coeff.cols() <= 0 || !coeff.allFinite())
         throw std::invalid_argument("invalid structure block");
-    Eigen::MatrixXd result(action_->n_structures(), coeff.cols());
     if (complete_carrier_) {
         ExteriorOrbitalTransform la(alpha_, left_upper), lb(beta_, left_upper);
         ExteriorOrbitalTransform ra(alpha_, right_upper), rb(beta_, right_upper);
@@ -316,7 +364,6 @@ RepresentationOverlap::apply_direction(const Eigen::Ref<const Eigen::MatrixXd>& 
         throw std::invalid_argument("invalid structure block");
     const Eigen::Index na = core::checked_index<Eigen::Index>(alpha_.size());
     const Eigen::Index nb = core::checked_index<Eigen::Index>(beta_.size());
-    Eigen::MatrixXd result(action_->n_structures(), coeff.cols());
     if (complete_carrier_) {
         ExteriorOrbitalTransform la(alpha_, left_upper), lb(beta_, left_upper);
         ExteriorOrbitalTransform ra(alpha_, right_upper), rb(beta_, right_upper);
@@ -329,10 +376,21 @@ RepresentationOverlap::apply_direction(const Eigen::Ref<const Eigen::MatrixXd>& 
     const Eigen::MatrixXd k = left_upper.transpose() * right_upper;
     const Eigen::MatrixXd dk =
         delta_left_upper.transpose() * right_upper + left_upper.transpose() * delta_right_upper;
+    const std::size_t fixed_bytes =
+        sizeof(double) * (static_cast<std::size_t>(action_->n_structures()) * (coeff.cols() + 2) +
+                          2 * nb + 6 * k.size());
+    const auto available = workspace::available();
+    if (fixed_bytes >= available)
+        throw std::length_error("directional overlap outputs exceed shared workspace");
     const std::size_t denominator =
         sizeof(double) * static_cast<std::size_t>(std::max<Eigen::Index>(1, 4 * nb + 1));
-    const Eigen::Index rows_per_tile = std::max<Eigen::Index>(
-        1, std::min<Eigen::Index>(na, static_cast<int>(kRowWorkspaceBytes / denominator)));
+    const Eigen::Index rows_per_tile = row_extent(available - fixed_bytes, denominator, na);
+    workspace::Reservation capacity;
+    const auto bytes = fixed_bytes + rows_per_tile * denominator;
+    if (!capacity.try_resize(bytes))
+        throw std::length_error("directional overlap rows exceed shared workspace");
+    const workspace::Temporary temporary(bytes);
+    Eigen::MatrixXd result(action_->n_structures(), coeff.cols());
     for (int col = 0; col < coeff.cols(); ++col) {
         Eigen::MatrixXd one_coeff = coeff.col(col);
         Eigen::MatrixXd one_result = Eigen::MatrixXd::Zero(action_->n_structures(), 1);
@@ -393,7 +451,7 @@ UpperPair RepresentationOverlap::adjoint(const Eigen::Ref<const Eigen::MatrixXd>
                                               rb,
                                               nullptr,
                                               nullptr,
-                                              64ULL * 1024ULL * 1024ULL,
+                                              workspace::available(),
                                               side);
     }
     const Eigen::MatrixXd k = left_upper.transpose() * right_upper;
@@ -456,7 +514,7 @@ RepresentationOverlap::adjoint_direction(const Eigen::Ref<const Eigen::MatrixXd>
         ExteriorOrbitalTransform ra(alpha_, right_upper), rb(beta_, right_upper);
         const Eigen::MatrixXd dl = delta_left_upper, dr = delta_right_upper;
         return action_->cross_overlap_adjoint(
-            left_coeff, right_coeff, la, lb, ra, rb, &dl, &dr, 64ULL * 1024ULL * 1024ULL, side);
+            left_coeff, right_coeff, la, lb, ra, rb, &dl, &dr, workspace::available(), side);
     }
     const Eigen::MatrixXd k = left_upper.transpose() * right_upper;
     const Eigen::MatrixXd dk =

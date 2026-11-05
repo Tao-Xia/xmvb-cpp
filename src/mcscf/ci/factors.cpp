@@ -1,6 +1,7 @@
 #include <cstdint>
 #include "mcscf/ci/factors.hpp"
 #include "mcscf/ci/factors_internal.hpp"
+#include "mcscf/ci/workspace.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -328,6 +329,8 @@ DirectCiIntegralAdjoint factor_integral_adjoint(const DirectCiSigmaAction& sigma
     Eigen::MatrixXd gradient = Eigen::MatrixXd::Zero(d, d);
     if (!left.count || !right.count)
         return sigma.pullback_channel_kernel(gradient);
+    const CiWorkspace operation(workspace_bytes, false);
+    workspace_bytes = operation.bytes();
     // Self-adjointness permits either bilinear order. Include the independent
     // support-map multiplication cost, not only the number of source factors.
     const bool first = detail::integral_bra_is_left(sigma, left, right, workspace_bytes);

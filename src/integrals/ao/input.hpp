@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <algorithm>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -164,8 +165,10 @@ struct AoIntegralInput {
     /** @brief Canonical AO two-electron integral representation. */
     AoPairGraph pair_graph;
 
-    /** @brief Additional shared exchange image plus peak workspace budget; zero disables it. */
-    std::size_t exact_exchange_memory_budget_bytes = 64 * 1024 * 1024;
+    /** @brief Optional upper bound for the exchange image and its peak scratch.
+     * Unset uses the shared CPU workspace; an explicit zero disables the image.
+     */
+    std::optional<std::size_t> exact_exchange_memory_budget_bytes;
 };
 
 } // namespace xmvb::integrals

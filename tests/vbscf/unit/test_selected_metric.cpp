@@ -460,7 +460,25 @@ void doublet_case() {
 
 } // namespace
 
+/** Resource admission follows dimensions and bytes, without a 512-structure boundary. */
+void check_metric_resources() {
+    using xmvb::vb::RepresentationOverlap;
+    constexpr Eigen::Index dimension = 600;
+    constexpr std::size_t bytes = 6 * sizeof(double) * dimension * dimension;
+    require(RepresentationOverlap::PreparedMetric::fits_selected(dimension, bytes) &&
+                !RepresentationOverlap::PreparedMetric::fits_selected(dimension, bytes - 1),
+            "selected factor admission does not follow actual resource requirements");
+    const auto before = xmvb::workspace::retained();
+    {
+        const xmvb::vb::SelectedMetric metric(Eigen::Matrix3d::Identity());
+        require(xmvb::workspace::retained() == before + 2 * 9 * sizeof(double),
+                "selected metric and factor are missing from shared residency");
+    }
+    require(xmvb::workspace::retained() == before, "selected metric residency leaked");
+}
+
 int main() {
+    check_metric_resources();
     check_physical_qr_factor();
     check_parallel_qr_factor();
     check_selected_spin_metric();

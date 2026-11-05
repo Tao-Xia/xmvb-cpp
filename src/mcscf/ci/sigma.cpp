@@ -1,6 +1,7 @@
 #include "core/index.hpp"
 #include "mcscf/ci/sigma.hpp"
 #include "mcscf/ci/sigma_schedule.hpp"
+#include "mcscf/ci/workspace.hpp"
 
 #include <algorithm>
 #include <array>
@@ -523,7 +524,8 @@ DirectCiSigmaAction::contract_channels(const Eigen::Ref<const Eigen::MatrixXd>& 
     // Flatten the contracted spin-string rows into two shared, bounded tiles.
     // Each output block has one owner: no thread-private pair-square gradient
     // and no serial reduction of those gradients are needed.
-    constexpr std::size_t workspace_bytes = 64ULL * 1024ULL * 1024ULL;
+    const CiWorkspace operation(workspace::available(), false);
+    const std::size_t workspace_bytes = operation.bytes();
     const std::size_t bytes_per_row = 2ULL * n_pairs * sizeof(double);
     if (bytes_per_row > workspace_bytes) {
         throw std::runtime_error("one direct-CI adjoint row exceeds workspace budget");

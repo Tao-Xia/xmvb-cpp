@@ -18,9 +18,6 @@
 
 namespace xmvb::vb::detail {
 
-/** @brief Existing structure-action workspace; panels share equal quarters. */
-inline constexpr std::size_t kStructureTileWorkspaceBytes = 256ULL * 1024 * 1024;
-
 /** @brief Compare exact beta contractions, independently of residency.
  * Row sampling costs touched_products * sampled_beta_columns multiply-adds. Applying the
  * ordered exterior factors costs n_alpha * (n_beta + shear_pairs). Alpha

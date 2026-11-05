@@ -10,6 +10,7 @@
 
 #include <Eigen/Core>
 
+#include "core/workspace.hpp"
 #include "mcscf/ci/integrals.hpp"
 #include "mcscf/ci/links.hpp"
 #include "mcscf/ci/string_table.hpp"
@@ -255,7 +256,7 @@ class DirectCiSigmaAction {
                      const ProductSupport* support = nullptr,
                      int exchange_parity = 0,
                      const DirectCiColumnRelease& release = {},
-                     std::size_t workspace_bytes = 64ULL * 1024 * 1024,
+                     std::size_t workspace_bytes = workspace::available(),
                      bool source_projected_image = false) const;
 
     /** @brief Stream H*response and the integral adjoint of <response,H*state>.
@@ -267,15 +268,15 @@ class DirectCiSigmaAction {
    * an adjoint-only request. Support must contain both inputs; a nonzero
    * exchange parity certifies that both have that same parity.
    */
-    DirectCiIntegralAdjoint apply_tiled_with_adjoint(int block_width,
-                                                     const DirectCiTileReader& response,
-                                                     const DirectCiTileWriter& add_columns,
-                                                     const DirectCiTileReader& state = {},
-                                                     const ProductSupport* support = nullptr,
-                                                     int exchange_parity = 0,
-                                                     const DirectCiColumnRelease& release = {},
-                                                     std::size_t workspace_bytes = 64ULL * 1024 *
-                                                                                   1024) const;
+    DirectCiIntegralAdjoint
+    apply_tiled_with_adjoint(int block_width,
+                             const DirectCiTileReader& response,
+                             const DirectCiTileWriter& add_columns,
+                             const DirectCiTileReader& state = {},
+                             const ProductSupport* support = nullptr,
+                             int exchange_parity = 0,
+                             const DirectCiColumnRelease& release = {},
+                             std::size_t workspace_bytes = workspace::available()) const;
 
     /** @brief Fuse H*response + deltaH*state with the integral adjoint.
    * The required state reader supplies unweighted coefficients. Both readers
@@ -288,17 +289,17 @@ class DirectCiSigmaAction {
    * shared channel slabs and one input halo are live within the supplied tile
    * workspace; neither reader nor writer may retain a batch view.
    */
-    DirectCiIntegralAdjoint apply_tiled_direction(int block_width,
-                                                  const DirectCiTileReader& response,
-                                                  const DirectCiTileReader& state,
-                                                  const DirectCiSigmaAction& direction,
-                                                  const DirectCiTileWriter& add_columns,
-                                                  const DirectCiTileWriter& add_forcing = {},
-                                                  const ProductSupport* support = nullptr,
-                                                  int exchange_parity = 0,
-                                                  const DirectCiColumnRelease& release = {},
-                                                  std::size_t workspace_bytes = 64ULL * 1024 *
-                                                                                1024) const;
+    DirectCiIntegralAdjoint
+    apply_tiled_direction(int block_width,
+                          const DirectCiTileReader& response,
+                          const DirectCiTileReader& state,
+                          const DirectCiSigmaAction& direction,
+                          const DirectCiTileWriter& add_columns,
+                          const DirectCiTileWriter& add_forcing = {},
+                          const ProductSupport* support = nullptr,
+                          int exchange_parity = 0,
+                          const DirectCiColumnRelease& release = {},
+                          std::size_t workspace_bytes = workspace::available()) const;
 
     /** @brief Independent responses sharing one accepted scatter per tile.
    * Each returned integral adjoint is <request.response,H*state>, without
@@ -314,7 +315,7 @@ class DirectCiSigmaAction {
                           const ProductSupport* support = nullptr,
                           int exchange_parity = 0,
                           const DirectCiColumnRelease& release = {},
-                          std::size_t workspace_bytes = 64ULL * 1024 * 1024) const;
+                          std::size_t workspace_bytes = workspace::available()) const;
 
     /** @brief Hamiltonian diagonal on the unique alpha/beta product carrier.
    * Uses occupation lists and the retained two-electron kernel, not sigma
@@ -466,7 +467,7 @@ class DirectCiSigmaAction {
                    const ProductSupport* support,
                    int exchange_parity,
                    const DirectCiColumnRelease& release = {},
-                   std::size_t workspace_bytes = 64ULL * 1024 * 1024,
+                   std::size_t workspace_bytes = workspace::available(),
                    bool source_projected_image = false) const;
 
     /** @brief Cooperative sigma contraction inside the current OpenMP team.

@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "mcscf/ci/factors.hpp"
+#include "mcscf/ci/workspace.hpp"
 #include "vbscf/structures/assembly/sources.hpp"
 #include "vbscf/structures/orthogonal_ci/integrals.hpp"
 
@@ -93,9 +94,10 @@ StructureAction::source_integral_action(const StructureAdjointState& state,
                                           scalar ? nullptr : output_generator,
                                           !scalar,
                                           energy);
+        const mcscf::CiWorkspace operation(workspace::available(), false);
         mcscf::FactorActionWorkspace workspace(source,
                                                action.channel_kernel().rows(),
-                                               mcscf::kFactorWorkspaceBytes,
+                                               operation.bytes(),
                                                false,
                                                output_generator ? 2 : 0);
         return {

@@ -9,6 +9,7 @@
 
 #include <Eigen/Core>
 
+#include "core/workspace.hpp"
 #include "vbscf/core/contracts/input.hpp"
 #include "mcscf/optimization/trace.hpp"
 #include "integrals/active/two_electron.hpp"
@@ -211,9 +212,13 @@ SelectedStateDirectionalStructureImages build_selected_structure_direction_from_
             xmvb::integrals::materialize_raw_active_integrals(accepted_two_electron));
         raw_accepted_two_electron = &*raw_accepted_two_electron_storage;
     }
+    workspace::Reservation pair_capacity;
+    const auto pair_budget = workspace::available() / 2;
+    if (!pair_budget || !pair_capacity.try_resize(pair_budget))
+        throw std::length_error("directional structure pair tiles exceed shared workspace");
     const detail::PairTileExtents tile_extents =
         detail::plan_local_response_tiles(
-            same_spin, n_active_orbitals, accepted_two_electron, n_states)
+            same_spin, n_active_orbitals, accepted_two_electron, n_states, 1, pair_budget)
             .extents;
 
     Eigen::MatrixXd delta_hamiltonian_selected =
@@ -383,7 +388,9 @@ SelectedStateDirectionalStructureImages build_selected_structure_direction_from_
                     alpha_channel, beta_channel, accepted_tile, same_tile, opposite_tile);
             }
         },
-        n_states);
+        n_states,
+        pair_budget);
+    pair_capacity.try_resize(0);
 
     SelectedStateDirectionalStructureImages result;
     result.delta_hamiltonian_selected = std::move(delta_hamiltonian_selected);

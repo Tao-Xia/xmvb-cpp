@@ -23,7 +23,7 @@ StructureAction::project_source_adjoint(const mcscf::SpinFactorSource& source,
                                         bool project_output,
                                         double residual_energy) const {
     // Image and covector slabs coexist, so partition one budget, not two copies.
-    const mcscf::CiWorkspace operation(mcscf::kFactorWorkspaceBytes, false);
+    const mcscf::CiWorkspace operation(workspace::available(), false);
     const std::size_t image_bytes = operation.bytes() / 2;
     mcscf::FactorActionWorkspace workspace(source,
                                            sigma.channel_kernel().rows(),
@@ -40,7 +40,7 @@ StructureAction::project_source_adjoint(const mcscf::SpinFactorSource& source,
         return result;
     const std::size_t reductions =
         static_cast<std::size_t>(effective_openmp_thread_count() + 1) * n * n;
-    const std::size_t capacity = (mcscf::kFactorWorkspaceBytes - image_bytes) / sizeof(double);
+    const std::size_t capacity = (operation.bytes() - image_bytes) / sizeof(double);
     const std::size_t fixed = reductions + rows * columns;
     const bool mapped = mcscf::detail::use_amplitude_map(right);
     // Accumulating all right covectors traverses generator links only once.

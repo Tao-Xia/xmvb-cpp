@@ -242,8 +242,7 @@ class StructureAction {
    * order also permits independent comparisons against the product-tile order.
    */
     StructureActionResult apply_sources(const Eigen::Ref<const Eigen::MatrixXd>& vectors,
-                                        std::size_t workspace_bytes = 64ULL * 1024ULL *
-                                                                      1024ULL) const;
+                                        std::size_t workspace_bytes = workspace::available()) const;
 
     /**
    * @brief Applies the exact first derivative of a complete-space direct-CI action.
@@ -405,7 +404,7 @@ class StructureAction {
                                   const ExteriorTransformDirection* delta_left_beta = nullptr,
                                   const ExteriorTransformDirection* delta_right_alpha = nullptr,
                                   const ExteriorTransformDirection* delta_right_beta = nullptr,
-                                  std::size_t workspace_bytes = 64ULL * 1024ULL * 1024ULL) const;
+                                  std::size_t workspace_bytes = workspace::available()) const;
 
     /** @brief Streaming QR of physical selected-structure images, without normal equations. */
     Eigen::MatrixXd selected_overlap_factor(const ExteriorOrbitalTransform& alpha,
@@ -424,7 +423,7 @@ class StructureAction {
                                     const ExteriorOrbitalTransform& rb,
                                     const Eigen::MatrixXd* delta_left = nullptr,
                                     const Eigen::MatrixXd* delta_right = nullptr,
-                                    std::size_t workspace_bytes = 64ULL * 1024ULL * 1024ULL,
+                                    std::size_t workspace_bytes = workspace::available(),
                                     OverlapSide side = OverlapSide::Both) const;
 
     /** @brief Shared finite-transport VJP and reference coefficient image. */
@@ -438,7 +437,7 @@ class StructureAction {
                                      const ExteriorOrbitalTransform& origin_alpha,
                                      const ExteriorOrbitalTransform& origin_beta,
                                      const Eigen::MatrixXd& origin_direction,
-                                     std::size_t workspace_bytes = 64ULL * 1024ULL * 1024ULL) const;
+                                     std::size_t workspace_bytes = workspace::available()) const;
 
     /**
    * @brief Contracts one rectangular unique-string-product image tile.

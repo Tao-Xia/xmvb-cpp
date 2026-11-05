@@ -2,6 +2,7 @@
 
 #include <memory>
 
+#include "core/workspace.hpp"
 #include "mcscf/ci/integrals.hpp"
 #include "vbscf/structures/assembly/action.hpp"
 
@@ -9,12 +10,19 @@ namespace xmvb::vb {
 
 /** @brief Immutable accepted-point contractions; no spin-product images. */
 struct OperatorFirstState {
+    OperatorFirstState() = default;
+    OperatorFirstState(const OperatorFirstState&) = delete;
+    OperatorFirstState& operator=(const OperatorFirstState&) = delete;
+    OperatorFirstState(OperatorFirstState&&) = default;
+    OperatorFirstState& operator=(OperatorFirstState&&) = default;
     /** Shared identity token prevents reuse after the physical point is replaced. */
     std::shared_ptr<const void> point;
     /** Canonical one-body and ordered-pair integral cotangents. */
     Eigen::MatrixXd one, two;
     /** Raw residual-generator moment, including the fixed Rayleigh multiplier. */
     Eigen::MatrixXd moment;
+    /** Shared retained capacity follows this accepted point across adjoint-state copies. */
+    std::shared_ptr<workspace::Reservation> residency;
 };
 
 struct OperatorFirstWork {

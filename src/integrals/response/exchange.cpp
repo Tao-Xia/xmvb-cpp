@@ -2,10 +2,12 @@
 #include "integrals/response/adjoint.hpp"
 
 #include <algorithm>
+#include <limits>
 #include <stdexcept>
 
 #include "parallel/openmp.hpp"
 #include "core/timing.hpp"
+#include "core/workspace.hpp"
 #include "integrals/ao/input.hpp"
 
 namespace xmvb::integrals::detail {
@@ -13,33 +15,47 @@ namespace xmvb::integrals::detail {
 void build_exchange_integrals(ExactPackedActiveTwoElectronAdjointCache* cache) {
     const Eigen::Index n_bf = cache->n_basis_functions;
     const Eigen::Index n = cache->n_active_orbitals;
-    const std::size_t budget = cache->ao_integral_input->exact_exchange_memory_budget_bytes;
+    const std::size_t budget =
+        std::min(workspace::available(),
+                 cache->ao_integral_input->exact_exchange_memory_budget_bytes.value_or(
+                     std::numeric_limits<std::size_t>::max()));
     const std::size_t width = static_cast<std::size_t>(n) * n;
     const std::size_t rows = static_cast<std::size_t>(n_bf) * (n_bf + 1) / 2;
     const auto& graph = cache->ao_integral_input->pair_graph;
     // Keep the large-space streamed representation. The additional integral
     // image has its own memory bound and needs resident accepted pair products.
     if (cache->accepted_pair_products == nullptr || !graph.has_row_graph() || rows == 0 ||
-        width == 0 || width > budget / sizeof(double) / rows)
+        width == 0 || width > budget / sizeof(double) / rows ||
+        width > cache->optional_retained_budget_bytes / sizeof(double) / rows)
         return;
     // Include the shared active weights and mixed-direction workspace in the
     // admission bound, rather than bounding only the resident integral tensor.
     const std::size_t slice_values = static_cast<std::size_t>(n_bf) * n_bf * n;
     const std::size_t coefficients_values = static_cast<std::size_t>(n_bf) * n;
     const std::size_t action_values =
-        static_cast<std::size_t>(n_bf + n) * n * width + 2 * coefficients_values;
+        (static_cast<std::size_t>(n_bf) + n) * n * width + 2 * coefficients_values;
     const std::size_t panel_row = static_cast<std::size_t>(n_bf) * width;
-    const std::size_t workspace =
+    const std::size_t scratch =
         std::max(slice_values + coefficients_values, action_values + panel_row);
     const std::size_t available = budget / sizeof(double) - rows * width;
-    if (workspace > available)
+    if (scratch > available)
         return;
+    if (!cache->exchange_reservation.try_resize(rows * width * sizeof(double)))
+        return;
+    // A single AO slice already exposes n_bf independent rows to OpenMP. A
+    // larger tile only increases retained peak scratch without reducing sweeps.
+    workspace::Reservation build_scratch;
+    const std::size_t build_scratch_bytes = (slice_values + coefficients_values) * sizeof(double);
+    if (!build_scratch.try_resize(build_scratch_bytes)) {
+        cache->exchange_reservation.try_resize(0);
+        return;
+    }
+    workspace::Temporary build_temporary(build_scratch_bytes);
     xmvb::profiling::ScopedPhase phase(xmvb::profiling::Phase::ExchangeBuild);
     const ExactCtxPairMatrix coefficients = *cache->accepted_active_coefficients;
     cache->exchange_integrals.resize(rows, n * n);
     const int threads = std::min<int>(effective_openmp_thread_count(), n_bf);
-    const Eigen::Index tile =
-        std::min<Eigen::Index>(n_bf, (available - coefficients_values) / slice_values);
+    const Eigen::Index tile = 1;
     ExactCtxPairMatrix half;
     // Transform one active index in the integral sweep, then the second with
     // GEMM. The half-transformed AO slices are shared and released per tile;
@@ -89,6 +105,28 @@ void build_exchange_integrals(ExactPackedActiveTwoElectronAdjointCache* cache) {
     }
 }
 
+bool can_contract_exchange_direction(const ExactPackedActiveTwoElectronAdjointCache& cache) {
+    const Eigen::Index n_bf = cache.n_basis_functions;
+    const Eigen::Index n = cache.n_active_orbitals;
+    if (cache.ao_integral_input == nullptr || n_bf <= 0 || n <= 0 ||
+        cache.exchange_integrals.rows() != n_bf * (n_bf + 1) / 2 ||
+        cache.exchange_integrals.cols() != n * n)
+        return false;
+    const std::size_t image_bytes =
+        static_cast<std::size_t>(cache.exchange_integrals.size()) * sizeof(double);
+    const std::size_t explicit_cap =
+        cache.ao_integral_input->exact_exchange_memory_budget_bytes.value_or(
+            std::numeric_limits<std::size_t>::max());
+    const std::size_t capacity =
+        std::min(workspace::available(), explicit_cap - std::min(explicit_cap, image_bytes)) /
+        sizeof(double);
+    const std::size_t width = static_cast<std::size_t>(n) * n;
+    const std::size_t row_values = static_cast<std::size_t>(n_bf) * width;
+    const std::size_t occupied = width * width + static_cast<std::size_t>(n_bf) * n * width +
+                                 2 * static_cast<std::size_t>(n_bf) * n;
+    return occupied <= capacity && capacity - occupied >= row_values;
+}
+
 Eigen::MatrixXd contract_exchange_direction(const ExactPackedActiveTwoElectronAdjointCache& cache,
                                             const Eigen::Ref<const Eigen::MatrixXd>& direction) {
     xmvb::profiling::ScopedPhase phase(xmvb::profiling::Phase::ExchangeAction);
@@ -98,6 +136,27 @@ Eigen::MatrixXd contract_exchange_direction(const ExactPackedActiveTwoElectronAd
         cache.exchange_integrals.rows() != n_bf * (n_bf + 1) / 2 ||
         cache.exchange_integrals.cols() != n * n)
         throw std::invalid_argument("exchange integral direction dimensions mismatch");
+    if (!can_contract_exchange_direction(cache))
+        throw std::logic_error("exchange action exceeds its admitted memory budget");
+    const std::size_t image_bytes =
+        static_cast<std::size_t>(cache.exchange_integrals.size()) * sizeof(double);
+    const std::size_t explicit_cap =
+        cache.ao_integral_input->exact_exchange_memory_budget_bytes.value_or(
+            std::numeric_limits<std::size_t>::max());
+    const std::size_t capacity =
+        std::min(workspace::available(), explicit_cap - std::min(explicit_cap, image_bytes)) /
+        sizeof(double);
+    const std::size_t width = static_cast<std::size_t>(n) * n;
+    const std::size_t row_values = static_cast<std::size_t>(n_bf) * width;
+    const std::size_t occupied = width * width + static_cast<std::size_t>(n_bf) * n * width +
+                                 2 * static_cast<std::size_t>(n_bf) * n;
+    const int threads = std::min<int>(effective_openmp_thread_count(), n_bf);
+    const Eigen::Index tile = std::min<std::size_t>(threads, (capacity - occupied) / row_values);
+    const std::size_t scratch_bytes = (occupied + tile * row_values) * sizeof(double);
+    workspace::Reservation action_scratch;
+    if (!action_scratch.try_resize(scratch_bytes))
+        throw std::logic_error("exchange action cannot reserve its peak scratch");
+    workspace::Temporary action_temporary(scratch_bytes);
 
     // Expand packed pair multiplicities into a small active-only contraction.
     // Index (input orbital, partner-left, partner-right, output orbital).
@@ -119,15 +178,6 @@ Eigen::MatrixXd contract_exchange_direction(const ExactPackedActiveTwoElectronAd
     const ExactCtxPairMatrix mixed = direction * weights;
     const Eigen::Map<const ExactCtxPairMatrix> source(mixed.data(), n_bf * n * n, n);
     ExactCtxPairMatrix result(n_bf, n);
-    const int threads = std::min<int>(effective_openmp_thread_count(), n_bf);
-    const std::size_t occupied =
-        cache.exchange_integrals.size() + weights.size() + mixed.size() + 2 * result.size();
-    const std::size_t capacity =
-        cache.ao_integral_input->exact_exchange_memory_budget_bytes / sizeof(double);
-    const std::size_t row_values = static_cast<std::size_t>(n_bf) * n * n;
-    if (occupied > capacity || capacity - occupied < row_values)
-        throw std::logic_error("exchange action exceeds its admitted memory budget");
-    const Eigen::Index tile = std::min<std::size_t>(threads, (capacity - occupied) / row_values);
     ExactCtxPairMatrix panel(tile, row_values);
     // Only a shared output-row panel is expanded; the complete ordered image
     // never exists. Each worker writes disjoint rows, with no private big tensor.

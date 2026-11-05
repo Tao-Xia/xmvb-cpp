@@ -92,6 +92,7 @@ void contract_orbital_pair_direction(const ExactPackedActiveTwoElectronAdjointCa
 void build_exchange_integrals(ExactPackedActiveTwoElectronAdjointCache* cache);
 
 /** @brief Contracts the mixed-pair adjoint without generating an AO-pair image. */
+bool can_contract_exchange_direction(const ExactPackedActiveTwoElectronAdjointCache& cache);
 Eigen::MatrixXd contract_exchange_direction(const ExactPackedActiveTwoElectronAdjointCache& cache,
                                             const Eigen::Ref<const Eigen::MatrixXd>& direction);
 

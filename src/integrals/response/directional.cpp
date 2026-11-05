@@ -12,6 +12,7 @@
 #include "integrals/response/adjoint.hpp"
 #include "integrals/response/ao_pair_operator.hpp"
 #include "core/pair_index.hpp"
+#include "core/workspace.hpp"
 
 namespace xmvb::integrals {
 namespace {
@@ -25,13 +26,14 @@ using detail::resize_for_overwrite;
 
 } // namespace
 
-void compute_exact_packed_active_two_electron_integral_directional_derivative(
-    const ExactPackedActiveTwoElectronAdjointCache& accepted_cache,
-    const Eigen::Ref<const Eigen::MatrixXd>& dense_active_direction,
-    const AoIntegralInput& ao_integral_input,
-    ExactPackedActiveTwoElectronDirectionalDerivativeWorkspace* workspace,
-    std::vector<double>* delta_packed_active_two_electron_integrals,
-    bool compute_fixed_adjoint) {
+namespace {
+void compute_direction_impl(const ExactPackedActiveTwoElectronAdjointCache& accepted_cache,
+                            const Eigen::Ref<const Eigen::MatrixXd>& dense_active_direction,
+                            const AoIntegralInput& ao_integral_input,
+                            ExactPackedActiveTwoElectronDirectionalDerivativeWorkspace* workspace,
+                            std::vector<double>* delta_packed_active_two_electron_integrals,
+                            bool compute_fixed_adjoint,
+                            bool force_stream) {
     if (workspace == nullptr) {
         throw std::invalid_argument("exact packed delta GGO workspace must not be null");
     }
@@ -57,7 +59,7 @@ void compute_exact_packed_active_two_electron_integral_directional_derivative(
         throw std::invalid_argument("cached dense active coefficient size mismatch in delta GGO");
     }
     const std::size_t n_active_pairs = accepted_cache.active_pair_first_indices.size();
-    if (accepted_cache.active_pair_second_indices.size() != n_active_pairs) {
+    if (!n_active_pairs || accepted_cache.active_pair_second_indices.size() != n_active_pairs) {
         throw std::invalid_argument("exact packed delta GGO cache pair-index mismatch");
     }
     const std::size_t n_bf_pairs = static_cast<std::size_t>(n_bf) * (n_bf + 1ULL) / 2;
@@ -67,7 +69,25 @@ void compute_exact_packed_active_two_electron_integral_directional_derivative(
             static_cast<Eigen::Index>(n_active_pairs)) {
         throw std::invalid_argument("cached active-pair adjoint size mismatch in delta GGO");
     }
-    if (accepted_cache.accepted_pair_products == nullptr) {
+    if (accepted_cache.accepted_pair_products == nullptr || force_stream) {
+        const std::size_t pair_values = n_active_pairs;
+        const std::size_t packed_values = pair_values * (pair_values + 1) / 2;
+        const std::size_t active_values = static_cast<std::size_t>(n_bf) * n_ao;
+        const std::size_t base_values = pair_values * pair_values + packed_values +
+                                        (compute_fixed_adjoint ? 2 * active_values : 0);
+        const std::size_t values_per_row = (compute_fixed_adjoint ? 4 : 2) * pair_values;
+        const std::size_t available_values = xmvb::workspace::available() / sizeof(double);
+        if (base_values > available_values || values_per_row > available_values - base_values)
+            throw std::length_error(
+                "exact directional resource_limit: one AO-pair row exceeds workspace");
+        const Eigen::Index tile_rows =
+            std::min<Eigen::Index>(n_bf, (available_values - base_values) / values_per_row);
+        const std::size_t scratch_bytes =
+            (base_values + static_cast<std::size_t>(tile_rows) * values_per_row) * sizeof(double);
+        xmvb::workspace::Reservation row_reservation;
+        if (!row_reservation.try_resize(scratch_bytes))
+            throw std::length_error("exact directional resource_limit: row reservation failed");
+        xmvb::workspace::Temporary row_temporary(scratch_bytes);
         if (compute_fixed_adjoint)
             workspace->dense_active_direction = dense_active_direction;
         workspace->active_pair_contraction.setZero(static_cast<Eigen::Index>(n_active_pairs),
@@ -76,7 +96,6 @@ void compute_exact_packed_active_two_electron_integral_directional_derivative(
             workspace->dense_fixed_adjoint_direction.setZero(n_bf, n_ao);
         else
             workspace->dense_fixed_adjoint_direction.resize(0, 0);
-        const Eigen::Index tile_rows = n_bf;
         for (Eigen::Index row_begin = 0; row_begin < static_cast<Eigen::Index>(n_bf_pairs);
              row_begin += tile_rows) {
             const Eigen::Index row_count =
@@ -179,6 +198,23 @@ void compute_exact_packed_active_two_electron_integral_directional_derivative(
         }
     }
 }
+} // namespace
+
+void compute_exact_packed_active_two_electron_integral_directional_derivative(
+    const ExactPackedActiveTwoElectronAdjointCache& accepted_cache,
+    const Eigen::Ref<const Eigen::MatrixXd>& dense_active_direction,
+    const AoIntegralInput& ao_integral_input,
+    ExactPackedActiveTwoElectronDirectionalDerivativeWorkspace* workspace,
+    std::vector<double>* delta_packed_active_two_electron_integrals,
+    bool compute_fixed_adjoint) {
+    compute_direction_impl(accepted_cache,
+                           dense_active_direction,
+                           ao_integral_input,
+                           workspace,
+                           delta_packed_active_two_electron_integrals,
+                           compute_fixed_adjoint,
+                           false);
+}
 
 Eigen::MatrixXd compute_exact_packed_active_two_electron_integral_directional_derivative_batch(
     const ExactPackedActiveTwoElectronAdjointCache& accepted_cache,
@@ -193,8 +229,9 @@ Eigen::MatrixXd compute_exact_packed_active_two_electron_integral_directional_de
         static_cast<Eigen::Index>(accepted_cache.active_pair_first_indices.size());
     const Eigen::Index n_bf_pairs = static_cast<Eigen::Index>(n_bf) * (n_bf + 1) / 2;
     const Eigen::Index packed_size = n_active_pairs * (n_active_pairs + 1) / 2;
-    Eigen::MatrixXd packed_directions(packed_size, n_directions);
+    Eigen::MatrixXd packed_directions;
     if (n_directions == 0) {
+        packed_directions.resize(packed_size, 0);
         if (directional_pair_products != nullptr) {
             directional_pair_products->clear();
         }
@@ -231,6 +268,29 @@ Eigen::MatrixXd compute_exact_packed_active_two_electron_integral_directional_de
             throw std::invalid_argument("exact delta GGO batch direction shape mismatch");
         }
     }
+    const std::size_t available_values = workspace::available() / sizeof(double);
+    const std::size_t packed_values = static_cast<std::size_t>(packed_size) * n_directions;
+    const bool cached_fixed = fixed_adjoint_directions != nullptr &&
+                              accepted_cache.exchange_integrals.size() != 0 &&
+                              accepted_cache.orbital_pair_products.size() != 0;
+    const std::size_t fixed_values =
+        fixed_adjoint_directions != nullptr &&
+                (cached_fixed || accepted_cache.accepted_pair_products == nullptr)
+            ? static_cast<std::size_t>(n_directions) * n_bf * n_ao
+            : 0;
+    const std::size_t returned_image_values =
+        directional_pair_products != nullptr && accepted_cache.accepted_pair_products != nullptr &&
+                !cached_fixed
+            ? static_cast<std::size_t>(n_directions) * n_bf_pairs * n_active_pairs
+            : 0;
+    const std::size_t output_values = packed_values + fixed_values + returned_image_values;
+    if (output_values > available_values)
+        throw std::length_error(
+            "exact directional resource_limit: required outputs exceed workspace");
+    workspace::Reservation output_reservation;
+    if (!output_reservation.try_resize(output_values * sizeof(double)))
+        throw std::length_error("exact directional resource_limit: output reservation failed");
+    packed_directions.resize(packed_size, n_directions);
     const auto pack = [&](const Eigen::MatrixXd& contraction, Eigen::Index direction) {
         for (int left = 0; left < n_active_pairs; ++left) {
             for (int right = 0; right <= left; ++right) {
@@ -239,39 +299,94 @@ Eigen::MatrixXd compute_exact_packed_active_two_electron_integral_directional_de
             }
         }
     };
-    constexpr Eigen::Index workspace_bytes = 64 * 1024 * 1024;
-    constexpr Eigen::Index value_bytes = sizeof(double);
-
-    if (fixed_adjoint_directions != nullptr && accepted_cache.exchange_integrals.size() != 0 &&
-        accepted_cache.orbital_pair_products.size() != 0) {
-        Eigen::MatrixXd contraction;
-        ExactPackedActiveTwoElectronApplyWorkspace workspace;
+    if (cached_fixed) {
+        const std::size_t active_values = static_cast<std::size_t>(n_bf) * n_ao;
+        const std::size_t worker_count = effective_openmp_thread_count();
+        const std::size_t fixed_scratch_values =
+            static_cast<std::size_t>(n_ao) * n_ao * n_active_pairs +
+            2 * static_cast<std::size_t>(n_active_pairs) * n_active_pairs +
+            (2 + worker_count) * active_values +
+            worker_count * static_cast<std::size_t>(n_bf) * n_active_pairs;
+        workspace::Reservation fixed_scratch;
+        if (fixed_scratch_values <= workspace::available() / sizeof(double) &&
+            fixed_scratch.try_resize(fixed_scratch_values * sizeof(double)) &&
+            detail::can_contract_exchange_direction(accepted_cache)) {
+            workspace::Temporary fixed_temporary(fixed_scratch_values * sizeof(double));
+            Eigen::MatrixXd contraction;
+            ExactPackedActiveTwoElectronApplyWorkspace workspace;
+            for (Eigen::Index direction = 0; direction < n_directions; ++direction) {
+                detail::contract_orbital_pair_direction(
+                    accepted_cache, dense_active_directions[direction], &contraction);
+                pack(contraction, direction);
+                apply_exact_packed_active_two_electron_adjoint_hessian_vector(
+                    accepted_cache,
+                    dense_active_directions[direction],
+                    ao_integral_input,
+                    &workspace,
+                    &(*fixed_adjoint_directions)[direction]);
+                if (directional_pair_products != nullptr)
+                    (*directional_pair_products)[direction].resize(0, 0);
+            }
+            return packed_directions;
+        }
+    }
+    if (cached_fixed) {
+        ExactPackedActiveTwoElectronDirectionalDerivativeWorkspace streamed_workspace;
+        std::vector<double> packed_direction;
         for (Eigen::Index direction = 0; direction < n_directions; ++direction) {
-            detail::contract_orbital_pair_direction(
-                accepted_cache, dense_active_directions[direction], &contraction);
-            pack(contraction, direction);
-            apply_exact_packed_active_two_electron_adjoint_hessian_vector(
-                accepted_cache,
-                dense_active_directions[direction],
-                ao_integral_input,
-                &workspace,
-                &(*fixed_adjoint_directions)[direction]);
+            compute_direction_impl(accepted_cache,
+                                   dense_active_directions[direction],
+                                   ao_integral_input,
+                                   &streamed_workspace,
+                                   &packed_direction,
+                                   true,
+                                   true);
+            packed_directions.col(direction) =
+                Eigen::Map<const Eigen::VectorXd>(packed_direction.data(), packed_direction.size());
+            (*fixed_adjoint_directions)[direction] =
+                streamed_workspace.dense_fixed_adjoint_direction;
             if (directional_pair_products != nullptr)
                 (*directional_pair_products)[direction].resize(0, 0);
         }
         return packed_directions;
     }
 
-    if (accepted_cache.accepted_pair_products == nullptr) {
+    const bool integral_only =
+        directional_pair_products == nullptr && fixed_adjoint_directions == nullptr;
+    const std::size_t resident_integral_values =
+        2 * static_cast<std::size_t>(n_active_pairs) * n_active_pairs +
+        (accepted_cache.orbital_pair_products.size() != 0
+             ? static_cast<std::size_t>(n_ao) * n_ao * n_active_pairs
+             : static_cast<std::size_t>(n_bf_pairs) * n_active_pairs);
+    const bool stream_integral_only =
+        integral_only && resident_integral_values > workspace::available() / sizeof(double);
+    if (accepted_cache.accepted_pair_products == nullptr || stream_integral_only) {
         if (directional_pair_products == nullptr && fixed_adjoint_directions == nullptr) {
             // Integral-only coupling needs sym(delta D^T K D), not K delta D.
             // Generate each accepted row tile once for every direction in the block.
+            const std::size_t contraction_values =
+                static_cast<std::size_t>(n_directions) * n_active_pairs * n_active_pairs;
+            const std::size_t remaining_values = workspace::available() / sizeof(double);
+            if (contraction_values > remaining_values ||
+                2 * static_cast<std::size_t>(n_active_pairs) >
+                    remaining_values - contraction_values)
+                throw std::length_error(
+                    "exact directional resource_limit: one streamed row exceeds workspace");
+            const Eigen::Index tile_rows =
+                std::min<Eigen::Index>(n_bf,
+                                       (remaining_values - contraction_values) /
+                                           (2 * static_cast<std::size_t>(n_active_pairs)));
+            const std::size_t tile_bytes =
+                (contraction_values + 2 * static_cast<std::size_t>(tile_rows) * n_active_pairs) *
+                sizeof(double);
+            workspace::Reservation tile_reservation;
+            if (!tile_reservation.try_resize(tile_bytes))
+                throw std::length_error(
+                    "exact directional resource_limit: streamed tile reservation failed");
+            workspace::Temporary tile_temporary(tile_bytes);
             std::vector<Eigen::MatrixXd> contractions(
                 n_directions, Eigen::MatrixXd::Zero(n_active_pairs, n_active_pairs));
             ExactCtxPairMatrix accepted_tile, mixed_tile;
-            const Eigen::Index tile_rows = std::max<Eigen::Index>(
-                1,
-                std::min<Eigen::Index>(n_bf, workspace_bytes / value_bytes / n_active_pairs / 2));
             for (Eigen::Index begin = 0; begin < n_bf_pairs; begin += tile_rows) {
                 const Eigen::Index rows = std::min(tile_rows, n_bf_pairs - begin);
                 apply_generated_pair_rows(ao_integral_input,
@@ -318,18 +433,47 @@ Eigen::MatrixXd compute_exact_packed_active_two_electron_integral_directional_de
         return packed_directions;
     }
 
-    // Bound additional block workspace, including compact-stream private images.
-    // A single direction remains the irreducible resident-path working set.
-    const Eigen::Index image_count = ao_integral_input.pair_graph.has_compact_integral_stream()
-                                         ? 3 + effective_openmp_thread_count()
-                                         : 3;
-    const Eigen::Index block_width =
-        directional_pair_products == nullptr
-            ? 1
-            : std::max<Eigen::Index>(1,
-                                     std::min(n_directions,
-                                              workspace_bytes / value_bytes / n_bf_pairs /
-                                                  n_active_pairs / image_count));
+    // The output reservation above owns all returned images. Price the active
+    // contraction, one mixed image, and the actual AO-kernel block separately.
+    const std::size_t private_images = ao_integral_input.pair_graph.has_compact_integral_stream()
+                                           ? effective_openmp_thread_count()
+                                           : 0;
+    const std::size_t image_values = static_cast<std::size_t>(n_bf_pairs) * n_active_pairs;
+    const std::size_t contraction_values =
+        2 * static_cast<std::size_t>(n_active_pairs) * n_active_pairs +
+        (accepted_cache.orbital_pair_products.size() != 0
+             ? static_cast<std::size_t>(n_ao) * n_ao * n_active_pairs
+             : 0);
+    const std::size_t mixed_values =
+        directional_pair_products != nullptr || accepted_cache.orbital_pair_products.size() == 0
+            ? image_values
+            : 0;
+    const std::size_t remaining_values = workspace::available() / sizeof(double);
+    const std::size_t minimum_values =
+        contraction_values + mixed_values +
+        (directional_pair_products != nullptr ? (1 + private_images) * image_values : 0);
+    if (minimum_values > remaining_values)
+        throw std::length_error(
+            "exact directional resource_limit: one resident direction exceeds workspace");
+    Eigen::Index block_width = 1;
+    if (directional_pair_products != nullptr && n_directions > 1) {
+        const std::size_t wider_images = (2 + private_images) * image_values;
+        const std::size_t wider_capacity =
+            (remaining_values - contraction_values - mixed_values) / wider_images;
+        if (wider_capacity >= 2)
+            block_width = std::min<Eigen::Index>(n_directions, wider_capacity);
+    }
+    const std::size_t scratch_values =
+        contraction_values + mixed_values +
+        (directional_pair_products == nullptr
+             ? 0
+             : (block_width == 1
+                    ? (1 + private_images) * image_values
+                    : static_cast<std::size_t>(block_width) * (2 + private_images) * image_values));
+    workspace::Reservation block_reservation;
+    if (!block_reservation.try_resize(scratch_values * sizeof(double)))
+        throw std::length_error("exact directional resource_limit: block reservation failed");
+    workspace::Temporary block_temporary(scratch_values * sizeof(double));
     ExactCtxPairMatrix mixed, block, products;
     Eigen::MatrixXd contraction;
     for (Eigen::Index begin = 0; begin < n_directions; begin += block_width) {

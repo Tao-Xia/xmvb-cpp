@@ -26,25 +26,27 @@
 #include "mcscf/ci/sigma.hpp"
 #include "mcscf/ci/factors.hpp"
 #include "mcscf/ci/raw_action.hpp"
+#include "mcscf/ci/workspace.hpp"
 
 namespace xmvb::vb {
 namespace {
 
-constexpr std::size_t kStructureActionWorkspaceBytes = detail::kStructureTileWorkspaceBytes;
 constexpr int kMaximumStructureActionBatchColumns = 8;
 
 int bounded_structure_action_width(int requested,
                                    Eigen::Index n_unique_alpha,
-                                   Eigen::Index n_unique_beta) {
+                                   Eigen::Index n_unique_beta,
+                                   std::size_t workspace_bytes) {
     const std::size_t spin_products =
         static_cast<std::size_t>(n_unique_alpha) * static_cast<std::size_t>(n_unique_beta);
     const std::size_t simultaneous_spin_product_matrices = 8;
     const std::size_t bytes_per_column = std::max<std::size_t>(
         sizeof(double), simultaneous_spin_product_matrices * spin_products * sizeof(double));
-    const int budget_width = static_cast<int>(
-        std::max<std::size_t>(1ULL, kStructureActionWorkspaceBytes / bytes_per_column));
-    return std::max<Eigen::Index>(
-        1, std::min<Eigen::Index>({requested, kMaximumStructureActionBatchColumns, budget_width}));
+    return static_cast<int>(std::max<std::size_t>(
+        1,
+        std::min<std::size_t>({static_cast<std::size_t>(requested),
+                               static_cast<std::size_t>(kMaximumStructureActionBatchColumns),
+                               workspace_bytes / bytes_per_column})));
 }
 
 Eigen::MatrixXd build_pair_channel_block(const AcceptedSpinPairTile& tile, int n_packed_pairs) {
@@ -119,14 +121,17 @@ void add_opposite_spin_tile(const AcceptedSpinPairTile& alpha_tile,
 
 bool full_factorized_action_fits(Eigen::Index n_unique_alpha,
                                  Eigen::Index n_unique_beta,
-                                 int block_width) {
+                                 int block_width,
+                                 std::size_t workspace_bytes) {
     constexpr std::size_t kSimultaneousSpinProductMatrices = 8;
     const std::size_t columns = static_cast<std::size_t>(block_width);
-    const std::size_t spin_products = static_cast<std::size_t>(n_unique_alpha) * n_unique_beta;
+    const std::size_t spin_products =
+        core::checked_multiply(core::checked_index<std::size_t>(n_unique_alpha),
+                               core::checked_index<std::size_t>(n_unique_beta));
     const std::size_t maximum_products =
-        kStructureActionWorkspaceBytes /
+        (workspace_bytes ? workspace_bytes - 1 : 0) /
         (kSimultaneousSpinProductMatrices * sizeof(double) * columns);
-    return spin_products <= maximum_products;
+    return workspace_bytes && spin_products <= maximum_products;
 }
 
 void add_tiled_opposite_spin_action(
@@ -1156,69 +1161,100 @@ StructureAction::apply(const Eigen::Ref<const Eigen::MatrixXd>& vectors) const {
         return apply_orthogonal_tiled(
             vectors, direct_ci_->alpha_transform, direct_ci_->beta_transform(), direct_ci_->sigma);
     }
+    const mcscf::CiWorkspace operation(workspace::available(), false);
     const int block_width = core::checked_index<std::int64_t>(vectors.cols());
+    const std::size_t output_bytes = core::checked_multiply(
+        2 * sizeof(double),
+        core::checked_multiply(core::checked_index<std::size_t>(n_structures_),
+                               core::checked_index<std::size_t>(block_width)));
+    if (output_bytes >= operation.bytes())
+        throw std::length_error("structure action workspace cannot hold its output block");
+    const std::size_t work_bytes = operation.bytes() - output_bytes;
     const int bounded_width =
-        bounded_structure_action_width(block_width, n_unique_alpha_, n_unique_beta_);
+        bounded_structure_action_width(block_width, n_unique_alpha_, n_unique_beta_, work_bytes);
+    const auto evaluate = [&](const Eigen::Ref<const Eigen::MatrixXd>& block,
+                              std::size_t budget) -> StructureActionResult {
+        const int width = core::checked_index<std::int64_t>(block.cols());
+        if (!full_factorized_action_fits(n_unique_alpha_, n_unique_beta_, width, budget))
+            return apply_streamed(block, budget);
+
+        Eigen::MatrixXd spin_vectors = expand_structure_block(block);
+        if (!tiled_pairs_)
+            throw std::logic_error("structure action has no retained operator data");
+        const std::size_t carrier_bytes = core::checked_multiply(
+            8 * sizeof(double),
+            core::checked_multiply(
+                core::checked_multiply(core::checked_index<std::size_t>(n_unique_alpha_),
+                                       core::checked_index<std::size_t>(n_unique_beta_)),
+                static_cast<std::size_t>(width)));
+        const std::size_t pair_budget = budget - carrier_bytes;
+        const std::size_t one_pair =
+            std::max(detail::accepted_scalar_pair_bytes(*tiled_pairs_->alpha_provider,
+                                                        tiled_pairs_->n_active),
+                     detail::accepted_scalar_pair_bytes(*tiled_pairs_->beta_provider,
+                                                        tiled_pairs_->n_active));
+        if (pair_budget < one_pair)
+            return apply_streamed(block, budget);
+        const Eigen::MatrixXd transposed_spin_vectors =
+            transpose_matrix_blocks(spin_vectors, n_unique_alpha_, n_unique_beta_);
+        const AcceptedSpinPairActionResult beta_images =
+            apply_accepted_spin_pair_action(*tiled_pairs_->beta_provider,
+                                            tiled_pairs_->active_overlap,
+                                            tiled_pairs_->one_electron,
+                                            tiled_pairs_->two_electron,
+                                            transposed_spin_vectors,
+                                            pair_budget);
+        const Eigen::MatrixXd right_overlap =
+            transpose_matrix_blocks(beta_images.overlap, n_unique_beta_, n_unique_alpha_);
+        const Eigen::MatrixXd right_hamiltonian =
+            transpose_matrix_blocks(beta_images.hamiltonian, n_unique_beta_, n_unique_alpha_);
+        Eigen::MatrixXd alpha_inputs(n_unique_alpha_, 2 * right_overlap.cols());
+        alpha_inputs.leftCols(right_overlap.cols()) = right_overlap;
+        alpha_inputs.rightCols(right_hamiltonian.cols()) = right_hamiltonian;
+        const AcceptedSpinPairActionResult alpha_images =
+            apply_accepted_spin_pair_action(*tiled_pairs_->alpha_provider,
+                                            tiled_pairs_->active_overlap,
+                                            tiled_pairs_->one_electron,
+                                            tiled_pairs_->two_electron,
+                                            alpha_inputs,
+                                            pair_budget);
+        Eigen::MatrixXd spin_hamiltonians = alpha_images.hamiltonian.leftCols(right_overlap.cols());
+        spin_hamiltonians.noalias() += alpha_images.overlap.rightCols(right_hamiltonian.cols());
+        Eigen::MatrixXd spin_overlaps = alpha_images.overlap.leftCols(right_overlap.cols());
+        add_tiled_opposite_spin_action(*tiled_pairs_->alpha_provider,
+                                       *tiled_pairs_->beta_provider,
+                                       tiled_pairs_->alpha_strings,
+                                       tiled_pairs_->beta_strings,
+                                       tiled_pairs_->active_overlap,
+                                       tiled_pairs_->one_electron,
+                                       tiled_pairs_->two_electron,
+                                       tiled_pairs_->n_active,
+                                       n_unique_alpha_,
+                                       n_unique_beta_,
+                                       spin_vectors,
+                                       &spin_hamiltonians);
+        return StructureActionResult{contract_spin_product_block(spin_hamiltonians),
+                                     contract_spin_product_block(spin_overlaps)};
+    };
     if (block_width > bounded_width) {
+        const std::size_t chunk_output_bytes = core::checked_multiply(
+            2 * sizeof(double),
+            core::checked_multiply(core::checked_index<std::size_t>(n_structures_),
+                                   static_cast<std::size_t>(bounded_width)));
+        if (chunk_output_bytes >= work_bytes)
+            throw std::length_error("structure action workspace cannot hold one output panel");
         StructureActionResult images{Eigen::MatrixXd(n_structures_, block_width),
                                      Eigen::MatrixXd(n_structures_, block_width)};
         for (std::int64_t first = 0; first < block_width; first += bounded_width) {
             const int width = std::min<Eigen::Index>(bounded_width, block_width - first);
-            StructureActionResult chunk = apply(vectors.middleCols(first, width));
+            StructureActionResult chunk =
+                evaluate(vectors.middleCols(first, width), work_bytes - chunk_output_bytes);
             images.hamiltonian.middleCols(first, width) = chunk.hamiltonian;
             images.overlap.middleCols(first, width) = chunk.overlap;
         }
         return images;
     }
-
-    if (!full_factorized_action_fits(n_unique_alpha_, n_unique_beta_, block_width)) {
-        return apply_streamed(vectors);
-    }
-
-    Eigen::MatrixXd spin_vectors = expand_structure_block(vectors);
-    if (!tiled_pairs_) {
-        throw std::logic_error("structure action has no retained operator data");
-    }
-    const Eigen::MatrixXd transposed_spin_vectors =
-        transpose_matrix_blocks(spin_vectors, n_unique_alpha_, n_unique_beta_);
-    const AcceptedSpinPairActionResult beta_images =
-        apply_accepted_spin_pair_action(*tiled_pairs_->beta_provider,
-                                        tiled_pairs_->active_overlap,
-                                        tiled_pairs_->one_electron,
-                                        tiled_pairs_->two_electron,
-                                        transposed_spin_vectors,
-                                        kStructureActionWorkspaceBytes);
-    const Eigen::MatrixXd right_overlap =
-        transpose_matrix_blocks(beta_images.overlap, n_unique_beta_, n_unique_alpha_);
-    const Eigen::MatrixXd right_hamiltonian =
-        transpose_matrix_blocks(beta_images.hamiltonian, n_unique_beta_, n_unique_alpha_);
-    Eigen::MatrixXd alpha_inputs(n_unique_alpha_, 2 * right_overlap.cols());
-    alpha_inputs.leftCols(right_overlap.cols()) = right_overlap;
-    alpha_inputs.rightCols(right_hamiltonian.cols()) = right_hamiltonian;
-    const AcceptedSpinPairActionResult alpha_images =
-        apply_accepted_spin_pair_action(*tiled_pairs_->alpha_provider,
-                                        tiled_pairs_->active_overlap,
-                                        tiled_pairs_->one_electron,
-                                        tiled_pairs_->two_electron,
-                                        alpha_inputs,
-                                        kStructureActionWorkspaceBytes);
-    Eigen::MatrixXd spin_hamiltonians = alpha_images.hamiltonian.leftCols(right_overlap.cols());
-    spin_hamiltonians.noalias() += alpha_images.overlap.rightCols(right_hamiltonian.cols());
-    Eigen::MatrixXd spin_overlaps = alpha_images.overlap.leftCols(right_overlap.cols());
-    add_tiled_opposite_spin_action(*tiled_pairs_->alpha_provider,
-                                   *tiled_pairs_->beta_provider,
-                                   tiled_pairs_->alpha_strings,
-                                   tiled_pairs_->beta_strings,
-                                   tiled_pairs_->active_overlap,
-                                   tiled_pairs_->one_electron,
-                                   tiled_pairs_->two_electron,
-                                   tiled_pairs_->n_active,
-                                   n_unique_alpha_,
-                                   n_unique_beta_,
-                                   spin_vectors,
-                                   &spin_hamiltonians);
-    return StructureActionResult{contract_spin_product_block(spin_hamiltonians),
-                                 contract_spin_product_block(spin_overlaps)};
+    return evaluate(vectors, work_bytes);
 }
 
 StructureActionResult

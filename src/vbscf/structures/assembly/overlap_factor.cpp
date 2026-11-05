@@ -9,6 +9,7 @@
 #include "core/workspace.hpp"
 #include "linalg/qr.hpp"
 #include "mcscf/ci/product_index.hpp"
+#include "mcscf/ci/workspace.hpp"
 #include "parallel/openmp.hpp"
 #include "vbscf/structures/orthogonal_ci/exterior_transform.hpp"
 
@@ -17,6 +18,8 @@ namespace xmvb::vb {
 Eigen::MatrixXd StructureAction::selected_overlap_factor(const ExteriorOrbitalTransform& alpha,
                                                          const ExteriorOrbitalTransform& beta,
                                                          std::size_t workspace_bytes) const {
+    mcscf::CiWorkspace workspace(workspace_bytes, false);
+    workspace_bytes = workspace.bytes();
     const auto n = static_cast<std::size_t>(n_structures_);
     const auto na = static_cast<std::size_t>(n_unique_alpha_);
     const auto nb = static_cast<std::size_t>(n_unique_beta_);

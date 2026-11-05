@@ -9,6 +9,7 @@
 #include "integrals/ao/exact.hpp"
 #include "integrals/ao/ri.hpp"
 #include "core/pair_index.hpp"
+#include "core/workspace.hpp"
 
 namespace xmvb::vb {
 namespace {
@@ -40,12 +41,14 @@ DensityDiagonals density_diagonal_channels(const VbScfInput& input,
     const std::size_t matrix_bytes = sizeof(double) * static_cast<std::size_t>(n_bf) * n_bf;
     const std::size_t pair_bytes = sizeof(double) * static_cast<std::size_t>(n_bf) * (n_bf + 1) / 2;
     const std::size_t active_temp = sizeof(double) * static_cast<std::size_t>(n_bf) * na;
-    const std::size_t stream_budget = std::max<std::size_t>(
-        64 * 1024 * 1024, 3 * matrix_bytes + pair_bytes + sizeof(double) + active_temp);
-    const int stream_workers =
-        std::min(effective_openmp_thread_count(),
-                 static_cast<int>((stream_budget - 3 * matrix_bytes - active_temp) /
-                                  (pair_bytes + sizeof(double))));
+    const std::size_t budget = workspace::available();
+    const std::size_t stream_minimum = 3 * matrix_bytes + pair_bytes + sizeof(double) + active_temp;
+    if (budget < stream_minimum)
+        throw std::runtime_error("diagonal density resource_limit: one channel exceeds workspace");
+    const int stream_workers = static_cast<int>(
+        std::min({static_cast<std::size_t>(effective_openmp_thread_count()),
+                  static_cast<std::size_t>(n_bf),
+                  (budget - 3 * matrix_bytes - active_temp) / (pair_bytes + sizeof(double))}));
     int lanes = 1;
 #if defined(__GNUC__) && defined(__x86_64__)
     lanes = __builtin_cpu_supports("avx512f") ? 8 : __builtin_cpu_supports("avx2") ? 4 : 2;
@@ -53,30 +56,24 @@ DensityDiagonals density_diagonal_channels(const VbScfInput& input,
     const std::size_t stream_channel =
         2 * matrix_bytes + stream_workers * (pair_bytes + sizeof(double));
     const int stream_width =
-        std::min({channels,
-                  lanes,
-                  static_cast<int>((stream_budget - matrix_bytes - active_temp) / stream_channel)});
+        static_cast<int>(std::min({static_cast<std::size_t>(channels),
+                                   static_cast<std::size_t>(lanes),
+                                   (budget - matrix_bytes - active_temp) / stream_channel}));
     const auto& graph = input.ao_integral_input.pair_graph;
-    if (graph.has_row_graph()) {
-        const std::size_t matrix_bytes = sizeof(double) * static_cast<std::size_t>(n_bf) * n_bf;
-        const std::size_t output_bytes =
-            sizeof(double) * static_cast<std::size_t>(n_bf) * (3 * channels + 2 * n_core);
-        const std::size_t active_temp = sizeof(double) * static_cast<std::size_t>(n_bf) * na;
-        const std::size_t n_pairs = static_cast<std::size_t>(na) * (na + 1) / 2;
-        const std::size_t span_bytes =
-            sizeof(double) * (4 * n_pairs * na + n_pairs * active_weights.cols() +
-                              2 * na * active_weights.cols() + active_weights.size());
-        // One shared source batch and one AO source-building scratch. Each worker
-        // keeps a K/J row, its MO projection and its partial diagonal. There are
-        // at most two row columns per source, never a worker AO response matrix.
-        const std::size_t worker_channel = 6 * sizeof(double) * static_cast<std::size_t>(n_bf);
-        const std::size_t base = matrix_bytes + output_bytes + active_temp + span_bytes;
-        const std::size_t budget =
-            std::max<std::size_t>(64 * 1024 * 1024, base + matrix_bytes + worker_channel);
+    const std::size_t output_bytes =
+        sizeof(double) * static_cast<std::size_t>(n_bf) * (3 * channels + 2 * n_core);
+    const std::size_t n_pairs = static_cast<std::size_t>(na) * (na + 1) / 2;
+    const std::size_t span_bytes =
+        sizeof(double) * (4 * n_pairs * na + n_pairs * active_weights.cols() +
+                          2 * na * active_weights.cols() + active_weights.size());
+    // Row workers own one K/J row, its MO projection, and a partial diagonal.
+    const std::size_t worker_channel = 6 * sizeof(double) * static_cast<std::size_t>(n_bf);
+    const std::size_t base = matrix_bytes + output_bytes + active_temp + span_bytes;
+    if (graph.has_row_graph() && budget >= base + matrix_bytes + worker_channel) {
         const int workers =
-            std::min({effective_openmp_thread_count(),
-                      n_bf,
-                      static_cast<int>((budget - base - matrix_bytes) / worker_channel)});
+            static_cast<int>(std::min({static_cast<std::size_t>(effective_openmp_thread_count()),
+                                       static_cast<std::size_t>(n_bf),
+                                       (budget - base - matrix_bytes) / worker_channel}));
         const std::size_t per_channel = matrix_bytes + workers * worker_channel;
         int width = std::min<std::size_t>(channels, (budget - base) / per_channel);
         // A final SIMD tail does not justify another complete ERI traversal.
@@ -109,6 +106,12 @@ DensityDiagonals density_diagonal_channels(const VbScfInput& input,
                                        base + width * per_channel,
                                        static_cast<int>(row_selected));
         if (row_selected) {
+            workspace::Reservation action_scratch;
+            const std::size_t row_peak = base + width * per_channel;
+            if (!action_scratch.try_resize(row_peak))
+                throw std::runtime_error(
+                    "diagonal density resource_limit: row action reservation failed");
+            workspace::Temporary action_temporary(row_peak);
             xmvb::integrals::AoH1eBatchWorkspace::Channels sources;
             xmvb::integrals::AoDensityDiagonalWorkspace workspace;
             Eigen::MatrixXd scratch(n_bf, n_bf);
@@ -171,8 +174,14 @@ DensityDiagonals density_diagonal_channels(const VbScfInput& input,
     // Budget all batch inputs, packed worker outputs, response and shared scratch.
     // For exceptionally large AO bases the unavoidable one-channel/one-worker
     // working set is the lower bound; the budget never enables further replicas.
-    const auto budget = stream_budget, channel_bytes = stream_channel;
+    const auto channel_bytes = stream_channel;
     const int workers = stream_workers, width = stream_width;
+    workspace::Reservation action_scratch;
+    const std::size_t stream_peak = matrix_bytes + active_temp + width * channel_bytes;
+    if (!action_scratch.try_resize(stream_peak))
+        throw std::runtime_error(
+            "diagonal density resource_limit: stream action reservation failed");
+    workspace::Temporary action_temporary(stream_peak);
     xmvb::integrals::AoH1eBatchWorkspace workspace;
     Eigen::MatrixXd response, scratch(n_bf, n_bf);
     for (int begin = 0; begin < channels; begin += width) {

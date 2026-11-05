@@ -24,6 +24,7 @@
 #include "vbscf/derivatives/hessian/coupled/coupling.hpp"
 #include "integrals/response/adjoint.hpp"
 #include "core/pair_index.hpp"
+#include "core/workspace.hpp"
 #include "vbscf/derivatives/hessian/responses/active_space/integral_direction.hpp"
 #include "vbscf/derivatives/hessian/responses/active_space/local_tile_accumulator_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/active_space/outer_response.hpp"
@@ -541,11 +542,18 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
             precomputed_outer_response == nullptr && !direct_active_gradient &&
             (components.local_active_response || components.structure_response ||
              build_orbital_coupling);
+        workspace::Reservation local_pair_capacity;
         std::unique_ptr<detail::LocalActiveSpaceTileAccumulator> local_active_tile_accumulator;
         if (use_directional_pair_tiles && components.local_active_response) {
+            const auto requested = workspace::available() / 2;
+            if (requested < 2 || !local_pair_capacity.try_resize(requested))
+                throw std::length_error("local pair response has insufficient shared workspace");
             local_active_tile_accumulator =
                 std::make_unique<detail::LocalActiveSpaceTileAccumulator>(
-                    *current_input_, *accepted_point_context_, active_space_integral_direction);
+                    *current_input_,
+                    *accepted_point_context_,
+                    active_space_integral_direction,
+                    local_pair_capacity.bytes() / 2);
         }
         const auto consume_local_active_tile =
             [&](bool alpha_channel,
@@ -690,7 +698,8 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
                 ri_directional_active_pair_factors,
                 true,
                 consume_local_active_tile,
-                static_cast<int>(accepted_point_context_->selected_state_matrices.states.size()));
+                static_cast<int>(accepted_point_context_->selected_state_matrices.states.size()),
+                local_pair_capacity.bytes() - local_pair_capacity.bytes() / 2);
         }
 
         selected_direction_phase.stop();
@@ -718,6 +727,8 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
                                                               local,
                                                               local_active_tile_accumulator.get()},
                                                              components);
+            local_active_tile_accumulator.reset();
+            local_pair_capacity.try_resize(0);
             active_gradient = &*local_active_gradient;
         }
         const auto& directional_active_space_gradient = *active_gradient;

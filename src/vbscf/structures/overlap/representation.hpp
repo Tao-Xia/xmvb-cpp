@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/index.hpp"
+#include "core/workspace.hpp"
 
 #include "mcscf/ci/string_table.hpp"
 
@@ -59,8 +60,9 @@ class RepresentationOverlap {
         const std::shared_ptr<const SelectedMetric>& selected_metric() const noexcept {
             return selected_metric_;
         }
-        /** @brief Whether the selected matrix fits its existing workspace quarter. */
-        static bool fits_selected(Eigen::Index dimension) noexcept;
+        /** @brief Space for the retained metric, factor and minimum QR scratch. */
+        static bool fits_selected(Eigen::Index dimension,
+                                  std::size_t bytes = workspace::available()) noexcept;
 
       private:
         friend class RepresentationOverlap;

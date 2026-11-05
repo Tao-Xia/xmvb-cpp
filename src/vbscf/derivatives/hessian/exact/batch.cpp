@@ -1,5 +1,6 @@
 #include "vbscf/derivatives/hessian/exact/operator.hpp"
 #include "core/timing.hpp"
+#include "core/workspace.hpp"
 
 #include "vbscf/derivatives/hessian/exact/ao_one_electron_internal.hpp"
 #include "vbscf/derivatives/hessian/exact/apply_internal.hpp"
@@ -29,7 +30,6 @@
 namespace xmvb::vb {
 namespace {
 
-constexpr std::size_t kOrbitalCouplingBatchWorkspaceBytes = 256ULL * 1024ULL * 1024ULL;
 constexpr Eigen::Index kMaximumOrbitalCouplingBatchColumns = 8;
 
 Eigen::Index bounded_orbital_coupling_width(Eigen::Index requested,
@@ -48,7 +48,7 @@ Eigen::Index bounded_orbital_coupling_width(Eigen::Index requested,
     // Include copied tangent contexts, active directions, exact pair images,
     // and selected-state forcing. RI uses less. This limits the column-dependent
     // workspace, not total process RSS or resident accepted-point caches.
-    // A single column is the irreducible working-set floor when it exceeds 256 MiB.
+    // One shared action allowance includes the active worker slices.
     const std::size_t elements_per_column =
         (7ULL + 2ULL * workers) * ao_matrix + 3ULL * n_bf * input.n_orbitals +
         6ULL * n_bf * n_active + 2ULL * ao_pairs * active_pairs + 2ULL * workers +
@@ -56,8 +56,11 @@ Eigen::Index bounded_orbital_coupling_width(Eigen::Index requested,
         static_cast<std::size_t>(n_structures) * static_cast<std::size_t>(n_states);
     const std::size_t bytes_per_column =
         std::max<std::size_t>(sizeof(double), elements_per_column * sizeof(double));
-    const Eigen::Index budget_width = static_cast<Eigen::Index>(
-        std::max<std::size_t>(1ULL, kOrbitalCouplingBatchWorkspaceBytes / bytes_per_column));
+    const std::size_t available = workspace::available();
+    if (bytes_per_column > available)
+        throw std::runtime_error(
+            "orbital coupling batch resource_limit: one column exceeds workspace");
+    const Eigen::Index budget_width = static_cast<Eigen::Index>(available / bytes_per_column);
     return std::max<Eigen::Index>(
         1, std::min({requested, kMaximumOrbitalCouplingBatchColumns, budget_width}));
 }
@@ -81,6 +84,8 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch(
         !reduced_directions.allFinite()) {
         throw std::invalid_argument("HVP block has incompatible dimensions or values");
     }
+    workspace::Reservation action_reservation;
+    workspace::Scope action(workspace::available(), action_reservation);
     const Eigen::Index chunk_width = bounded_orbital_coupling_width(
         reduced_directions.cols(),
         current_input_->orbital_preparation_input,
@@ -101,6 +106,8 @@ OrbitalCouplingBlockAction ExactHvpOperator::State::apply_orbital_coupling_batch
         reduced_directions.cols() <= 0 || !reduced_directions.allFinite()) {
         throw std::invalid_argument("orbital coupling block has incompatible dimensions or values");
     }
+    workspace::Reservation action_reservation;
+    workspace::Scope action(workspace::available(), action_reservation);
     ++apply_timing_totals_.orbital_coupling_batch_count;
     const Eigen::Index n_states =
         static_cast<Eigen::Index>(accepted_point_context_->selected_state_indices.size());
@@ -349,13 +356,19 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch_impl(
         const auto structure_start = std::chrono::steady_clock::now();
         for (Eigen::Index column = 0; column < n_directions; ++column) {
             PrecomputedOuterResponse& outer = *precomputed_directions[column].outer_response;
+            workspace::Reservation local_pair_capacity;
             std::unique_ptr<detail::LocalActiveSpaceTileAccumulator> local_active_accumulator;
             if (!direct_active_gradient && components.local_active_response) {
+                const auto requested = workspace::available() / 2;
+                if (requested < 2 || !local_pair_capacity.try_resize(requested))
+                    throw std::length_error(
+                        "local pair response has insufficient shared workspace");
                 local_active_accumulator =
                     std::make_unique<detail::LocalActiveSpaceTileAccumulator>(
                         *current_input_,
                         *accepted_point_context_,
-                        integral_directions[static_cast<std::size_t>(column)]);
+                        integral_directions[static_cast<std::size_t>(column)],
+                        local_pair_capacity.bytes() / 2);
             }
             const auto consume_local_active_tile =
                 [&](bool alpha_channel,
@@ -438,10 +451,13 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch_impl(
                         : nullptr,
                     true,
                     consume_local_active_tile,
-                    n_selected_states);
+                    n_selected_states,
+                    local_pair_capacity.bytes() - local_pair_capacity.bytes() / 2);
             }
             if (local_active_accumulator) {
                 outer.local_active_gradient = local_active_accumulator->finish();
+                local_active_accumulator.reset();
+                local_pair_capacity.try_resize(0);
             }
             // Retain exact tangents until their local adjoint consumer finishes.
             // RI directions never materialize this buffer.

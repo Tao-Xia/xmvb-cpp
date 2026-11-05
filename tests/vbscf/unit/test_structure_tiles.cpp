@@ -40,6 +40,7 @@
 #include "vbscf/structures/orthogonal_ci/integrals.hpp"
 #include "vbscf/structures/overlap/representation.hpp"
 #include "vbscf/structures/overlap/metric.hpp"
+#include "vbscf/derivatives/hessian/responses/same_spin/tile_policy_internal.hpp"
 #include "mcscf/ci/product_paths.hpp"
 
 namespace {
@@ -881,9 +882,10 @@ void check_factor_structure_response(int parity, bool unequal = false) {
     const auto reference = explicit_response(fixture, cache, action, dense, q, mu);
     // No accepted product arrays may be needed by this consumer.
     auto sparse = accepted;
+    const auto source_budget = xmvb::workspace::available();
     auto sweep = action.apply_response(sparse, q);
     require(sweep.images.tiles.source_columns > 0 &&
-                sweep.images.tiles.source_workspace_bound <= xmvb::mcscf::kFactorWorkspaceBytes,
+                sweep.images.tiles.source_workspace_bound <= source_budget,
             "sparse structure response missed source contraction or exceeded its workspace");
     check_images(sweep.images,
                  reference_images(
@@ -927,11 +929,12 @@ void check_factor_structure_response(int parity, bool unequal = false) {
                                   0.0001);
     xmvb::vb::StructureIntegralDirection source_cache, product_cache;
     source_cache.capture_connection = product_cache.capture_connection = true;
+    const auto direction_budget = xmvb::workspace::available();
     const auto source_images =
         action.apply_integral_direction(sparse, overlap, one, two, &source_cache);
     check_images(source_images,
                  action.apply_integral_direction(dense, overlap, one, two, &product_cache));
-    require(source_images.tiles.source_workspace_bound <= xmvb::mcscf::kFactorWorkspaceBytes,
+    require(source_images.tiles.source_workspace_bound <= direction_budget,
             "source image/VJP exceeded the single shared numerical workspace");
     require(source_cache.connection.has_value(), "source direction lost its requested diagnostic");
     require(
@@ -1185,13 +1188,13 @@ void check_broad_product_projection(bool unequal, bool partial = false, int pari
     auto source_state = wide;
     source_state.source_factors = true;
     source_state.product_images.reset();
+    const auto source_budget = xmvb::workspace::available();
     const auto source_response = action.apply_response(source_state, q);
     check_images(source_response.images, response.images);
     require((source_response.generator - response.generator).norm() < 3e-11 &&
                 (source_response.one_electron - response.one_electron).norm() < 3e-11 &&
                 (source_response.pair_kernel - response.pair_kernel).norm() < 3e-11 &&
-                source_response.images.tiles.source_workspace_bound <=
-                    xmvb::mcscf::kFactorWorkspaceBytes,
+                source_response.images.tiles.source_workspace_bound <= source_budget,
             "single-pass source image changed an arbitrary-space adjoint or exceeded its budget");
     check_images(response.images, reference_images(fixture, terms, alpha, beta, q));
     check_images(response.images, action.apply_response(narrow, q).images);
@@ -1706,6 +1709,35 @@ void check_column_temporary_ownership() {
         require(xmvb::workspace::temporary_bytes() == baseline && accepted.values.size() == 6,
                 "retained tile was charged as temporary");
     }
+}
+
+void check_pair_tile_minimum_budget() {
+    using xmvb::vb::detail::plan_pair_tile_extent;
+    // Empty sectors need no pair. A one-pair sector must cover its payload,
+    // one worker scratch, reserved scratch, and one primary panel.
+    require(plan_pair_tile_extent(0, 0, 1, 0, false, 0) == 1,
+            "empty pair sector lost its no-work extent");
+    const std::size_t minimum = sizeof(xmvb::vb::SpinDeterminantPairEvaluation) +
+                                5 * sizeof(double) + 5 + sizeof(double) + 7 + 11;
+    const auto extent = [&](std::int64_t unique, std::size_t budget, int workers) {
+        return plan_pair_tile_extent(unique, 0, 1, 0, false, budget, 11, 7, 5, workers);
+    };
+    require(extent(1, minimum, 1) == 1 && extent(2, minimum, 1) == 1,
+            "pair-tile planner rejected its exact one-pair minimum");
+    bool rejected = false;
+    try {
+        extent(1, minimum - 1, 1);
+    } catch (const std::length_error&) {
+        rejected = true;
+    }
+    require(rejected, "pair-tile planner admitted one pair below its minimum");
+    rejected = false;
+    try {
+        extent(1, minimum, 2);
+    } catch (const std::length_error&) {
+        rejected = true;
+    }
+    require(rejected, "pair-tile planner ignored the explicit scratch worker count");
 }
 
 void check_input_columns() {
@@ -4951,6 +4983,14 @@ void check_operator_first() {
                 "H-only operator-first changed the physical image");
 
         const auto accepted = action.prepare_active_adjoint(vectors, {0.5, 0.5}, {-0.9, -0.7});
+        bool insufficient_panel_rejected = false;
+        try {
+            executor.jet(accepted, nullptr, nullptr, nullptr, false, 1);
+        } catch (const std::length_error&) {
+            insufficient_panel_rejected = true;
+        }
+        require(insufficient_panel_rejected,
+                "operator-first jet admitted a budget below one mandatory panel");
         const auto zero_response = action.apply_response(accepted, Eigen::MatrixXd::Zero(3, 2));
         require(zero_response.images.tiles.source_columns == 0 &&
                     zero_response.images.hamiltonian.isZero(0.0) &&
@@ -5218,10 +5258,10 @@ int main(int argc, char** argv) {
                            [&] { check_product_response(parity, false); });
             check_case("check_product_response", [&] { check_product_response(0, true); });
             {
-                // The complete derivative chain, not only bare sigma: force multiple
-                // generated tiles while the narrow-panel cases also force evictions.
+                // Keep the complete derivative chain under a constrained shared
+                // allowance; the product-image cache still forces evictions.
                 const auto previous = xmvb::workspace::limit();
-                xmvb::workspace::set_limit(32 * 1024);
+                xmvb::workspace::set_limit(128 * 1024);
                 for (int parity : {0, 1, -1})
                     check_case("check_product_response",
                                [&] { check_product_response(parity, false); });
@@ -5254,6 +5294,7 @@ int main(int argc, char** argv) {
             check_case("check_mixed_exchange_space", [&] { check_mixed_exchange_space(); });
             check_case("check_column_cache_allocation_order",
                        [&] { check_column_cache_allocation_order(); });
+            check_case("check_pair_tile_minimum_budget", [&] { check_pair_tile_minimum_budget(); });
             check_case("check_input_columns", [&] { check_input_columns(); });
             check_case("check_indexed_halo", [&] { check_indexed_halo(); });
             check_case("check_exterior_team", [&] { check_exterior_team(); });

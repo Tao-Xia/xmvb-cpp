@@ -107,15 +107,17 @@ LocalOppositeSpinTileAccumulator::LocalOppositeSpinTileAccumulator(
     int n_active_orbitals,
     const std::vector<double>& active_overlap,
     const Eigen::MatrixXd& active_one_electron,
-    const xmvb::integrals::ActiveSpaceTwoElectronResult& active_two_electron)
+    const xmvb::integrals::ActiveSpaceTwoElectronResult& active_two_electron,
+    std::size_t workspace_bytes)
     : accepted_pair_cache_(accepted_pair_cache), selected_states_(selected_states),
       n_active_orbitals_(n_active_orbitals),
       n_packed_pairs_(xmvb::integrals::packed_active_pair_count(n_active_orbitals)),
       active_overlap_(active_overlap), active_one_electron_(active_one_electron),
       active_two_electron_(active_two_electron),
-      tile_extents_(plan_opposite_spin_backward_tiles(
-                        accepted_pair_cache, n_active_orbitals, active_two_electron)
-                        .partner) {
+      tile_extents_(
+          plan_opposite_spin_backward_tiles(
+              accepted_pair_cache, n_active_orbitals, active_two_electron, workspace_bytes)
+              .partner) {
     result_.active_orbital_overlap_gradient.assign(
         static_cast<std::size_t>(n_active_orbitals) * n_active_orbitals, 0.0);
     result_.packed_active_two_electron_gradient.assign(

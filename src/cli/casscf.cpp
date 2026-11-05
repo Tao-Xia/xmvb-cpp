@@ -113,8 +113,11 @@ int run_casscf(const Options& command_line, const vb::InputDeck& deck) {
               << " orbitals; core=" << input.ncore << ", spin multiplicity=" << input.twice_spin + 1
               << '\n'
               << "Maximum iterations: " << options.max_iterations << '\n'
-              << "Exact-exchange memory budget: " << input.ao.exact_exchange_memory_budget_bytes
-              << " bytes\n";
+              << "Exact-exchange memory budget: ";
+    if (input.ao.exact_exchange_memory_budget_bytes)
+        std::cout << *input.ao.exact_exchange_memory_budget_bytes << " bytes\n";
+    else
+        std::cout << "automatic CPU workspace\n";
 
     const auto solve_start = Clock::now();
     const auto result = casscf::solve_casscf(input.ao,

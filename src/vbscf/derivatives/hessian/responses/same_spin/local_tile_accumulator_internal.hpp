@@ -27,7 +27,7 @@ class LocalSameSpinTileAccumulator {
         const Eigen::MatrixXd& active_one_electron,
         const xmvb::integrals::ActiveSpaceTwoElectronResult& active_two_electron,
         const ActiveSpaceIntegralDirectionView& direction,
-        std::size_t workspace_bytes = kPairTileWorkspaceBytes);
+        std::size_t workspace_bytes = workspace::available());
 
     void consume(bool alpha_channel,
                  bool beta_channel,

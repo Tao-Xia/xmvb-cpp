@@ -1,6 +1,8 @@
 #include <cstdint>
 #include "vbscf/structures/assembly/operator_first_internal.hpp"
 
+#include <algorithm>
+
 #include "core/workspace.hpp"
 #include "parallel/openmp.hpp"
 #include "vbscf/structures/orthogonal_ci/exterior_transform.hpp"
@@ -36,6 +38,16 @@ struct Lane {
     StructureResponseSweep result;
     bool images = false;
 };
+/** Release jet scratch only after its local matrices have been destroyed. */
+struct AcceptedCapacityTail {
+    OperatorFirstState* state;
+    std::size_t retained_bytes;
+    bool armed = false;
+    ~AcceptedCapacityTail() {
+        if (armed)
+            state->residency->try_resize(retained_bytes);
+    }
+};
 } // namespace
 
 StructureResponseSweep OperatorFirstAction::jet(const StructureAdjointState& state,
@@ -63,6 +75,76 @@ StructureResponseSweep OperatorFirstAction::jet(const StructureAdjointState& sta
     const auto* fixed = state.operator_state.get();
     const bool reuse = tangent && fixed && fixed->point == data.point;
     const bool collect_value = !tangent || (moving && !reuse);
+    const int lanes = (tangent ? 1 : 0) + (ci_response ? 1 : 0);
+    const int outputs = (collect_images ? 1 : 0) + (ci_response ? 1 : 0);
+    const auto targets = data.source.beta_columns();
+    // The canonical copy overlaps right, z, source, both seeds and the alpha
+    // scratch. Later the same scratch is resized for the beta seed. Take the
+    // larger of those two live panel shapes, not one panel per worker.
+    const std::size_t canonical_column = static_cast<std::size_t>(na) * (5 + 4 * lanes) +
+                                         static_cast<std::size_t>(nb) * (2 + 2 * lanes);
+    const std::size_t beta_column = static_cast<std::size_t>(na) * (3 + 3 * lanes) +
+                                    static_cast<std::size_t>(nb) * (3 + 2 * lanes);
+    const std::size_t per_column = sizeof(double) * std::max(canonical_column, beta_column);
+    const std::size_t small = static_cast<std::size_t>(n) * n;
+    const std::size_t pair_square = static_cast<std::size_t>(pairs) * pairs;
+    const std::size_t has_direction = integral_direction || moving ? 1 : 0;
+    // Live throughout the sweep: raw canonical cotangents, one/two/moment for
+    // each lane, the primal and lane results, empty integrals, and the optional
+    // canonical operator direction. The worker gradients are separate below.
+    const std::size_t adjoints =
+        sizeof(double) * (small * small * (1 + lanes + has_direction) + pair_square * (2 + lanes) +
+                          small * (7 + 4 * lanes + has_direction));
+    // Pullbacks run after the panels and one lane at a time. Bound their live
+    // Jet products and symmetrization matrices as a separate phase.
+    const std::size_t pullback_scratch =
+        sizeof(double) * (12 * small * small + 4 * pair_square + 16 * small);
+    const std::size_t intrinsic =
+        sizeof(double) * view.products.size() * states *
+        (1 + (coefficient_direction ? 1 : 0) + (ci_response ? 1 : 0) + 2 * outputs);
+    // The unused primal result remains live alongside tangent results. The
+    // accepted matrices are new output storage; a reused fixed state is merely
+    // borrowed and its existing ownership is not charged a second time.
+    const std::size_t structure_images = sizeof(double) *
+                                         static_cast<std::size_t>(data.n_structures) * states * 2 *
+                                         ((collect_images ? 1 : 0) + outputs);
+    const std::size_t accepted_images = accepted ? sizeof(double) * (small * small + 2 * small) : 0;
+    const std::size_t density_images =
+        densities ? sizeof(double) * static_cast<std::size_t>(states) * (states + 1) / 2 * small
+                  : 0;
+    const std::size_t frame_directions =
+        moving ? sizeof(double) *
+                     (static_cast<std::size_t>(na + nb) + static_cast<std::size_t>(n) * (n - 1))
+               : 0;
+    const std::size_t fixed_bytes =
+        intrinsic + adjoints + structure_images + density_images + frame_directions;
+    // Accepted contractions are copied after the last beta panel is destroyed.
+    const std::size_t accepted_tail_bytes = fixed_bytes + accepted_images;
+    const std::size_t pullback_peak_bytes = fixed_bytes + pullback_scratch;
+    const std::size_t budget = std::min(workspace_bytes, workspace::available());
+    const std::size_t worker_bytes =
+        sizeof(double) * (small * small + small) * (lanes + (collect_value ? 1 : 0));
+    const std::size_t workers = cooperative_openmp_thread_count();
+    if (std::max(accepted_tail_bytes, pullback_peak_bytes) > budget || fixed_bytes >= budget ||
+        budget - fixed_bytes < per_column + worker_bytes)
+        throw std::length_error("operator-first jet budget cannot hold one panel");
+    std::size_t width = std::min<std::size_t>(
+        targets.size(), std::min<std::size_t>(8 * workers, (budget - fixed_bytes) / per_column));
+    while (width &&
+           width * per_column + std::min(width, workers) * worker_bytes > budget - fixed_bytes)
+        --width;
+    if (!width)
+        throw std::length_error("operator-first jet budget cannot hold one panel");
+    const std::size_t live_bytes =
+        std::max({accepted_tail_bytes,
+                  pullback_peak_bytes,
+                  fixed_bytes + width * per_column + std::min(width, workers) * worker_bytes});
+    workspace::Reservation capacity;
+    if (!capacity.try_resize(live_bytes))
+        throw std::length_error("operator-first jet exceeds shared workspace");
+    const workspace::Temporary charge(live_bytes);
+    AcceptedCapacityTail accepted_tail{accepted, accepted_images};
+    const auto accepted_capacity = accepted ? std::make_shared<workspace::Reservation>() : nullptr;
     const Eigen::MatrixXd zero = Eigen::MatrixXd::Zero(n, n);
     const Eigen::MatrixXd& dr = moving ? *orbital_direction : zero;
     mcscf::ActiveIntegrals empty;
@@ -74,26 +156,6 @@ StructureResponseSweep OperatorFirstAction::jet(const StructureAdjointState& sta
                         : std::nullopt;
     const auto da = moving ? std::optional(view.alpha.direction(dr)) : std::nullopt;
     const auto db = moving ? std::optional(view.beta.direction(dr)) : std::nullopt;
-    const int lanes = (tangent ? 1 : 0) + (ci_response ? 1 : 0);
-    const int outputs = (collect_images ? 1 : 0) + (ci_response ? 1 : 0);
-    const auto targets = data.source.beta_columns();
-    const std::size_t per_column =
-        sizeof(double) * (6 + 5 * lanes) * (static_cast<std::size_t>(na) + nb);
-    const std::size_t small = static_cast<std::size_t>(n) * n;
-    const std::size_t adjoints =
-        sizeof(double) *
-        (small * small * (24 + 4 * lanes) + small * (32 + 4 * lanes) +
-         (1 + lanes) * cooperative_openmp_thread_count() * (small * small + small));
-    const std::size_t intrinsic =
-        sizeof(double) * view.products.size() * states *
-        (1 + (coefficient_direction ? 1 : 0) + (ci_response ? 1 : 0) + 2 * outputs);
-    if (workspace_bytes <= intrinsic || workspace_bytes - intrinsic < per_column)
-        throw std::length_error("operator-first jet budget cannot hold one panel");
-    const int width =
-        std::min<std::size_t>(targets.size(),
-                              std::min<std::size_t>(8 * cooperative_openmp_thread_count(),
-                                                    (workspace_bytes - intrinsic) / per_column));
-    const workspace::Temporary charge(adjoints + intrinsic + width * per_column);
     const auto result = [&](bool images) {
         return StructureResponseSweep{
             {Eigen::MatrixXd::Zero(images ? data.n_structures : 0, states),
@@ -273,7 +335,7 @@ StructureResponseSweep OperatorFirstAction::jet(const StructureAdjointState& sta
         tiles.source_columns = states * targets.size();
         tiles.input_panels = tiles.integral_adjoint_sweeps = tiles.source_tiles;
         tiles.hamiltonian_projections = tiles.overlap_projections = images ? states : 0;
-        tiles.source_workspace_bound = intrinsic + width * per_column;
+        tiles.source_workspace_bound = live_bytes;
         if (!images)
             return;
 #pragma omp parallel for schedule(static)
@@ -307,6 +369,11 @@ StructureResponseSweep OperatorFirstAction::jet(const StructureAdjointState& sta
     }
     if (ci_response)
         ci_response->result = std::move(directions.back().result);
+    if (accepted) {
+        *accepted_capacity = std::move(capacity);
+        accepted->residency = accepted_capacity;
+        accepted_tail.armed = true;
+    }
     return tangent ? std::move(directions.front().result) : std::move(out);
 }
 } // namespace xmvb::vb

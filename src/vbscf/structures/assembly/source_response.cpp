@@ -4,6 +4,7 @@
 #include <cmath>
 #include <stdexcept>
 
+#include "core/workspace.hpp"
 #include "mcscf/ci/factors.hpp"
 #include "vbscf/structures/assembly/sources.hpp"
 
@@ -89,7 +90,7 @@ StructureAction::source_response(const StructureAdjointState& state,
                 beta,
                 sigma,
                 false,
-                mcscf::kFactorWorkspaceBytes);
+                workspace::available());
             result.images.hamiltonian.col(i) = image.hamiltonian.col(0);
             result.images.overlap.col(i) = image.overlap.col(0);
             continue;

@@ -11,6 +11,7 @@
 #include "integrals/response/ao_pair_operator.hpp"
 #include "integrals/response/directional.hpp"
 #include "integrals/response/ri.hpp"
+#include "core/workspace.hpp"
 
 namespace {
 
@@ -46,7 +47,7 @@ void check_exact() {
     constexpr int active_pairs = active * (active + 1) / 2;
     xmvb::integrals::AoIntegralInput ao;
     ao.n_basis_functions = basis;
-    std::vector<int> left, right;
+    std::vector<xmvb::integrals::PairAddress> left, right;
     std::vector<double> values;
     for (int first = 0; first < basis_pairs; ++first)
         for (int second = 0; second <= first; ++second) {
@@ -68,19 +69,33 @@ void check_exact() {
         ao, pair_map, basis, active_pairs, &accepted.dense_ao_pair_products);
     const auto resident = xmvb::integrals::build_exact_packed_active_two_electron_adjoint_cache(
         accepted_gradient, accepted_coefficients, ao, active, accepted);
+    if (resident.accepted_pair_products == nullptr || resident.orbital_pair_products.size() == 0 ||
+        resident.exchange_integrals.size() == 0)
+        throw std::runtime_error("exact resident fixture did not admit accepted transforms");
+    xmvb::integrals::ActiveSpaceTwoElectronResult streamed_accepted;
+    streamed_accepted.dense_active_coefficients = accepted_coefficients;
+    const auto streamed_cache =
+        xmvb::integrals::build_exact_packed_active_two_electron_adjoint_cache(
+            accepted_gradient, accepted_coefficients, ao, active, streamed_accepted);
+    if (streamed_cache.accepted_pair_products != nullptr ||
+        streamed_cache.orbital_pair_products.size() != 0 ||
+        streamed_cache.exchange_integrals.size() != 0)
+        throw std::runtime_error("exact streamed fixture retained accepted transforms");
+    const Eigen::MatrixXd resident_reference =
+        xmvb::integrals::apply_exact_packed_active_two_electron_adjoint_hessian_vector(
+            resident, direction, ao) +
+        xmvb::integrals::backpropagate_exact_packed_active_two_electron_gradient(gradient_direction,
+                                                                                 resident);
 
     for (bool streamed : {false, true}) {
-        auto cache = resident;
-        if (streamed) {
-            cache.accepted_pair_products = nullptr;
-            cache.orbital_pair_products.resize(0, 0);
-            cache.exchange_integrals.resize(0, 0);
-        }
+        const auto& cache = streamed ? streamed_cache : resident;
         const Eigen::MatrixXd reference =
             xmvb::integrals::apply_exact_packed_active_two_electron_adjoint_hessian_vector(
                 cache, direction, ao) +
             xmvb::integrals::backpropagate_exact_packed_active_two_electron_gradient(
                 gradient_direction, cache);
+        require_close(
+            reference, resident_reference, "exact streamed and resident adjoints disagree");
         xmvb::integrals::ExactPackedActiveTwoElectronApplyWorkspace workspace;
         Eigen::MatrixXd jet;
         xmvb::integrals::apply_exact_active_two_electron_jet(
@@ -103,21 +118,31 @@ void check_exact() {
                 throw std::runtime_error("integral-only exact direction changed packed integrals");
 
         if (!streamed) {
-            auto no_exchange = cache;
-            no_exchange.exchange_integrals.resize(0, 0);
+            auto ao_no_exchange = ao;
+            ao_no_exchange.exact_exchange_memory_budget_bytes = 0;
+            const auto no_exchange =
+                xmvb::integrals::build_exact_packed_active_two_electron_adjoint_cache(
+                    accepted_gradient, accepted_coefficients, ao_no_exchange, active, accepted);
+            if (no_exchange.exchange_integrals.size() != 0 ||
+                no_exchange.orbital_pair_products.size() == 0)
+                throw std::runtime_error("exact no-exchange fixture selected the wrong cache");
             xmvb::integrals::ExactPackedActiveTwoElectronDirectionalDerivativeWorkspace
                 direction_workspace;
             std::vector<double> integral_direction;
             xmvb::integrals::
                 compute_exact_packed_active_two_electron_integral_directional_derivative(
-                    no_exchange, direction, ao, &direction_workspace, &integral_direction);
+                    no_exchange,
+                    direction,
+                    ao_no_exchange,
+                    &direction_workspace,
+                    &integral_direction);
             if (direction_workspace.directional_pair_products.rows() != basis_pairs)
                 throw std::runtime_error("exact direction did not retain pair products");
             xmvb::integrals::apply_exact_active_two_electron_jet(
                 no_exchange,
                 direction,
                 gradient_direction,
-                ao,
+                ao_no_exchange,
                 &workspace,
                 &jet,
                 &direction_workspace.directional_pair_products);
@@ -126,6 +151,45 @@ void check_exact() {
                           "exact precomputed-direction jet disagrees with separate contractions");
         }
     }
+    struct RestoreWorkspaceLimit {
+        std::size_t previous = xmvb::workspace::limit();
+        ~RestoreWorkspaceLimit() {
+            xmvb::workspace::set_limit(previous);
+        }
+    } restore_limit;
+    const std::size_t held = xmvb::workspace::retained();
+    const std::size_t packed = active_pairs * (active_pairs + 1) / 2;
+    const std::vector<Eigen::MatrixXd> one_direction{direction};
+    const Eigen::MatrixXd resident_direction = xmvb::integrals::
+        compute_exact_packed_active_two_electron_integral_directional_derivative_batch(
+            resident, one_direction, ao);
+    const std::size_t streamed_minimum = active_pairs * active_pairs + 2 * active_pairs;
+    const std::size_t resident_minimum =
+        2 * active_pairs * active_pairs + active * active * active_pairs;
+    const std::size_t constrained_scratch = (streamed_minimum + resident_minimum) / 2;
+    if (constrained_scratch < streamed_minimum || constrained_scratch >= resident_minimum)
+        throw std::runtime_error("exact directional resource fixture has no streamed interval");
+    xmvb::workspace::set_limit(held + (packed + constrained_scratch) * sizeof(double));
+    const Eigen::MatrixXd constrained_direction = xmvb::integrals::
+        compute_exact_packed_active_two_electron_integral_directional_derivative_batch(
+            resident, one_direction, ao);
+    require_close(constrained_direction,
+                  resident_direction,
+                  "exact resident integral direction did not stream under tight workspace");
+    const std::size_t one_row_minimum = active_pairs * active_pairs + packed + 2 * active_pairs;
+    xmvb::workspace::set_limit(held + (one_row_minimum - 1) * sizeof(double));
+    xmvb::integrals::ExactPackedActiveTwoElectronDirectionalDerivativeWorkspace low_workspace;
+    std::vector<double> low_direction;
+    bool rejected = false;
+    try {
+        xmvb::integrals::compute_exact_packed_active_two_electron_integral_directional_derivative(
+            streamed_cache, direction, ao, &low_workspace, &low_direction, false);
+    } catch (const std::length_error&) {
+        rejected = true;
+    }
+    if (!rejected || low_workspace.active_pair_contraction.size() != 0)
+        throw std::runtime_error(
+            "exact streamed direction allocated before minimum workspace check");
 }
 
 void check_ri(int auxiliary, bool expect_resident_plan) {

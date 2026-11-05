@@ -1,6 +1,7 @@
 #include "integrals/active/exact.hpp"
 
 #include <algorithm>
+#include <limits>
 #include <stdexcept>
 #include <vector>
 
@@ -13,6 +14,7 @@
 #include "parallel/openmp.hpp"
 #include "linalg/storage.hpp"
 #include "core/pair_index.hpp"
+#include "core/workspace.hpp"
 #include "integrals/response/ao_pair_operator.hpp"
 
 namespace xmvb::integrals {
@@ -385,10 +387,32 @@ ActiveSpaceTwoElectronResult build_packed_active_two_electron_integrals_sparse(
     n_threads = xmvb::effective_openmp_thread_count();
 #endif
 
-    // Preserve sparse support arithmetic without multiplying a large packed
-    // tensor by the OpenMP team size. A single large image becomes the result.
-    constexpr std::size_t private_elements = 32 * 1024 * 1024 / sizeof(double);
-    n_threads = bounded_openmp_thread_count(n_threads, private_elements / packed_size);
+    // One worker image becomes the result. Multiple workers additionally need
+    // one shared reduction output, so admit all partials and that output from
+    // one operation allowance before creating either allocation.
+    if (packed_size > std::numeric_limits<std::size_t>::max() / sizeof(double))
+        throw std::length_error("active integral packed result size overflow");
+    const std::size_t packed_bytes = packed_size * sizeof(double);
+    const std::size_t available = workspace::available();
+    if (packed_bytes > available)
+        throw std::length_error(
+            "active integral resource_limit: one packed result exceeds workspace");
+    const std::size_t image_capacity = available / packed_bytes;
+    const std::size_t worker_capacity = image_capacity >= 3 ? image_capacity - 1 : 1;
+    n_threads =
+        bounded_openmp_thread_count(n_threads, std::min(worker_capacity, graph.integral_count()));
+    workspace::Reservation action_scratch;
+    while (true) {
+        const std::size_t peak_bytes =
+            packed_bytes * (static_cast<std::size_t>(n_threads) + (n_threads > 1 ? 1 : 0));
+        if (action_scratch.try_resize(peak_bytes))
+            break;
+        if (n_threads == 1)
+            throw std::length_error(
+                "active integral resource_limit: packed result reservation failed");
+        --n_threads;
+    }
+    workspace::Temporary action_temporary(action_scratch.bytes());
     std::vector<std::vector<double>> partial_packed_integrals(n_threads);
     for (auto& partial : partial_packed_integrals)
         partial.assign(packed_size, 0.0);

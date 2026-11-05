@@ -15,6 +15,7 @@
 #include "mcscf/optimization/trace.hpp"
 #include "vbscf/derivatives/hessian/context/accepted_point.hpp"
 #include "core/pair_index.hpp"
+#include "core/workspace.hpp"
 #include "integrals/response/types.hpp"
 #include "integrals/response/ao_pair_operator.hpp"
 #include "integrals/active/pair_map.hpp"
@@ -344,12 +345,24 @@ AnalyticOrbitalDiagonal build_analytic_orbital_diagonal(const VbScfInput& input,
         }();
         pair_end =
             trace ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-        // Independent output rows share the pair products. Workers own only one
-        // packed AO-pair vector; their aggregate is bounded by the existing 64 MiB
-        // diagonal worker budget, rather than copying the AO-by-core matrix.
-        constexpr std::size_t worker_budget = 64 * 1024 * 1024;
-        workers = std::min(effective_openmp_thread_count(),
-                           static_cast<int>(std::max<std::size_t>(1, worker_budget / pair_bytes)));
+        // Independent output rows share the pair products. Each worker owns
+        // one packed AO-pair vector, charged to one shared projection action.
+        const std::size_t worker_capacity = workspace::available() / pair_bytes;
+        if (n_core && !worker_capacity)
+            throw std::runtime_error(
+                "diagonal projection resource_limit: one worker exceeds workspace");
+        workers = n_core ? static_cast<int>(
+                               std::min({static_cast<std::size_t>(effective_openmp_thread_count()),
+                                         static_cast<std::size_t>(n_bf),
+                                         worker_capacity}))
+                         : 1;
+        workspace::Reservation projection_scratch;
+        const std::size_t scratch_bytes =
+            static_cast<std::size_t>(n_core ? workers : 0) * pair_bytes;
+        if (!projection_scratch.try_resize(scratch_bytes))
+            throw std::runtime_error(
+                "diagonal projection resource_limit: worker reservation failed");
+        workspace::Temporary projection_temporary(scratch_bytes);
 #pragma omp parallel for schedule(static) num_threads(workers)
         for (int p = 0; p < (n_core ? n_bf : 0); ++p) {
             Eigen::VectorXd diagonal_pair(n_ao_pairs);

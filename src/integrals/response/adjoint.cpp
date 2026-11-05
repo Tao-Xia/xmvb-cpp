@@ -34,12 +34,29 @@ void build_orbital_pair_products(ExactPackedActiveTwoElectronAdjointCache* cache
     const Eigen::Index n_bf = cache->n_basis_functions;
     const Eigen::Index n = cache->n_active_orbitals;
     const Eigen::Index pairs = cache->active_pair_first_indices.size();
-    constexpr std::size_t budget = 64 * 1024 * 1024;
     const std::size_t columns = static_cast<std::size_t>(n) * pairs;
-    if (cache->accepted_pair_products == nullptr ||
-        columns > budget / sizeof(double) / static_cast<std::size_t>(n_bf)) {
+    const std::size_t rows = static_cast<std::size_t>(n_bf);
+    const std::size_t available = workspace::available();
+    // Preserve the exchange action's single-row panel and active weights after
+    // retaining this second accepted-point image.
+    const std::size_t n_bf_values = rows * static_cast<std::size_t>(n);
+    const std::size_t orbital_scratch = columns * static_cast<std::size_t>(n) +
+                                        static_cast<std::size_t>(pairs) * pairs + 2 * n_bf_values;
+    const std::size_t exchange_scratch =
+        cache->exchange_integrals.size() == 0
+            ? 0
+            : (rows + static_cast<std::size_t>(n)) * n * n * n + 2 * n_bf_values + rows * n * n;
+    const std::size_t scratch = orbital_scratch + exchange_scratch;
+    const std::size_t retained_budget = cache->optional_retained_budget_bytes;
+    const std::size_t exchange_bytes = cache->exchange_reservation.bytes();
+    if (cache->accepted_pair_products == nullptr || !rows || scratch > available / sizeof(double) ||
+        columns > (available / sizeof(double) - scratch) / rows ||
+        exchange_bytes > retained_budget ||
+        columns > (retained_budget - exchange_bytes) / sizeof(double) / rows) {
         return;
     }
+    if (!cache->orbital_pair_reservation.try_resize(rows * columns * sizeof(double)))
+        return;
     cache->orbital_pair_products.setZero(n_bf * n, pairs);
     const auto& c = *cache->accepted_active_coefficients;
     const auto& products = *cache->accepted_pair_products;
@@ -199,6 +216,9 @@ ExactPackedActiveTwoElectronAdjointCache build_exact_packed_active_two_electron_
     }
     cache.active_pair_gradient_matrix =
         build_active_pair_gradient_matrix(packed_active_two_electron_gradient, active_pairs);
+    // Optional accepted-point transforms must leave room for the next CI and
+    // for action scratch, even when the detected resource headroom is large.
+    cache.optional_retained_budget_bytes = workspace::available() / 2;
     if (accepted_active_space_two_electron_result.dense_ao_pair_products.size() != 0) {
         if (accepted_active_space_two_electron_result.dense_ao_pair_products.rows() !=
                 static_cast<Eigen::Index>(n_bf_pairs) ||
@@ -209,8 +229,8 @@ ExactPackedActiveTwoElectronAdjointCache build_exact_packed_active_two_electron_
         cache.accepted_pair_products =
             &accepted_active_space_two_electron_result.dense_ao_pair_products;
     }
-    build_orbital_pair_products(&cache);
     detail::build_exchange_integrals(&cache);
+    build_orbital_pair_products(&cache);
 
     return cache;
 }
@@ -263,10 +283,9 @@ void apply_exact_active_two_electron_jet_impl(
             "dense active coefficient shape mismatch in exact two-electron HVP");
     }
     const std::size_t n_active_pairs = accepted_cache.active_pair_first_indices.size();
-    if (accepted_cache.active_pair_second_indices.size() != n_active_pairs) {
+    if (!n_active_pairs || accepted_cache.active_pair_second_indices.size() != n_active_pairs) {
         throw std::invalid_argument("exact 2e cache active-pair index size mismatch");
     }
-    workspace->dense_active_direction = dense_active_direction;
 
     if (accepted_cache.active_pair_gradient_matrix.rows() !=
             static_cast<Eigen::Index>(n_active_pairs) ||
@@ -295,10 +314,59 @@ void apply_exact_active_two_electron_jet_impl(
              static_cast<Eigen::Index>(n_active_pairs))) {
         throw std::invalid_argument("exact 2e accepted pair-product size mismatch");
     }
+    const Eigen::Index planned_tiles = (n_bf_pairs + n_bf - 1) / n_bf;
+    int planned_threads = 1;
+#ifdef _OPENMP
+    planned_threads = bounded_openmp_thread_count(effective_openmp_thread_count(), planned_tiles);
+#endif
+    xmvb::workspace::Reservation accepted_scratch;
+    bool stream_action = accepted_cache.accepted_pair_products == nullptr;
+    if (!stream_action) {
+        const std::size_t active_values = static_cast<std::size_t>(n_bf) * n_ao;
+        const std::size_t pair_tile_values = static_cast<std::size_t>(n_bf) * n_active_pairs;
+        const std::size_t full_pair_values = static_cast<std::size_t>(n_bf_pairs) * n_active_pairs;
+        const std::size_t resident_values =
+            (2 + planned_threads + (dense_active_gradient_direction == nullptr ? 0 : 1)) *
+                active_values +
+            planned_threads * pair_tile_values +
+            (directional_pair_products == nullptr && accepted_cache.exchange_integrals.size() == 0
+                 ? 3 * full_pair_values
+                 : 0);
+        if (resident_values > xmvb::workspace::available() / sizeof(double) ||
+            !accepted_scratch.try_resize(resident_values * sizeof(double)))
+            stream_action = true;
+        else if (directional_pair_products == nullptr &&
+                 accepted_cache.exchange_integrals.size() != 0 &&
+                 !detail::can_contract_exchange_direction(accepted_cache)) {
+            accepted_scratch.try_resize(0);
+            stream_action = true;
+        }
+    }
+    xmvb::workspace::Temporary accepted_temporary(accepted_scratch.bytes());
+    xmvb::workspace::Reservation stream_scratch;
+    Eigen::Index stream_rows = n_bf;
+    if (stream_action) {
+        const std::size_t active_values = static_cast<std::size_t>(n_bf) * n_ao;
+        const std::size_t base_values =
+            (dense_active_gradient_direction == nullptr ? 2 : 3) * active_values;
+        const std::size_t row_values =
+            (directional_pair_products == nullptr ? 3 : 2) * n_active_pairs;
+        const std::size_t available_values = xmvb::workspace::available() / sizeof(double);
+        if (base_values > available_values || row_values > available_values - base_values)
+            throw std::length_error(
+                "exact adjoint resource_limit: one AO-pair row exceeds workspace");
+        stream_rows = std::min<Eigen::Index>(n_bf, (available_values - base_values) / row_values);
+        if (!stream_scratch.try_resize(
+                (base_values + static_cast<std::size_t>(stream_rows) * row_values) *
+                sizeof(double)))
+            throw std::length_error("exact adjoint resource_limit: row reservation failed");
+    }
+    xmvb::workspace::Temporary stream_temporary(stream_scratch.bytes());
+    workspace->dense_active_direction = dense_active_direction;
     workspace->dense_active_gradient_direction.resize(n_bf, n_ao);
     workspace->dense_active_gradient_direction.setZero();
-    if (accepted_cache.accepted_pair_products == nullptr) {
-        const Eigen::Index tile_rows = n_bf;
+    if (stream_action) {
+        const Eigen::Index tile_rows = stream_rows;
         for (Eigen::Index row_begin = 0; row_begin < n_bf_pairs; row_begin += tile_rows) {
             const Eigen::Index row_count = std::min(tile_rows, n_bf_pairs - row_begin);
             apply_generated_pair_rows(
@@ -355,10 +423,7 @@ void apply_exact_active_two_electron_jet_impl(
     // direction), with only an AO-by-active accumulator per worker.
     const Eigen::Index tile_rows = n_bf;
     const Eigen::Index n_tiles = (n_bf_pairs + tile_rows - 1) / tile_rows;
-    int n_threads = 1;
-#ifdef _OPENMP
-    n_threads = bounded_openmp_thread_count(effective_openmp_thread_count(), n_tiles);
-#endif
+    const int n_threads = planned_threads;
     std::vector<Eigen::MatrixXd> thread_gradients;
     thread_gradients.reserve(n_threads);
     for (int thread = 0; thread < n_threads; ++thread)

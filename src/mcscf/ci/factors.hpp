@@ -11,8 +11,6 @@
 
 namespace xmvb::mcscf {
 
-inline constexpr std::size_t kFactorWorkspaceBytes = 64ULL * 1024ULL * 1024ULL;
-
 /** @brief Exact orthogonal spin factors supplied a bounded source panel at a time.
  * load(first,count,A,B) fills the borrowed full-row views so that the represented
  * amplitude is sum_j A_j B_j^T. No complete product or all-source array is needed.
@@ -155,7 +153,7 @@ DirectCiIntegralAdjoint
 factor_integral_adjoint(const DirectCiSigmaAction& sigma,
                         const SpinFactorSource& left,
                         const SpinFactorSource& right,
-                        std::size_t workspace_bytes = kFactorWorkspaceBytes);
+                        std::size_t workspace_bytes = workspace::available());
 
 /** @brief Oriented one-body adjoint <left, E(kappa) right> from spin factors.
  * No symmetry of the returned orbital matrix or closure of a selected space
@@ -165,7 +163,7 @@ factor_integral_adjoint(const DirectCiSigmaAction& sigma,
 Eigen::MatrixXd factor_generator_adjoint(const DirectCiSigmaAction& sigma,
                                          const SpinFactorSource& left,
                                          const SpinFactorSource& right,
-                                         std::size_t workspace_bytes = kFactorWorkspaceBytes);
+                                         std::size_t workspace_bytes = workspace::available());
 
 /** @brief Oriented adjoint <(H-energy) left, E(kappa) right>, without a residual carrier.
  * H acts on the LEFT source. Exchanging sources is generally invalid even if
@@ -176,6 +174,6 @@ factor_residual_generator_adjoint(const DirectCiSigmaAction& sigma,
                                   const SpinFactorSource& left,
                                   const SpinFactorSource& right,
                                   double energy,
-                                  std::size_t workspace_bytes = kFactorWorkspaceBytes);
+                                  std::size_t workspace_bytes = workspace::available());
 
 } // namespace xmvb::mcscf

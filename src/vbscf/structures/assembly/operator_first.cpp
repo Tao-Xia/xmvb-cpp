@@ -41,17 +41,31 @@ OperatorFirstImages OperatorFirstAction::apply(const Eigen::Ref<const Eigen::Mat
     const std::size_t rhs_bytes =
         sizeof(double) * (view.products.size() * (families + 1) + na * families);
     const std::size_t beta_bytes = sizeof(double) * static_cast<std::size_t>(nb);
-    const int batch = workspace_bytes > beta_bytes
-                          ? std::min<std::size_t>(rhs, (workspace_bytes - beta_bytes) / rhs_bytes)
-                          : 0;
+    const std::size_t output_bytes = sizeof(double) * static_cast<std::size_t>(data.n_structures) *
+                                     rhs * ((!overlap_only ? 1 : 0) + (collect_overlap ? 1 : 0));
+    const std::size_t output_rhs_bytes = output_bytes / static_cast<std::size_t>(rhs);
+    const std::size_t budget = std::min(workspace_bytes, workspace::available());
+    std::size_t batch = 0;
+    if (budget > output_bytes + beta_bytes) {
+        const auto remaining = budget - output_bytes - beta_bytes;
+        batch = remaining / rhs_bytes >= static_cast<std::size_t>(rhs)
+                    ? static_cast<std::size_t>(rhs)
+                    : std::min<std::size_t>(rhs, remaining / (rhs_bytes + output_rhs_bytes));
+    }
     if (batch > 0 && batch < rhs) {
+        workspace::Reservation output_capacity;
+        if (!output_capacity.try_resize(output_bytes))
+            throw std::length_error("operator-first output exceeds shared workspace");
+        const workspace::Temporary output_charge(output_bytes);
         OperatorFirstImages result;
         result.images.hamiltonian.resize(overlap_only ? 0 : data.n_structures, rhs);
         result.images.overlap.resize(collect_overlap ? data.n_structures : 0, rhs);
         for (std::int64_t first = 0; first < rhs; first += batch) {
             const std::int64_t count = std::min<std::int64_t>(batch, rhs - first);
-            auto part = apply(
-                vectors.middleCols(first, count), workspace_bytes, collect_overlap, overlap_only);
+            auto part = apply(vectors.middleCols(first, count),
+                              budget - output_bytes,
+                              collect_overlap,
+                              overlap_only);
             if (!overlap_only)
                 result.images.hamiltonian.middleCols(first, count) = part.images.hamiltonian;
             if (collect_overlap)
@@ -73,13 +87,15 @@ OperatorFirstImages OperatorFirstAction::apply(const Eigen::Ref<const Eigen::Mat
             t.source_tiles += p.source_tiles;
             t.source_columns += p.source_columns;
             t.input_panels += p.input_panels;
-            t.source_workspace_bound = std::max(t.source_workspace_bound, p.source_workspace_bound);
+            t.source_workspace_bound =
+                std::max(t.source_workspace_bound, output_bytes + p.source_workspace_bound);
         }
         return result;
     }
     const std::size_t unit = sizeof(double) * (static_cast<std::size_t>(na) * rhs * families + nb);
     const auto intrinsic = sizeof(double) * view.products.size() * rhs * (families + 1);
-    if (intrinsic >= workspace_bytes || workspace_bytes - intrinsic < unit)
+    const auto fixed_bytes = intrinsic + output_bytes;
+    if (fixed_bytes >= budget || budget - fixed_bytes < unit)
         throw std::length_error("operator-first budget cannot hold one source panel");
     // One cache-line of independent vectors per worker, bounded by shared bytes.
     const std::size_t parallel = std::max<std::size_t>(
@@ -87,9 +103,14 @@ OperatorFirstImages OperatorFirstAction::apply(const Eigen::Ref<const Eigen::Mat
     const int width = std::min<std::size_t>(
         targets.size(),
         std::min<std::size_t>(std::max<std::int64_t>(1, nb - 1),
-                              std::min(parallel, (workspace_bytes - intrinsic) / unit)));
+                              std::min(parallel, (budget - fixed_bytes) / unit)));
     if (!width)
         throw std::length_error("operator-first source has no target columns");
+    const auto live_bytes = fixed_bytes + width * unit;
+    workspace::Reservation capacity;
+    if (!capacity.try_resize(live_bytes))
+        throw std::length_error("operator-first source panel exceeds shared workspace");
+    const workspace::Temporary charge(live_bytes);
 
     OperatorFirstImages result;
     result.work.source_products = view.products.size();
@@ -105,11 +126,10 @@ OperatorFirstImages OperatorFirstAction::apply(const Eigen::Ref<const Eigen::Mat
     result.images.tiles.source_tiles = (targets.size() + width - 1) / width;
     result.images.tiles.source_columns = targets.size() * rhs;
     result.images.tiles.input_panels = result.images.tiles.source_tiles;
-    result.images.tiles.source_workspace_bound = intrinsic + width * unit;
+    result.images.tiles.source_workspace_bound = live_bytes;
 
     result.images.hamiltonian = Eigen::MatrixXd::Zero(overlap_only ? 0 : data.n_structures, rhs);
     result.images.overlap = Eigen::MatrixXd::Zero(collect_overlap ? data.n_structures : 0, rhs);
-    const workspace::Temporary charge(intrinsic + width * unit);
     Eigen::MatrixXd values = Eigen::MatrixXd::Zero(view.products.size(), rhs);
 #pragma omp parallel for schedule(static)
     for (std::size_t p = 0; p < view.products.size(); ++p)

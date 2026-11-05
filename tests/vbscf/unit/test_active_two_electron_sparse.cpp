@@ -27,8 +27,8 @@ void require(bool condition, const char* message) {
 /** @brief Linear reference ordering preserves values, duplicates and orientation. */
 void check_unique_integral_order() {
     using namespace xmvb::vb;
-    const std::vector<int> left{5, 0, 3, 2, 5, 0, 3};
-    const std::vector<int> right{0, 5, 3, 1, 0, 0, 2};
+    const std::vector<xmvb::integrals::PairAddress> left{5, 0, 3, 2, 5, 0, 3};
+    const std::vector<xmvb::integrals::PairAddress> right{0, 5, 3, 1, 0, 0, 2};
     const std::vector<double> values{0.7, -0.2, 0.4, 0.3, 0.8, 0.9, -0.1};
     const auto graph = xmvb::integrals::build_ao_pair_graph(left, right, values, 3);
     std::vector<std::tuple<int, int, double>> expected, actual;
@@ -57,7 +57,7 @@ void check_csr_edge_groups() {
     using namespace xmvb::vb;
     constexpr int n_bf = 5;
     constexpr int n_pairs = n_bf * (n_bf + 1) / 2;
-    std::vector<int> left, right;
+    std::vector<xmvb::integrals::PairAddress> left, right;
     std::vector<double> values;
     Eigen::MatrixXd reference = Eigen::MatrixXd::Zero(n_pairs, n_pairs);
     for (int a = 0; a < n_pairs - 1; ++a) {
@@ -134,8 +134,10 @@ void check_direction_block(const xmvb::integrals::AoIntegralInput& integrals) {
     }
     // Also exercise the resident pair-image contract independently of whether
     // the accepted exchange image fits this tiny problem's resource budget.
-    auto pair_cache = cache;
-    pair_cache.exchange_integrals.resize(0, 0);
+    auto pair_integrals = integrals;
+    pair_integrals.exact_exchange_memory_budget_bytes = 0;
+    auto pair_cache = xmvb::integrals::build_exact_packed_active_two_electron_adjoint_cache(
+        {0.2, -0.1, 0.3, 0.4, -0.2, 0.5}, orbitals, pair_integrals, 2, accepted);
     const auto pair_batch = xmvb::integrals::
         compute_exact_packed_active_two_electron_integral_directional_derivative_batch(
             pair_cache, directions, integrals, &products, &fixed);
