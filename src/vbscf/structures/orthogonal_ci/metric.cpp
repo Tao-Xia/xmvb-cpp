@@ -6,6 +6,7 @@
 #include <limits>
 #include <stdexcept>
 
+#include "mcscf/optimization/trace.hpp"
 #include "vbscf/structures/assembly/action.hpp"
 #include "vbscf/structures/orthogonal_ci/exterior_transform.hpp"
 
@@ -157,9 +158,33 @@ Eigen::MatrixXd StructureMetricInverse::ci_covector_to_structure(
 Eigen::MatrixXd StructureMetricInverse::apply_ci_hamiltonian(
     const Eigen::Ref<const Eigen::MatrixXd>& coordinates) const {
     Eigen::MatrixXd result(coordinates.rows(), coordinates.cols());
-    // Sigma retains both its input and output carrier. Keep their combined
-    // payload within the existing carrier-column allowance even for tiny G.
-    const Eigen::Index width = std::max<Eigen::Index>(1, chunk_width_ / 2);
+    if (coordinates.cols() == 0)
+        return result;
+    // Each lane holds both an input and an output carrier. The metric owns
+    // the minimum scratch for this action; lease extra lanes only while
+    // Davidson actually has them, leaving working space for the sigma tiles.
+    const auto lane_bytes = core::checked_multiply(
+        2, carrier_column_bytes(action_->n_structures_,
+                                action_->n_unique_alpha_,
+                                action_->n_unique_beta_));
+    const auto minimum_tile = core::checked_multiply(
+        2 * sizeof(double),
+        core::checked_index<std::size_t>(action_->orthogonal_integrals().pair_kernel.rows()));
+    const auto spare = std::max(lane_bytes, minimum_tile);
+    const auto free = workspace::available();
+    const auto extra_capacity = (free - std::min(free, spare)) / lane_bytes;
+    const Eigen::Index resident = std::max<Eigen::Index>(1, chunk_width_ / 2);
+    const Eigen::Index requested = std::min(
+        coordinates.cols(), std::numeric_limits<Eigen::Index>::max() / action_->n_unique_beta_);
+    const auto extra_lanes = std::min(
+        extra_capacity, static_cast<std::size_t>(std::max<Eigen::Index>(0, requested - resident)));
+    workspace::Reservation extra;
+    const Eigen::Index admitted =
+        extra.try_resize(extra_lanes * lane_bytes) ? static_cast<Eigen::Index>(extra_lanes) : 0;
+    const Eigen::Index width = std::min(requested, resident + admitted);
+    mcscf::diagnostics::ciah_trace(
+        "ciah_ci_sigma_batch", "rhs=%ld,width=%ld,extra_bytes=%zu",
+        static_cast<long>(coordinates.cols()), static_cast<long>(width), extra.bytes());
     for (Eigen::Index first = 0; first < coordinates.cols(); first += width) {
         const Eigen::Index count = std::min<Eigen::Index>(width, coordinates.cols() - first);
         const auto carrier = action_->expand_structure_block(

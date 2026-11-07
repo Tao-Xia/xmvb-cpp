@@ -1322,6 +1322,13 @@ void check_sigma_action() {
     require((ci_h - ji.transpose() * raw_h * ji).norm() < 2e-10 &&
                 (ci_h - ci_h.transpose()).norm() < 2e-11,
             "complete CI Hamiltonian is not the independent symmetric congruence");
+    const Eigen::MatrixXd batched_h = full_metric.apply_ci_hamiltonian(metric_rhs);
+    {
+        xmvb::workspace::Reservation reusable;
+        xmvb::workspace::Scope single_lane(one_column_bytes, reusable);
+        require((full_metric.apply_ci_hamiltonian(metric_rhs) - batched_h).norm() < 2e-11,
+                "FULL CI Hamiltonian changed between bounded and multi-lane sigma");
+    }
     require((full_metric.ci_covector_to_structure(metric_rhs) - j.transpose() * metric_rhs).norm() <
                 2e-11,
             "complete CI Ritz covector pullback is inconsistent");
@@ -3059,6 +3066,12 @@ void benchmark_sigma() {
 
 int main(int argc, char** argv) {
     try {
+        if (argc == 2 && std::string(argv[1]) == "--full-batch") {
+            check_sigma_action();
+            check_spin_sector_carrier_inverse();
+            std::cout << "FULL multi-lane sigma: passed\n";
+            return 0;
+        }
         if (argc == 2 && std::string(argv[1]) == "--benchmark-exchange") {
             check_exchange_adjoint(true);
             return 0;
