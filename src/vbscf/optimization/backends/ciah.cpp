@@ -45,7 +45,7 @@ bool admit_structure_response(const VbScfObjective& objective,
     // scales with graph edges, not just the number of AO-pair rows.
     const long double ao_pair_actions =
         graph.empty()           ? n_ao_pairs
-        : graph.has_row_graph() ? static_cast<long double>(graph.values.size())
+        : graph.has_rows()      ? static_cast<long double>(graph.directed_count())
                                 : 2.0L * static_cast<long double>(graph.integral_count());
     const long double core_pair_work = ao_pair_actions * n_active_pairs;
     // The orthogonal direct-CI branch uses pair-channel GEMM on spin products,

@@ -19,9 +19,9 @@ using Channels = AoH1eBatchWorkspace::Channels;
 void validate_rows(const AoIntegralInput& ao, const Eigen::Ref<const Channels>& sources) {
     const Eigen::Index n = ao.n_basis_functions;
     const auto& graph = ao.pair_graph;
-    if (n <= 0 || sources.rows() != n * n || !graph.has_row_graph() ||
-        graph.row_offsets.size() != static_cast<std::size_t>(n * (n + 1) / 2 + 1))
-        throw std::invalid_argument("density row contraction requires symmetric CSR integrals");
+    if (n <= 0 || sources.rows() != n * n || !graph.has_rows() ||
+        graph.pair_first.size() != static_cast<std::size_t>(n * (n + 1) / 2))
+        throw std::invalid_argument("density row contraction requires symmetric AO-pair rows");
 }
 
 /** @brief One owned exchange row and, optionally, its ordered Coulomb row.
@@ -45,11 +45,8 @@ void contract_row(const AoIntegralInput& ao, int mu, const double* source,
             std::fill_n(sum, core_width, 0.0);
         const PairAddress hi = std::max(mu, j), lo = std::min(mu, j);
         const PairAddress pair = hi * (hi + 1) / 2 + lo;
-        for (PairAddress edge = graph.row_offsets[pair]; edge < graph.row_offsets[pair + 1];
-             ++edge) {
-            const auto right = graph.columns[edge];
+        graph.visit_row(pair, [&](std::size_t right, double value) {
             const int k = graph.pair_first[right], l = graph.pair_second[right];
-            const double value = graph.values[edge];
             // D is symmetric: keep the ordered left partner j as the AO column.
             // All exchange RHS values then lie in one contiguous n-by-width stripe,
             // rather than touching n different pages for every integral row.
@@ -76,7 +73,7 @@ void contract_row(const AoIntegralInput& ao, int mu, const double* source,
                 for (int channel = 0; channel < core_width; ++channel)
                     sum[channel] += scale * dkl[channel];
             }
-        }
+        });
     }
 }
 
@@ -89,7 +86,7 @@ void validate_weighted_graph(const AoIntegralInput& ao) {
     const bool csr = graph.has_row_graph() && graph.row_offsets.size() == n_pairs + 1 &&
                      graph.columns.size() == graph.values.size();
     const bool compact = graph.has_compact_integral_stream() && graph.valid_unique_storage();
-    if ((!csr && !compact) || graph.pair_first.size() != n_pairs ||
+    if ((!csr && !compact && (!graph.tiles || graph.tiles->size() != n_pairs)) || graph.pair_first.size() != n_pairs ||
         graph.pair_second.size() != n_pairs)
         throw std::invalid_argument("invalid exact AO JK integral representation");
 }
@@ -174,7 +171,7 @@ void apply_weighted_symmetric_ao_jk(const Eigen::Ref<const Eigen::MatrixXd>& den
     if (coulomb_weight == 0.0 && exchange_weight == 0.0)
         return;
     const auto& graph = ao.pair_graph;
-    if (!graph.has_row_graph()) {
+    if (!graph.has_rows()) {
         // The compact representation stores each integral once. Expand only its
         // distinct index permutations, so equal AO indices need no half weights.
         for (std::size_t index = 0; index < graph.integral_count(); ++index) {

@@ -24,7 +24,7 @@ void build_exchange_integrals(ExactPackedActiveTwoElectronAdjointCache* cache) {
     const auto& graph = cache->ao_integral_input->pair_graph;
     // Keep the large-space streamed representation. The additional integral
     // image has its own memory bound and needs resident accepted pair products.
-    if (cache->accepted_pair_products == nullptr || !graph.has_row_graph() || rows == 0 ||
+    if (cache->accepted_pair_products == nullptr || !graph.has_rows() || rows == 0 ||
         width == 0 || width > budget / sizeof(double) / rows ||
         width > cache->optional_retained_budget_bytes / sizeof(double) / rows)
         return;
@@ -72,11 +72,8 @@ void build_exchange_integrals(ExactPackedActiveTwoElectronAdjointCache* cache) {
                 const auto pair = ao_pair_index(mu, nu);
                 double* target = half.row(item).data();
                 std::fill_n(target, n_bf * n, 0.0);
-                for (PairAddress edge = graph.row_offsets[pair]; edge < graph.row_offsets[pair + 1];
-                     ++edge) {
-                    const auto right = graph.columns[edge];
+                graph.visit_row(pair, [&](std::size_t right, double value) {
                     const int k = graph.pair_first[right], l = graph.pair_second[right];
-                    const double value = graph.values[edge];
                     const double* c_k = coefficients.row(k).data();
                     const double* c_l = coefficients.row(l).data();
 #pragma omp simd
@@ -87,7 +84,7 @@ void build_exchange_integrals(ExactPackedActiveTwoElectronAdjointCache* cache) {
                         for (Eigen::Index b = 0; b < n; ++b)
                             target[k * n + b] += value * c_l[b];
                     }
-                }
+                });
             }
 #pragma omp for schedule(static)
             for (Eigen::Index item = 0; item < count * n_bf; ++item) {

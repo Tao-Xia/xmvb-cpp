@@ -58,6 +58,7 @@ bool retain_dense_pair_products(const AoPairGraph& graph,
                                              static_cast<long double>(n_active_pairs) *
                                              sizeof(double);
     const long double graph_bytes =
+        (graph.tiles ? static_cast<long double>(graph.tiles->storage_bytes()) : 0.0L) +
         (graph.chunks.empty() ? 0.0L
                               : static_cast<long double>(graph.integral_count()) *
                                     (2 * sizeof(PairAddress) + sizeof(double))) +

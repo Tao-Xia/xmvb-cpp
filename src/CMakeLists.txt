@@ -33,6 +33,7 @@ include(vbscf/sources.cmake)
 
 set(XMVB_INTEGRAL_SOURCES
   integrals/ao/graph.cpp
+  integrals/ao/tiles.cpp
   integrals/ao/libcint.cpp
   integrals/ao/exact.cpp
   integrals/ao/exact_rows.cpp

@@ -69,7 +69,7 @@ DensityDiagonals density_diagonal_channels(const VbScfInput& input,
     // Row workers own one K/J row, its MO projection, and a partial diagonal.
     const std::size_t worker_channel = 6 * sizeof(double) * static_cast<std::size_t>(n_bf);
     const std::size_t base = matrix_bytes + output_bytes + active_temp + span_bytes;
-    if (graph.has_row_graph() && budget >= base + matrix_bytes + worker_channel) {
+    if (graph.has_rows() && budget >= base + matrix_bytes + worker_channel) {
         const int workers =
             static_cast<int>(std::min({static_cast<std::size_t>(effective_openmp_thread_count()),
                                        static_cast<std::size_t>(n_bf),
@@ -84,10 +84,10 @@ DensityDiagonals density_diagonal_channels(const VbScfInput& input,
         // canonical scatter reads unique ERIs. Do not use the saved core action
         // to justify extra main-contraction reads: its fused projection also has
         // work, and is deliberately not priced as a free benefit in admission.
-        std::size_t row_records = 2 * graph.values.size();
+        std::size_t row_records = 2 * graph.directed_count();
         for (int mu = 0; mu < n_bf; ++mu) {
-            const int diagonal_pair = mu * (mu + 1) / 2 + mu;
-            row_records -= graph.row_offsets[diagonal_pair + 1] - graph.row_offsets[diagonal_pair];
+            const auto diagonal_pair = core::PairIndex::packed_pair_index(mu, mu);
+            graph.visit_row(diagonal_pair, [&](std::size_t, double) { --row_records; });
         }
         const long double row_reads =
             static_cast<long double>(row_records) * ((channels + width - 1) / width);

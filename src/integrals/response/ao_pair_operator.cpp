@@ -110,6 +110,11 @@ void apply_exact_ao_pair_graph(const AoPairGraph& graph,
     if (n_active_pairs == 0)
         return;
 
+    if (graph.tiles) {
+        graph.tiles->apply(coefficients, *result);
+        return;
+    }
+
     int n_threads = 1;
 #ifdef _OPENMP
     n_threads = effective_openmp_thread_count();

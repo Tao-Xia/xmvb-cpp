@@ -8,6 +8,8 @@ extern "C" {
 #include "cint.h"
 }
 
+#include "integrals/ao/exact.hpp"
+#include "integrals/response/ao_pair_operator.hpp"
 #include "libcint/direct_shell.hpp"
 #include "libcint/materialized_provider.hpp"
 #include "libcint/shell_normalization.hpp"
@@ -147,6 +149,64 @@ void check_materialized_equal(const xmvb::libcint::MaterializedAoIntegralBuffers
     }
 }
 
+void check_tiled_operators(const xmvb::libcint::MaterializedAoIntegralBuffers& reference,
+                           xmvb::libcint::MaterializedAoIntegralBuffers tiled) {
+    using namespace xmvb::integrals;
+    require(tiled.tiles && tiled.two_electron_values.empty() && tiled.chunks.empty(),
+            "CPU libcint did not build one triangular payload");
+    const int n = reference.n_basis_functions;
+    AoIntegralInput csr;
+    csr.n_basis_functions = n;
+    csr.pair_graph = build_ao_pair_graph(reference.left_pair_indices,
+                                        reference.right_pair_indices,
+                                        reference.two_electron_values,
+                                        n);
+    const auto blocks = xmvb::libcint::build_materialized_ao_integral_input(std::move(tiled));
+    const auto& graph = blocks.pair_graph;
+    const auto size = graph.pair_first.size();
+    require(graph.integral_count() == csr.pair_graph.integral_count(),
+            "triangular integral count differs");
+    require(graph.directed_count() == csr.pair_graph.directed_count(),
+            "triangular directed count differs");
+    require(graph.row_offsets.empty() && !graph.has_compact_integral_stream(),
+            "triangular data were expanded");
+    Eigen::MatrixXd exact = Eigen::MatrixXd::Zero(size, size);
+    for (std::size_t p = 0; p < size; ++p)
+        csr.pair_graph.visit_row(p, [&](std::size_t q, double v) { exact(p, q) = v; });
+    for (std::size_t p = 0; p < size; ++p)
+        graph.visit_row(p, [&](std::size_t q, double v) {
+            require(v == exact(p, q), "triangular row value differs");
+        });
+
+    const ExactCtxPairMatrix rhs = ExactCtxPairMatrix::NullaryExpr(size, 11,
+        [](Eigen::Index i, Eigen::Index j) { return std::cos((i + 1) * (j + 1)); });
+    ExactCtxPairMatrix image;
+    detail::apply_exact_ao_pair_graph(graph, rhs, n, rhs.cols(), &image);
+    require(image.isApprox(exact * rhs, 1e-12), "triangular AO-pair product differs");
+
+    // Two symmetric density channels exercise canonical traversal and the
+    // output-owned projection used by the analytical Hessian diagonal.
+    Eigen::MatrixXd densities(n * n, 2);
+    for (int i = 0; i < n; ++i)
+        for (int j = 0; j < n; ++j) {
+            densities(i + j * n, 0) = std::sin((i + 1) * (j + 1));
+            densities(i + j * n, 1) = std::cos((i + 1) * (j + 1));
+        }
+    AoH1eBatchWorkspace workspace;
+    Eigen::MatrixXd expected, actual;
+    apply_symmetric_ao_h1e_batch(densities, csr, 2, &workspace, &expected);
+    apply_symmetric_ao_h1e_batch(densities, blocks, 2, &workspace, &actual);
+    require(actual.isApprox(expected, 1e-12), "triangular multi-density response differs");
+
+    AoDensityDiagonalWorkspace diagonal;
+    Eigen::MatrixXd j_ref, k_ref, j, k;
+    const AoH1eBatchWorkspace::Channels sources = densities;
+    const Eigen::MatrixXd frame = rhs.topLeftCorner(n, 3);
+    apply_ao_density_diagonals(csr, sources, frame, 1, 2, &diagonal, &k_ref, &j_ref);
+    apply_ao_density_diagonals(blocks, sources, frame, 1, 2, &diagonal, &k, &j);
+    require(j.isApprox(j_ref, 1e-12) && k.isApprox(k_ref, 1e-12),
+            "triangular projected density diagonal differs");
+}
 } // namespace
 
 int main() {
@@ -182,6 +242,8 @@ int main() {
         xmvb::libcint::LibcintMaterializedIntegralProviderOptions screened;
         screened.integral_tolerance = kTolerance;
         screened.use_shell_pair_prescreen = true;
+        const auto tiled = screened;
+        screened.ao_pair_layout = xmvb::integrals::AoPairLayout::Automatic;
         auto unscreened = screened;
         unscreened.use_shell_pair_prescreen = false;
         const auto original_with_screen = provider.build(original_input, screened);
@@ -191,6 +253,7 @@ int main() {
         check_materialized_equal(original_with_screen, original_without_screen);
         check_materialized_equal(scaled_with_screen, scaled_without_screen);
         check_materialized_equal(original_with_screen, scaled_with_screen);
+        check_tiled_operators(original_with_screen, provider.build(original_input, tiled));
         auto chunked = screened;
         chunked.ao_pair_layout = xmvb::integrals::AoPairLayout::Chunked;
         auto buffered = provider.build(original_input, chunked);

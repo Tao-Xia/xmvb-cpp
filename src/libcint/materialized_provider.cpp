@@ -2,6 +2,8 @@
 #include "core/index.hpp"
 #include "core/memory.hpp"
 #include "core/pair_index.hpp"
+#include "integrals/ao/libcint.hpp"
+#include "integrals/ao/tile_builder.hpp"
 
 #include <cmath>
 #include <chrono>
@@ -195,11 +197,30 @@ MaterializedAoIntegralBuffers LibcintMaterializedIntegralProvider::build(
     // Address width is not a physical-space or allocation-policy switch.
     const long double directed_bytes = static_cast<long double>(n_ao_pairs) * n_ao_pairs *
                                        (sizeof(integrals::PairAddress) + sizeof(double));
-    if (directed_bytes > memory::default_workspace()) {
+    if (options.ao_pair_layout == integrals::AoPairLayout::Tiled) {
+        std::vector<std::size_t> shell_ends(n_shells);
+        for (int i = 0; i < n_shells; ++i) {
+            const std::size_t end = integrals::shell_ao_offset(input, i) +
+                                    integrals::shell_ao_count(input, i);
+            shell_ends[i] = core::triangular_count(end);
+        }
+        integrals::AoPairTiles::Builder builder(shell_ends);
+#pragma omp parallel for schedule(dynamic, 1)
+        for (int i = 0; i < n_shells; ++i) {
+            integrals::AoPairTiles::Builder::Shell shell(builder, i);
+            visit_shell_i_integrals(evaluator, i, [&](double value, auto left, auto right) {
+                shell.add(left, right, value);
+            });
+            shell.finish();
+        }
+        buffers.tiles = builder.finish();
+        if (timings)
+            timings->buffered_bytes = buffers.tiles->storage_bytes();
+    } else if (directed_bytes > memory::default_workspace()) {
         std::vector<std::size_t> shell_integral_counts(n_shells, 0);
         if (n_threads <= 1) {
             for (int shell_i = 0; shell_i < n_shells; ++shell_i) {
-                visit_shell_i_integrals(evaluator, shell_i, [&](double, int, int) {
+                visit_shell_i_integrals(evaluator, shell_i, [&](double, integrals::PairAddress, integrals::PairAddress) {
                     ++shell_integral_counts[shell_i];
                 });
             }
@@ -209,7 +230,7 @@ MaterializedAoIntegralBuffers LibcintMaterializedIntegralProvider::build(
 #pragma omp for schedule(dynamic)
                 for (int shell_i = 0; shell_i < n_shells; ++shell_i) {
                     std::size_t count = 0;
-                    visit_shell_i_integrals(evaluator, shell_i, [&](double, int, int) { ++count; });
+                    visit_shell_i_integrals(evaluator, shell_i, [&](double, integrals::PairAddress, integrals::PairAddress) { ++count; });
                     shell_integral_counts[shell_i] = count;
                 }
             }

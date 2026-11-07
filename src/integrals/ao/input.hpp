@@ -9,6 +9,8 @@
 
 #include <Eigen/Core>
 
+#include "integrals/ao/tiles.hpp"
+
 namespace xmvb::integrals {
 
 using PairAddress = std::int64_t;
@@ -28,8 +30,8 @@ struct AoIntegralChunk {
 /**
  * @brief Exact symmetric AO-pair operator with adaptive storage.
  *
- * Automatic construction uses symmetric CSR with 64-bit offsets and addresses.
- * Consumers may request a unique stream to avoid unused symmetry expansion.
+ * CPU libcint builds shared triangular blocks. Explicit CSR and unique
+ * streams remain available for other producers and device upload.
  */
 struct AoPairGraph {
     std::vector<PairAddress> row_offsets;
@@ -52,6 +54,7 @@ struct AoPairGraph {
     /** Alternative to flat unique arrays: one retained set of producer chunks. */
     std::vector<AoIntegralChunk> chunks;
     std::vector<std::size_t> chunk_offsets;
+    std::shared_ptr<const AoPairTiles> tiles;
     std::vector<int> pair_first;
     std::vector<int> pair_second;
 
@@ -65,13 +68,34 @@ struct AoPairGraph {
         return !row_offsets.empty();
     }
 
+    bool has_rows() const noexcept {
+        return tiles || has_row_graph();
+    }
+
+    std::size_t directed_count() const noexcept {
+        return tiles ? tiles->directed_count() : values.size();
+    }
+
+    /** Visit a directed pair row, including its implicit symmetric entries. */
+    template<class Consumer>
+    void visit_row(std::size_t row, Consumer consume) const {
+        if (tiles) {
+            tiles->visit_row(row, consume);
+        } else {
+            for (auto edge = row_offsets[row]; edge < row_offsets[row + 1]; ++edge)
+                consume(columns[edge], values[edge]);
+        }
+    }
+
     /** @brief Unique stream, including the valid zero-integral operator. */
     bool has_compact_integral_stream() const noexcept {
-        return row_offsets.empty() && !pair_first.empty();
+        return !has_rows() && !pair_first.empty();
     }
 
     /** @brief Number of unique permutational AO integrals. */
     std::size_t integral_count() const noexcept {
+        if (tiles)
+            return tiles->integral_count();
         if (!chunks.empty())
             return chunk_offsets.empty() ? 0 : chunk_offsets.back();
         return has_row_graph() ? static_cast<std::size_t>(integral_offsets.back())
@@ -95,6 +119,11 @@ struct AoPairGraph {
     }
 
     AoPairIntegral integral(std::size_t index) const noexcept {
+        if (tiles) {
+            const AoPairTiles::Cursor cursor(*tiles, index);
+            return {static_cast<PairAddress>(cursor.left()), static_cast<PairAddress>(cursor.right()),
+                    cursor.value()};
+        }
         if (!chunks.empty()) {
             const auto i = static_cast<std::size_t>(
                 std::upper_bound(chunk_offsets.begin(), chunk_offsets.end(), index) -
@@ -122,13 +151,18 @@ struct AoPairGraph {
     class Cursor {
       public:
         Cursor(const AoPairGraph& graph, std::size_t begin) : graph_(graph), index_(begin) {
-            if (graph_.has_row_graph())
+            if (graph_.tiles)
+                tiles_.emplace(*graph_.tiles, begin);
+            else if (graph_.has_row_graph())
                 row_ = static_cast<std::size_t>(std::upper_bound(graph_.integral_offsets.begin(),
                                                                  graph_.integral_offsets.end(),
                                                                  static_cast<PairAddress>(begin)) -
                                                 graph_.integral_offsets.begin() - 1);
         }
         AoPairIntegral value() const noexcept {
+            if (tiles_)
+                return {static_cast<PairAddress>(tiles_->left()), static_cast<PairAddress>(tiles_->right()),
+                        tiles_->value()};
             if (!graph_.has_row_graph())
                 return graph_.integral(index_);
             const auto edge = graph_.row_offsets[row_] + static_cast<PairAddress>(index_) -
@@ -136,6 +170,10 @@ struct AoPairGraph {
             return {static_cast<PairAddress>(row_), graph_.columns[edge], graph_.values[edge]};
         }
         void advance() noexcept {
+            if (tiles_) {
+                tiles_->advance();
+                return;
+            }
             ++index_;
             if (graph_.has_row_graph())
                 while (row_ + 1 < graph_.integral_offsets.size() &&
@@ -146,6 +184,7 @@ struct AoPairGraph {
       private:
         const AoPairGraph& graph_;
         std::size_t index_, row_ = 0;
+        std::optional<AoPairTiles::Cursor> tiles_;
     };
 
     /** Visit contiguous unique chunks without allocating or concatenating them.

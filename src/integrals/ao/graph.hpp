@@ -5,7 +5,7 @@
 namespace xmvb::integrals {
 
 /** Input layout contract; Unique leaves symmetry expansion to the consumer. */
-enum class AoPairLayout { Automatic, Unique, Chunked };
+enum class AoPairLayout { Automatic, Unique, Chunked, Tiled };
 
 /**
  * @brief Builds an exact AO-pair operator in the requested input layout.

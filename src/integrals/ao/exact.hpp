@@ -33,9 +33,9 @@ struct AoDensityDiagonalWorkspace {
 };
 
 /** @brief Exact symmetric 2J-K with exclusive AO output-row ownership.
- * Uses raw directed CSR integrals. Source/output AO indices are flattened
+ * Uses raw directed AO-pair integrals. Source/output AO indices are flattened
  * column-major, with contiguous density channels. No worker AO image or
- * atomic scatter is allocated. Requires the CSR storage representation.
+ * atomic scatter is allocated. Requires directed AO-pair row access.
  */
 void apply_symmetric_ao_h1e_rows(const AoIntegralInput& ao,
                                  int n_threads,

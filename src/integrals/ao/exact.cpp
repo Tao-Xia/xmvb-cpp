@@ -29,7 +29,8 @@ std::size_t matrix_size(const AoIntegralInput& ao) {
                                  graph.integral_offsets.front() == 0 && graph.integral_rows.empty();
     const bool valid_compact_stream =
         graph.has_compact_integral_stream() && graph.valid_unique_storage();
-    if ((!valid_row_graph && !valid_compact_stream) || graph.pair_first.size() != n_pairs ||
+    if ((!valid_row_graph && !valid_compact_stream &&
+         (!graph.tiles || graph.tiles->size() != n_pairs)) || graph.pair_first.size() != n_pairs ||
         graph.pair_second.size() != n_pairs) {
         throw std::invalid_argument("invalid AO-H1E integral input");
     }

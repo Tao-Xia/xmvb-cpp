@@ -48,7 +48,7 @@ void apply_generated_ao_pair_rows(const AoIntegralInput& ao,
     image->setZero(count, pairs.size());
     if (directional)
         directional->setZero(count, pairs.size());
-    const auto accumulate = [&](Eigen::Index target, int source, double integral) {
+    const auto accumulate = [&](Eigen::Index target, std::size_t source, double integral) {
         const int i = graph.pair_first[source], j = graph.pair_second[source];
         double* output = image->data() + target * pairs.size();
         double* delta = directional ? directional->data() + target * pairs.size() : nullptr;
@@ -64,18 +64,17 @@ void apply_generated_ao_pair_rows(const AoIntegralInput& ao,
             }
         }
     };
-    if (graph.has_row_graph()) {
-        if (graph.row_offsets.size() != graph.pair_first.size() + 1 ||
+    if (graph.has_rows()) {
+        if (graph.has_row_graph() && (graph.row_offsets.size() != graph.pair_first.size() + 1 ||
             graph.columns.size() != graph.values.size() ||
-            graph.values.size() != static_cast<std::size_t>(graph.row_offsets.back()))
+            graph.values.size() != static_cast<std::size_t>(graph.row_offsets.back())))
             throw std::invalid_argument("invalid generated-row CSR graph");
         // Disjoint target rows: no private pair images and no scatter races.
 #pragma omp parallel for schedule(dynamic, 1)
         for (Eigen::Index row = 0; row < count; ++row)
-            for (PairAddress edge = graph.row_offsets[begin + row];
-                 edge < graph.row_offsets[begin + row + 1];
-                 ++edge)
-                accumulate(row, graph.columns[edge], graph.values[edge]);
+            graph.visit_row(begin + row, [&](std::size_t source, double integral) {
+                accumulate(row, source, integral);
+            });
     } else if (graph.has_compact_integral_stream()) {
         if (!graph.valid_unique_storage())
             throw std::invalid_argument("invalid generated-row integral stream");
