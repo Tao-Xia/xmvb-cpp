@@ -112,6 +112,26 @@ DensityDiagonals density_diagonal_channels(const VbScfInput& input,
                                    reuse ? static_cast<int>(active_weights.cols()) : 0);
     if (!channels)
         return {Eigen::MatrixXd(n_bf, 0), std::move(cached_active), Eigen::MatrixXd(n_bf, 0)};
+    const auto& graph = input.ao_integral_input.pair_graph;
+    // The half transform scans each left pair once. Use it for core-only dense
+    // pair rows, where a dense one-index transform is cheaper than updating
+    // both orientations of every stored quartet across all density channels.
+    const long double half_terms =
+        static_cast<long double>(graph.pair_first.size()) * n_bf * n_bf;
+    if (reuse && n_core >= Eigen::internal::packet_traits<double>::size &&
+        graph.has_rows() && half_terms < 4.0L * graph.directed_count()) {
+        Eigen::MatrixXd exchange, coulomb;
+        if (integrals::apply_ao_core_diagonals(input.ao_integral_input,
+                                              mo,
+                                              n_core,
+                                              effective_openmp_thread_count(),
+                                              &exchange,
+                                              &coulomb)) {
+            exchange *= -1.0;
+            exchange.noalias() += 2.0 * coulomb;
+            return {std::move(exchange), std::move(cached_active), std::move(coulomb)};
+        }
+    }
     Eigen::MatrixXd result(n_bf, channels);
     const auto active_result = [&]() -> Eigen::MatrixXd {
         if (reuse)
@@ -139,7 +159,6 @@ DensityDiagonals density_diagonal_channels(const VbScfInput& input,
         static_cast<int>(std::min({static_cast<std::size_t>(channels),
                                    static_cast<std::size_t>(lanes),
                                    (budget - matrix_bytes - active_temp) / stream_channel}));
-    const auto& graph = input.ao_integral_input.pair_graph;
     const std::size_t output_bytes =
         sizeof(double) * static_cast<std::size_t>(n_bf) * (3 * channels + 2 * n_core);
     const std::size_t n_pairs = static_cast<std::size_t>(na) * (na + 1) / 2;

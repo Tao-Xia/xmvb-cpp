@@ -1,3 +1,4 @@
+#include "core/timing.hpp"
 #include "vbscf/optimization/preconditioners/hessian_diagonal.hpp"
 
 #include <algorithm>
@@ -135,6 +136,7 @@ std::vector<double> pack_symmetric_dm2(const std::vector<double>& dm2, int n) {
 AnalyticOrbitalDiagonal build_analytic_orbital_diagonal(const VbScfInput& input,
                                                         const AcceptedPointContext& accepted,
                                                         const integrals::ExactCtxPairMatrix* exchange) {
+    profiling::ScopedPhase phase(profiling::Phase::AnalyticHessianDiagonal);
     const bool trace = mcscf::diagnostics::ciah_event_trace_enabled();
     const auto start =
         trace ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};

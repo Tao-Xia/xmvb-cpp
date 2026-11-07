@@ -64,6 +64,16 @@ void apply_ao_density_diagonals(const AoIntegralInput& ao,
                                 Eigen::MatrixXd* exchange_diagonal,
                                 Eigen::MatrixXd* coulomb_diagonal);
 
+/** @brief Project core (pp|ii) and (pi|pi) from a shared one-index transform.
+ * Return false if the bounded workspace cannot be reserved.
+ */
+bool apply_ao_core_diagonals(const AoIntegralInput& ao,
+                             const Eigen::Ref<const Eigen::MatrixXd>& frame,
+                             int n_core,
+                             int n_threads,
+                             Eigen::MatrixXd* exchange_diagonal,
+                             Eigen::MatrixXd* coulomb_diagonal);
+
 /**
  * @brief Applies one physical symmetric response per source in a shared sweep.
  *

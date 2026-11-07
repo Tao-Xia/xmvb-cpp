@@ -139,6 +139,63 @@ xmvb::mcscf::AnalyticDiagonalIntermediates make_intermediates(
     return x;
 }
 
+/** @brief Compare both shared half-transform images with explicit AO sums. */
+void check_core_half_transform() {
+    double max_error = 0.0;
+    for (int n : {7, 8}) {
+        constexpr int core = 3;
+        const auto g = make_symmetric_eri(n);
+        std::vector<xmvb::integrals::PairAddress> left, right;
+        std::vector<double> values;
+        for (int p = 0, pq = 0; p < n; ++p)
+            for (int q = 0; q <= p; ++q, ++pq)
+                for (int r = 0, rs = 0; r < n; ++r)
+                    for (int s = 0; s <= r; ++s, ++rs)
+                        if (rs <= pq && (pq + rs) % 5) {
+                            left.push_back(pq);
+                            right.push_back(rs);
+                            values.push_back(eri(g, p, q, r, s, n));
+                        }
+        xmvb::integrals::AoIntegralInput ao;
+        ao.n_basis_functions = n;
+        ao.pair_graph = xmvb::integrals::build_ao_pair_graph(left, right, values, n);
+        Eigen::MatrixXd frame(n, n + 1);
+        for (int p = 0; p < frame.cols(); ++p)
+            for (int mu = 0; mu < n; ++mu)
+                frame(mu, p) = std::sin(0.23 * (p + 1) * (mu + 1)) / std::sqrt(n);
+        const auto screened = [&](int p, int q, int r, int s) {
+            using xmvb::core::PairIndex;
+            const auto a = PairIndex::packed_pair_index(p, q);
+            const auto b = PairIndex::packed_pair_index(r, s);
+            return (a + b) % 5 ? eri(g, p, q, r, s, n) : 0.0;
+        };
+        Eigen::MatrixXd expected_k = Eigen::MatrixXd::Zero(frame.cols(), core);
+        Eigen::MatrixXd expected_j = expected_k;
+        for (int p = 0; p < frame.cols(); ++p)
+            for (int i = 0; i < core; ++i)
+                for (int mu = 0; mu < n; ++mu)
+                    for (int nu = 0; nu < n; ++nu)
+                        for (int r = 0; r < n; ++r)
+                            for (int s = 0; s < n; ++s) {
+                                const double w =
+                                    frame(mu, p) * frame(nu, p) * frame(r, i) * frame(s, i);
+                                expected_k(p, i) += w * screened(mu, r, nu, s);
+                                expected_j(p, i) += w * screened(mu, nu, r, s);
+                            }
+        for (int workers : {1, 4}) {
+            Eigen::MatrixXd k, j;
+            if (!xmvb::integrals::apply_ao_core_diagonals(ao, frame, core, workers, &k, &j))
+                throw std::runtime_error("core diagonal test failed workspace reservation");
+            max_error = std::max({max_error,
+                                  (k - expected_k).cwiseAbs().maxCoeff(),
+                                  (j - expected_j).cwiseAbs().maxCoeff()});
+        }
+    }
+    if (max_error > 5.0e-12)
+        throw std::runtime_error("core half transform changed the projected J/K diagonals");
+    std::cout << "Core half-transform projected J/K max error = " << max_error << '\n';
+}
+
 /** @brief Exercise fewer density channels, including dependent source columns. */
 void check_contracted_density_span() {
     constexpr int n = 7;
@@ -363,6 +420,7 @@ void check_contracted_density_span() {
 } // namespace
 
 int main() {
+    check_core_half_transform();
     check_contracted_density_span();
     constexpr int n = 5;
     constexpr int nc = 1;

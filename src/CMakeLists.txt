@@ -37,6 +37,7 @@ set(XMVB_INTEGRAL_SOURCES
   integrals/ao/libcint.cpp
   integrals/ao/exact.cpp
   integrals/ao/exact_rows.cpp
+  integrals/ao/core_diagonal.cpp
   integrals/ao/ri_operator.cpp
   integrals/ao/ri_transform.cpp
   integrals/jk/contraction.cpp
