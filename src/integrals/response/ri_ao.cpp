@@ -293,7 +293,30 @@ apply_ri_projected_ao_response_batch(const RiActiveTwoElectronResponseCache& act
              : 0);
     if (fixed + per_aux > limit)
         throw std::length_error("minimum projected RI AO tile exceeds workspace");
-    const int tile = static_cast<int>(std::min<std::size_t>(n_aux, (limit - fixed) / per_aux));
+    // Keep the compact accepted projections independently of the AO slabs.
+    // They carry an orbital output index in place of the much wider AO index.
+    const std::size_t projection_per_aux = static_cast<std::size_t>(rank) * outputs;
+    const std::size_t scratch_per_aux = per_aux - projection_per_aux;
+    const auto auxiliary = static_cast<std::size_t>(n_aux);
+    const auto spare = limit - fixed;
+    const auto streaming_tile = std::min(auxiliary, spare / per_aux);
+    std::size_t projected_tile = 0;
+    if (workspace.lifetime == RiAoResponseWorkspace::Lifetime::AcceptedPoint &&
+        inactive.orbitals.size() == static_cast<std::size_t>(nm) &&
+        auxiliary <= (spare - scratch_per_aux) / projection_per_aux) {
+        projected_tile =
+            std::min(auxiliary, (spare - auxiliary * projection_per_aux) / scratch_per_aux);
+    }
+    // Reuse must not come at the cost of more AO passes per direction.
+    const bool retain_projection =
+        projected_tile != 0 && (auxiliary - 1) / projected_tile <= (auxiliary - 1) / streaming_tile;
+    const int tile = static_cast<int>(retain_projection ? projected_tile : streaming_tile);
+    const bool reuse_projection =
+        retain_projection && workspace.accepted_tile_size == tile && workspace.accepted_columns &&
+        std::ranges::equal(*workspace.accepted_columns, inactive.orbitals);
+    const bool reuse_accepted = reuse_projection && tile == n_aux;
+    if (!reuse_projection)
+        workspace.accepted_columns.reset();
     const auto release_oversized = [](Eigen::MatrixXd& slab, Eigen::Index elements) {
         if (slab.size() > elements)
             slab.resize(0, 0);
@@ -302,8 +325,9 @@ apply_ri_projected_ao_response_batch(const RiActiveTwoElectronResponseCache& act
     release_oversized(workspace.accepted, static_cast<Eigen::Index>(n) * rank * tile);
     release_oversized(workspace.direction_projection,
                       static_cast<Eigen::Index>(rank) * tile * outputs);
-    release_oversized(workspace.accepted_projection,
-                      static_cast<Eigen::Index>(rank) * tile * outputs);
+    const auto projection_rows =
+        static_cast<Eigen::Index>(rank) * (retain_projection ? n_aux : tile);
+    release_oversized(workspace.accepted_projection, projection_rows * outputs);
     release_oversized(workspace.charges, 2 * static_cast<Eigen::Index>(n_aux) * n_directions);
     if (inactive.factors != nullptr || workspace.coulomb.size() > pairs)
         workspace.coulomb.resize(0);
@@ -327,11 +351,12 @@ apply_ri_projected_ao_response_batch(const RiActiveTwoElectronResponseCache& act
     }
     Eigen::MatrixXd u(n, rank);
     const auto& c = *active.accepted_active_coefficients;
+    workspace.accepted_projection.resize(projection_rows, outputs);
     for (int first = 0; first < n_aux; first += tile) {
         const int count = std::min(tile, n_aux - first);
         const Eigen::Index stride = count;
         const Eigen::Index leading = stride * rank, moving_rows = stride * nm;
-        {
+        if (!reuse_accepted) {
             profiling::ScopedPhase phase(profiling::Phase::RiAoAccepted);
             workspace.accepted.resize(leading, n);
             if (nm != 0) {
@@ -366,7 +391,10 @@ apply_ri_projected_ao_response_batch(const RiActiveTwoElectronResponseCache& act
         if (fixed_hvp != nullptr)
             accepted_factor_adjoint =
                 active.accepted_active_pair_factors->middleRows(first, count) * pair_adjoint;
-        workspace.accepted_projection.resize(leading, outputs);
+        const Eigen::Index projection_offset =
+            retain_projection ? static_cast<Eigen::Index>(first) * rank * outputs : 0;
+        Eigen::Map<Eigen::MatrixXd> accepted_projection(
+            workspace.accepted_projection.data() + projection_offset, leading, outputs);
         // A direction keeps only one transformed AO slab and its projections live.
         for (std::size_t direction_index = 0; direction_index < n_directions; ++direction_index) {
             const auto& request = directions[direction_index];
@@ -434,23 +462,21 @@ apply_ri_projected_ao_response_batch(const RiActiveTwoElectronResponseCache& act
                 const Eigen::Index end = (worker + 1) * leading / team_size;
                 const Eigen::Index size = end - begin;
                 if (size) {
-                    if (direction_index == 0) {
+                    if (direction_index == 0 && !reuse_projection) {
                         // The first direction fills the accepted projection; later directions
                         // reuse it without launching another worker team for width one.
-                        workspace.accepted_projection.block(begin, 0, size, nf).noalias() =
+                        accepted_projection.block(begin, 0, size, nf).noalias() =
                             workspace.accepted.middleRows(begin, size) * full_inactive_duals;
                         const Eigen::Index moving_end = std::min(end, moving_rows);
                         if (moving_end > begin && inactive.orbitals.empty())
-                            workspace.accepted_projection.block(begin, nf, moving_end - begin, na)
-                                .noalias() =
+                            accepted_projection.block(begin, nf, moving_end - begin, na).noalias() =
                                 -workspace.accepted.middleRows(begin, moving_end - begin) * c;
                         if (moving_end > begin)
-                            workspace.accepted_projection.block(begin, 0, moving_end - begin, nf) *=
-                                -4;
+                            accepted_projection.block(begin, 0, moving_end - begin, nf) *= -4;
                         const Eigen::Index active_begin = std::max(begin, moving_rows);
                         if (end > active_begin)
-                            workspace.accepted_projection.block(
-                                active_begin, 0, end - active_begin, nf) *= -1;
+                            accepted_projection.block(active_begin, 0, end - active_begin, nf) *=
+                                -1;
                     }
                     workspace.direction_projection.block(begin, 0, size, nf).noalias() =
                         workspace.direction.middleRows(begin, size) * full_inactive_duals;
@@ -470,17 +496,15 @@ apply_ri_projected_ao_response_batch(const RiActiveTwoElectronResponseCache& act
                             active_begin, 0, end - active_begin, nf) *= -1;
                 }
 #pragma omp barrier
-                if (direction_index == 0 && !inactive.orbitals.empty()) {
+                if (direction_index == 0 && !reuse_projection && !inactive.orbitals.empty()) {
                     // Symmetry moves the accepted active projection into each moving row.
 #pragma omp for schedule(static)
                     for (int moving = 0; moving < nm; ++moving)
                         for (int auxiliary = 0; auxiliary < count; ++auxiliary)
                             for (int orbital = 0; orbital < na; ++orbital)
-                                workspace.accepted_projection(moving * stride + auxiliary,
-                                                              nf + orbital) =
-                                    workspace.accepted_projection((nm + orbital) * stride +
-                                                                      auxiliary,
-                                                                  inactive.orbitals[moving]);
+                                accepted_projection(moving * stride + auxiliary, nf + orbital) =
+                                    accepted_projection((nm + orbital) * stride + auxiliary,
+                                                        inactive.orbitals[moving]);
                 }
                 const Eigen::Index aux_begin = worker * stride / team_size;
                 const Eigen::Index aux_end = (worker + 1) * stride / team_size;
@@ -527,7 +551,7 @@ apply_ri_projected_ao_response_batch(const RiActiveTwoElectronResponseCache& act
                               cols = (c + 1) * nf / inactive_columns - col;
                     result.inactive.block(row, col, rows, cols).noalias() +=
                         workspace.direction.middleCols(row, rows).transpose() *
-                        workspace.accepted_projection.middleCols(col, cols);
+                        accepted_projection.middleCols(col, cols);
                     result.inactive.block(row, col, rows, cols).noalias() +=
                         workspace.accepted.middleCols(row, rows).transpose() *
                         workspace.direction_projection.middleCols(col, cols);
@@ -543,7 +567,7 @@ apply_ri_projected_ao_response_batch(const RiActiveTwoElectronResponseCache& act
                             workspace.direction.topRows(moving_rows)
                                 .middleCols(row, rows)
                                 .transpose() *
-                            workspace.accepted_projection.block(0, nf + col, moving_rows, cols);
+                            accepted_projection.block(0, nf + col, moving_rows, cols);
                         result.active.block(row, col, rows, cols).noalias() +=
                             workspace.accepted.topRows(moving_rows)
                                 .middleCols(row, rows)
@@ -615,6 +639,10 @@ apply_ri_projected_ao_response_batch(const RiActiveTwoElectronResponseCache& act
                                  workspace.coulomb.size());
     if (!workspace.residency.try_resize(retained))
         throw std::length_error("retained RI AO workspace exceeds shared allowance");
+    if (retain_projection && !reuse_projection) {
+        workspace.accepted_columns.emplace(inactive.orbitals.begin(), inactive.orbitals.end());
+        workspace.accepted_tile_size = tile;
+    }
     return results;
 }
 

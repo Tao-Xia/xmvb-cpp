@@ -154,7 +154,8 @@ void check(int ni, bool cached, std::size_t budget) {
         }
     }
     cache.accepted_one_index_factors = std::move(resident);
-    xmvb::integrals::RiAoResponseWorkspace workspace;
+    using Workspace = xmvb::integrals::RiAoResponseWorkspace;
+    Workspace workspace(Workspace::Lifetime::AcceptedPoint);
     const std::array<xmvb::integrals::RiAoResponseDirection, 1> requests{{{x, w}}};
     auto actual = xmvb::integrals::apply_ri_projected_ao_response_batch(
                       cache, a, requests, a0, workspace, budget, {nullptr, selected})
@@ -166,6 +167,9 @@ void check(int ni, bool cached, std::size_t budget) {
                             .front();
     close(reused.inactive, actual.inactive);
     close(reused.active, actual.active);
+    if (cached && ni == 2 && budget == 32768 &&
+        (!workspace.accepted_columns || workspace.accepted_tile_size >= aux))
+        throw std::runtime_error("RI AO projection should be reusable with multiple AO tiles");
     for (int tile : {1, 7, aux}) {
         cache.auxiliary_tile_size = tile;
         close(xmvb::integrals::apply_ri_active_density_response(cache, weights), active_reference);
@@ -179,6 +183,19 @@ void check(int ni, bool cached, std::size_t budget) {
             .front();
     close(zero.inactive, Matrix::Zero(n, a0.cols()));
     close(zero.active, Matrix::Zero(n, na));
+    if (cached && ni >= 2) {
+        // The same dimensions with a different ordered support must rebuild
+        // the accepted panel. Permuting the direction with it leaves D intact.
+        std::swap(selected[0], selected[1]);
+        a.col(0).swap(a.col(1));
+        x.col(0).swap(x.col(1));
+        const auto permuted =
+            xmvb::integrals::apply_ri_projected_ao_response_batch(
+                cache, a, requests, a0, workspace, budget, {&inactive_image, selected})
+                .front();
+        close(permuted.inactive, actual.inactive);
+        close(permuted.active, actual.active);
+    }
     check_diagonals(factors, c, ni, budget);
 }
 } // namespace
@@ -191,7 +208,8 @@ int main() {
 #endif
         for (int ni : {0, 2, 5})
             for (bool cached : {false, true})
-                for (std::size_t budget : {std::size_t{8192}, xmvb::workspace::available()})
+                for (std::size_t budget :
+                     {std::size_t{8192}, std::size_t{32768}, xmvb::workspace::available()})
                     check(ni, cached, budget);
     }
     std::cout << "ri_ao_response_exact_projection=PASS\n";

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <span>
 #include <vector>
 #include <Eigen/Core>
@@ -36,10 +37,17 @@ struct RiAoResponseDirection {
 };
 
 /** @brief Shared auxiliary slabs and narrow tile projections.
- * AO projections and fixed jets have disjoint output writers. Accepted and
- * directional factor slabs are shared, with no per-thread integral copies.
+ * An AcceptedPoint workspace borrows the same immutable accepted orbitals and
+ * RI factors throughout its lifetime. Directions and their support may vary.
  */
 struct RiAoResponseWorkspace {
+    enum class Lifetime { Call, AcceptedPoint };
+
+    explicit RiAoResponseWorkspace(Lifetime scope = Lifetime::Call) : lifetime(scope) {}
+
+    const Lifetime lifetime;
+    std::optional<std::vector<int>> accepted_columns;
+    int accepted_tile_size = 0;
     workspace::Reservation residency;
     Eigen::MatrixXd direction, accepted;
     Eigen::MatrixXd direction_projection, accepted_projection, charges;
