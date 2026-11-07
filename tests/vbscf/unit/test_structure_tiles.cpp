@@ -1129,6 +1129,41 @@ void check_product_response(int parity, bool unequal) {
                     "exact-zero pruning discarded a representable tiny linear response");
         }
     }
+    if (unequal) {
+        const Eigen::MatrixXd roots = test_vectors(ns, 4);
+        const Eigen::MatrixXd response = 0.03 * roots.array().cos().matrix();
+        const std::vector<double> energies{-1.2, -1.0, -0.8, -0.7};
+        const auto multi = action.prepare_active_adjoint(roots, {0.25, 0.25, 0.25, 0.25}, energies);
+        xmvb::vb::StructureIntegralDirection multi_delta;
+        xmvb::vb::StructureResponseRequest multi_ci{response, {}};
+        const auto multi_images =
+            action.apply_integral_direction(multi, overlap, one, two, &multi_delta, &multi_ci);
+        Eigen::MatrixXd moment = Eigen::MatrixXd::Zero(fixture.n, fixture.n);
+        Eigen::MatrixXd ci_moment = moment, one_moment = moment;
+        Eigen::MatrixXd pair_moment = Eigen::MatrixXd::Zero(
+            multi_delta.pair_kernel_direction.rows(), multi_delta.pair_kernel_direction.cols());
+        for (int k = 0; k < 4; ++k) {
+            const auto single = action.prepare_active_adjoint(roots.col(k), {1.0}, {energies[k]});
+            xmvb::vb::StructureIntegralDirection single_delta;
+            xmvb::vb::StructureResponseRequest single_ci{response.col(k), {}};
+            const auto single_images =
+                action.apply_integral_direction(single, overlap, one, two, &single_delta, &single_ci);
+            require((multi_images.hamiltonian.col(k) - single_images.hamiltonian).norm() < 3e-11 &&
+                        (multi_images.overlap.col(k) - single_images.overlap).norm() < 3e-11 &&
+                        (multi_ci.result.images.hamiltonian.col(k) -
+                         single_ci.result.images.hamiltonian).norm() < 3e-11,
+                    "shared four-state tile changed an H/S image");
+            moment += 0.25 * single_delta.generator_direction;
+            one_moment += 0.25 * single_delta.one_electron_direction;
+            pair_moment += 0.25 * single_delta.pair_kernel_direction;
+            ci_moment += 0.25 * single_ci.result.generator;
+        }
+        require((multi_delta.generator_direction - moment).norm() < 3e-11 &&
+                    (multi_delta.one_electron_direction - one_moment).norm() < 3e-11 &&
+                    (multi_delta.pair_kernel_direction - pair_moment).norm() < 3e-11 &&
+                    (multi_ci.result.generator - ci_moment).norm() < 3e-11,
+                "shared four-state tile mixed bra states, weights or energy shifts");
+    }
 }
 
 /** @brief Broad selected support: one final projection, independent of closure. */
@@ -5157,6 +5192,9 @@ int main(int argc, char** argv) {
             check_case("check_full_channel_image_layout",
                        [&] { check_full_channel_image_layout(); });
             std::cout << "channel layout: PASS\n";
+        } else if (argc == 2 && std::string(argv[1]) == "--state-tiles") {
+            check_case("check_product_response", [&] { check_product_response(0, true); });
+            std::cout << "state tiles: PASS\n";
         } else if (argc == 2 && std::string(argv[1]) == "--cache-order") {
             check_case("check_column_cache_allocation_order",
                        [&] { check_column_cache_allocation_order(); });

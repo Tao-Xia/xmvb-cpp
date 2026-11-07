@@ -88,8 +88,6 @@ DirectCiSigmaAction::apply_tiled_responses(int width,
                                            const DirectCiColumnRelease& release,
                                            std::size_t workspace_bytes) const {
     profiling::ScopedPhase phase(profiling::Phase::CiResponse);
-    if (!state)
-        throw std::invalid_argument("temporal responses require a common state");
     return contract_tiled(
         width, requests, state, true, support, exchange_parity, release, workspace_bytes);
 }
@@ -104,15 +102,22 @@ DirectCiSigmaAction::contract_tiled(int width,
                                     const DirectCiColumnRelease& release,
                                     std::size_t workspace_bytes,
                                     bool source_projected_image) const {
-    if (width <= 0 || requests.empty() || (requests.size() > 1 && !state))
+    if (width <= 0 || requests.empty())
         throw std::invalid_argument("invalid tiled direct-CI width or response sequence");
     if (exchange_parity < -1 || exchange_parity > 1 || (exchange_parity != 0 && distinct_beta_))
         throw std::invalid_argument("exchange projection requires identical spin spaces");
-    bool has_direction = false;
+    bool has_state = static_cast<bool>(state), reuse_bra = false;
+    std::size_t state_reads = has_state && !requests.front().state;
+    std::vector<const DirectCiSigmaAction*> directions;
+    std::vector<std::size_t> direction_indices;
+    direction_indices.reserve(requests.size());
     for (const auto& request : requests) {
         const auto* direction = request.direction;
-        if (!request.response || (!request.image && !collect_integrals) || (direction && !state) ||
-            (request.forcing && !direction))
+        reuse_bra |= &request != &requests.front() && has_state && !request.state;
+        has_state |= static_cast<bool>(request.state);
+        state_reads += static_cast<bool>(request.state);
+        if (!request.response || (!request.image && !collect_integrals) ||
+            (direction && !has_state) || (request.forcing && !direction))
             throw std::invalid_argument("invalid tiled direct-CI response callbacks");
         if (direction &&
             (n_orbitals_ != direction->n_orbitals_ || n_alpha_ != direction->n_alpha_ ||
@@ -120,8 +125,12 @@ DirectCiSigmaAction::contract_tiled(int width,
              distinct_beta_ != direction->distinct_beta_ ||
              hamiltonian_pair_kernel_.rows() != direction->hamiltonian_pair_kernel_.rows()))
             throw std::invalid_argument("direction requires shared direct-CI spin links");
-        has_direction = has_direction || direction;
+        const auto found = std::find(directions.begin(), directions.end(), direction);
+        direction_indices.push_back(found - directions.begin());
+        if (direction && found == directions.end())
+            directions.push_back(direction);
     }
+    const bool has_direction = !directions.empty();
 
     // Direct kernel callers own one allowance too. Structure actions already
     // provide a scope and pass this kernel its sigma partition explicitly.
@@ -137,10 +146,6 @@ DirectCiSigmaAction::contract_tiled(int width,
     const int pairs = hamiltonian_pair_kernel_.rows();
     const std::size_t n = n_orbitals_;
     const std::size_t envelopes = n * (n - 1) * (n + 1) * (n + 2) / 24;
-    const auto directions =
-        std::count_if(requests.begin(), requests.end(), [](const auto& request) {
-            return request.direction != nullptr;
-        });
     std::size_t kernel_entries = pairs * envelopes;
     if (source_projected_image) {
         kernel_entries = 0;
@@ -152,7 +157,7 @@ DirectCiSigmaAction::contract_tiled(int width,
     }
     const std::size_t kernel_bytes =
         (sizeof(double) * kernel_entries + sizeof(int) * (envelopes + pairs * n * (n - 1) / 2)) *
-        (1 + directions);
+        (1 + directions.size());
     // Packing is optional arithmetic scheduling, not a change of CI space.
     // Charge shared immutable kernel panels to this action's existing budget.
     const bool restricted_channels =
@@ -166,13 +171,10 @@ DirectCiSigmaAction::contract_tiled(int width,
     const detail::ChannelProduct channel_product(
         hamiltonian_pair_kernel_, n_orbitals_, restricted_channels, projected_image);
     std::vector<detail::ChannelProduct> directional_products;
-    directional_products.reserve(requests.size());
-    for (const auto& request : requests)
-        directional_products.emplace_back(request.direction
-                                              ? request.direction->hamiltonian_pair_kernel_
-                                              : hamiltonian_pair_kernel_,
-                                          n_orbitals_,
-                                          restricted_channels && request.direction);
+    directional_products.reserve(directions.size());
+    for (const auto* direction : directions)
+        directional_products.emplace_back(
+            direction->hamiltonian_pair_kernel_, n_orbitals_, restricted_channels);
     std::vector<Eigen::MatrixXd> kernel_adjoints(requests.size());
     if (collect_integrals)
         for (auto& gradient : kernel_adjoints)
@@ -185,7 +187,7 @@ DirectCiSigmaAction::contract_tiled(int width,
     // Projected H/S images pack only their certified source-bra channels. Directional
     // forcing normally adds directly into the image. Only an explicit forcing
     // consumer needs to expand the consumed source slab into a second image.
-    const bool separate_output = has_direction || requests.size() > 1;
+    const bool separate_output = has_direction || reuse_bra;
     const bool has_forcing = std::any_of(requests.begin(), requests.end(), [](const auto& request) {
         return static_cast<bool>(request.forcing);
     });
@@ -567,11 +569,15 @@ DirectCiSigmaAction::contract_tiled(int width,
                     }
                 }
             };
+            bool distinct_bra = false;
             for (std::size_t request_id = 0; request_id < requests.size(); ++request_id) {
                 const auto& request = requests[request_id];
                 const auto& add_columns = request.image;
                 const auto& add_forcing = request.forcing;
                 const auto* direction = request.direction;
+                const auto& bra = request.state ? request.state : state;
+                const bool read_bra = request.state || (request_id == 0 && state);
+                distinct_bra |= read_bra;
                 auto& kernel_adjoint = kernel_adjoints[request_id];
                 if (request_id > 0) {
 #pragma omp single
@@ -594,7 +600,7 @@ DirectCiSigmaAction::contract_tiled(int width,
                 }
                 scatter_rows(scattered);
                 if (collect_integrals) {
-                    if (state && request_id == 0) {
+                    if (read_bra) {
                         // The response scatter is complete. Refill the same input halo for
                         // the unweighted state, then scatter it into the second channel slab.
 #pragma omp barrier
@@ -604,7 +610,7 @@ DirectCiSigmaAction::contract_tiled(int width,
                                 const auto begin = tick();
                                 Eigen::Map<Eigen::MatrixXd> values(
                                     workspace.get(), n_halo, n_columns * width);
-                                state(columns, halo, values, source_read);
+                                bra(columns, halo, values, source_read);
                                 const double elapsed = seconds(begin, tick());
                                 read_time += elapsed;
                                 compute_time -= elapsed;
@@ -639,7 +645,7 @@ DirectCiSigmaAction::contract_tiled(int width,
                     detail::contract_channel_gram(channel_product,
                                                   channel_layout,
                                                   scattered,
-                                                  state ? state_channels : scattered,
+                                                  distinct_bra ? state_channels : scattered,
                                                   kernel_adjoint,
                                                   diagonal_images,
                                                   count,
@@ -675,7 +681,7 @@ DirectCiSigmaAction::contract_tiled(int width,
                     // Expanding packed A into a full forcing image may overlap rows
                     // owned by other workers. Every base multiplication must finish.
 #pragma omp barrier
-                    detail::multiply_channels(directional_products[request_id],
+                    detail::multiply_channels(directional_products[direction_indices[request_id]],
                                               channel_layout,
                                               state_channels,
                                               scattered,
@@ -704,7 +710,7 @@ DirectCiSigmaAction::contract_tiled(int width,
                         }
                     }
                 } else if (direction && add_columns) {
-                    detail::multiply_channels(directional_products[request_id],
+                    detail::multiply_channels(directional_products[direction_indices[request_id]],
                                               channel_layout,
                                               state_channels,
                                               transformed,
@@ -935,9 +941,7 @@ DirectCiSigmaAction::contract_tiled(int width,
             scatter_time,
             targets,
             exchange_parity,
-            unsupported_targets * static_cast<std::size_t>(width) *
-                (requests.size() +
-                 static_cast<std::size_t>(collect_integrals && static_cast<bool>(state))),
+            unsupported_targets * static_cast<std::size_t>(width) * (requests.size() + state_reads),
             gram_time,
             gram_tiles,
             identity_halo_targets,

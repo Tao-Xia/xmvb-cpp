@@ -65,6 +65,10 @@ struct DirectCiTileRequest {
     DirectCiTileWriter image;
     const DirectCiSigmaAction* direction = nullptr;
     DirectCiTileWriter forcing{};
+    // When supplied, start a new group with this accepted bra. Later requests
+    // in the group borrow its scatter. A missing global and local bra denotes
+    // an identical bra until an explicit group starts.
+    DirectCiTileReader state{};
 };
 
 /** @brief Borrowed Eigen column payload, valid until the next column read.
@@ -309,12 +313,10 @@ class DirectCiSigmaAction {
                           const DirectCiColumnRelease& release = {},
                           std::size_t workspace_bytes = workspace::available()) const;
 
-    /** @brief Independent responses sharing one accepted scatter per tile.
-   * Each returned integral adjoint is <request.response,H*state>, without
-   * combining directions. All inputs share width, exact support and parity.
-   * Requests reuse the same halo and at most three channel slabs under the
-   * supplied workspace bound. Carrier storage does not grow with the request
-   * count; the small orbital-space integral cotangents remain separate.
+    /** @brief Independent responses sharing tile topology and channel storage.
+   * Each integral adjoint contracts only its request's accepted bra. Requests
+   * may share the initial bra or replace it at the start of a state group.
+   * All inputs share width, exact support and parity.
    */
     std::vector<DirectCiIntegralAdjoint>
     apply_tiled_responses(int block_width,
