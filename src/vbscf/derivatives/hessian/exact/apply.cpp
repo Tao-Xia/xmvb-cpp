@@ -812,7 +812,9 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
                                                             : &accepted_exact_two_electron_cache_,
                 accepted_ri_two_electron_cache_.has_value() ? &*accepted_ri_two_electron_cache_
                                                             : nullptr,
-                accepted_ri_factorization_,
+                {accepted_ri_inactive_one_index_factors_.get(),
+                 accepted_ri_active_inactive_projection_.get(),
+                 accepted_ri_density_action_.get()},
                 &outer_response_symmetric_active_overlap_gradient_workspace_,
                 &outer_response_symmetric_active_one_electron_gradient_workspace_,
                 two_electron_orbital_gradient);
@@ -1034,7 +1036,9 @@ Eigen::VectorXd ExactHvpOperator::State::pullback_structure_response(
                                                         : &accepted_exact_two_electron_cache_,
             accepted_ri_two_electron_cache_.has_value() ? &*accepted_ri_two_electron_cache_
                                                         : nullptr,
-            accepted_ri_factorization_,
+            {accepted_ri_inactive_one_index_factors_.get(),
+             accepted_ri_active_inactive_projection_.get(),
+             accepted_ri_density_action_.get()},
             &outer_response_symmetric_active_overlap_gradient_workspace_,
             &outer_response_symmetric_active_one_electron_gradient_workspace_);
     apply_timing_totals_.outer_response_orbital_pullback_wall_time_seconds +=

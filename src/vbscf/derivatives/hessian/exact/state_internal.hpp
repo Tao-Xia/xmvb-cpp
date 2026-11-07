@@ -167,6 +167,8 @@ struct ExactHvpOperator::State {
     mutable integrals::RiAoResponseWorkspace ri_ao_response_workspace_{
         integrals::RiAoResponseWorkspace::Lifetime::AcceptedPoint};
     std::shared_ptr<const Eigen::MatrixXd> accepted_ri_inactive_one_index_factors_;
+    std::shared_ptr<const Eigen::MatrixXd> accepted_ri_active_inactive_projection_;
+    std::shared_ptr<const Eigen::MatrixXd> accepted_ri_density_action_;
     Eigen::MatrixXd zero_core_hamiltonian_;
     xmvb::integrals::ExactPackedActiveTwoElectronAdjointCache accepted_exact_two_electron_cache_;
     std::optional<xmvb::integrals::RiActiveTwoElectronResponseCache>

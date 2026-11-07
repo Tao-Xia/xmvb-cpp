@@ -348,7 +348,7 @@ std::vector<double> build_orbital_value_gradient_from_active_space_gradient_dire
     const AcceptedOrbitalPreparationCache& orbital_preparation_cache,
     const xmvb::integrals::ExactPackedActiveTwoElectronAdjointCache* exact_two_electron_cache,
     const xmvb::integrals::RiActiveTwoElectronResponseCache* ri_two_electron_cache,
-    const xmvb::integrals::RiAoFactorization* ri_factorization,
+    xmvb::integrals::RiInactiveResponseFactors ri_inactive,
     std::vector<double>* symmetric_active_overlap_gradient_workspace,
     std::vector<double>* symmetric_active_one_electron_gradient_workspace,
     const Eigen::MatrixXd* two_electron_orbital_gradient) {
@@ -400,9 +400,6 @@ std::vector<double> build_orbital_value_gradient_from_active_space_gradient_dire
     if ((exact_two_electron_cache == nullptr) == (ri_two_electron_cache == nullptr)) {
         throw std::invalid_argument("outer-response requires exactly one active 2e representation");
     }
-    if ((ri_two_electron_cache != nullptr) != (ri_factorization != nullptr)) {
-        throw std::invalid_argument("RI outer-response requires both active and AO RI caches");
-    }
     if (two_electron_orbital_gradient != nullptr) {
         active_two_electron_auxiliary_gradient = *two_electron_orbital_gradient;
     } else if (exact_two_electron_cache != nullptr &&
@@ -424,31 +421,43 @@ std::vector<double> build_orbital_value_gradient_from_active_space_gradient_dire
             active_two_electron_auxiliary_gradient,
             prepared_active_space.active_space_two_electron_result.orbital_transform);
 
-    AoEffectiveOneElectronBackpropagator ao_effective_one_electron_backpropagator;
-    std::vector<double> total_inactive_density_gradient;
+    Eigen::MatrixXd total_active_auxiliary_gradient =
+        active_space_matrix_backpropagation_result.active_auxiliary_orbital_gradient;
+    total_active_auxiliary_gradient.noalias() += active_two_electron_auxiliary_gradient;
     const auto integral_h1e_weight = integrals::active_frame_one_electron_weight(
         symmetric_active_one_electron_gradient,
         prepared_active_space.active_space_two_electron_result.orbital_transform);
+    if (ri_two_electron_cache != nullptr) {
+        const Eigen::Map<const Eigen::MatrixXd> weight(
+            integral_h1e_weight.data(), n_active_orbitals, n_active_orbitals);
+        const Eigen::MatrixXd symmetric_weight = weight + weight.transpose();
+        const Eigen::MatrixXd projection = integrals::project_ri_active_density_response(
+            *ri_two_electron_cache,
+            symmetric_weight,
+            orbital_preparation_cache.inactive_auxiliary,
+            ri_inactive);
+        auto gradient =
+            backpropagate_active_space_orbital_gradient(total_active_auxiliary_gradient,
+                                                        InactiveDensityProjection{projection},
+                                                        input.orbital_preparation_input,
+                                                        orbital_result,
+                                                        orbital_preparation_cache);
+        throw_if_nonfinite(gradient, "RI outer-response orbital-value gradient");
+        return gradient;
+    }
+    std::vector<double> total_inactive_density_gradient;
     if (exact_two_electron_cache != nullptr &&
         exact_two_electron_cache->exchange_integrals.size() != 0) {
         total_inactive_density_gradient = xmvb::integrals::backpropagate_exact_active_h1e_gradient(
             integral_h1e_weight, *exact_two_electron_cache);
-    } else if (ri_factorization != nullptr) {
-        total_inactive_density_gradient =
-            ao_effective_one_electron_backpropagator
-                .backpropagate(integral_h1e_weight, *ri_two_electron_cache)
-                .inactive_density_gradient;
     } else {
         total_inactive_density_gradient =
-            ao_effective_one_electron_backpropagator
+            AoEffectiveOneElectronBackpropagator{}
                 .backpropagate(
                     active_space_matrix_backpropagation_result.ao_effective_one_electron_gradient,
                     input.ao_integral_input)
                 .inactive_density_gradient;
     }
-    Eigen::MatrixXd total_active_auxiliary_gradient =
-        active_space_matrix_backpropagation_result.active_auxiliary_orbital_gradient;
-    total_active_auxiliary_gradient.noalias() += active_two_electron_auxiliary_gradient;
     const Eigen::Map<const Eigen::MatrixXd> total_inactive_density_gradient_matrix(
         total_inactive_density_gradient.data(),
         input.orbital_preparation_input.n_basis_functions,

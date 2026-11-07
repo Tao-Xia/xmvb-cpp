@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 #include <cblas.h>
+#include "core/pair_index.hpp"
 #include "parallel/openmp.hpp"
 #include "core/timing.hpp"
 
@@ -139,12 +140,9 @@ void add_coulomb(const Eigen::MatrixXd& factors,
     }
 }
 
-} // namespace
-
-Eigen::MatrixXd apply_ri_active_density_response(const RiActiveTwoElectronResponseCache& active,
-                                                 const Eigen::Ref<const Eigen::MatrixXd>& weights) {
-    const int n = active.n_basis_functions, na = active.n_active_orbitals;
-    const int n_aux = active.n_auxiliary_functions;
+Eigen::VectorXd pack_active_density(const RiActiveTwoElectronResponseCache& active,
+                                    const Eigen::Ref<const Eigen::MatrixXd>& weights) {
+    const int na = active.n_active_orbitals;
     if (weights.rows() != na || weights.cols() != na || !active.accepted_active_pair_factors ||
         !active.metric_whitened_ao_pair_factors)
         throw std::invalid_argument("invalid RI active-density response dimensions");
@@ -153,7 +151,17 @@ Eigen::MatrixXd apply_ri_active_density_response(const RiActiveTwoElectronRespon
         const int a = active.active_pair_first_indices[p], b = active.active_pair_second_indices[p];
         packed_weights[p] = (a == b ? 1.0 : 2.0) * weights(a, b);
     }
-    const Eigen::VectorXd charge = *active.accepted_active_pair_factors * packed_weights;
+    return packed_weights;
+}
+
+} // namespace
+
+Eigen::MatrixXd apply_ri_active_density_response(const RiActiveTwoElectronResponseCache& active,
+                                                 const Eigen::Ref<const Eigen::MatrixXd>& weights) {
+    const int n = active.n_basis_functions, na = active.n_active_orbitals;
+    const int n_aux = active.n_auxiliary_functions;
+    const Eigen::VectorXd charge =
+        *active.accepted_active_pair_factors * pack_active_density(active, weights);
     Eigen::MatrixXd result = Eigen::MatrixXd::Zero(n, n);
     const int workers = std::min(effective_openmp_thread_count(), n);
     for (int first = 0; first < n_aux; first += active.auxiliary_tile_size) {
@@ -187,6 +195,149 @@ Eigen::MatrixXd apply_ri_active_density_response(const RiActiveTwoElectronRespon
         add_symmetric_product(weighted, *factors, -0.5, result);
     }
     add_coulomb(*active.metric_whitened_ao_pair_factors, charge, result);
+    return result;
+}
+
+std::shared_ptr<const Eigen::MatrixXd>
+build_ri_active_density_action(const RiActiveTwoElectronResponseCache& active,
+                               RiInactiveResponseFactors inactive) {
+    const auto& y = active.accepted_one_index_factors;
+    if (!y || !inactive.one_index || !inactive.active_projection)
+        return {};
+    const auto& b = *active.accepted_active_pair_factors;
+    const Eigen::Index n = active.n_basis_functions, a = active.n_active_orbitals;
+    const Eigen::Index q = b.rows(), ni = inactive.active_projection->cols();
+    const Eigen::Index pairs = b.cols();
+    // Avoid retaining a larger image than the half transform this action replaces.
+    if (ni == 0 || ni > y->rows() / pairs)
+        return {};
+    const int workers = bounded_openmp_thread_count(effective_openmp_thread_count(), ni);
+    auto action = workspace::make_matrix<Eigen::MatrixXd>(
+        n * ni, pairs, sizeof(double) * static_cast<std::size_t>(workers) * a * (n + q));
+    if (!action)
+        return {};
+#pragma omp parallel for schedule(static) num_threads(workers)
+    for (Eigen::Index i = 0; i < ni; ++i) {
+        auto out = action->middleRows(i * n, n);
+        out.noalias() = 2 * inactive.one_index->middleRows(i * q, q).transpose() * b;
+        const Eigen::Map<const Eigen::MatrixXd> mixed(
+            inactive.active_projection->col(i).data(), q, a);
+        // Packed off-diagonals in the input carry multiplicity two.
+        Eigen::MatrixXd exchange(n, a);
+        for (Eigen::Index x = 0; x < a; ++x) {
+            exchange.noalias() = y->middleRows(x * q, q).transpose() * mixed;
+            for (Eigen::Index z = 0; z < a; ++z) {
+                const auto pair = core::PairIndex::packed_pair_index(x, z);
+                out.col(pair) -= (x == z ? 1.0 : 0.5) * exchange.col(z);
+            }
+        }
+    }
+    return action;
+}
+
+Eigen::MatrixXd
+project_ri_active_density_response(const RiActiveTwoElectronResponseCache& active,
+                                   const Eigen::Ref<const Eigen::MatrixXd>& weights,
+                                   const Eigen::Ref<const Eigen::MatrixXd>& inactive_duals,
+                                   RiInactiveResponseFactors inactive) {
+    const int n = active.n_basis_functions, na = active.n_active_orbitals;
+    const int n_aux = active.n_auxiliary_functions;
+    const Eigen::Index ni = inactive_duals.cols();
+    if (!ni)
+        return Eigen::MatrixXd(n, 0);
+    if (inactive_duals.rows() != n ||
+        (inactive.one_index &&
+         (inactive.one_index->rows() != n_aux * ni || inactive.one_index->cols() != n)) ||
+        (inactive.active_projection &&
+         (inactive.active_projection->rows() != static_cast<Eigen::Index>(n_aux) * na ||
+          inactive.active_projection->cols() != ni)))
+        throw std::invalid_argument("invalid inactive RI density projection dimensions");
+    const Eigen::VectorXd packed = pack_active_density(active, weights);
+    if (inactive.density_action) {
+        Eigen::MatrixXd result(n, ni);
+        Eigen::Map<Eigen::VectorXd>(result.data(), result.size()).noalias() =
+            *inactive.density_action * packed;
+        return result;
+    }
+    Eigen::MatrixXd result = Eigen::MatrixXd::Zero(n, ni);
+    const Eigen::VectorXd charge = *active.accepted_active_pair_factors * packed;
+    const int workers = bounded_openmp_thread_count(effective_openmp_thread_count(), ni);
+    const int exchange_workers = std::min(effective_openmp_thread_count(), n);
+    const auto [row_blocks, column_blocks] = projection_grid(n, ni, exchange_workers);
+    const auto projection_elements = static_cast<std::size_t>(na) * (ni + workers);
+    const bool generate = !active.accepted_one_index_factors || !inactive.one_index;
+    const std::size_t per_aux =
+        projection_elements +
+        (generate ? static_cast<std::size_t>(n) * ((active.accepted_one_index_factors ? 0 : na) +
+                                                   (inactive.one_index ? 0 : ni) + exchange_workers)
+                  : 0);
+    const auto capacity = workspace::available() / sizeof(double) / per_aux;
+    if (!capacity)
+        throw std::length_error("minimum RI density projection tile exceeds workspace");
+    const int tile = static_cast<int>(std::min<std::size_t>(n_aux, capacity));
+    const auto& ao_factors = *active.metric_whitened_ao_pair_factors;
+    for (int first = 0; first < n_aux; first += tile) {
+        const int count = std::min(tile, n_aux - first);
+        Eigen::MatrixXd generated_active, generated_inactive;
+        const Eigen::MatrixXd* active_factors = active.accepted_one_index_factors.get();
+        const Eigen::MatrixXd* inactive_factors = inactive.one_index;
+        if (!active_factors) {
+            generated_active.resize(static_cast<Eigen::Index>(count) * na, n);
+            transform_ri_one_index(
+                ao_factors, *active.accepted_active_coefficients, first, count, generated_active);
+            active_factors = &generated_active;
+        }
+        if (!inactive_factors) {
+            generated_inactive.resize(count * ni, n);
+            transform_ri_one_index(ao_factors, inactive_duals, first, count, generated_inactive);
+            inactive_factors = &generated_inactive;
+        }
+        const Eigen::Index active_stride = active_factors->rows() / na;
+        const Eigen::Index inactive_stride = inactive_factors->rows() / ni;
+        const int active_offset = active.accepted_one_index_factors ? first : 0;
+        const int inactive_offset = inactive.one_index ? first : 0;
+        profiling::ScopedPhase phase(profiling::Phase::RiAoExchange);
+        Eigen::MatrixXd weighted(static_cast<Eigen::Index>(count) * na, ni);
+#pragma omp parallel for schedule(static) num_threads(workers)
+        for (Eigen::Index i = 0; i < ni; ++i) {
+            Eigen::MatrixXd mixed(count, na);
+            for (int a = 0; a < na; ++a) {
+                if (inactive.active_projection) {
+                    mixed.col(a) = inactive.active_projection->col(i).segment(
+                        static_cast<Eigen::Index>(a) * n_aux + first, count);
+                } else {
+                    mixed.col(a).noalias() =
+                        active_factors->middleRows(a * active_stride + active_offset, count) *
+                        inactive_duals.col(i);
+                }
+            }
+            Eigen::Map<Eigen::MatrixXd> weight(weighted.col(i).data(), count, na);
+            weight.noalias() = mixed * weights;
+            result.col(i).noalias() +=
+                2 *
+                inactive_factors->middleRows(i * inactive_stride + inactive_offset, count)
+                    .transpose() *
+                charge.segment(first, count);
+        }
+#pragma omp parallel for schedule(static) num_threads(exchange_workers)
+        for (int block = 0; block < exchange_workers; ++block) {
+            const int rb = block / column_blocks, cb = block % column_blocks;
+            const int row = rb * n / row_blocks, rows = (rb + 1) * n / row_blocks - row;
+            const Eigen::Index col = cb * ni / column_blocks;
+            const Eigen::Index cols = (cb + 1) * ni / column_blocks - col;
+            auto output = result.block(row, col, rows, cols);
+            if (count == active_stride) {
+                output.noalias() -= active_factors->middleCols(row, rows).transpose() *
+                                    weighted.middleCols(col, cols);
+            } else {
+                for (int a = 0; a < na; ++a)
+                    output.noalias() -=
+                        active_factors->block(a * active_stride + active_offset, row, count, rows)
+                            .transpose() *
+                        weighted.block(static_cast<Eigen::Index>(a) * count, col, count, cols);
+            }
+        }
+    }
     return result;
 }
 

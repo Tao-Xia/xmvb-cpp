@@ -68,6 +68,26 @@ struct RiInactiveFactorView {
 Eigen::MatrixXd apply_ri_active_density_response(const RiActiveTwoElectronResponseCache& active,
                                                  const Eigen::Ref<const Eigen::MatrixXd>& weights);
 
+/** @brief Accepted RI images for projecting an active-density response onto inactive duals. */
+struct RiInactiveResponseFactors {
+    const Eigen::MatrixXd* one_index = nullptr;
+    const Eigen::MatrixXd* active_projection = nullptr;
+    const Eigen::MatrixXd* density_action = nullptr;
+};
+
+/** @brief Build the accepted active-pair to AO-by-inactive action when it is
+ * smaller than the active half transform and fits the shared workspace. */
+std::shared_ptr<const Eigen::MatrixXd>
+build_ri_active_density_action(const RiActiveTwoElectronResponseCache& active,
+                               RiInactiveResponseFactors inactive);
+
+/** @brief Compute the AO response times the inactive duals without an AO-square intermediate. */
+Eigen::MatrixXd
+project_ri_active_density_response(const RiActiveTwoElectronResponseCache& active,
+                                   const Eigen::Ref<const Eigen::MatrixXd>& weights,
+                                   const Eigen::Ref<const Eigen::MatrixXd>& inactive_duals,
+                                   RiInactiveResponseFactors inactive);
+
 /** @brief Compute a block of AO-by-orbital projections consumed by the HVP.
  * `moving_inactive_duals` and every horizontal direction contain matching
  * shared moving columns; `full_inactive_duals` contains all accepted duals A0.

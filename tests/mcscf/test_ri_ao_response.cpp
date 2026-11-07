@@ -154,6 +154,23 @@ void check(int ni, bool cached, std::size_t budget) {
         }
     }
     cache.accepted_one_index_factors = std::move(resident);
+    Matrix mixed;
+    if (cached)
+        mixed.noalias() = *cache.accepted_one_index_factors * a0;
+    close(xmvb::integrals::project_ri_active_density_response(cache, weights, a0, {}),
+          active_reference * a0);
+    close(xmvb::integrals::project_ri_active_density_response(
+              cache, weights, a0, {&inactive_image, cached ? &mixed : nullptr}),
+          active_reference * a0);
+    if (cached) {
+        xmvb::integrals::RiInactiveResponseFactors images{&inactive_image, &mixed};
+        const auto action = xmvb::integrals::build_ri_active_density_action(cache, images);
+        if (!action)
+            throw std::runtime_error("small accepted RI density action was not built");
+        images.density_action = action.get();
+        close(xmvb::integrals::project_ri_active_density_response(cache, weights, a0, images),
+              active_reference * a0);
+    }
     using Workspace = xmvb::integrals::RiAoResponseWorkspace;
     Workspace workspace(Workspace::Lifetime::AcceptedPoint);
     const std::array<xmvb::integrals::RiAoResponseDirection, 1> requests{{{x, w}}};
