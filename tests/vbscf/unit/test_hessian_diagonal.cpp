@@ -13,6 +13,7 @@
 #include "integrals/ao/graph.hpp"
 #include "integrals/ao/ri.hpp"
 #include "integrals/ao/exact.hpp"
+#include "integrals/ao/tile_builder.hpp"
 
 namespace {
 
@@ -182,13 +183,30 @@ void check_core_half_transform() {
                                 expected_k(p, i) += w * screened(mu, r, nu, s);
                                 expected_j(p, i) += w * screened(mu, nu, r, s);
                             }
-        for (int workers : {1, 4}) {
-            Eigen::MatrixXd k, j;
-            if (!xmvb::integrals::apply_ao_core_diagonals(ao, frame, core, workers, &k, &j))
-                throw std::runtime_error("core diagonal test failed workspace reservation");
-            max_error = std::max({max_error,
-                                  (k - expected_k).cwiseAbs().maxCoeff(),
-                                  (j - expected_j).cwiseAbs().maxCoeff()});
+        std::vector<std::size_t> shell_ends;
+        for (std::size_t i = 1; i <= static_cast<std::size_t>(n); ++i)
+            shell_ends.push_back(i * (i + 1) / 2);
+        xmvb::integrals::AoPairTiles::Builder tiles(shell_ends);
+        std::size_t entry = 0;
+        for (int shell = 0; shell < n; ++shell) {
+            xmvb::integrals::AoPairTiles::Builder::Shell row(tiles, shell);
+            for (; entry < left.size() && static_cast<std::size_t>(left[entry]) < shell_ends[shell];
+                 ++entry)
+                row.add(left[entry], right[entry], values[entry]);
+            row.finish();
+        }
+        for (bool tiled : {false, true}) {
+            if (tiled) {
+                ao.pair_graph.tiles = tiles.finish();
+            }
+            for (int workers : {1, 4}) {
+                Eigen::MatrixXd k, j;
+                if (!xmvb::integrals::apply_ao_core_diagonals(ao, frame, core, workers, &k, &j))
+                    throw std::runtime_error("core diagonal test failed workspace reservation");
+                max_error = std::max({max_error,
+                                      (k - expected_k).cwiseAbs().maxCoeff(),
+                                      (j - expected_j).cwiseAbs().maxCoeff()});
+            }
         }
     }
     if (max_error > 5.0e-12)

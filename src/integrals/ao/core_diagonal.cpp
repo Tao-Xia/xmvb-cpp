@@ -1,6 +1,7 @@
 #include "integrals/ao/exact.hpp"
 
 #include <algorithm>
+#include <mutex>
 #include <stdexcept>
 #include <vector>
 
@@ -32,23 +33,29 @@ bool apply_ao_core_diagonals(const AoIntegralInput& ao,
     const int order = n + n % 2;
     const int ring = order - 1;
     const int workers = bounded_openmp_thread_count(n_threads, order / 2);
-    // One exchange image shared by the workers, packed J, and one AO-pair
-    // slice plus half-transformed and projected row panels per worker.
+    // Reuse the previous per-worker AO slice allowance for half panels.
+    // Each pair in the panel has n AO rows and n_core contiguous channels.
+    const int panel_pairs = graph.tiles ? std::max(1, n / n_core) : 1;
     const auto square = static_cast<std::size_t>(n) * n;
+    const auto panel_values = static_cast<std::size_t>(panel_pairs) * n * n_core;
+    const auto scratch = graph.tiles ? panel_values : square + panel_values;
     const std::size_t bytes =
-        sizeof(double) * ((square + pairs + 2 * n_mo) * n_core +
-                          workers * (square + 3 * n * n_core + 4 * n_mo * n_core));
+        sizeof(double) * ((square + pairs + n + 2 * n_mo) * n_core +
+                          workers * (scratch + 2 * n * n_core + 4 * n_mo * n_core));
     workspace::Reservation reservation;
     if (!reservation.try_resize(bytes))
         return false;
     workspace::Temporary temporary(bytes);
     profiling::ScopedPhase phase(profiling::Phase::AoCoreDiagonal);
 
-    Eigen::MatrixXd exchange(n, static_cast<Eigen::Index>(n) * n_core);
+    using Panel = AoPairTiles::Matrix;
+    const Panel core = frame.leftCols(n_core);
+    Panel exchange(square, n_core);
     Eigen::MatrixXd coulomb(n_core, pairs);
+    std::vector<std::mutex> exchange_locks(graph.tiles ? n : 0);
     std::vector<Eigen::MatrixXd> projected(workers, Eigen::MatrixXd::Zero(n_mo, 2 * n_core));
     const auto exchange_row = [&](int mu) {
-        return exchange.middleCols(static_cast<Eigen::Index>(mu) * n_core, n_core);
+        return exchange.middleRows(static_cast<Eigen::Index>(mu) * n, n);
     };
 #pragma omp parallel num_threads(workers)
     {
@@ -56,49 +63,72 @@ bool apply_ao_core_diagonals(const AoIntegralInput& ao,
 #ifdef _OPENMP
         worker = omp_get_thread_num();
 #endif
-        Eigen::MatrixXd eri(n, n), half(n, n_core);
-        const auto consume = [&](int mu, int nu) {
-            const auto pair = core::PairIndex::packed_pair_index(mu, nu);
-            eri.triangularView<Eigen::Lower>().setZero();
-            graph.visit_row(pair, [&](std::size_t right, double value) {
-                eri(graph.pair_first[right], graph.pair_second[right]) = value;
-            });
-            // T(k,i) = sum_l (mu nu|k l) C(l,i). The same panel supplies
-            // J_i(mu,nu) and the exchange updates to rows mu and nu.
-            cblas_dsymm(CblasColMajor,
-                        CblasLeft,
-                        CblasLower,
-                        n,
-                        n_core,
-                        1.0,
-                        eri.data(),
-                        n,
-                        frame.data(),
-                        frame.outerStride(),
-                        0.0,
-                        half.data(),
-                        n);
-            for (int i = 0; i < n_core; ++i) {
-                coulomb(i, pair) = frame.col(i).dot(half.col(i));
-                exchange_row(mu).col(i).noalias() += frame(nu, i) * half.col(i);
-                if (mu != nu)
-                    exchange_row(nu).col(i).noalias() += frame(mu, i) * half.col(i);
-            }
+        const auto consume_half = [&](std::size_t pair, int mu, int nu, const auto& half) {
+            // The same T(k,i) = sum_l (mu nu|k l) C(l,i) supplies both images.
+            coulomb.col(pair) = (core.array() * half.array()).colwise().sum().transpose();
+            const auto accumulate = [&](int target, int source) {
+                std::unique_lock<std::mutex> lock;
+                if (graph.tiles)
+                    lock = std::unique_lock(exchange_locks[target]);
+                exchange_row(target).array() += half.array().rowwise() * core.row(source).array();
+            };
+            accumulate(mu, nu);
+            if (mu != nu)
+                accumulate(nu, mu);
         };
 #pragma omp for schedule(static)
-        for (int mu = 0; mu < n; ++mu) {
+        for (int mu = 0; mu < n; ++mu)
             exchange_row(mu).setZero();
-            consume(mu, mu);
-        }
-        // Round-robin pair schedule. Every unordered pair is visited once
-        // and no two workers update the same exchange row within a round.
-        for (int round = 0; round < ring; ++round) {
+
+        if (graph.tiles) {
+            const auto& tiles = *graph.tiles;
+            Panel half(static_cast<Eigen::Index>(panel_pairs) * n, n_core);
+#pragma omp for schedule(dynamic, 1)
+            for (std::size_t block = 0; block < tiles.row_blocks(); ++block) {
+                for (int begin = 0; begin < tiles.row_count(block); begin += panel_pairs) {
+                    const int count = std::min(panel_pairs, tiles.row_count(block) - begin);
+                    half.topRows(static_cast<Eigen::Index>(count) * n).setZero();
+                    tiles.visit_panel(block, begin, count, [&](std::size_t source, auto visit) {
+                        const int k = graph.pair_first[source], l = graph.pair_second[source];
+                        visit([&](int row, double value) {
+                            const auto offset = static_cast<Eigen::Index>(row) * n;
+                            half.row(offset + k).noalias() += value * core.row(l);
+                            if (k != l)
+                                half.row(offset + l).noalias() += value * core.row(k);
+                        });
+                    });
+                    for (int row = 0; row < count; ++row) {
+                        const auto pair = tiles.row_begin(block) + begin + row;
+                        consume_half(pair, graph.pair_first[pair], graph.pair_second[pair],
+                                     half.middleRows(static_cast<Eigen::Index>(row) * n, n));
+                    }
+                }
+            }
+        } else {
+            Panel eri(n, n), half(n, n_core);
+            const auto consume = [&](int mu, int nu) {
+                const auto pair = core::PairIndex::packed_pair_index(mu, nu);
+                eri.triangularView<Eigen::Lower>().setZero();
+                graph.visit_row(pair, [&](std::size_t right, double value) {
+                    eri(graph.pair_first[right], graph.pair_second[right]) = value;
+                });
+                cblas_dsymm(CblasRowMajor, CblasLeft, CblasLower, n, n_core, 1.0,
+                            eri.data(), n, core.data(), n_core, 0.0, half.data(), n_core);
+                consume_half(pair, mu, nu, half);
+            };
 #pragma omp for schedule(static)
-            for (int k = 0; k < order / 2; ++k) {
-                if (k != 0)
-                    consume((round + k) % ring, (round + ring - k) % ring);
-                else if (ring < n)
-                    consume(round, ring);
+            for (int mu = 0; mu < n; ++mu)
+                consume(mu, mu);
+            // Every unordered pair is visited once. The two output rows of each
+            // pair are disjoint from the other workers' rows in the same round.
+            for (int round = 0; round < ring; ++round) {
+#pragma omp for schedule(static)
+                for (int k = 0; k < order / 2; ++k) {
+                    if (k != 0)
+                        consume((round + k) % ring, (round + ring - k) % ring);
+                    else if (ring < n)
+                        consume(round, ring);
+                }
             }
         }
         Eigen::MatrixXd rows(n, 2 * n_core), images(n_mo, 2 * n_core);

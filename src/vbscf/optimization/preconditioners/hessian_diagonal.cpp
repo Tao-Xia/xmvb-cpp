@@ -244,22 +244,25 @@ AnalyticOrbitalDiagonal build_analytic_orbital_diagonal(const VbScfInput& input,
         owned_active_pair_products = apply_ao_pair_operator(input, active_pair_map);
     }
     const int n_active_pairs = n_active * (n_active + 1) / 2;
-    x.j_active.resize(static_cast<std::size_t>(n_bf) * n_active * n_active);
-    // Only the diagonal MO pair (pp|ab) enters the analytic diagonal.
-    // Accumulate directly: each worker owns O(n_active^2), not an AO-pair map.
+    {
+        profiling::ScopedPhase phase(profiling::Phase::ActiveCoulombDiagonal);
+        x.j_active.resize(static_cast<std::size_t>(n_bf) * n_active * n_active);
+        // Only the diagonal MO pair (pp|ab) enters the analytic diagonal.
+        // Accumulate directly: each worker owns O(n_active^2), not an AO-pair map.
 #pragma omp parallel for schedule(static)
-    for (int p = 0; p < n_bf; ++p) {
-        Eigen::RowVectorXd contraction = Eigen::RowVectorXd::Zero(n_active_pairs);
-        Eigen::Index pair = 0;
-        for (int mu = 0; mu < n_bf; ++mu)
-            for (int nu = 0; nu <= mu; ++nu, ++pair) {
-                const double coefficient = mo(mu, p) * mo(nu, p) * (mu == nu ? 1.0 : 2.0);
-                contraction.noalias() += coefficient * active_pair_products->row(pair);
-            }
-        for (int a = 0; a < n_active; ++a)
-            for (int b = 0; b < n_active; ++b)
-                x.j_active[mcscf::orbital_diagonal_slice_index(p, a, b, n_active)] =
-                    contraction[xmvb::core::PairIndex::packed_pair_index(a, b)];
+        for (int p = 0; p < n_bf; ++p) {
+            Eigen::RowVectorXd contraction = Eigen::RowVectorXd::Zero(n_active_pairs);
+            Eigen::Index pair = 0;
+            for (int mu = 0; mu < n_bf; ++mu)
+                for (int nu = 0; nu <= mu; ++nu, ++pair) {
+                    const double coefficient = mo(mu, p) * mo(nu, p) * (mu == nu ? 1.0 : 2.0);
+                    contraction.noalias() += coefficient * active_pair_products->row(pair);
+                }
+            for (int a = 0; a < n_active; ++a)
+                for (int b = 0; b < n_active; ++b)
+                    x.j_active[mcscf::orbital_diagonal_slice_index(p, a, b, n_active)] =
+                        contraction[xmvb::core::PairIndex::packed_pair_index(a, b)];
+        }
     }
     x.active_eri.resize(static_cast<std::size_t>(n_active) * n_active * n_active * n_active);
     const auto& packed_active_eri = active_two_electron.packed_active_two_electron_integrals;
