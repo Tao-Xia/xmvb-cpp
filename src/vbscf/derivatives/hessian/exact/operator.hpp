@@ -6,6 +6,7 @@
 #include <optional>
 
 #include <Eigen/Core>
+#include "integrals/response/types.hpp"
 #include "vbscf/structures/assembly/connection.hpp"
 
 namespace xmvb::vb {
@@ -243,6 +244,7 @@ class ExactHvpOperator {
     Eigen::VectorXd
     apply_structure_coupling_adjoint(const StructureActiveIntegralAdjoint& adjoint) const;
 
+    const integrals::ExactCtxPairMatrix* accepted_exchange_integrals() const noexcept;
     bool supports_analytic_core_model() const noexcept;
 
     /** @brief Revision invalidating previously sampled relaxed HVP images. */

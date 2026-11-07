@@ -73,7 +73,8 @@ bool admit_structure_response(const VbScfObjective& objective,
 bool build_accepted_ciah_keyframe(VbScfObjective* objective,
                                   const SparseParameterLayout& parameter_view,
                                   const VbScfOptimizerOptions& options,
-                                  const OrbitalChart& chart,
+                                  OrbitalChart& chart,
+                                  OrbitalPreconditioner preconditioner,
                                   const Eigen::VectorXd& reduced_gradient,
                                   const Eigen::VectorXd& orbital_guess_packed,
                                   const Eigen::MatrixXd& structure_guess,
@@ -93,6 +94,8 @@ bool build_accepted_ciah_keyframe(VbScfObjective* objective,
         result->termination_reason = "ciah_analytic_hessian_unavailable";
         return false;
     }
+    prepare_orbital_curvature(
+        *objective, chart, preconditioner, true, orbital_hessian.accepted_exchange_integrals());
     StructureTangentOperator structure_hessian(objective->second_order_context(),
                                                orbital_hessian.structure_action());
     const bool use_structure_response = admit_structure_response(
@@ -158,8 +161,6 @@ BackendRunResult run_ciah_backend(VbScfObjective* objective,
             result->termination_reason = "ciah_projected_gradient_tolerance";
             break;
         }
-        prepare_orbital_curvature(*objective, chart, preconditioner, true);
-
         CiahIterationRecord iteration_record;
         iteration_record.accepted_iteration_index = run_result.n_iterations + 1;
         iteration_record.initial_trust_radius = trust_radius;
@@ -168,6 +169,7 @@ BackendRunResult run_ciah_backend(VbScfObjective* objective,
                                           parameter_view,
                                           options,
                                           chart,
+                                          preconditioner,
                                           projected.reduced_gradient,
                                           orbital_guess_packed,
                                           structure_guess,

@@ -30,6 +30,16 @@ ExactHvpOperator::ExactHvpOperator(
 
 ExactHvpOperator::~ExactHvpOperator() = default;
 
+const integrals::ExactCtxPairMatrix* ExactHvpOperator::accepted_exchange_integrals() const noexcept {
+    return state_->accepted_exchange_integrals();
+}
+
+const integrals::ExactCtxPairMatrix*
+ExactHvpOperator::State::accepted_exchange_integrals() const noexcept {
+    const auto& image = accepted_exact_two_electron_cache_.exchange_integrals;
+    return image.size() ? &image : nullptr;
+}
+
 bool ExactHvpOperator::supports_analytic_core_model() const noexcept {
     return state_->supports_analytic_core_model();
 }

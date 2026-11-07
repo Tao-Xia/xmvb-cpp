@@ -457,6 +457,26 @@ int main() {
         std::cerr << "density-contracted diagonal error = " << contraction_error << '\n';
         return 1;
     }
+    // Build the accepted exchange image independently in the AO pair basis.
+    // The diagonal must agree entrywise with the complete AO-density path.
+    xmvb::integrals::ExactCtxPairMatrix exchange(n * (n + 1) / 2, na * na);
+    Eigen::Index pair = 0;
+    for (int mu = 0; mu < n; ++mu)
+        for (int nu = 0; nu <= mu; ++nu, ++pair)
+            for (int a = 0; a < na; ++a)
+                for (int b = 0; b < na; ++b) {
+                    double value = 0;
+                    for (int i = 0; i < n; ++i)
+                        for (int j = 0; j < n; ++j)
+                            value += mo(i, nc + a) * mo(j, nc + b) * eri(g, mu, i, nu, j, n);
+                    exchange(pair, a * na + b) = value;
+                }
+    const auto reused = xmvb::vb::build_analytic_orbital_diagonal(input, accepted, &exchange);
+    const double reuse_error = (reused.rotation_diagonal - built.rotation_diagonal).cwiseAbs().maxCoeff();
+    if (reuse_error > 2.0e-12) {
+        std::cerr << "cached exchange diagonal error = " << reuse_error << '\n';
+        return 1;
+    }
     // Independent factorized-ERI reference for signed rank-two RI sources.
     auto ri = std::make_shared<xmvb::integrals::RiAoFactorization>();
     ri->n_basis_functions = n;

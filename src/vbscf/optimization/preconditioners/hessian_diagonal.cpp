@@ -133,7 +133,8 @@ std::vector<double> pack_symmetric_dm2(const std::vector<double>& dm2, int n) {
 } // namespace
 
 AnalyticOrbitalDiagonal build_analytic_orbital_diagonal(const VbScfInput& input,
-                                                        const AcceptedPointContext& accepted) {
+                                                        const AcceptedPointContext& accepted,
+                                                        const integrals::ExactCtxPairMatrix* exchange) {
     const bool trace = mcscf::diagnostics::ciah_event_trace_enabled();
     const auto start =
         trace ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
@@ -290,7 +291,15 @@ AnalyticOrbitalDiagonal build_analytic_orbital_diagonal(const VbScfInput& input,
     const auto dm2 = unpack_symmetric_active_two_rdm(*packed_dm2, n_active);
     const auto active_end =
         trace ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-    const auto densities = contract_diagonal_densities(input, mo, n_core, dm1, dm2, x.j_active);
+    const auto densities = contract_diagonal_densities(input,
+                                                         mo,
+                                                         n_core,
+                                                         dm1,
+                                                         dm2,
+                                                         x.j_active,
+                                                         exchange,
+                                                         two_electron_pretransformed
+                                                             ? nullptr : &inverse_active_transform);
     const auto& density_images = densities.active;
     const auto density_end =
         trace ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};

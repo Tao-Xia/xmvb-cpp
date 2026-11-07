@@ -63,6 +63,7 @@ struct ExactHvpOperator::State {
     Eigen::VectorXd
     apply_structure_coupling_adjoint(const StructureActiveIntegralAdjoint& adjoint) const;
 
+    const integrals::ExactCtxPairMatrix* accepted_exchange_integrals() const noexcept;
     bool supports_analytic_core_model() const noexcept;
     std::uint64_t response_model_revision() const noexcept;
     StructureResponseSchurModel structure_response_schur_model() const;

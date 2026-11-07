@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Eigen/Core>
+#include "integrals/response/types.hpp"
 #include "mcscf/optimization/preconditioners/orbital_diagonal.hpp"
 
 namespace xmvb::vb {
@@ -22,6 +23,7 @@ struct AnalyticOrbitalDiagonal {
  * supports enter only when this model is pulled into the orbital chart.
  */
 AnalyticOrbitalDiagonal build_analytic_orbital_diagonal(const VbScfInput& input,
-                                                        const AcceptedPointContext& accepted);
+                                                        const AcceptedPointContext& accepted,
+                                                        const integrals::ExactCtxPairMatrix* exchange = nullptr);
 
 } // namespace xmvb::vb

@@ -55,7 +55,8 @@ OrbitalChart build_orbital_geometry(const OrbitalPreparationInput& orbital_prepa
 void prepare_orbital_curvature(const VbScfObjective& objective,
                                OrbitalChart& chart,
                                OrbitalPreconditioner preconditioner,
-                               bool need_ah_mapping) {
+                               bool need_ah_mapping,
+                               const integrals::ExactCtxPairMatrix* exchange) {
     if (preconditioner == OrbitalPreconditioner::Automatic) {
         throw std::invalid_argument(
             "orbital-chart construction requires a resolved preconditioner");
@@ -67,7 +68,7 @@ void prepare_orbital_curvature(const VbScfObjective& objective,
             throw std::invalid_argument(
                 "analytic Hessian diagonal requires an accepted-point context");
         }
-        hessian_diagonal = build_analytic_orbital_diagonal(objective.input(), *context);
+        hessian_diagonal = build_analytic_orbital_diagonal(objective.input(), *context, exchange);
     }
     const Eigen::MatrixXd* one_electron =
         preconditioner == OrbitalPreconditioner::OneElectron
