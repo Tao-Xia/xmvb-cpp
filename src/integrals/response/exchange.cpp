@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <mutex>
 #include <stdexcept>
 
 #include "parallel/openmp.hpp"
@@ -11,6 +12,79 @@
 #include "integrals/ao/input.hpp"
 
 namespace xmvb::integrals::detail {
+
+namespace {
+
+/** Build a half panel once per unordered AO pair. Its two AO orientations
+ * contribute to the same packed exchange image used by the row contraction.
+ * A worker owns its panel and takes at most one output AO stripe lock at a time.
+ */
+void build_tiled_exchange(const AoPairGraph& graph,
+                          const ExactCtxPairMatrix& coefficients,
+                          int threads,
+                          ExactCtxPairMatrix& result) {
+    const Eigen::Index n_bf = coefficients.rows(), n = coefficients.cols();
+    const auto& tiles = *graph.tiles;
+    // Across the team, the half panels fit in the existing single AO slice.
+    const int panel_rows = static_cast<int>(n_bf / threads);
+    const Eigen::Index stride = n_bf * n, width = n * n;
+    std::vector<std::mutex> stripe_locks(n_bf);
+#pragma omp parallel num_threads(threads)
+    {
+        ExactCtxPairMatrix half(panel_rows, stride);
+#pragma omp for schedule(static)
+        for (Eigen::Index pair = 0; pair < result.rows(); ++pair)
+            result.row(pair).setZero();
+
+#pragma omp for schedule(dynamic, 1)
+        for (std::size_t block = 0; block < tiles.row_blocks(); ++block) {
+            for (int begin = 0; begin < tiles.row_count(block); begin += panel_rows) {
+                const int rows = std::min(panel_rows, tiles.row_count(block) - begin);
+                half.topRows(rows).setZero();
+                tiles.visit_panel(block, begin, rows, [&](std::size_t pair, auto visit) {
+                    const int k = graph.pair_first[pair], l = graph.pair_second[pair];
+                    const double* c_k = coefficients.row(k).data();
+                    const double* c_l = coefficients.row(l).data();
+                    visit([&](int row, double value) {
+                        double* target = half.row(row).data();
+#pragma omp simd
+                        for (Eigen::Index b = 0; b < n; ++b)
+                            target[l * n + b] += value * c_k[b];
+                        if (k != l) {
+#pragma omp simd
+                            for (Eigen::Index b = 0; b < n; ++b)
+                                target[k * n + b] += value * c_l[b];
+                        }
+                    });
+                });
+                for (int row = 0; row < rows; ++row) {
+                    const auto pair = tiles.row_begin(block) + begin + row;
+                    const int i = graph.pair_first[pair], j = graph.pair_second[pair];
+                    const double* panel = half.row(row).data();
+                    const auto accumulate = [&](int mu, int nu) {
+                        const double* c = coefficients.row(nu).data();
+                        const std::lock_guard lock(stripe_locks[mu]);
+                        double* target = result.row(ao_pair_index(mu, 0)).data();
+                        for (int k = 0; k <= mu; ++k) {
+                            const double* source = panel + k * n;
+                            for (Eigen::Index a = 0; a < n; ++a) {
+                                const double coefficient = c[a];
+#pragma omp simd
+                                for (Eigen::Index b = 0; b < n; ++b)
+                                    target[k * width + a * n + b] += coefficient * source[b];
+                            }
+                        }
+                    };
+                    accumulate(i, j);
+                    if (i != j)
+                        accumulate(j, i);
+                }
+            }
+        }
+    }
+}
+
+} // namespace
 
 void build_exchange_integrals(ExactPackedActiveTwoElectronAdjointCache* cache) {
     const Eigen::Index n_bf = cache->n_basis_functions;
@@ -55,6 +129,10 @@ void build_exchange_integrals(ExactPackedActiveTwoElectronAdjointCache* cache) {
     const ExactCtxPairMatrix coefficients = *cache->accepted_active_coefficients;
     cache->exchange_integrals.resize(rows, n * n);
     const int threads = std::min<int>(effective_openmp_thread_count(), n_bf);
+    if (graph.tiles) {
+        build_tiled_exchange(graph, coefficients, threads, cache->exchange_integrals);
+        return;
+    }
     const Eigen::Index tile = 1;
     ExactCtxPairMatrix half;
     // Transform one active index in the integral sweep, then the second with

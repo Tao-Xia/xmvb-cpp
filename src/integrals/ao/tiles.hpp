@@ -71,6 +71,93 @@ class AoPairTiles {
         }
     }
 
+    std::size_t unique_blocks() const noexcept {
+        return canonical_.size();
+    }
+    std::size_t row_blocks() const noexcept {
+        return rows_.size();
+    }
+    std::size_t row_begin(std::size_t block) const noexcept {
+        return starts_[block];
+    }
+    int row_count(std::size_t block) const noexcept {
+        return extent(block);
+    }
+
+    /** Consume rows of a canonical block, with each retained ERI visited once. */
+    template <class Consumer> void visit_unique_block(std::size_t block, Consumer consume) const {
+        const auto row_block = canonical_[block].block;
+        const auto& tile = canonical(block);
+        const auto left = starts_[row_block], right = starts_[tile.column];
+        const bool diagonal = row_block == tile.column;
+        const int height = extent(row_block), width = extent(tile.column);
+        if (tile.dense) {
+            for (int row = 0; row < height; ++row) {
+                const auto* values = tile.values.data() + row * width;
+                const int end = diagonal ? row + 1 : width;
+                consume(left + row, [&](auto add) {
+                    for (int col = 0; col < end; ++col)
+                        if (values[col] != 0.0)
+                            add(right + col, values[col]);
+                });
+            }
+        } else {
+            for (int row = 0; row < height; ++row)
+                consume(left + row, [&](auto add) {
+                    for (int k = tile.row_offsets[row]; k < tile.row_offsets[row + 1]; ++k) {
+                        const int col = tile.columns[k];
+                        if (!diagonal || col <= row)
+                            add(right + col, tile.values[k]);
+                    }
+                });
+        }
+    }
+
+    /** Visit a directed subpanel. Dense transposed blocks read contiguous runs
+     * from the original storage and update several target rows together. */
+    template <class Consumer>
+    void visit_panel(std::size_t block, int begin, int count, Consumer consume) const {
+        for (const auto [other, slot] : adjacency_[block]) {
+            const bool transposed = other > block;
+            const auto& tile = transposed ? rows_[other][slot] : rows_[block][slot];
+            const auto source = starts_[other];
+            if (transposed && tile.dense) {
+                const int stride = extent(block), height = extent(other);
+                for (int col = 0; col < height; ++col) {
+                    const auto* values = tile.values.data() + col * stride + begin;
+                    consume(source + col, [&](auto add) {
+                        for (int row = 0; row < count; ++row)
+                            if (values[row] != 0.0)
+                                add(row, values[row]);
+                    });
+                }
+            } else if (tile.dense) {
+                const int width = extent(other);
+                for (int row = 0; row < count; ++row) {
+                    const auto* values = tile.values.data() + (begin + row) * width;
+                    for (int col = 0; col < width; ++col)
+                        if (values[col] != 0.0)
+                            consume(source + col, [&](auto add) { add(row, values[col]); });
+                }
+            } else {
+                for (int row = 0; row < count; ++row) {
+                    const int index = begin + row;
+                    if (transposed) {
+                        for (int k = tile.col_offsets[index]; k < tile.col_offsets[index + 1];
+                             ++k) {
+                            const auto [col, value] = tile.transpose[k];
+                            consume(source + col, [&](auto add) { add(row, tile.values[value]); });
+                        }
+                    } else {
+                        for (int k = tile.row_offsets[index]; k < tile.row_offsets[index + 1]; ++k)
+                            consume(source + tile.columns[k],
+                                    [&](auto add) { add(row, tile.values[k]); });
+                    }
+                }
+            }
+        }
+    }
+
     void apply(const Eigen::Ref<const Matrix>& input, Matrix& output) const;
 
   private:

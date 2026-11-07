@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <vector>
 
@@ -10,6 +11,7 @@ extern "C" {
 
 #include "integrals/ao/exact.hpp"
 #include "integrals/response/ao_pair_operator.hpp"
+#include "integrals/response/internal.hpp"
 #include "libcint/direct_shell.hpp"
 #include "libcint/materialized_provider.hpp"
 #include "libcint/shell_normalization.hpp"
@@ -198,6 +200,16 @@ void check_tiled_operators(const xmvb::libcint::MaterializedAoIntegralBuffers& r
     apply_symmetric_ao_h1e_batch(densities, blocks, 2, &workspace, &actual);
     require(actual.isApprox(expected, 1e-12), "triangular multi-density response differs");
 
+    Eigen::MatrixXd expected_transpose, actual_transpose;
+    const Eigen::MatrixXd adjoints = densities.rowwise().reverse();
+    apply_symmetric_ao_h1e_fused_batch(
+        densities, adjoints, csr, 2, &workspace, &expected, &expected_transpose);
+    apply_symmetric_ao_h1e_fused_batch(
+        densities, adjoints, blocks, 2, &workspace, &actual, &actual_transpose);
+    require(actual.isApprox(expected, 1e-12) &&
+                actual_transpose.isApprox(expected_transpose, 1e-12),
+            "triangular fused forward/adjoint response differs");
+
     AoDensityDiagonalWorkspace diagonal;
     Eigen::MatrixXd j_ref, k_ref, j, k;
     const AoH1eBatchWorkspace::Channels sources = densities;
@@ -206,6 +218,22 @@ void check_tiled_operators(const xmvb::libcint::MaterializedAoIntegralBuffers& r
     apply_ao_density_diagonals(blocks, sources, frame, 1, 2, &diagonal, &k, &j);
     require(j.isApprox(j_ref, 1e-12) && k.isApprox(k_ref, 1e-12),
             "triangular projected density diagonal differs");
+
+    const auto build_exchange = [&](const AoIntegralInput& ao) {
+        ExactPackedActiveTwoElectronAdjointCache cache;
+        cache.n_basis_functions = n;
+        cache.n_active_orbitals = frame.cols();
+        cache.ao_integral_input = &ao;
+        cache.accepted_pair_products = &image;
+        cache.accepted_active_coefficients = &frame;
+        cache.optional_retained_budget_bytes = std::numeric_limits<std::size_t>::max();
+        detail::build_exchange_integrals(&cache);
+        require(cache.exchange_integrals.rows() == static_cast<Eigen::Index>(size),
+                "exchange half transform was not constructed");
+        return std::move(cache.exchange_integrals);
+    };
+    require(build_exchange(blocks).isApprox(build_exchange(csr), 1e-12),
+            "triangular exchange half transform differs");
 }
 } // namespace
 
