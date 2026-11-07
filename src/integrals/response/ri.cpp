@@ -191,12 +191,28 @@ void fill_ri_factor_direction_tile(const RiActiveTwoElectronResponseCache& cache
                                    int first_aux,
                                    int count,
                                    Eigen::MatrixXd& result) {
-    const Eigen::MatrixXd mixed = accepted * direction;
-    for (Eigen::Index pair = 0; pair < result.cols(); ++pair) {
-        const int a = cache.active_pair_first_indices[pair];
-        const int b = cache.active_pair_second_indices[pair];
-        result.col(pair).segment(first_aux, count) =
-            mixed.col(b).segment(a * count, count) + mixed.col(a).segment(b * count, count);
+    const int workers = bounded_openmp_thread_count(effective_openmp_thread_count(), count);
+    Eigen::MatrixXd mixed(accepted.rows(), direction.cols());
+#pragma omp parallel num_threads(workers) if (workers > 1)
+    {
+        int worker = 0, team = 1;
+#ifdef _OPENMP
+        worker = omp_get_thread_num();
+        team = omp_get_num_threads();
+#endif
+        // Each worker owns a contiguous row slab of this tall GEMM. The input
+        // and mixed image are shared, and each packed pair has one writer.
+        const Eigen::Index first = worker * mixed.rows() / team;
+        const Eigen::Index rows = (worker + 1) * mixed.rows() / team - first;
+        mixed.middleRows(first, rows).noalias() = accepted.middleRows(first, rows) * direction;
+#pragma omp barrier
+#pragma omp for schedule(static)
+        for (Eigen::Index pair = 0; pair < result.cols(); ++pair) {
+            const Eigen::Index a = cache.active_pair_first_indices[pair];
+            const Eigen::Index b = cache.active_pair_second_indices[pair];
+            result.col(pair).segment(first_aux, count) =
+                mixed.col(b).segment(a * count, count) + mixed.col(a).segment(b * count, count);
+        }
     }
 }
 
