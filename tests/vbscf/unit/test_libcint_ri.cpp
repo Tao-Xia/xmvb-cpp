@@ -139,6 +139,44 @@ int main() {
         const double a = positive.metric_whitened_ao_pair_factors.squaredNorm();
         const double b = singular.metric_whitened_ao_pair_factors.squaredNorm();
         require(std::abs(a - b) < 1e-12, "Cholesky and spectral RI contractions differ");
+        auto mixed = make_input(4);
+        int ao_offset = 0;
+        for (int shell = 0; shell < mixed.n_shells; ++shell) {
+            const int angular = shell % 3;
+            const int count = (angular + 1) * (angular + 2) / 2;
+            mixed.bas[shell * BAS_SLOTS + ANG_OF] = angular;
+            mixed.env[mixed.bas[shell * BAS_SLOTS + PTR_COEFF]] =
+                xmvb::libcint::shell_normalization(angular, 1.0);
+            mixed.basidx[2 * shell] = ao_offset;
+            mixed.basidx[2 * shell + 1] = count;
+            ao_offset += count;
+        }
+        const auto aux = make_input(1);
+        const auto tiled = provider.build(mixed, aux, {});
+        const auto reduced = provider.build(mixed, make_input(3), {});
+        xmvb::libcint::LibcintDirectShellEvaluator reference(mixed, aux);
+        xmvb::libcint::LibcintShellWorkspace scratch;
+        const double scale = 1.0 / std::sqrt(tiled.auxiliary_metric_matrix(0, 0));
+        for (int i = 0; i < mixed.n_shells; ++i)
+            for (int j = 0; j <= i; ++j) {
+                const auto& block = reference.evaluate_three_center_shell_block(i, j, 0, scratch);
+                for (int q = 0; q < block.primary_right_ao_count; ++q)
+                    for (int p = 0; p < block.primary_left_ao_count; ++p) {
+                        const int mu = block.primary_left_ao_offset + p;
+                        const int nu = block.primary_right_ao_offset + q;
+                        if (mu < nu)
+                            continue;
+                        const int col = mu * (mu + 1) / 2 + nu;
+                        const double expected =
+                            scale * block.values[p + q * block.primary_left_ao_count];
+                        require(std::abs(tiled.metric_whitened_ao_pair_factors(0, col) - expected) <
+                                    1e-12,
+                                "shell panel changed a canonical Cholesky factor column");
+                        require(std::abs(std::abs(reduced.metric_whitened_ao_pair_factors(0, col)) -
+                                         std::abs(expected)) < 1e-12,
+                                "shell panel changed a rank-reduced factor column");
+                    }
+            }
         std::cout << "RI metric normalization and rank regression passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

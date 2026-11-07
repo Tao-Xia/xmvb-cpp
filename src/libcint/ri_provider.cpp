@@ -1,7 +1,8 @@
 #include "libcint/ri_provider.hpp"
 
 #include <algorithm>
-#include <cmath>
+#include <chrono>
+#include <cstdio>
 #include <stdexcept>
 #include <vector>
 
@@ -10,6 +11,9 @@
 
 #include "libcint/direct_shell.hpp"
 #include "core/index.hpp"
+#include "core/timing.hpp"
+#include "integrals/ao/libcint.hpp"
+#include "parallel/openmp.hpp"
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -21,59 +25,36 @@ namespace {
 
 constexpr Eigen::Index kWhitenColumnBlockSize = 256;
 
-struct ThreeCenterShellTask {
-    int primary_left_shell = 0;
-    int primary_right_shell = 0;
-    int auxiliary_shell = 0;
+using Clock = std::chrono::steady_clock;
+
+struct ShellPair {
+    int left;
+    int right;
+    Eigen::Index columns;
+};
+
+struct ShellPanel {
+    std::size_t first;
+    std::size_t end;
+    Eigen::Index columns;
 };
 
 Eigen::Index ao_pair_index(int first, int second) {
-    const Eigen::Index hi = std::max(first, second), lo = std::min(first, second);
-    return hi * (hi + 1) / 2 + lo;
+    const Eigen::Index row = first;
+    return row * (row + 1) / 2 + second;
 }
 
-std::vector<ThreeCenterShellTask> build_three_center_shell_tasks(int n_primary_shells,
-                                                                 int n_auxiliary_shells) {
-    std::vector<ThreeCenterShellTask> tasks;
-    tasks.reserve(core::checked_multiply(n_auxiliary_shells, core::triangular_count(n_primary_shells)));
-    for (int primary_left_shell = 0; primary_left_shell < n_primary_shells; ++primary_left_shell) {
-        for (int primary_right_shell = 0; primary_right_shell <= primary_left_shell;
-             ++primary_right_shell) {
-            for (int auxiliary_shell = 0; auxiliary_shell < n_auxiliary_shells; ++auxiliary_shell) {
-                ThreeCenterShellTask task;
-                task.primary_left_shell = primary_left_shell;
-                task.primary_right_shell = primary_right_shell;
-                task.auxiliary_shell = auxiliary_shell;
-                tasks.push_back(task);
-            }
-        }
-    }
-    return tasks;
+/** Visit exactly the canonical AO columns of one primary shell pair. */
+template<class Consumer>
+void visit_ao_columns(int left_offset, int left_count, int right_offset, int right_count,
+                      Consumer consume) {
+    for (int j = 0; j < right_count; ++j)
+        for (int i = std::max(0, right_offset + j - left_offset); i < left_count; ++i)
+            consume(i, j, ao_pair_index(left_offset + i, right_offset + j));
 }
 
-void scatter_three_center_shell_block(const LibcintThreeCenterShellBlock& block,
-                                      Eigen::MatrixXd* raw_ao_pair_factors) {
-    if (raw_ao_pair_factors == nullptr) {
-        throw std::invalid_argument("raw_ao_pair_factors must not be null");
-    }
-    for (int auxiliary_local = 0; auxiliary_local < block.auxiliary_ao_count; ++auxiliary_local) {
-        const int auxiliary_index = block.auxiliary_ao_offset + auxiliary_local;
-        for (int right_local = 0; right_local < block.primary_right_ao_count; ++right_local) {
-            const int right_index = block.primary_right_ao_offset + right_local;
-            for (int left_local = 0; left_local < block.primary_left_ao_count; ++left_local) {
-                const int left_index = block.primary_left_ao_offset + left_local;
-                if (right_index > left_index) {
-                    continue;
-                }
-                const auto packed_pair_index = ao_pair_index(left_index, right_index);
-                const std::size_t local_index =
-                    left_local + right_local * block.primary_left_ao_count +
-                    auxiliary_local * block.primary_left_ao_count * block.primary_right_ao_count;
-                (*raw_ao_pair_factors)(auxiliary_index, packed_pair_index) =
-                    block.values[local_index];
-            }
-        }
-    }
+double elapsed(Clock::time_point start) {
+    return std::chrono::duration<double>(Clock::now() - start).count();
 }
 
 } // namespace
@@ -97,6 +78,8 @@ build_libcint_ri_factorization(const xmvb::integrals::LibcintInput& primary_inpu
         throw std::runtime_error("invalid RI dimensions inferred from libcint inputs");
     }
 
+    const bool timing = profiling::phase_totals().enabled;
+    const auto metric_start = timing ? Clock::now() : Clock::time_point{};
     Eigen::MatrixXd auxiliary_metric(result.n_auxiliary_functions, result.n_auxiliary_functions);
     auxiliary_metric.setZero();
     for (int left_shell = 0; left_shell < auxiliary_input.n_shells; ++left_shell) {
@@ -112,44 +95,6 @@ build_libcint_ri_factorization(const xmvb::integrals::LibcintInput& primary_inpu
                     auxiliary_metric(global_row, global_column) = value;
                     auxiliary_metric(global_column, global_row) = value;
                 }
-            }
-        }
-    }
-    Eigen::MatrixXd raw_ao_pair_factors(result.n_auxiliary_functions, result.n_packed_ao_pairs);
-    raw_ao_pair_factors.setZero();
-    int n_threads = 1;
-#ifdef _OPENMP
-    n_threads = omp_get_max_threads();
-#endif
-    if (n_threads <= 1) {
-        for (int left_shell = 0; left_shell < primary_input.n_shells; ++left_shell) {
-            for (int right_shell = 0; right_shell <= left_shell; ++right_shell) {
-                for (int auxiliary_shell = 0; auxiliary_shell < auxiliary_input.n_shells;
-                     ++auxiliary_shell) {
-                    const auto& block = evaluator.evaluate_three_center_shell_block(
-                        left_shell, right_shell, auxiliary_shell, workspace);
-                    scatter_three_center_shell_block(block, &raw_ao_pair_factors);
-                }
-            }
-        }
-    } else {
-        const auto three_center_tasks =
-            build_three_center_shell_tasks(primary_input.n_shells, auxiliary_input.n_shells);
-
-#pragma omp parallel
-        {
-            LibcintShellWorkspace local_workspace;
-#pragma omp for schedule(dynamic)
-            for (std::ptrdiff_t task_index = 0;
-                 task_index < static_cast<std::ptrdiff_t>(three_center_tasks.size());
-                 ++task_index) {
-                const auto& task = three_center_tasks[task_index];
-                const auto& block =
-                    evaluator.evaluate_three_center_shell_block(task.primary_left_shell,
-                                                                task.primary_right_shell,
-                                                                task.auxiliary_shell,
-                                                                local_workspace);
-                scatter_three_center_shell_block(block, &raw_ao_pair_factors);
             }
         }
     }
@@ -187,23 +132,115 @@ build_libcint_ri_factorization(const xmvb::integrals::LibcintInput& primary_inpu
         }
         result.n_auxiliary_functions = rank;
     }
-    result.metric_whitened_ao_pair_factors.resize(result.n_auxiliary_functions,
-                                                  result.n_packed_ao_pairs);
+    const double metric_seconds = timing ? elapsed(metric_start) : 0.0;
+    const int workers = effective_openmp_thread_count();
+    const auto target_columns = std::min<Eigen::Index>(
+        kWhitenColumnBlockSize,
+        1 + (result.n_packed_ao_pairs - 1) / (4LL * workers));
 
-#pragma omp parallel for schedule(static)
-    for (Eigen::Index pair_column_offset = 0; pair_column_offset < result.n_packed_ao_pairs;
-         pair_column_offset += kWhitenColumnBlockSize) {
-        const Eigen::Index block_column_count =
-            std::min(kWhitenColumnBlockSize, result.n_packed_ao_pairs - pair_column_offset);
-        auto output = result.metric_whitened_ao_pair_factors.middleCols(pair_column_offset,
-                                                                        block_column_count);
-        const auto input = raw_ao_pair_factors.middleCols(pair_column_offset, block_column_count);
-        if (cholesky_info == 0) {
-            output = metric_factor.triangularView<Eigen::Lower>().solve(input);
-        } else {
-            output.noalias() = whitener * input;
+    // A shell pair stays whole so every Libcint shell triple is generated once.
+    std::vector<ShellPair> pairs;
+    std::vector<ShellPanel> panels;
+    ShellPanel panel{};
+    for (int i = 0; i < primary_input.n_shells; ++i) {
+        const Eigen::Index n_i = integrals::shell_ao_count(primary_input, i);
+        for (int j = 0; j <= i; ++j) {
+            const Eigen::Index columns = i == j ? n_i * (n_i + 1) / 2
+                                                : n_i * integrals::shell_ao_count(primary_input, j);
+            if (panel.columns && panel.columns + columns > target_columns) {
+                panels.push_back(panel);
+                panel = {pairs.size(), pairs.size(), 0};
+            }
+            pairs.push_back({i, j, columns});
+            panel.end = pairs.size();
+            panel.columns += columns;
         }
     }
+    if (panel.columns)
+        panels.push_back(panel);
+
+    const auto widest = std::max_element(panels.begin(), panels.end(), [](auto a, auto b) {
+        return a.columns < b.columns;
+    })->columns;
+    result.metric_whitened_ao_pair_factors.resize(result.n_auxiliary_functions,
+                                                 result.n_packed_ao_pairs);
+    const auto build_start = timing ? Clock::now() : Clock::time_point{};
+    double generation_worker_seconds = 0.0, whitening_worker_seconds = 0.0;
+    int team_size = 1;
+#pragma omp parallel num_threads(workers) reduction(+ : generation_worker_seconds, whitening_worker_seconds)
+    {
+#ifdef _OPENMP
+#pragma omp single
+        team_size = omp_get_num_threads();
+#endif
+        LibcintShellWorkspace local_workspace;
+        Eigen::MatrixXd raw(n_auxiliary, target_columns);
+        Eigen::MatrixXd whitened;
+        if (cholesky_info != 0)
+            whitened.resize(result.n_auxiliary_functions, target_columns);
+        std::vector<Eigen::Index> output_columns(target_columns);
+        std::vector<std::size_t> shell_offsets(target_columns);
+#pragma omp for schedule(dynamic, 1)
+        for (std::size_t task = 0; task < panels.size(); ++task) {
+            const auto job = panels[task];
+            const auto generation_start = timing ? Clock::now() : Clock::time_point{};
+            if (job.columns > raw.cols()) {
+                raw.resize(n_auxiliary, job.columns);
+                output_columns.resize(job.columns);
+                shell_offsets.resize(job.columns);
+            }
+            Eigen::Index first = 0;
+            for (std::size_t item = job.first; item < job.end; ++item) {
+                const auto pair = pairs[item];
+                const int left_count = integrals::shell_ao_count(primary_input, pair.left);
+                const int right_count = integrals::shell_ao_count(primary_input, pair.right);
+                const auto stride = static_cast<std::size_t>(left_count) * right_count;
+                Eigen::Index column = first;
+                visit_ao_columns(integrals::shell_ao_offset(primary_input, pair.left), left_count,
+                                 integrals::shell_ao_offset(primary_input, pair.right), right_count,
+                                 [&](int i, int j, Eigen::Index packed) {
+                    output_columns[column] = packed;
+                    shell_offsets[column] = i + static_cast<std::size_t>(j) * left_count;
+                    ++column;
+                });
+                for (int aux = 0; aux < auxiliary_input.n_shells; ++aux) {
+                    const auto& block = evaluator.evaluate_three_center_shell_block(
+                        pair.left, pair.right, aux, local_workspace);
+                    for (Eigen::Index col = first; col < first + pair.columns; ++col)
+                        for (int a = 0; a < block.auxiliary_ao_count; ++a)
+                            raw(block.auxiliary_ao_offset + a, col) =
+                                block.values[shell_offsets[col] +
+                                             static_cast<std::size_t>(a) * stride];
+                }
+                first += pair.columns;
+            }
+            if (timing)
+                generation_worker_seconds += elapsed(generation_start);
+            const auto whiten_start = timing ? Clock::now() : Clock::time_point{};
+            auto raw_panel = raw.leftCols(job.columns);
+            if (cholesky_info == 0)
+                metric_factor.triangularView<Eigen::Lower>().solveInPlace(raw_panel);
+            else {
+                if (job.columns > whitened.cols())
+                    whitened.resize(result.n_auxiliary_functions, job.columns);
+                whitened.leftCols(job.columns).noalias() = whitener * raw_panel;
+            }
+            const auto& source = cholesky_info == 0 ? raw : whitened;
+            for (Eigen::Index col = 0; col < job.columns; ++col)
+                result.metric_whitened_ao_pair_factors.col(output_columns[col]) = source.col(col);
+            if (timing)
+                whitening_worker_seconds += elapsed(whiten_start);
+        }
+    }
+    if (timing)
+        std::fprintf(stderr,
+                     "XMVB_RI_BUILD,metric_seconds=%.9f,panels_seconds=%.9f,"
+                     "generation_worker_seconds=%.9f,whitening_worker_seconds=%.9f,"
+                     "threads=%d,panels=%zu,max_panel_columns=%ld,raw_aux=%d,rank=%d,ao_pairs=%ld\n",
+                     metric_seconds, elapsed(build_start), generation_worker_seconds,
+                     whitening_worker_seconds, team_size, panels.size(), static_cast<long>(widest),
+                     n_auxiliary, result.n_auxiliary_functions,
+                     static_cast<long>(result.n_packed_ao_pairs));
     result.auxiliary_metric_matrix = std::move(auxiliary_metric);
     return result;
 }
