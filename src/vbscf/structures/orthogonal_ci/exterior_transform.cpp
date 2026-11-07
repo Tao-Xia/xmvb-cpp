@@ -34,6 +34,55 @@ double replacement_sign(std::uint64_t source, int removed, int inserted) {
     return __builtin_popcountll(between) % 2 == 0 ? 1.0 : -1.0;
 }
 
+// Pack independent RHS columns so a shear reads each link once for a SIMD
+// packet. The original panel remains column-major for its other consumers.
+constexpr Eigen::Index shear_packet = 8;
+using ShearPanel = Eigen::Matrix<double, shear_packet, Eigen::Dynamic>;
+
+template <class Apply>
+bool apply_shear_panels(Eigen::Ref<Eigen::MatrixXd> values,
+                        Eigen::MatrixXd* tangent,
+                        int workers,
+                        Apply&& apply) {
+    if (values.cols() / shear_packet < workers)
+        return false;
+    const Eigen::Index blocks = values.cols() / shear_packet;
+    const Eigen::Index tail = values.cols() % shear_packet;
+    const Eigen::Index panels = blocks + (tail != 0);
+    const std::size_t bytes = sizeof(double) * static_cast<std::size_t>(values.rows()) *
+                              shear_packet * workers * (tangent ? 2 : 1);
+    workspace::Reservation reservation;
+    if (!reservation.try_resize(bytes))
+        return false;
+    workspace::Temporary temporary(bytes);
+    std::vector<ShearPanel> packed(workers), derivatives(tangent ? workers : 0);
+    for (auto& panel : packed)
+        panel.resize(shear_packet, values.rows());
+    for (auto& panel : derivatives)
+        panel.resize(shear_packet, values.rows());
+    cooperative_openmp_for(workers, workers, [&](std::ptrdiff_t worker) {
+        auto& panel = packed[worker];
+        for (Eigen::Index block = worker; block < panels; block += workers) {
+            const Eigen::Index first = block * shear_packet;
+            const Eigen::Index count = block == blocks ? tail : shear_packet;
+            if (count != shear_packet)
+                panel.bottomRows(shear_packet - count).setZero();
+            panel.topRows(count) = values.middleCols(first, count).transpose();
+            ShearPanel* delta = tangent ? &derivatives[worker] : nullptr;
+            if (delta) {
+                if (count != shear_packet)
+                    delta->bottomRows(shear_packet - count).setZero();
+                delta->topRows(count) = tangent->middleCols(first, count).transpose();
+            }
+            apply(panel, delta);
+            values.middleCols(first, count) = panel.topRows(count).transpose();
+            if (delta)
+                tangent->middleCols(first, count) = delta->topRows(count).transpose();
+        }
+    });
+    return true;
+}
+
 } // namespace
 
 struct ExteriorOrbitalTransform::RowCache {
@@ -571,6 +620,30 @@ void ExteriorOrbitalTransform::transform_left(Eigen::Ref<Eigen::MatrixXd> coeffi
     const int workers = bounded_openmp_thread_count(
         coarse_openmp_thread_count(cooperative_openmp_thread_count(), coefficients.size()),
         coefficients.cols());
+    if (apply_shear_panels(coefficients, nullptr, workers, [&](ShearPanel& values, ShearPanel*) {
+            const auto scale = [&] {
+                if (inverse)
+                    values.array().rowwise() /= determinant_scales_.transpose().array();
+                else
+                    values.array().rowwise() *= determinant_scales_.transpose().array();
+            };
+            if (!reverse)
+                scale();
+            for (int index = 0; index < n_shears; ++index) {
+                const Shear& shear = shears_[reverse ? n_shears - 1 - index : index];
+                if (shear.coefficient == 0.0)
+                    continue;
+                const double factor = inverse ? -shear.coefficient : shear.coefficient;
+                for (const ShearEdge& pair : shear.pairs) {
+                    const auto target = adjoint ? pair.source : pair.target;
+                    const auto source = adjoint ? pair.target : pair.source;
+                    values.col(target) += (factor * pair.sign) * values.col(source);
+                }
+            }
+            if (reverse)
+                scale();
+        }))
+        return;
     // A column is an independent vector. Keep it resident while applying the
     // complete ordered product, rather than streaming strided rows per shear.
     cooperative_openmp_for(coefficients.cols(), workers, [&](std::ptrdiff_t column) {
@@ -724,6 +797,32 @@ void ExteriorOrbitalTransform::transform_directional_left(
     const int workers = bounded_openmp_thread_count(
         coarse_openmp_thread_count(cooperative_openmp_thread_count(), coefficients->size()),
         coefficients->cols());
+    if (apply_shear_panels(
+            *coefficients, tangent, workers, [&](ShearPanel& value, ShearPanel* delta) {
+                const auto scale = [&] {
+                    delta->array() =
+                        delta->array().rowwise() * determinant_scales_.transpose().array() +
+                        value.array().rowwise() * direction.determinant_scales.transpose().array();
+                    value.array().rowwise() *= determinant_scales_.transpose().array();
+                };
+                if (!adjoint)
+                    scale();
+                for (int index = 0; index < n_shears; ++index) {
+                    const int ordered = adjoint ? n_shears - 1 - index : index;
+                    const Shear& shear = shears_[ordered];
+                    const double dc = direction.shear_coefficients[ordered];
+                    for (const ShearEdge& pair : shear.pairs) {
+                        const auto source = adjoint ? pair.target : pair.source;
+                        const auto target = adjoint ? pair.source : pair.target;
+                        delta->col(target) += pair.sign * (dc * value.col(source) +
+                                                           shear.coefficient * delta->col(source));
+                        value.col(target) += (shear.coefficient * pair.sign) * value.col(source);
+                    }
+                }
+                if (adjoint)
+                    scale();
+            }))
+        return;
     // Different columns are independent. Primal and tangent follow the same
     // ordered shears in one pass, with no thread-local copies or shear barriers.
     cooperative_openmp_for(coefficients->cols(), workers, [&](std::ptrdiff_t column) {
@@ -833,8 +932,8 @@ std::size_t ExteriorOrbitalTransform::shear_pair_count() const noexcept {
 }
 
 Eigen::MatrixXd
-ExteriorOrbitalTransform::generator_pullback(const Eigen::MatrixXd& seed,
-                                             const Eigen::MatrixXd& image,
+ExteriorOrbitalTransform::generator_pullback(const Eigen::Ref<const Eigen::MatrixXd>& seed,
+                                             const Eigen::Ref<const Eigen::MatrixXd>& image,
                                              const Eigen::MatrixXd* delta_seed,
                                              const Eigen::MatrixXd* delta_image,
                                              const Eigen::MatrixXd* delta_upper) const {

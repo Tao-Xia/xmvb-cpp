@@ -504,6 +504,36 @@ void check_broad_moment_budget(bool restricted) {
             "restricted broad transport moments differ from bounded source panels");
 }
 
+/** @brief Shared spin moments agree with separate alpha and beta contractions. */
+void check_exchange_transport() {
+    const std::vector<std::vector<int>> spin{{0, 1}, {0, 2}, {0, 3}, {1, 2}, {1, 3}, {2, 3}};
+    const auto count = static_cast<Eigen::Index>(spin.size());
+    const Eigen::MatrixXd w = selected_expansion(count, count);
+    const Eigen::MatrixXd current = upper(0.05, 0.16), origin = upper(0.08, 0.29);
+    const Eigen::MatrixXd direction = upper_direction(0.21);
+    const ExteriorOrbitalTransform ca(spin, current), cb(spin, current);
+    const ExteriorOrbitalTransform oa(spin, origin), ob(spin, origin);
+    const Eigen::Vector3d lambda(0.4, -0.7, 0.8), base(-0.2, 0.6, 0.3), reference(0.1, -0.3, 0.7),
+        transported(0.3, -0.5, 0.2);
+    for (int parity : {-1, 1}) {
+        Eigen::MatrixXd selected = w;
+        for (Eigen::Index a = 0; a < count; ++a)
+            for (Eigen::Index b = 0; b < count; ++b)
+                selected.row(a * count + b) = w.row(a * count + b) + parity * w.row(b * count + a);
+        const auto action = make_action(spin, spin, selected);
+        require(action.orthogonal_view().exchange_parity == parity,
+                "transport test did not select the intended spin-exchange parity");
+        const auto shared = action.cross_overlap_transport_gradient(
+            lambda, base, reference, transported, ca, ca, oa, oa, direction);
+        const auto separate = action.cross_overlap_transport_gradient(
+            lambda, base, reference, transported, ca, cb, oa, ob, direction);
+        require(relative_error(shared.charts.left, separate.charts.left) < 3e-12 &&
+                    relative_error(shared.charts.right, separate.charts.right) < 3e-12 &&
+                    relative_error(shared.image, separate.image) < 3e-12,
+                "shared spin exchange changed the transported gradient");
+    }
+}
+
 /** @brief Real parallel row scatters, with unequal complete spin carriers. */
 void check_parallel_transport() {
     constexpr int n = 8;
@@ -678,6 +708,7 @@ int main() {
         check_broad_moment_budget(false);
         check_broad_moment_budget(true);
         check_parallel_transport();
+        check_exchange_transport();
         const std::vector<std::vector<int>> full_alpha = {
             {0, 1}, {0, 2}, {0, 3}, {1, 2}, {1, 3}, {2, 3}};
         const std::vector<std::vector<int>> full_beta = {{0}, {1}, {2}, {3}};

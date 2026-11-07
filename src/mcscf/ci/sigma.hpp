@@ -105,6 +105,11 @@ struct DirectCiGeneratorAdjointRequest {
     bool transpose = false;
 };
 
+/** @brief One borrowed factor pair in a single-spin generator moment. */
+struct SpinGeneratorTerm {
+    Eigen::Ref<const Eigen::MatrixXd> left, right;
+};
+
 /** @brief Generated right argument of a streamed generator contraction.
  * read fills a requested beta/alpha tile. column borrows one beta spectator;
  * its storage may be invalidated by the next read or column call, including
@@ -157,6 +162,9 @@ class DirectCiSigmaAction {
     Eigen::MatrixXd spin_generator_adjoint(bool beta,
                                            const Eigen::Ref<const Eigen::MatrixXd>& left,
                                            const Eigen::Ref<const Eigen::MatrixXd>& right) const;
+
+    Eigen::MatrixXd spin_generator_adjoint(bool beta,
+                                           std::span<const SpinGeneratorTerm> terms) const;
 
     /** @brief Symmetric K in H = (E_alpha+E_beta)^T K (E_alpha+E_beta).
    * Includes the absorbed one-electron Hamiltonian. Borrowed immutable data.

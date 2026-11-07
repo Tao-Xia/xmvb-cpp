@@ -29,8 +29,8 @@ struct ExteriorProjection {
 
 /** @brief Borrowed bilinear generator moment and optional directional panels. */
 struct ExteriorGeneratorTerm {
-    const Eigen::MatrixXd& seed;
-    const Eigen::MatrixXd& image;
+    Eigen::Ref<const Eigen::MatrixXd> seed;
+    Eigen::Ref<const Eigen::MatrixXd> image;
     double scale = 1.0;
     const Eigen::MatrixXd* delta_seed = nullptr;
     const Eigen::MatrixXd* delta_image = nullptr;
@@ -156,8 +156,8 @@ class ExteriorOrbitalTransform {
    * delta Y = E(delta R R^-1) Y. Inputs are bounded single-spin factor panels.
    * With all three tangent arguments, returns the derivative of this pullback.
    */
-    Eigen::MatrixXd generator_pullback(const Eigen::MatrixXd& seed,
-                                       const Eigen::MatrixXd& image,
+    Eigen::MatrixXd generator_pullback(const Eigen::Ref<const Eigen::MatrixXd>& seed,
+                                       const Eigen::Ref<const Eigen::MatrixXd>& image,
                                        const Eigen::MatrixXd* delta_seed = nullptr,
                                        const Eigen::MatrixXd* delta_image = nullptr,
                                        const Eigen::MatrixXd* delta_upper = nullptr) const;

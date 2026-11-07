@@ -3,6 +3,7 @@
 
 #include <algorithm>
 
+#include "core/timing.hpp"
 #include "core/workspace.hpp"
 #include "parallel/openmp.hpp"
 #include "vbscf/structures/orthogonal_ci/exterior_transform.hpp"
@@ -71,6 +72,10 @@ StructureResponseSweep OperatorFirstAction::jet(const StructureAdjointState& sta
         (!tangent || ci_response->coefficients.rows() != data.n_structures ||
          ci_response->coefficients.cols() != states || !ci_response->coefficients.allFinite()))
         throw std::invalid_argument("invalid joint operator-first CI direction");
+    // The raw Hamiltonian and the shared spin Gram commute with transpose.
+    // For a common parity of all selected states, exchanging the two spin
+    // factors leaves each generator moment (including its derivative) equal.
+    const bool shared_moment = view.exchange_parity != 0 && &view.alpha == &view.beta;
     const bool moving = orbital_direction != nullptr;
     const auto* fixed = state.operator_state.get();
     const bool reuse = tangent && fixed && fixed->point == data.point;
@@ -218,7 +223,7 @@ StructureResponseSweep OperatorFirstAction::jet(const StructureAdjointState& sta
                 if (directions[l].source.size())
                     data.source.source_columns(
                         directions[l].source.middleCols(k, 1), betas, source.directions[l]);
-            Panel left_seed(na, count, lanes), beta_seed(nb, count, lanes);
+            Panel left_seed(na, count, lanes);
             data.source.multiply_source(x.col(k), right.value, left_seed.value);
             Eigen::MatrixXd temp(na, count);
             for (int l = 0; l < lanes; ++l) {
@@ -247,8 +252,11 @@ StructureResponseSweep OperatorFirstAction::jet(const StructureAdjointState& sta
                                    z.directions[l],
                                    canonical.directions[l],
                                    {&directions[l].one, &directions[l].two}});
-                data.source.apply_columns(
-                    data.hamiltonian, x.middleCols(k, 1), betas, z.value, &adjoint, raw);
+                {
+                    profiling::ScopedPhase phase(profiling::Phase::CiRawColumns);
+                    data.source.apply_columns(
+                        data.hamiltonian, x.middleCols(k, 1), betas, z.value, &adjoint, raw);
+                }
                 if (densities && w != 0)
                     for (int j = k; j < states; ++j)
                         if (state.weights[j] != 0)
@@ -263,17 +271,6 @@ StructureResponseSweep OperatorFirstAction::jet(const StructureAdjointState& sta
             gram(z, view.alpha, da ? &*da : nullptr);
             if (outputs)
                 gram(source, view.alpha, da ? &*da : nullptr);
-            data.source.multiply_source(x.col(k), z.value, beta_seed.value, true);
-            temp.resize(nb, count);
-            for (int l = 0; l < lanes; ++l) {
-                if (directions[l].source.size())
-                    data.source.multiply_source(
-                        directions[l].source.col(k), z.value, beta_seed.directions[l], true);
-                data.source.multiply_source(x.col(k), z.directions[l], temp, true);
-                beta_seed.directions[l] += temp;
-                beta_seed.directions[l] *= w;
-            }
-            beta_seed.value *= w;
             if (outputs) {
 #pragma omp parallel for schedule(static)
                 for (std::size_t p = 0; p < view.products.size(); ++p) {
@@ -298,17 +295,38 @@ StructureResponseSweep OperatorFirstAction::jet(const StructureAdjointState& sta
                     }
                 }
             }
+            const double multiplicity = shared_moment ? 2.0 : 1.0;
             if (collect_value)
-                raw_moment += view.sigma.spin_generator_adjoint(false, z.value, left_seed.value) +
-                              view.sigma.spin_generator_adjoint(true, right.value, beta_seed.value);
+                raw_moment += multiplicity *
+                              view.sigma.spin_generator_adjoint(false, z.value, left_seed.value);
             for (int l = 0; l < lanes; ++l) {
+                const mcscf::SpinGeneratorTerm terms[]{{z.directions[l], left_seed.value},
+                                                       {z.value, left_seed.directions[l]}};
                 directions[l].moment +=
-                    view.sigma.spin_generator_adjoint(false, z.directions[l], left_seed.value) +
-                    view.sigma.spin_generator_adjoint(false, z.value, left_seed.directions[l]) +
-                    view.sigma.spin_generator_adjoint(true, right.value, beta_seed.directions[l]);
-                if (l == 0 && moving)
+                    multiplicity * view.sigma.spin_generator_adjoint(false, terms);
+            }
+            if (!shared_moment) {
+                Panel beta_seed(nb, count, lanes);
+                data.source.multiply_source(x.col(k), z.value, beta_seed.value, true);
+                temp.resize(nb, count);
+                for (int l = 0; l < lanes; ++l) {
+                    if (directions[l].source.size())
+                        data.source.multiply_source(
+                            directions[l].source.col(k), z.value, beta_seed.directions[l], true);
+                    data.source.multiply_source(x.col(k), z.directions[l], temp, true);
+                    beta_seed.directions[l] += temp;
+                    beta_seed.directions[l] *= w;
+                }
+                beta_seed.value *= w;
+                if (collect_value)
+                    raw_moment +=
+                        view.sigma.spin_generator_adjoint(true, right.value, beta_seed.value);
+                for (int l = 0; l < lanes; ++l) {
+                    const mcscf::SpinGeneratorTerm terms[]{{right.value, beta_seed.directions[l]},
+                                                           {right.directions[l], beta_seed.value}};
                     directions[l].moment += view.sigma.spin_generator_adjoint(
-                        true, right.directions[l], beta_seed.value);
+                        true, std::span(terms).first(l == 0 && moving ? 2 : 1));
+                }
             }
         }
     }
