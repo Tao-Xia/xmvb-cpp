@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <limits>
 #include <stdexcept>
+#include <utility>
 
 #include "mcscf/optimization/trace.hpp"
 #include "vbscf/structures/assembly/action.hpp"
@@ -36,11 +37,12 @@ bool StructureMetricInverse::fits(const StructureAction& action,
     return SpinMetric::fits(action, alpha_strings, beta_strings, factor_byte_limit);
 }
 
-std::unique_ptr<StructureMetricInverse> StructureMetricInverse::try_build(
-    const StructureAction& action,
-    const xmvb::mcscf::StringTable& alpha_strings,
-    const xmvb::mcscf::StringTable& beta_strings,
-    std::size_t other_work_bytes) {
+std::unique_ptr<StructureMetricInverse>
+StructureMetricInverse::try_build(const StructureAction& action,
+                                  const xmvb::mcscf::StringTable& alpha_strings,
+                                  const xmvb::mcscf::StringTable& beta_strings,
+                                  std::size_t other_work_bytes,
+                                  const StructureMetricInverse* accepted) {
     const auto column =
         carrier_column_bytes(action.n_structures_, alpha_strings.size(), beta_strings.size());
     // The Hamiltonian application holds one input and one output carrier.
@@ -49,10 +51,16 @@ std::unique_ptr<StructureMetricInverse> StructureMetricInverse::try_build(
     if (other_work_bytes >= available || scratch >= available - other_work_bytes)
         return {};
     const auto factors = available - other_work_bytes - scratch;
-    if (!fits(action, alpha_strings, beta_strings, factors, scratch))
+    std::shared_ptr<const SpinMetric> spin;
+    if (accepted && action.topology_ == accepted->action_->topology_)
+        spin = accepted->spin_;
+    if (!spin && !fits(action, alpha_strings, beta_strings, factors, scratch))
         return {};
-    return std::make_unique<StructureMetricInverse>(
-        action, alpha_strings, beta_strings, true, factors, scratch);
+    mcscf::diagnostics::ciah_trace("ciah_ci_spin_factors", "shared=%d", spin ? 1 : 0);
+    if (!spin)
+        spin = std::make_shared<SpinMetric>(action, alpha_strings, beta_strings, factors);
+    return std::unique_ptr<StructureMetricInverse>(
+        new StructureMetricInverse(action, std::move(spin), true, column, scratch));
 }
 
 StructureMetricInverse::StructureMetricInverse(const StructureAction& action,
@@ -61,11 +69,21 @@ StructureMetricInverse::StructureMetricInverse(const StructureAction& action,
                                                bool complete_space,
                                                std::size_t factor_byte_limit,
                                                std::size_t workspace_byte_limit)
-    : action_(&action), spin_(action, alpha_strings, beta_strings, factor_byte_limit) {
+    : StructureMetricInverse(
+          action,
+          std::make_shared<SpinMetric>(action, alpha_strings, beta_strings, factor_byte_limit),
+          complete_space,
+          carrier_column_bytes(action.n_structures_, alpha_strings.size(), beta_strings.size()),
+          workspace_byte_limit) {}
+
+StructureMetricInverse::StructureMetricInverse(const StructureAction& action,
+                                               std::shared_ptr<const SpinMetric> spin,
+                                               bool complete_space,
+                                               std::size_t column_bytes,
+                                               std::size_t workspace_byte_limit)
+    : action_(&action), spin_(std::move(spin)) {
     if (!complete_space || !action.storage().orthogonal_direct_ci)
         throw std::invalid_argument("factorized metric inverse requires a complete spin sector");
-    const auto column_bytes =
-        carrier_column_bytes(action.n_structures_, alpha_strings.size(), beta_strings.size());
     if (column_bytes == 0 || workspace_byte_limit < column_bytes)
         throw std::length_error("structure metric workspace cannot hold one carrier column");
     chunk_width_ = core::checked_index<Eigen::Index>(
@@ -82,11 +100,11 @@ Eigen::MatrixXd StructureMetricInverse::apply(const Eigen::Ref<const Eigen::Matr
     for (Eigen::Index first = 0; first < rhs.cols(); first += chunk_width_) {
         const Eigen::Index count = std::min<Eigen::Index>(chunk_width_, rhs.cols() - first);
         Eigen::MatrixXd carrier =
-            action_->expand_structure_block(spin_.solve(rhs.middleCols(first, count)));
+            action_->expand_structure_block(spin_->solve(rhs.middleCols(first, count)));
         action_->inverse_adjoint_orbital_transform(&carrier);
         action_->inverse_orbital_transform(&carrier);
         result.middleCols(first, count) =
-            spin_.solve(action_->contract_spin_product_block(carrier));
+            spin_->solve(action_->contract_spin_product_block(carrier));
     }
     if (!result.allFinite())
         throw std::runtime_error("structure metric inverse produced nonfinite coefficients");
@@ -104,12 +122,12 @@ StructureMetricInverse::apply_carrier_inverse(const Eigen::Ref<const Eigen::Matr
     for (Eigen::Index first = 0; first < rhs.cols(); first += chunk_width_) {
         const Eigen::Index count = std::min<Eigen::Index>(chunk_width_, rhs.cols() - first);
         Eigen::MatrixXd carrier =
-            action_->expand_structure_block(spin_.solve(rhs.middleCols(first, count)));
+            action_->expand_structure_block(spin_->solve(rhs.middleCols(first, count)));
         action_->inverse_adjoint_orbital_transform(&carrier);
         action_->divide_carrier_diagonal(carrier, energies.segment(first, count), eigenvalue);
         action_->inverse_orbital_transform(&carrier);
         result.middleCols(first, count) =
-            spin_.solve(action_->contract_spin_product_block(carrier));
+            spin_->solve(action_->contract_spin_product_block(carrier));
     }
     return result;
 }
@@ -123,7 +141,7 @@ Eigen::MatrixXd StructureMetricInverse::to_ci_coordinates(
         const auto carrier =
             action_->orthogonalize_structure_block(coefficients.middleCols(first, count));
         result.middleCols(first, count) =
-            spin_.solve(action_->contract_spin_product_block(carrier), SpinMetric::Part::Lower);
+            spin_->solve(action_->contract_spin_product_block(carrier), SpinMetric::Part::Lower);
     }
     return result;
 }
@@ -134,10 +152,10 @@ Eigen::MatrixXd StructureMetricInverse::from_ci_coordinates(
     for (Eigen::Index first = 0; first < coordinates.cols(); first += chunk_width_) {
         const Eigen::Index count = std::min<Eigen::Index>(chunk_width_, coordinates.cols() - first);
         auto carrier = action_->expand_structure_block(
-            spin_.solve(coordinates.middleCols(first, count), SpinMetric::Part::Upper));
+            spin_->solve(coordinates.middleCols(first, count), SpinMetric::Part::Upper));
         action_->inverse_orbital_transform(&carrier);
         result.middleCols(first, count) =
-            spin_.solve(action_->contract_spin_product_block(carrier));
+            spin_->solve(action_->contract_spin_product_block(carrier));
     }
     return result;
 }
@@ -148,7 +166,7 @@ Eigen::MatrixXd StructureMetricInverse::ci_covector_to_structure(
     for (Eigen::Index first = 0; first < covector.cols(); first += chunk_width_) {
         const Eigen::Index count = std::min<Eigen::Index>(chunk_width_, covector.cols() - first);
         auto carrier = action_->expand_structure_block(
-            spin_.solve(covector.middleCols(first, count), SpinMetric::Part::Upper));
+            spin_->solve(covector.middleCols(first, count), SpinMetric::Part::Upper));
         action_->adjoint_orbital_transform(&carrier);
         result.middleCols(first, count) = action_->contract_spin_product_block(carrier);
     }
@@ -163,10 +181,10 @@ Eigen::MatrixXd StructureMetricInverse::apply_ci_hamiltonian(
     // Each lane holds both an input and an output carrier. The metric owns
     // the minimum scratch for this action; lease extra lanes only while
     // Davidson actually has them, leaving working space for the sigma tiles.
-    const auto lane_bytes = core::checked_multiply(
-        2, carrier_column_bytes(action_->n_structures_,
-                                action_->n_unique_alpha_,
-                                action_->n_unique_beta_));
+    const auto lane_bytes = core::checked_multiply(2,
+                                                   carrier_column_bytes(action_->n_structures_,
+                                                                        action_->n_unique_alpha_,
+                                                                        action_->n_unique_beta_));
     const auto minimum_tile = core::checked_multiply(
         2 * sizeof(double),
         core::checked_index<std::size_t>(action_->orthogonal_integrals().pair_kernel.rows()));
@@ -182,18 +200,22 @@ Eigen::MatrixXd StructureMetricInverse::apply_ci_hamiltonian(
     const Eigen::Index admitted =
         extra.try_resize(extra_lanes * lane_bytes) ? static_cast<Eigen::Index>(extra_lanes) : 0;
     const Eigen::Index width = std::min(requested, resident + admitted);
-    mcscf::diagnostics::ciah_trace(
-        "ciah_ci_sigma_batch", "rhs=%ld,width=%ld,extra_bytes=%zu",
-        static_cast<long>(coordinates.cols()), static_cast<long>(width), extra.bytes());
+    mcscf::diagnostics::ciah_trace("ciah_ci_sigma_batch",
+                                   "rhs=%ld,width=%ld,extra_bytes=%zu",
+                                   static_cast<long>(coordinates.cols()),
+                                   static_cast<long>(width),
+                                   extra.bytes());
     for (Eigen::Index first = 0; first < coordinates.cols(); first += width) {
         const Eigen::Index count = std::min<Eigen::Index>(width, coordinates.cols() - first);
-        const auto carrier = action_->expand_structure_block(
-            spin_.solve(coordinates.middleCols(first, count), SpinMetric::Part::Upper));
-        const auto sigma = action_->apply_carrier_hamiltonian(carrier);
-        result.middleCols(first, count) =
-            spin_.solve(action_->contract_spin_product_block(sigma), SpinMetric::Part::Lower);
+        const auto image = action_->apply_recoupled_hamiltonian(
+            spin_->solve(coordinates.middleCols(first, count), SpinMetric::Part::Upper));
+        result.middleCols(first, count) = spin_->solve(image, SpinMetric::Part::Lower);
     }
     return result;
+}
+
+Eigen::VectorXd StructureMetricInverse::ci_occupation_diagonal() const {
+    return spin_->occupation_diagonal(action_->orthogonal_integrals());
 }
 
 Eigen::MatrixXd
@@ -204,10 +226,10 @@ StructureMetricInverse::apply_ci_preconditioner(const Eigen::Ref<const Eigen::Ma
     for (Eigen::Index first = 0; first < covector.cols(); first += chunk_width_) {
         const Eigen::Index count = std::min<Eigen::Index>(chunk_width_, covector.cols() - first);
         auto carrier = action_->expand_structure_block(
-            spin_.solve(covector.middleCols(first, count), SpinMetric::Part::Upper));
+            spin_->solve(covector.middleCols(first, count), SpinMetric::Part::Upper));
         action_->divide_carrier_diagonal(carrier, energies.segment(first, count), eigenvalue);
         result.middleCols(first, count) =
-            spin_.solve(action_->contract_spin_product_block(carrier), SpinMetric::Part::Lower);
+            spin_->solve(action_->contract_spin_product_block(carrier), SpinMetric::Part::Lower);
     }
     return result;
 }
@@ -222,7 +244,7 @@ StructureMetricInverse::apply_at_transform(const Eigen::Ref<const Eigen::MatrixX
     for (Eigen::Index first = 0; first < rhs.cols(); first += chunk_width_) {
         const Eigen::Index count = std::min<Eigen::Index>(chunk_width_, rhs.cols() - first);
         Eigen::MatrixXd carrier =
-            action_->expand_structure_block(spin_.solve(rhs.middleCols(first, count)));
+            action_->expand_structure_block(spin_->solve(rhs.middleCols(first, count)));
         alpha.apply_inverse_adjoint_left(&carrier);
         for (Eigen::Index block = 0; block < count; ++block)
             beta.apply_inverse_adjoint_right_block(
@@ -232,7 +254,7 @@ StructureMetricInverse::apply_at_transform(const Eigen::Ref<const Eigen::MatrixX
             beta.apply_inverse_right_block(
                 carrier.middleCols(block * beta.dimension(), beta.dimension()));
         result.middleCols(first, count) =
-            spin_.solve(action_->contract_spin_product_block(carrier));
+            spin_->solve(action_->contract_spin_product_block(carrier));
     }
     return result;
 }

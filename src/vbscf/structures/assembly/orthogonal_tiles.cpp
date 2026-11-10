@@ -26,24 +26,24 @@ using detail::ColumnTile;
 
 int StructureAction::detect_spin_exchange() const {
     int parity = 0;
-    for (std::size_t group = 0; group < spin_products_.size(); ++group) {
-        const auto begin = spin_term_offsets_[group], end = spin_term_offsets_[group + 1];
+    for (std::size_t group = 0; group < topology_->products.size(); ++group) {
+        const auto begin = topology_->offsets[group], end = topology_->offsets[group + 1];
         if (begin == end)
             continue;
-        const auto product = spin_products_[group];
+        const auto product = topology_->products[group];
         const auto exchanged =
             (product % n_unique_beta_) * n_unique_alpha_ + product / n_unique_beta_;
         const auto found =
-            std::lower_bound(spin_products_.begin(), spin_products_.end(), exchanged);
-        if (found == spin_products_.end() || *found != exchanged)
+            std::lower_bound(topology_->products.begin(), topology_->products.end(), exchanged);
+        if (found == topology_->products.end() || *found != exchanged)
             return 0;
-        const auto other = static_cast<std::size_t>(found - spin_products_.begin());
-        const auto paired = spin_term_offsets_[other];
-        if (end - begin != spin_term_offsets_[other + 1] - paired)
+        const auto other = static_cast<std::size_t>(found - topology_->products.begin());
+        const auto paired = topology_->offsets[other];
+        if (end - begin != topology_->offsets[other + 1] - paired)
             return 0;
         for (std::size_t offset = 0; offset < end - begin; ++offset) {
-            const auto& a = spin_terms_[begin + offset];
-            const auto& b = spin_terms_[paired + offset];
+            const auto& a = topology_->terms[begin + offset];
+            const auto& b = topology_->terms[paired + offset];
             if (a.structure != b.structure)
                 return 0;
             const int sign = a.coefficient == b.coefficient    ? 1
@@ -145,7 +145,7 @@ StructureAction::contract_product_tiles(const Eigen::Ref<const Eigen::MatrixXd>&
         reachable_columns.resize(n_unique_beta_);
         std::iota(reachable_columns.begin(), reachable_columns.end(), 0);
     }
-    const bool ordered_beta = detail::prefer_ordered_beta(spin_products_.size(),
+    const bool ordered_beta = detail::prefer_ordered_beta(topology_->products.size(),
                                                           n_unique_alpha_,
                                                           n_unique_beta_,
                                                           beta_transform.shear_pair_count(),
@@ -225,21 +225,21 @@ StructureAction::contract_product_tiles(const Eigen::Ref<const Eigen::MatrixXd>&
         // Expand once per RHS, not once per beta panel. For a covalent space
         // these groups are exactly (A, complement(A)): only O(U) coefficients.
         Eigen::MatrixXd coefficients =
-            Eigen::MatrixXd::Zero(ordered ? 0 : spin_products_.size(), width);
+            Eigen::MatrixXd::Zero(ordered ? 0 : topology_->products.size(), width);
         workspace::Temporary coefficients_temporary(sizeof(double) * coefficients.size());
-#pragma omp parallel for schedule(static) if (spin_products_.size() > 32)
+#pragma omp parallel for schedule(static) if (topology_->products.size() > 32)
         for (std::int64_t group = 0; group < coefficients.rows(); ++group)
             for (int vector = 0; vector < width; ++vector)
-                for (std::size_t term = spin_term_offsets_[group];
-                     term < spin_term_offsets_[group + 1];
+                for (std::size_t term = topology_->offsets[group];
+                     term < topology_->offsets[group + 1];
                      ++term)
                     coefficients(group, vector) +=
-                        spin_terms_[term].coefficient *
-                        vectors(spin_terms_[term].structure, vector_begin + vector);
+                        topology_->terms[term].coefficient *
+                        vectors(topology_->terms[term].structure, vector_begin + vector);
         Eigen::MatrixXd h_products =
-            Eigen::MatrixXd::Zero(!ordered ? spin_products_.size() : 0, width);
-        Eigen::MatrixXd m_products =
-            Eigen::MatrixXd::Zero(!ordered && collect_overlap ? spin_products_.size() : 0, width);
+            Eigen::MatrixXd::Zero(!ordered ? topology_->products.size() : 0, width);
+        Eigen::MatrixXd m_products = Eigen::MatrixXd::Zero(
+            !ordered && collect_overlap ? topology_->products.size() : 0, width);
         workspace::Temporary h_products_temporary(sizeof(double) * h_products.size());
         workspace::Temporary m_products_temporary(sizeof(double) * m_products.size());
         const auto project_pattern =
@@ -260,28 +260,30 @@ StructureAction::contract_product_tiles(const Eigen::Ref<const Eigen::MatrixXd>&
                         {pattern.rows.data(), static_cast<std::size_t>(pattern.rows.size())},
                         true);
                 const int workers = coarse_openmp_thread_count(cooperative_openmp_thread_count(),
-                                                               spin_products_.size());
-                cooperative_openmp_for(spin_products_.size(), workers, [&](std::ptrdiff_t group) {
-                    const std::int64_t alpha = spin_products_[group] / n_unique_beta_;
-                    const std::int64_t beta = spin_products_[group] % n_unique_beta_;
-                    for (int vector = 0; vector < width; ++vector) {
-                        double sum = 0.0;
-                        double other = 0.0;
-                        for (Eigen::SparseMatrix<double, Eigen::ColMajor, Eigen::Index>::
-                                 InnerIterator entry(rows, beta);
-                             entry;
-                             ++entry) {
-                            sum += image(alpha, vector * rows.rows() + entry.row()) * entry.value();
+                                                               topology_->products.size());
+                cooperative_openmp_for(
+                    topology_->products.size(), workers, [&](std::ptrdiff_t group) {
+                        const std::int64_t alpha = topology_->products[group] / n_unique_beta_;
+                        const std::int64_t beta = topology_->products[group] % n_unique_beta_;
+                        for (int vector = 0; vector < width; ++vector) {
+                            double sum = 0.0;
+                            double other = 0.0;
+                            for (Eigen::SparseMatrix<double, Eigen::ColMajor, Eigen::Index>::
+                                     InnerIterator entry(rows, beta);
+                                 entry;
+                                 ++entry) {
+                                sum += image(alpha, vector * rows.rows() + entry.row()) *
+                                       entry.value();
+                                if (second)
+                                    other +=
+                                        image(alpha, (width + vector) * rows.rows() + entry.row()) *
+                                        entry.value();
+                            }
+                            target(group, vector) += sum;
                             if (second)
-                                other +=
-                                    image(alpha, (width + vector) * rows.rows() + entry.row()) *
-                                    entry.value();
+                                (*second)(group, vector) += other;
                         }
-                        target(group, vector) += sum;
-                        if (second)
-                            (*second)(group, vector) += other;
-                    }
-                });
+                    });
             };
         const auto contract = [&]() {
             if (!collect_images)
@@ -313,10 +315,10 @@ StructureAction::contract_product_tiles(const Eigen::Ref<const Eigen::MatrixXd>&
             for (Eigen::Index structure = 0; structure < n_structures_; ++structure) {
                 for (int vector = 0; vector < width; ++vector) {
                     double h = 0.0, m = 0.0;
-                    for (std::size_t offset = structure_term_offsets_[structure];
-                         offset < structure_term_offsets_[structure + 1];
+                    for (std::size_t offset = topology_->structure_offsets[structure];
+                         offset < topology_->structure_offsets[structure + 1];
                          ++offset) {
-                        const auto& term = spin_terms_[structure_term_indices_[offset]];
+                        const auto& term = topology_->terms[topology_->structure_terms[offset]];
                         h += term.coefficient * h_products(term.group, vector);
                         if (collect_overlap)
                             m += term.coefficient * m_products(term.group, vector);
@@ -364,11 +366,12 @@ StructureAction::contract_product_tiles(const Eigen::Ref<const Eigen::MatrixXd>&
                 // no determinant vector or full raw spin-product grid is formed.
                 cooperative_openmp_for(n_unique_alpha_, workers, [&](std::ptrdiff_t alpha) {
                     const auto first = mcscf::product_index(alpha, 0, n_unique_beta_);
-                    auto group =
-                        std::lower_bound(spin_products_.begin(), spin_products_.end(), first);
-                    for (; group != spin_products_.end() && *group < first + n_unique_beta_;
+                    auto group = std::lower_bound(
+                        topology_->products.begin(), topology_->products.end(), first);
+                    for (; group != topology_->products.end() && *group < first + n_unique_beta_;
                          ++group) {
-                        const auto id = static_cast<std::size_t>(group - spin_products_.begin());
+                        const auto id =
+                            static_cast<std::size_t>(group - topology_->products.begin());
                         for (Eigen::SparseMatrix<double, Eigen::ColMajor, Eigen::Index>::
                                  InnerIterator entry(rows, *group - first);
                              entry;

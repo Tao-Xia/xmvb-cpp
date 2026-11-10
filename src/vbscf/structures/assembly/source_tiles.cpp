@@ -17,11 +17,12 @@
 namespace xmvb::vb {
 Eigen::VectorXd
 StructureAction::expand_support(const Eigen::Ref<const Eigen::VectorXd>& vectors) const {
-    Eigen::VectorXd coefficients = Eigen::VectorXd::Zero(spin_products_.size());
-#pragma omp parallel for schedule(static) if (spin_products_.size() > 32)
-    for (std::size_t group = 0; group < spin_products_.size(); ++group)
-        for (std::size_t t = spin_term_offsets_[group]; t < spin_term_offsets_[group + 1]; ++t)
-            coefficients[group] += spin_terms_[t].coefficient * vectors[spin_terms_[t].structure];
+    Eigen::VectorXd coefficients = Eigen::VectorXd::Zero(topology_->products.size());
+#pragma omp parallel for schedule(static) if (topology_->products.size() > 32)
+    for (std::size_t group = 0; group < topology_->products.size(); ++group)
+        for (std::size_t t = topology_->offsets[group]; t < topology_->offsets[group + 1]; ++t)
+            coefficients[group] +=
+                topology_->terms[t].coefficient * vectors[topology_->terms[t].structure];
     return coefficients;
 }
 
@@ -38,7 +39,7 @@ bool StructureAction::prefer_source_contraction(const ExteriorOrbitalTransform& 
     const long double factor_work =
         r * (2 * (na + nb) * pairs * pairs + 4 * (na * ea * (n - ea + 1) + nb * eb * (n - eb + 1)) +
              (pairs + 3) * (2 * (alpha.shear_pair_count() + beta.shear_pair_count()) + na + nb) +
-             (2 * pairs + 6) * spin_products_.size());
+             (2 * pairs + 6) * topology_->products.size());
     const long double full_rows =
         spin_exchange_parity_ == 0 ? na * nb : na * (na + spin_exchange_parity_) / 2;
     const long double channel_work = 2 * pairs * pairs;
@@ -101,7 +102,7 @@ StructureAction::apply_source_columns(int width,
         const Eigen::VectorXd values = support_column(column);
         workspace::Temporary values_temporary(sizeof(double) *
                                               static_cast<std::size_t>(values.size()));
-        const auto source = sources_->orthogonal_source(spin_products_, values, alpha, beta);
+        const auto source = sources_->orthogonal_source(topology_->products, values, alpha, beta);
         const auto image =
             project_factor_source(source, workspace, alpha, beta, sigma, overlap_only);
         result.hamiltonian.col(column) = image.hamiltonian.col(0);
@@ -160,7 +161,7 @@ StructureAction::project_factor_source(const mcscf::SpinFactorSource& source,
         };
     {
         Eigen::VectorXd h_products =
-                            Eigen::VectorXd::Zero(project_output ? spin_products_.size() : 0),
+                            Eigen::VectorXd::Zero(project_output ? topology_->products.size() : 0),
                         m_products = h_products;
         workspace::Temporary products_temporary(
             sizeof(double) * static_cast<std::size_t>(h_products.size() + m_products.size()));
@@ -178,10 +179,10 @@ StructureAction::project_factor_source(const mcscf::SpinFactorSource& source,
             pullback(true, block.mixed_beta, db);
             const auto sampled = tick();
             pullback_time += seconds(pulling, sampled);
-#pragma omp parallel for schedule(static) if (spin_products_.size() > 32)
-            for (std::size_t group = 0; group < spin_products_.size(); ++group) {
-                const Eigen::Index i = spin_products_[group] / n_unique_beta_;
-                const Eigen::Index j = spin_products_[group] % n_unique_beta_;
+#pragma omp parallel for schedule(static) if (topology_->products.size() > 32)
+            for (std::size_t group = 0; group < topology_->products.size(); ++group) {
+                const Eigen::Index i = topology_->products[group] / n_unique_beta_;
+                const Eigen::Index j = topology_->products[group] % n_unique_beta_;
                 if (output_generator)
                     h_products[group] += 2 * (da.row(i).dot(block.mixed_beta.row(j)) +
                                               block.alpha_channels.row(i).dot(db.row(j)));
@@ -212,10 +213,10 @@ StructureAction::project_factor_source(const mcscf::SpinFactorSource& source,
             }
             pullback(false, block.alpha, da);
             pullback(true, block.beta, db);
-#pragma omp parallel for schedule(static) if (spin_products_.size() > 32)
-            for (std::size_t group = 0; group < spin_products_.size(); ++group) {
-                const Eigen::Index i = spin_products_[group] / n_unique_beta_;
-                const Eigen::Index j = spin_products_[group] % n_unique_beta_;
+#pragma omp parallel for schedule(static) if (topology_->products.size() > 32)
+            for (std::size_t group = 0; group < topology_->products.size(); ++group) {
+                const Eigen::Index i = topology_->products[group] / n_unique_beta_;
+                const Eigen::Index j = topology_->products[group] % n_unique_beta_;
                 if (output_generator) {
                     m_products[group] +=
                         da.row(i).dot(block.beta.row(j)) + block.alpha.row(i).dot(db.row(j));
@@ -248,10 +249,10 @@ StructureAction::project_factor_source(const mcscf::SpinFactorSource& source,
         for (Eigen::Index structure = 0; structure < (project_output ? n_structures_ : 0);
              ++structure) {
             double h = 0, m = 0;
-            for (std::size_t t = structure_term_offsets_[structure];
-                 t < structure_term_offsets_[structure + 1];
+            for (std::size_t t = topology_->structure_offsets[structure];
+                 t < topology_->structure_offsets[structure + 1];
                  ++t) {
-                const auto& term = spin_terms_[structure_term_indices_[t]];
+                const auto& term = topology_->terms[topology_->structure_terms[t]];
                 h += term.coefficient * h_products[term.group];
                 m += term.coefficient * m_products[term.group];
             }
@@ -265,7 +266,7 @@ StructureAction::project_factor_source(const mcscf::SpinFactorSource& source,
             "XMVB_SOURCES,structures=%d,sources=%zu,products=%zu,source_tile=%d,channel_tile=%d\n",
             n_structures_,
             sources.nodes.size(),
-            spin_products_.size(),
+            topology_->products.size(),
             source_tile,
             channel_tile);
     if (timing)

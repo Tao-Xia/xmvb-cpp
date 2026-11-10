@@ -111,7 +111,8 @@ class OrbitalGradientEvaluator {
                      double nuclear_repulsion_energy,
                      StructureEigensolver structure_eigensolver,
                      StructureSolveAccuracy structure_solve_accuracy,
-                     const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors) const;
+                     const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors,
+                     const AcceptedPointContext* accepted_point = nullptr) const;
 
     /** @brief Completes the orbital gradient without repeating a trial forward pass. */
     OrbitalGradientResult complete_gradient(const VbScfInput& input,
@@ -127,7 +128,8 @@ class OrbitalGradientEvaluator {
                              double nuclear_repulsion_energy,
                              const Eigen::Ref<const Eigen::MatrixXd>& structure_coefficients,
                              const SelectedMetric* metric = nullptr,
-                             bool retain_context = false) const;
+                             bool retain_context = false,
+                             const AcceptedPointContext* accepted_point = nullptr) const;
 
     /**
    * @brief Evaluates the orbital gradient pullback from a precomputed active-space result.

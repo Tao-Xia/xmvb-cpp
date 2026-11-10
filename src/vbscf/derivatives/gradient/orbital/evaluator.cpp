@@ -202,7 +202,8 @@ ActiveSpaceForwardEvaluation OrbitalGradientEvaluator::evaluate_forward(
     double nuclear_repulsion_energy,
     StructureEigensolver structure_eigensolver,
     StructureSolveAccuracy structure_solve_accuracy,
-    const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors) const {
+    const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors,
+    const AcceptedPointContext* accepted_point) const {
     if (input.orbital_preparation_input.orbital_value_table.empty()) {
         throw std::invalid_argument("orbital_value_table must not be empty");
     }
@@ -212,7 +213,8 @@ ActiveSpaceForwardEvaluation OrbitalGradientEvaluator::evaluate_forward(
                                                              nuclear_repulsion_energy,
                                                              structure_eigensolver,
                                                              structure_solve_accuracy,
-                                                             initial_eigenvectors);
+                                                             initial_eigenvectors,
+                                                             accepted_point);
 }
 
 OrbitalGradientResult
@@ -235,7 +237,8 @@ OrbitalFixedStructureGradient OrbitalGradientEvaluator::evaluate_fixed_structure
     double nuclear_repulsion_energy,
     const Eigen::Ref<const Eigen::MatrixXd>& structure_coefficients,
     const SelectedMetric* metric,
-    bool retain_context) const {
+    bool retain_context,
+    const AcceptedPointContext* accepted_point) const {
     const auto total_start_time = std::chrono::steady_clock::now();
     ActiveSpaceFixedStructureGradient active =
         active_space_gradient_evaluator_.evaluate_fixed_structure(input,
@@ -244,7 +247,8 @@ OrbitalFixedStructureGradient OrbitalGradientEvaluator::evaluate_fixed_structure
                                                                   nuclear_repulsion_energy,
                                                                   structure_coefficients,
                                                                   metric,
-                                                                  retain_context);
+                                                                  retain_context,
+                                                                  accepted_point);
     OrbitalFixedStructureGradient result;
     result.normalized_coefficients = std::move(active.normalized_coefficients);
     result.structure_residuals = std::move(active.structure_residuals);

@@ -68,14 +68,14 @@ Eigen::MatrixXd StructureAction::selected_overlap_factor(const ExteriorOrbitalTr
 #pragma omp parallel for schedule(static) if (na > 32) num_threads(workers)
                     for (std::size_t ai = 0; ai < na; ++ai) {
                         const auto start = mcscf::product_index(ai, 0, nb);
-                        auto group =
-                            std::lower_bound(spin_products_.begin(), spin_products_.end(), start);
-                        for (; group != spin_products_.end() && *group < start + nb; ++group) {
-                            const auto g = group - spin_products_.begin();
+                        auto group = std::lower_bound(
+                            topology_->products.begin(), topology_->products.end(), start);
+                        for (; group != topology_->products.end() && *group < start + nb; ++group) {
+                            const auto g = group - topology_->products.begin();
                             const auto bi = *group - start;
-                            for (auto t = spin_term_offsets_[g]; t < spin_term_offsets_[g + 1];
+                            for (auto t = topology_->offsets[g]; t < topology_->offsets[g + 1];
                                  ++t) {
-                                const auto& term = spin_terms_[t];
+                                const auto& term = topology_->terms[t];
                                 if (term.structure >= first && term.structure - first < width)
                                     raw.row(ai)
                                         .segment((term.structure - first) * bc, bc)

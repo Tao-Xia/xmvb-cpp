@@ -3,6 +3,7 @@
 #include "mcscf/ci/string_table.hpp"
 
 #include <cstddef>
+#include <memory>
 #include <vector>
 
 #include <Eigen/Core>
@@ -55,6 +56,9 @@ class StructureMetricInverse {
     /** @brief U^T H_orth U; no orbital exterior maps or overlap action. */
     Eigen::MatrixXd
     apply_ci_hamiltonian(const Eigen::Ref<const Eigen::MatrixXd>& coordinates) const;
+    /** @brief Spin-preserving occupation-diagonal model in FULL CI coordinates. */
+    Eigen::VectorXd ci_occupation_diagonal() const;
+
     /** @brief U^T D^-1 U, congruent to the original complete-sector inverse. */
     Eigen::MatrixXd apply_ci_preconditioner(const Eigen::Ref<const Eigen::MatrixXd>& covector,
                                             const Eigen::Ref<const Eigen::VectorXd>& energies,
@@ -71,13 +75,13 @@ class StructureMetricInverse {
    */
     void rebind(const StructureAction& action);
     std::size_t factor_bytes() const noexcept {
-        return spin_.factor_bytes();
+        return spin_->factor_bytes();
     }
     std::size_t block_count() const noexcept {
-        return spin_.block_count();
+        return spin_->block_count();
     }
     Eigen::Index max_block_size() const noexcept {
-        return spin_.max_block_size();
+        return spin_->max_block_size();
     }
 
     /** @brief Plans factor/workspace admission without allocating dense blocks. */
@@ -88,15 +92,22 @@ class StructureMetricInverse {
                      std::size_t workspace_byte_limit);
 
     /** @brief Build FULL coordinates within the shared allowance. */
-    static std::unique_ptr<StructureMetricInverse> try_build(
-        const StructureAction& action,
-        const xmvb::mcscf::StringTable& alpha_strings,
-        const xmvb::mcscf::StringTable& beta_strings,
-        std::size_t other_work_bytes = 0);
+    static std::unique_ptr<StructureMetricInverse>
+    try_build(const StructureAction& action,
+              const xmvb::mcscf::StringTable& alpha_strings,
+              const xmvb::mcscf::StringTable& beta_strings,
+              std::size_t other_work_bytes = 0,
+              const StructureMetricInverse* accepted = nullptr);
 
   private:
+    StructureMetricInverse(const StructureAction& action,
+                           std::shared_ptr<const SpinMetric> spin,
+                           bool complete_space,
+                           std::size_t column_bytes,
+                           std::size_t workspace_byte_limit);
+
     const StructureAction* action_;
-    SpinMetric spin_;
+    std::shared_ptr<const SpinMetric> spin_;
     workspace::Reservation carrier_workspace_;
     Eigen::Index chunk_width_ = 0;
 };

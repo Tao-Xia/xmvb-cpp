@@ -236,6 +236,10 @@ class DirectCiSigmaAction {
     Eigen::MatrixXd apply(const Eigen::Ref<const Eigen::MatrixXd>& coefficients,
                           int exchange_parity = 0) const;
 
+    /** @brief Raw triangular-channel image for a consumer that projects spin exchange itself. */
+    Eigen::MatrixXd apply_before_exchange_projection(
+        const Eigen::Ref<const Eigen::MatrixXd>& coefficients, int exchange_parity) const;
+
     /** @brief Stream the exact Hamiltonian action through beta-column callbacks.
    *
    * Each callback receives sorted, distinct beta and alpha indices and a
@@ -455,7 +459,8 @@ class DirectCiSigmaAction {
                                        StringIndex alpha_begin,
                                        std::int64_t alpha_count,
                                        std::int64_t beta_target,
-                                       Eigen::Ref<Eigen::MatrixXd> intermediate) const;
+                                       Eigen::Ref<Eigen::MatrixXd> intermediate,
+                                       int exchange_parity = 0) const;
     const SpinConnections& beta_connections() const noexcept;
 
     /** @brief Shared channel sweep for sigma, integral adjoints, or both.
@@ -466,7 +471,8 @@ class DirectCiSigmaAction {
                                               const Eigen::Ref<const Eigen::MatrixXd>& right,
                                               Eigen::MatrixXd* sigma,
                                               int exchange_parity,
-                                              bool collect_integrals) const;
+                                              bool collect_integrals,
+                                              bool project_exchange = true) const;
 
     /** @brief Generated channel graph shared by tiled sigma and its integral VJP. */
     std::vector<DirectCiIntegralAdjoint>
@@ -490,7 +496,9 @@ class DirectCiSigmaAction {
                           StringIndex beta_begin,
                           std::int64_t beta_count,
                           int exchange_parity,
+                          const Eigen::Ref<const Eigen::MatrixXd>& coefficients,
                           const Eigen::Ref<const Eigen::MatrixXd>& scattered,
+                          Eigen::Ref<Eigen::MatrixXd> scatter_scratch,
                           Eigen::Ref<Eigen::MatrixXd> workspace,
                           Eigen::Ref<Eigen::MatrixXd> sigma) const;
 

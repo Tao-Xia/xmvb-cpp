@@ -40,6 +40,19 @@ struct AdjointRows {
     }
 };
 
+void weight_exchange_channels(Eigen::Ref<Eigen::MatrixXd> panel,
+                              StringIndex count,
+                              StringIndex diagonal,
+                              int parity) {
+    if (parity == 0)
+        return;
+    // Q^T D Q weights each off-diagonal pair twice and leaves the diagonal alone.
+    panel *= 2.0;
+    if (parity > 0 && diagonal < count)
+        for (Eigen::Index row = diagonal; row < panel.rows(); row += count)
+            panel.row(row) *= 0.5;
+}
+
 double replacement_sign(std::uint64_t source, int removed, int inserted) {
     const int low = std::min(removed, inserted);
     const int high = std::max(removed, inserted);
@@ -284,7 +297,8 @@ void DirectCiSigmaAction::scatter_one_body_intermediate(
     StringIndex alpha_begin,
     std::int64_t alpha_count,
     std::int64_t beta_target,
-    Eigen::Ref<Eigen::MatrixXd> intermediate) const {
+    Eigen::Ref<Eigen::MatrixXd> intermediate,
+    int exchange_parity) const {
     const int block_width = core::checked_index<std::int64_t>(coefficients.cols()) / n_beta_;
     const int active_columns = alpha_count * block_width;
     const SpinConnections& beta_graph = beta_connections();
@@ -329,6 +343,7 @@ void DirectCiSigmaAction::scatter_one_body_intermediate(
                 alpha_singles[link].source, alpha_singles[link].pair, alpha_singles[link].sign);
         }
     }
+    weight_exchange_channels(intermediate, alpha_count, beta_target - alpha_begin, exchange_parity);
 }
 
 Eigen::MatrixXd DirectCiSigmaAction::apply(const Eigen::Ref<const Eigen::MatrixXd>& coefficients,
@@ -336,6 +351,14 @@ Eigen::MatrixXd DirectCiSigmaAction::apply(const Eigen::Ref<const Eigen::MatrixX
     profiling::ScopedPhase phase(profiling::Phase::CiSigma);
     Eigen::MatrixXd result;
     contract_channels(coefficients, coefficients, &result, exchange_parity, false);
+    return result;
+}
+
+Eigen::MatrixXd DirectCiSigmaAction::apply_before_exchange_projection(
+    const Eigen::Ref<const Eigen::MatrixXd>& coefficients, int exchange_parity) const {
+    profiling::ScopedPhase phase(profiling::Phase::CiSigma);
+    Eigen::MatrixXd result;
+    contract_channels(coefficients, coefficients, &result, exchange_parity, false, false);
     return result;
 }
 
@@ -428,7 +451,9 @@ void DirectCiSigmaAction::apply_sigma_tile(StringIndex alpha_begin,
                                            StringIndex beta_begin,
                                            std::int64_t beta_count,
                                            int exchange_parity,
+                                           const Eigen::Ref<const Eigen::MatrixXd>& coefficients,
                                            const Eigen::Ref<const Eigen::MatrixXd>& scattered,
+                                           Eigen::Ref<Eigen::MatrixXd> scatter_scratch,
                                            Eigen::Ref<Eigen::MatrixXd> workspace,
                                            Eigen::Ref<Eigen::MatrixXd> sigma) const {
     const AdjointRows layout{alpha_begin, alpha_count, beta_begin, block_count, exchange_parity};
@@ -444,8 +469,15 @@ void DirectCiSigmaAction::apply_sigma_tile(StringIndex alpha_begin,
             workspace.data() + static_cast<Eigen::Index>(layout.offset(beta)) * n_pairs,
             rows,
             n_pairs);
-        transformed.noalias() =
-            scattered.middleRows(layout.offset(beta), rows) * hamiltonian_pair_kernel_.transpose();
+        if (scattered.size() != 0) {
+            transformed.noalias() = scattered.middleRows(layout.offset(beta), rows) *
+                                    hamiltonian_pair_kernel_.transpose();
+        } else {
+            Eigen::Map<Eigen::MatrixXd> panel(scatter_scratch.data(), rows, n_pairs);
+            scatter_one_body_intermediate(
+                coefficients, alpha_begin, count, beta_begin + beta, panel, exchange_parity);
+            transformed.noalias() = panel * hamiltonian_pair_kernel_.transpose();
+        }
         for (StringIndex alpha = 0; alpha < count; ++alpha) {
             const StringIndex target = alpha_begin + alpha;
             const auto add = [&](StringIndex source, int pair, double sign) {
@@ -504,7 +536,8 @@ DirectCiSigmaAction::contract_channels(const Eigen::Ref<const Eigen::MatrixXd>& 
                                        const Eigen::Ref<const Eigen::MatrixXd>& right,
                                        Eigen::MatrixXd* sigma,
                                        int exchange_parity,
-                                       bool collect_integrals) const {
+                                       bool collect_integrals,
+                                       bool project_exchange) const {
     if (exchange_parity < -1 || exchange_parity > 1 || (exchange_parity != 0 && distinct_beta_)) {
         throw std::invalid_argument(
             "direct-CI adjoint exchange sector requires identical spin lists");
@@ -545,15 +578,15 @@ DirectCiSigmaAction::contract_channels(const Eigen::Ref<const Eigen::MatrixXd>& 
     const int beta_tile = static_cast<int>(
         std::min<std::size_t>(n_beta_, workspace_bytes / (bytes_per_alpha * alpha_tile)));
     const int maximum_rows = rows_per_beta * beta_tile;
-    const int n_threads =
-        std::max(1, std::min(effective_openmp_thread_count(), std::max(beta_tile, n_pairs)));
+    const int parallel_width = collect_integrals ? std::max(beta_tile, n_pairs) : beta_tile;
+    const int n_threads = std::max(1, std::min(effective_openmp_thread_count(), parallel_width));
     // Among exact factorizations of the worker count, the most nearly square
     // output grid minimizes repeated reads of these equally sized operands.
     int row_parts = static_cast<int>(std::sqrt(n_threads));
     while (n_threads % row_parts != 0)
         --row_parts;
     const int column_parts = n_threads / row_parts;
-    Eigen::MatrixXd left_intermediate(maximum_rows, n_pairs);
+    Eigen::MatrixXd left_intermediate(collect_integrals ? maximum_rows : 0, n_pairs);
     Eigen::MatrixXd right_intermediate(maximum_rows, n_pairs);
     Eigen::MatrixXd effective_kernel_adjoint =
         Eigen::MatrixXd::Zero(collect_integrals ? n_pairs : 0, collect_integrals ? n_pairs : 0);
@@ -562,6 +595,9 @@ DirectCiSigmaAction::contract_channels(const Eigen::Ref<const Eigen::MatrixXd>& 
 
 #pragma omp parallel if (n_threads > 1) num_threads(n_threads)
     {
+        // Pure sigma consumes each input panel immediately. Only the transformed
+        // panels have to survive the barrier for the beta gather.
+        Eigen::MatrixXd scatter_scratch(collect_integrals ? 0 : rows_per_beta, n_pairs);
         for (int block_begin = 0; block_begin < block_width; block_begin += block_tile) {
             const int block_count = std::min(block_tile, block_width - block_begin);
             const auto left_block = left.middleCols(block_begin * n_beta_, block_count * n_beta_);
@@ -578,16 +614,17 @@ DirectCiSigmaAction::contract_channels(const Eigen::Ref<const Eigen::MatrixXd>& 
                     const AdjointRows layout{
                         alpha_begin, alpha_count, beta_begin, block_count, exchange_parity};
                     const std::int64_t used_rows = layout.offset(beta_count);
+                    if (collect_integrals) {
 #pragma omp for schedule(static)
-                    for (StringIndex beta = 0; beta < beta_count; ++beta) {
-                        const std::int64_t count = layout.count(beta);
-                        const StringIndex rows = count * block_count;
-                        auto active_left = left_intermediate.middleRows(layout.offset(beta), rows);
-                        auto active_right =
-                            right_intermediate.middleRows(layout.offset(beta), rows);
-                        scatter_one_body_intermediate(
-                            left_block, alpha_begin, count, beta_begin + beta, active_left);
-                        if (collect_integrals) {
+                        for (StringIndex beta = 0; beta < beta_count; ++beta) {
+                            const std::int64_t count = layout.count(beta);
+                            const StringIndex rows = count * block_count;
+                            auto active_left =
+                                left_intermediate.middleRows(layout.offset(beta), rows);
+                            auto active_right =
+                                right_intermediate.middleRows(layout.offset(beta), rows);
+                            scatter_one_body_intermediate(
+                                left_block, alpha_begin, count, beta_begin + beta, active_left);
                             if (same_input)
                                 active_right = active_left;
                             else
@@ -596,21 +633,10 @@ DirectCiSigmaAction::contract_channels(const Eigen::Ref<const Eigen::MatrixXd>& 
                                                               count,
                                                               beta_begin + beta,
                                                               active_right);
+                            weight_exchange_channels(
+                                active_left, count, beta_begin + beta - alpha_begin, exchange_parity);
                         }
-                        if (exchange_parity != 0) {
-                            // Q^T D Q weights one operand only; omitted rows are never scattered.
-                            active_left *= 2.0;
-                            const int diagonal = beta_begin + beta - alpha_begin;
-                            if (exchange_parity > 0 && diagonal < alpha_count) {
-                                for (int block = 0; block < block_count; ++block) {
-                                    active_left.row(block * count + diagonal) *= 0.5;
-                                }
-                            }
-                        }
-                    }
-                    // The scatter barrier publishes every shared row before GEMM; the
-                    // following barrier prevents overwriting the tile during contraction.
-                    if (collect_integrals) {
+                        // The scatter barrier publishes every shared row before GEMM.
 #pragma omp for schedule(static)
                         for (int partition = 0; partition < n_threads; ++partition) {
                             const int row_partition = partition / column_parts;
@@ -647,7 +673,9 @@ DirectCiSigmaAction::contract_channels(const Eigen::Ref<const Eigen::MatrixXd>& 
                                          beta_begin,
                                          beta_count,
                                          exchange_parity,
+                                         left_block,
                                          left_intermediate,
+                                         scatter_scratch,
                                          right_intermediate,
                                          *sigma);
                     }
@@ -656,7 +684,7 @@ DirectCiSigmaAction::contract_channels(const Eigen::Ref<const Eigen::MatrixXd>& 
         }
     }
 
-    if (sigma != nullptr && exchange_parity != 0) {
+    if (sigma != nullptr && exchange_parity != 0 && project_exchange) {
         // H commutes with exchange. P_eta E^T Q^T D K Q E X = H X.
         // Each unordered pair has one owner; no transpose-sized temporary.
 #pragma omp parallel for schedule(static) if (n_threads > 1) num_threads(n_threads)

@@ -255,6 +255,12 @@ solve_complete_structure_roots(const StructureAction& action,
                                             diagonal.overlap,
                                             std::min(options.max_subspace_dimension, 2 * n_roots));
     const Eigen::MatrixXd guess = coordinates.to_ci_coordinates(seeds);
+    const auto diagonal_start = std::chrono::steady_clock::now();
+    const Eigen::VectorXd occupation_diagonal = coordinates.ci_occupation_diagonal();
+    mcscf::diagnostics::ciah_trace(
+        "ciah_ci_occupation_diagonal",
+        "seconds=%.17g",
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - diagonal_start).count());
     auto result = solve_selected_structure_roots(
         [&coordinates](const Eigen::Ref<const Eigen::MatrixXd>& x) {
             return linalg::GeneralizedEigenActionResult{coordinates.apply_ci_hamiltonian(x), {}};
@@ -267,12 +273,11 @@ solve_complete_structure_roots(const StructureAction& action,
         guess,
         solver,
         {},
-        [&coordinates, &action](const Eigen::VectorXd& r, double energy) {
-            if (!action.supports_carrier_diagonal())
-                return r;
+        [&occupation_diagonal](const Eigen::VectorXd& r, double energy) {
+            profiling::ScopedPhase phase(profiling::Phase::CiPreconditioner);
+            const auto denominator = occupation_diagonal.array() - energy;
             return Eigen::VectorXd(
-                coordinates.apply_ci_preconditioner(r, Eigen::VectorXd::Constant(1, energy), 0.0)
-                    .col(0));
+                (r.array() / (denominator.abs() < 1.0e-8).select(1.0e-8, denominator)).matrix());
         },
         true);
     const Eigen::Map<const Eigen::MatrixXd> x(
@@ -420,7 +425,8 @@ void solve_structure_problem(
     const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors,
     const FullDeterminantStructureHamiltonianOverlapBuilder& structure_builder,
     const xmvb::linalg::GeneralizedEigensolver& generalized_eigensolver,
-    ActiveSpaceGradientForwardContext* context) {
+    ActiveSpaceGradientForwardContext* context,
+    const AcceptedPointContext* accepted_point = nullptr) {
     const auto& prepared = context->timed_active_space_context.prepared_active_space;
     const Eigen::Index n_structures = input.structure_data.n_structures;
     const int n_roots = required_root_count(selected_state_indices);
@@ -495,15 +501,18 @@ void solve_structure_problem(
                 n_structures,
                 context->same_spin_pair_cache);
         }
-        context->structure_action =
-            std::make_unique<StructureAction>(input.structure_data.incidence(),
-                                              n_structures,
-                                              context->same_spin_pair_cache,
-                                              prepared.orbital_result.active_orbital_overlap_matrix,
-                                              prepared.active_space_one_electron_result.h1e_act,
-                                              prepared.active_space_two_electron_result,
-                                              input.orbital_preparation_input.n_active_orbitals,
-                                              jacobi_diagonal ? &*jacobi_diagonal : nullptr);
+        context->structure_action = std::make_unique<StructureAction>(
+            input.structure_data.incidence(),
+            n_structures,
+            context->same_spin_pair_cache,
+            prepared.orbital_result.active_orbital_overlap_matrix,
+            prepared.active_space_one_electron_result.h1e_act,
+            prepared.active_space_two_electron_result,
+            input.orbital_preparation_input.n_active_orbitals,
+            jacobi_diagonal ? &*jacobi_diagonal : nullptr,
+            StructureActionMode::Davidson,
+            accepted_point && accepted_point->structure_action ? &*accepted_point->structure_action
+                                                               : nullptr);
         context->structure_matrix_wall_time_seconds =
             std::chrono::duration<double>(std::chrono::steady_clock::now() - stage_start_time)
                 .count();
@@ -542,11 +551,14 @@ void solve_structure_problem(
             const auto& alpha = context->same_spin_pair_cache.alpha_reuse_table.unique_determinants;
             const auto& beta = context->same_spin_pair_cache.beta_reuse_table.unique_determinants;
             const auto inverse_start = std::chrono::steady_clock::now();
-            const auto planned = structure_solve_options(
-                n_structures, n_roots, structure_solve_accuracy, true);
+            const auto planned =
+                structure_solve_options(n_structures, n_roots, structure_solve_accuracy, true);
             context->structure_metric_inverse = StructureMetricInverse::try_build(
-                structure_action, alpha, beta,
-                linalg::davidson_workspace_bytes(n_structures, planned));
+                structure_action,
+                alpha,
+                beta,
+                linalg::davidson_workspace_bytes(n_structures, planned),
+                accepted_point ? accepted_point->structure_metric_inverse.get() : nullptr);
             if (context->structure_metric_inverse) {
                 mcscf::diagnostics::ciah_trace(
                     "ciah_ci_inverse_setup",
@@ -655,7 +667,8 @@ ActiveSpaceGradientForwardContext build_active_space_gradient_forward_context(
     StructureSolveAccuracy structure_solve_accuracy,
     const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors,
     const FullDeterminantStructureHamiltonianOverlapBuilder& structure_builder,
-    const xmvb::linalg::GeneralizedEigensolver& generalized_eigensolver) {
+    const xmvb::linalg::GeneralizedEigensolver& generalized_eigensolver,
+    const AcceptedPointContext* accepted_point) {
     ActiveSpaceGradientForwardContext context;
     profiling::ScopedPhase preparation_phase(profiling::Phase::ActivePreparation, true);
     context.timed_active_space_context = prepare_timed_active_space_context(input);
@@ -674,7 +687,8 @@ ActiveSpaceGradientForwardContext build_active_space_gradient_forward_context(
                             initial_eigenvectors,
                             structure_builder,
                             generalized_eigensolver,
-                            &context);
+                            &context,
+                            accepted_point);
     return context;
 }
 
@@ -1103,7 +1117,8 @@ ActiveSpaceForwardEvaluation ActiveSpaceGradientEvaluator::evaluate_forward(
     double nuclear_repulsion_energy,
     StructureEigensolver structure_eigensolver,
     StructureSolveAccuracy structure_solve_accuracy,
-    const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors) const {
+    const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors,
+    const AcceptedPointContext* accepted_point) const {
     const auto total_start_time = std::chrono::steady_clock::now();
     if (input.structure_data.n_structures <= 0) {
         throw std::invalid_argument("input.structure_data.n_structures must be positive");
@@ -1123,7 +1138,8 @@ ActiveSpaceForwardEvaluation ActiveSpaceGradientEvaluator::evaluate_forward(
                                                                         structure_solve_accuracy,
                                                                         initial_eigenvectors,
                                                                         structure_builder_,
-                                                                        generalized_eigensolver_);
+                                                                        generalized_eigensolver_,
+                                                                        accepted_point);
     const auto& prepared = state.forward_context.timed_active_space_context.prepared_active_space;
     state.total_energy =
         prepared.one_electron_reference_energy +
@@ -1178,7 +1194,8 @@ ActiveSpaceFixedStructureGradient ActiveSpaceGradientEvaluator::evaluate_fixed_s
     double nuclear_repulsion_energy,
     const Eigen::Ref<const Eigen::MatrixXd>& structure_coefficients,
     const SelectedMetric* metric,
-    bool retain_context) const {
+    bool retain_context,
+    const AcceptedPointContext* accepted_point) const {
     const auto total_start_time = std::chrono::steady_clock::now();
     validate_state_selection(
         selected_state_indices, state_average_weights, input.structure_data.n_structures);
@@ -1222,7 +1239,9 @@ ActiveSpaceFixedStructureGradient ActiveSpaceGradientEvaluator::evaluate_fixed_s
         prepared.active_space_two_electron_result,
         input.orbital_preparation_input.n_active_orbitals,
         diagonal ? &*diagonal : nullptr,
-        retain_context ? StructureActionMode::Davidson : StructureActionMode::ActionOnly);
+        retain_context ? StructureActionMode::Davidson : StructureActionMode::ActionOnly,
+        accepted_point && accepted_point->structure_action ? &*accepted_point->structure_action
+                                                           : nullptr);
     context.structure_matrix_wall_time_seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - structure_start_time)
             .count();

@@ -1195,6 +1195,31 @@ void check_sigma_action() {
                                               &exact_diagonal);
     require(topology_action.storage().orthogonal_direct_ci,
             "complete fixed-spin carrier did not select direct CI");
+    const Eigen::MatrixXd trial_one_electron = 1.125 * one_electron;
+    const auto trial_action = [&](const xmvb::vb::StructureAction* source) {
+        return xmvb::vb::StructureAction(determinant_to_structure_terms,
+                                         n_test_structures,
+                                         topology,
+                                         packed_overlap,
+                                         trial_one_electron,
+                                         two_electron,
+                                         n_orbitals,
+                                         nullptr,
+                                         xmvb::vb::StructureActionMode::ActionOnly,
+                                         source);
+    };
+    const auto shared_images = [&] {
+        const auto shared_trial = trial_action(&topology_action);
+        require(shared_trial.orthogonal_view().terms.data() ==
+                    topology_action.orthogonal_view().terms.data(),
+                "trial did not share the immutable structure incidence");
+        return shared_trial.apply(structure_vectors);
+    }();
+    const auto independent_images = trial_action(nullptr).apply(structure_vectors);
+    require((shared_images.hamiltonian - independent_images.hamiltonian).norm() < 2.0e-10 &&
+                (shared_images.overlap - independent_images.overlap).norm() < 2.0e-10,
+            "sharing topology changed the trial H/S action");
+
     bool selected_metric_rejected = false;
     try {
         const xmvb::vb::StructureMetricInverse invalid(
@@ -2300,6 +2325,57 @@ void benchmark_structure_response() {
 }
 
 /** @brief Complete singlet/triplet sectors are closed without spanning all M_S products. */
+void check_occupation_diagonal() {
+    constexpr int n = 4;
+    const Eigen::Matrix4d h = Eigen::Vector4d(-0.8, -0.3, 0.2, 0.7).asDiagonal();
+    const Eigen::Matrix4d s = Eigen::Matrix4d::Identity();
+    const std::vector<double> overlap(s.data(), s.data() + s.size());
+    xmvb::integrals::ActiveSpaceTwoElectronResult eri;
+    auto& packed = eri.packed_active_two_electron_integrals;
+    packed.resize(xmvb::integrals::packed_active_two_electron_integral_count(n));
+    for (std::size_t i = 0; i < packed.size(); ++i)
+        packed[i] = 0.1 * std::cos(0.17 * i);
+
+    for (const int n_beta : {1, 2}) {
+        const auto alpha = complete_space(n, 2), beta = complete_space(n, n_beta);
+        std::vector<std::vector<int>> pa, pb;
+        std::vector<std::vector<xmvb::vb::StructureExpansionTerm>> terms(alpha.size() * beta.size());
+        int product = 0;
+        for (const auto& a : alpha)
+            for (const auto& b : beta) {
+                pa.push_back(a);
+                pb.push_back(b);
+                terms[product].push_back({product, 1.0});
+                ++product;
+            }
+        const auto topology = xmvb::vb::build_same_spin_pair_topology(pa, pb, n);
+        const xmvb::vb::StructureAction action(
+            terms, product, topology, overlap, h, eri, n, nullptr,
+            xmvb::vb::StructureActionMode::ActionOnly);
+        const xmvb::vb::StructureMetricInverse metric(action, alpha, beta, true, 65536, 65536);
+        const auto& integrals = action.orthogonal_integrals();
+        const xmvb::mcscf::DirectCiSigmaAction sigma(alpha, beta, integrals);
+        const Eigen::MatrixXd determinant_diagonal = sigma.diagonal(integrals.one_electron);
+        std::vector<std::array<int, n>> occupations(product);
+        std::map<std::array<int, n>, std::pair<double, int>> reference;
+        for (int k = 0; k < product; ++k) {
+            for (const int p : pa[k])
+                ++occupations[k][p];
+            for (const int p : pb[k])
+                ++occupations[k][p];
+            auto& [sum, count] = reference[occupations[k]];
+            sum += determinant_diagonal(k / beta.size(), k % beta.size());
+            ++count;
+        }
+        const Eigen::VectorXd diagonal = metric.ci_occupation_diagonal();
+        for (int k = 0; k < product; ++k) {
+            const auto [sum, count] = reference.at(occupations[k]);
+            require(std::abs(diagonal[k] - sum / count) < 2e-12,
+                    "CI occupation diagonal differs from the fixed-spin product average");
+        }
+    }
+}
+
 void check_spin_sector_carrier_inverse() {
     const auto spin = complete_space(3, 1);
     Eigen::Matrix3d r = Eigen::Matrix3d::Identity();
@@ -3068,6 +3144,7 @@ int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string(argv[1]) == "--full-batch") {
             check_sigma_action();
+            check_occupation_diagonal();
             check_spin_sector_carrier_inverse();
             std::cout << "FULL multi-lane sigma: passed\n";
             return 0;
@@ -3098,6 +3175,7 @@ int main(int argc, char** argv) {
         check_tiled_integral_direction();
         check_permuted_tiled_direction();
         check_full_square_tiled_gram();
+        check_occupation_diagonal();
         check_spin_sector_carrier_inverse();
         check_exchange_adjoint();
         check_demand_driven_structure_diagonal();

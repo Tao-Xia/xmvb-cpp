@@ -107,7 +107,8 @@ VbScfObjective::TrialEvaluation VbScfObjective::evaluate_trial_energy_with_initi
                                               nuclear_repulsion_,
                                               structure_eigensolver_,
                                               structure_solve_accuracy_,
-                                              initial_eigenvectors));
+                                              initial_eigenvectors,
+                                              second_order_context().get()));
     evaluation.energy = evaluation.forward_evaluation->total_energy();
     evaluation.chart_changed = chart_changed;
     evaluation.wall_time_seconds =
@@ -125,8 +126,15 @@ VbScfCoupledKeyframeEvaluation VbScfObjective::evaluate_coupled_keyframe(
     OrbitalPreparationInput trial_orbitals = input_.orbital_preparation_input;
     layout_.unpack(parameter_vector, &trial_orbitals);
     ScopedTrialOrbitals trial_scope(&input_, std::move(trial_orbitals));
-    OrbitalFixedStructureGradient fixed = gradient_evaluator_->evaluate_fixed_structure(
-        input_, state_indices_, state_weights_, nuclear_repulsion_, structure_coefficients, metric);
+    OrbitalFixedStructureGradient fixed =
+        gradient_evaluator_->evaluate_fixed_structure(input_,
+                                                      state_indices_,
+                                                      state_weights_,
+                                                      nuclear_repulsion_,
+                                                      structure_coefficients,
+                                                      metric,
+                                                      false,
+                                                      second_order_context().get());
     VbScfCoupledKeyframeEvaluation result;
     result.orbital_gradient =
         layout_.gather_from_full(fixed.gradient.sparse_orbital_energy_gradient);

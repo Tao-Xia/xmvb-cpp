@@ -117,7 +117,8 @@ class ActiveSpaceGradientEvaluator {
                      double nuclear_repulsion_energy,
                      StructureEigensolver structure_eigensolver,
                      StructureSolveAccuracy structure_solve_accuracy,
-                     const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors) const;
+                     const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors,
+                     const AcceptedPointContext* accepted_point = nullptr) const;
 
     /** @brief Completes the exact gradient from a retained forward evaluation. */
     ActiveSpaceGradientResult
@@ -132,7 +133,8 @@ class ActiveSpaceGradientEvaluator {
                              double nuclear_repulsion_energy,
                              const Eigen::Ref<const Eigen::MatrixXd>& structure_coefficients,
                              const SelectedMetric* metric = nullptr,
-                             bool retain_context = false) const;
+                             bool retain_context = false,
+                             const AcceptedPointContext* accepted_point = nullptr) const;
 
     /**
    * @brief Evaluates a state-averaged gradient reusing a prebuilt active-space context.

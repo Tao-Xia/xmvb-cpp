@@ -1,12 +1,17 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <vector>
 
 #include <Eigen/Core>
 
 #include "core/workspace.hpp"
 #include "mcscf/ci/string_table.hpp"
+
+namespace xmvb::mcscf {
+struct ActiveIntegrals;
+}
 
 namespace xmvb::vb {
 
@@ -46,6 +51,9 @@ class SpinMetric {
     Eigen::MatrixXd solve_diagonal_model(const Eigen::Ref<const Eigen::MatrixXd>& rhs,
                                          const Eigen::Ref<const Eigen::VectorXd>& diagonal) const;
 
+    /** Uniform fixed-M_S average of determinant H diagonals in each occupation. */
+    Eigen::VectorXd occupation_diagonal(const mcscf::ActiveIntegrals& integrals) const;
+
     std::size_t factor_bytes() const noexcept {
         return factor_bytes_;
     }
@@ -74,8 +82,11 @@ class SpinMetric {
     struct Block {
         std::vector<Eigen::Index> indices;
         Eigen::MatrixXd lower;
+        std::uint64_t occupied;
+        std::uint64_t doubled;
     };
     Eigen::Index dimension_;
+    int n_alpha_, n_beta_;
     /** Factor owners outlive CI actions and share the process memory allowance. */
     workspace::Reservation residency_;
     Eigen::VectorXd diagonal_;

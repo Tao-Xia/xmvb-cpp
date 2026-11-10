@@ -192,6 +192,7 @@ class StructureAction {
     /** Immutable orthonormal physical integrals, without VB transformation metadata. */
     const mcscf::ActiveIntegrals& orthogonal_integrals() const;
 
+    /** topology_source must come from the same structure expansion and spin-string order. */
     StructureAction(
         StructureIncidence determinant_to_structure_terms,
         Eigen::Index n_structures,
@@ -201,7 +202,8 @@ class StructureAction {
         const xmvb::integrals::ActiveSpaceTwoElectronResult& active_space_two_electron_result,
         int n_active_orbitals,
         const StructureDiagonal* precomputed_preconditioner = nullptr,
-        StructureActionMode mode = StructureActionMode::Davidson);
+        StructureActionMode mode = StructureActionMode::Davidson,
+        const StructureAction* topology_source = nullptr);
 
     ~StructureAction();
     StructureAction(StructureAction&&) noexcept;
@@ -591,9 +593,13 @@ class StructureAction {
                                              bool collect_images) const;
     friend class StructureMetricInverse;
     friend class SpinMetric;
-    /** @brief Sigma in the orthogonal carrier; inner contraction remains tiled. */
-    Eigen::MatrixXd
-    apply_carrier_hamiltonian(const Eigen::Ref<const Eigen::MatrixXd>& carrier) const;
+    /** @brief Apply W^T H W, folding exchange in the structure projection. */
+    Eigen::MatrixXd apply_recoupled_hamiltonian(
+        const Eigen::Ref<const Eigen::MatrixXd>& vectors) const;
+    Eigen::MatrixXd expand_structure_block(
+        const Eigen::Ref<const Eigen::MatrixXd>& vectors, int exchange_parity) const;
+    Eigen::MatrixXd contract_spin_product_block(
+        const Eigen::Ref<const Eigen::MatrixXd>& spin_images, int exchange_parity) const;
     void adjoint_orbital_transform(Eigen::MatrixXd* carrier) const;
     /** @brief Shared in-place carrier denominator, with the existing signed floor. */
     void divide_carrier_diagonal(Eigen::Ref<Eigen::MatrixXd> carrier,
@@ -606,14 +612,19 @@ class StructureAction {
     int detect_spin_exchange() const;
     int spin_exchange_parity_ = 0;
     bool source_contraction_ = false;
-    std::unique_ptr<const SpinSources> sources_;
+    std::shared_ptr<const SpinSources> sources_;
 
-    std::vector<mcscf::ProductIndex> spin_products_;
-    std::vector<std::size_t> spin_term_offsets_;
-    std::vector<StructureTerm> spin_terms_;
-    /** Structure-major permutation of `spin_terms_` for race-free C^T actions. */
-    std::vector<std::size_t> structure_term_offsets_;
-    std::vector<std::size_t> structure_term_indices_;
+    /** Orbital-independent incidence and its reverse index, shared across one optimization. */
+    struct Topology {
+        std::vector<mcscf::ProductIndex> products;
+        std::vector<std::size_t> offsets;
+        std::vector<StructureTerm> terms;
+        std::vector<std::size_t> structure_offsets;
+        std::vector<std::size_t> structure_terms;
+    };
+    std::shared_ptr<const Topology>
+    build_topology(StructureIncidence incidence, const SameSpinPairCacheContext& spin_cache) const;
+    std::shared_ptr<const Topology> topology_;
 
     StructureDiagonal preconditioner_diagonal_;
     std::size_t n_determinants_ = 0;
@@ -622,7 +633,7 @@ class StructureAction {
     Eigen::Index n_unique_beta_ = 0;
     std::unique_ptr<OrthogonalDirectCiData> direct_ci_;
     std::unique_ptr<OperatorFirstAction> operator_first_;
-    std::unique_ptr<const mcscf::ProductSupport> product_support_;
+    std::shared_ptr<const mcscf::ProductSupport> product_support_;
     std::unique_ptr<TiledPairData> tiled_pairs_;
 };
 

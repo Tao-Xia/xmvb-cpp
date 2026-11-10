@@ -6,6 +6,7 @@
 #include "vbscf/structures/assembly/column_tiles.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <optional>
@@ -27,6 +28,7 @@
 #include "mcscf/ci/factors.hpp"
 #include "mcscf/ci/raw_action.hpp"
 #include "mcscf/ci/workspace.hpp"
+#include "mcscf/optimization/trace.hpp"
 
 namespace xmvb::vb {
 namespace {
@@ -412,6 +414,89 @@ StructureAction::~StructureAction() = default;
 StructureAction::StructureAction(StructureAction&&) noexcept = default;
 StructureAction& StructureAction::operator=(StructureAction&&) noexcept = default;
 
+std::shared_ptr<const StructureAction::Topology>
+StructureAction::build_topology(StructureIncidence determinant_to_structure_terms,
+                                const SameSpinPairCacheContext& same_spin_pair_cache) const {
+    profiling::ScopedPhase topology_phase(profiling::Phase::SpinTopology, true);
+    auto topology = std::make_shared<Topology>();
+    struct PendingSpinTerm {
+        mcscf::ProductIndex spin_product = 0;
+        StructureTerm term;
+    };
+    std::vector<PendingSpinTerm> pending_terms;
+    std::size_t n_expansion_terms = 0;
+    for (const auto& determinant_terms : determinant_to_structure_terms) {
+        n_expansion_terms += determinant_terms.size();
+    }
+    pending_terms.reserve(n_expansion_terms);
+    for (std::size_t determinant = 0; determinant < n_determinants_; ++determinant) {
+        const std::int64_t alpha =
+            same_spin_pair_cache.alpha_reuse_table.determinant_to_unique_id[determinant];
+        const std::int64_t beta =
+            same_spin_pair_cache.beta_reuse_table.determinant_to_unique_id[determinant];
+        const auto spin_product = mcscf::product_index(alpha, beta, n_unique_beta_);
+        for (const auto& term : determinant_to_structure_terms[determinant]) {
+            if (term.structure_index < 0 || term.structure_index >= n_structures_) {
+                throw std::out_of_range("determinant expansion structure index is out of range");
+            }
+            pending_terms.push_back(PendingSpinTerm{
+                spin_product, StructureTerm{0, term.structure_index, term.coefficient}});
+        }
+    }
+
+    std::sort(pending_terms.begin(),
+              pending_terms.end(),
+              [](const PendingSpinTerm& left, const PendingSpinTerm& right) {
+                  if (left.spin_product != right.spin_product) {
+                      return left.spin_product < right.spin_product;
+                  }
+                  return left.term.structure < right.term.structure;
+              });
+    topology->products.reserve(
+        std::min<Eigen::Index>(pending_terms.size(), static_cast<std::size_t>(n_determinants_)));
+    topology->terms.reserve(pending_terms.size());
+    topology->offsets.reserve(topology->products.capacity() + 1);
+    topology->offsets.push_back(0);
+    std::size_t pending = 0;
+    while (pending < pending_terms.size()) {
+        const auto spin_product = pending_terms[pending].spin_product;
+        topology->products.push_back(spin_product);
+        while (pending < pending_terms.size() &&
+               pending_terms[pending].spin_product == spin_product) {
+            const auto structure = pending_terms[pending].term.structure;
+            double coefficient = 0.0;
+            while (pending < pending_terms.size() &&
+                   pending_terms[pending].spin_product == spin_product &&
+                   pending_terms[pending].term.structure == structure) {
+                coefficient += pending_terms[pending].term.coefficient;
+                ++pending;
+            }
+            if (coefficient != 0.0) {
+                topology->terms.push_back(
+                    StructureTerm{topology->products.size() - 1, structure, coefficient});
+            }
+        }
+        topology->offsets.push_back(topology->terms.size());
+    }
+
+    topology->structure_offsets.assign(static_cast<std::size_t>(n_structures_) + 1, 0);
+    for (const StructureTerm& term : topology->terms) {
+        ++topology->structure_offsets[static_cast<std::size_t>(term.structure) + 1];
+    }
+    for (std::size_t structure = 0; structure < n_structures_; ++structure) {
+        topology->structure_offsets[static_cast<std::size_t>(structure) + 1] +=
+            topology->structure_offsets[static_cast<std::size_t>(structure)];
+    }
+    topology->structure_terms.resize(topology->terms.size());
+    std::vector<std::size_t> next_structure_term = topology->structure_offsets;
+    for (std::size_t term_index = 0; term_index < topology->terms.size(); ++term_index) {
+        const std::int64_t structure = topology->terms[term_index].structure;
+        topology->structure_terms[next_structure_term[structure]++] = term_index;
+    }
+
+    return topology;
+}
+
 StructureAction::StructureAction(
     StructureIncidence determinant_to_structure_terms,
     Eigen::Index n_structures,
@@ -421,7 +506,8 @@ StructureAction::StructureAction(
     const xmvb::integrals::ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     int n_active_orbitals,
     const StructureDiagonal* precomputed_preconditioner,
-    StructureActionMode mode)
+    StructureActionMode mode,
+    const StructureAction* topology_source)
     : n_determinants_(determinant_to_structure_terms.size()), n_structures_(n_structures),
       n_unique_alpha_(core::checked_index<Eigen::Index>(
           same_spin_pair_cache.alpha_reuse_table.unique_determinants.size())),
@@ -523,117 +609,65 @@ StructureAction::StructureAction(
                                                        n_active_orbitals);
     }
 
-    struct PendingSpinTerm {
-        mcscf::ProductIndex spin_product = 0;
-        StructureTerm term;
-    };
-    std::vector<PendingSpinTerm> pending_terms;
-    std::size_t n_expansion_terms = 0;
-    for (const auto& determinant_terms : determinant_to_structure_terms) {
-        n_expansion_terms += determinant_terms.size();
-    }
-    pending_terms.reserve(n_expansion_terms);
-    for (std::size_t determinant = 0; determinant < n_determinants_; ++determinant) {
-        const std::int64_t alpha =
-            same_spin_pair_cache.alpha_reuse_table.determinant_to_unique_id[determinant];
-        const std::int64_t beta =
-            same_spin_pair_cache.beta_reuse_table.determinant_to_unique_id[determinant];
-        const auto spin_product = mcscf::product_index(alpha, beta, n_unique_beta_);
-        for (const auto& term : determinant_to_structure_terms[determinant]) {
-            if (term.structure_index < 0 || term.structure_index >= n_structures_) {
-                throw std::out_of_range("determinant expansion structure index is out of range");
-            }
-            pending_terms.push_back(PendingSpinTerm{
-                spin_product, StructureTerm{0, term.structure_index, term.coefficient}});
+    if (topology_source != nullptr) {
+        if (n_structures_ != topology_source->n_structures_ ||
+            n_determinants_ != topology_source->n_determinants_ ||
+            n_unique_alpha_ != topology_source->n_unique_alpha_ ||
+            n_unique_beta_ != topology_source->n_unique_beta_) {
+            throw std::invalid_argument("shared structure topology has incompatible dimensions");
         }
-    }
-
-    std::sort(pending_terms.begin(),
-              pending_terms.end(),
-              [](const PendingSpinTerm& left, const PendingSpinTerm& right) {
-                  if (left.spin_product != right.spin_product) {
-                      return left.spin_product < right.spin_product;
-                  }
-                  return left.term.structure < right.term.structure;
-              });
-    spin_products_.reserve(
-        std::min<Eigen::Index>(pending_terms.size(), static_cast<std::size_t>(n_determinants_)));
-    spin_terms_.reserve(pending_terms.size());
-    spin_term_offsets_.reserve(spin_products_.capacity() + 1);
-    spin_term_offsets_.push_back(0);
-    std::size_t pending = 0;
-    while (pending < pending_terms.size()) {
-        const auto spin_product = pending_terms[pending].spin_product;
-        spin_products_.push_back(spin_product);
-        while (pending < pending_terms.size() &&
-               pending_terms[pending].spin_product == spin_product) {
-            const auto structure = pending_terms[pending].term.structure;
-            double coefficient = 0.0;
-            while (pending < pending_terms.size() &&
-                   pending_terms[pending].spin_product == spin_product &&
-                   pending_terms[pending].term.structure == structure) {
-                coefficient += pending_terms[pending].term.coefficient;
-                ++pending;
-            }
-            if (coefficient != 0.0) {
-                spin_terms_.push_back(
-                    StructureTerm{spin_products_.size() - 1, structure, coefficient});
-            }
-        }
-        spin_term_offsets_.push_back(spin_terms_.size());
-    }
-
-    structure_term_offsets_.assign(static_cast<std::size_t>(n_structures_) + 1, 0);
-    for (const StructureTerm& term : spin_terms_) {
-        ++structure_term_offsets_[static_cast<std::size_t>(term.structure) + 1];
-    }
-    for (std::size_t structure = 0; structure < n_structures_; ++structure) {
-        structure_term_offsets_[static_cast<std::size_t>(structure) + 1] +=
-            structure_term_offsets_[static_cast<std::size_t>(structure)];
-    }
-    structure_term_indices_.resize(spin_terms_.size());
-    std::vector<std::size_t> next_structure_term = structure_term_offsets_;
-    for (std::size_t term_index = 0; term_index < spin_terms_.size(); ++term_index) {
-        const std::int64_t structure = spin_terms_[term_index].structure;
-        structure_term_indices_[next_structure_term[structure]++] = term_index;
+        topology_ = topology_source->topology_;
+    } else {
+        topology_ = build_topology(determinant_to_structure_terms, same_spin_pair_cache);
     }
 
     if (direct_ci_) {
-        if (direct_ci_->alpha_transform.occupations() == direct_ci_->beta_transform().occupations())
-            spin_exchange_parity_ = detect_spin_exchange();
-        auto sources = std::make_unique<SpinSources>(
-            spin_products_, n_unique_alpha_, n_unique_beta_, spin_exchange_parity_);
-        sources->alpha_projection = direct_ci_->alpha_transform.projection(sources->alpha_rows);
-        sources->beta_projection = direct_ci_->beta_transform().projection(sources->columns);
-        sources_ = std::move(sources);
-        std::vector<mcscf::ProductIndex> touched;
-        touched.reserve(spin_products_.size());
-        for (std::size_t group = 0; group < spin_products_.size(); ++group)
-            if (spin_term_offsets_[group] != spin_term_offsets_[group + 1])
-                touched.push_back(spin_products_[group]);
-        auto support =
-            std::make_unique<mcscf::ProductSupport>(n_active_orbitals,
-                                                    direct_ci_->alpha_transform.strings(),
-                                                    direct_ci_->beta_transform().strings(),
-                                                    touched);
-        if (profiling::phase_totals().enabled)
-            std::fprintf(stderr,
-                         "XMVB_SUPPORT,structures=%d,alpha=%d,beta=%d,seeds=%zu,full=%d\n",
-                         n_structures_,
-                         n_unique_alpha_,
-                         n_unique_beta_,
-                         touched.size(),
-                         support->full());
-        if (!support->full())
-            product_support_ = std::move(support);
+        if (topology_source != nullptr && topology_source->direct_ci_) {
+            spin_exchange_parity_ = topology_source->spin_exchange_parity_;
+            product_support_ = topology_source->product_support_;
+            sources_ = topology_source->sources_;
+        } else {
+            if (direct_ci_->alpha_transform.occupations() ==
+                direct_ci_->beta_transform().occupations())
+                spin_exchange_parity_ = detect_spin_exchange();
+            auto sources = std::make_shared<SpinSources>(
+                topology_->products, n_unique_alpha_, n_unique_beta_, spin_exchange_parity_);
+            // Projection plans only index the fixed shear graph, including zero
+            // coefficients. The transforms still own their point-dependent values.
+            sources->alpha_projection = direct_ci_->alpha_transform.projection(sources->alpha_rows);
+            sources->beta_projection = direct_ci_->beta_transform().projection(sources->columns);
+            sources_ = std::move(sources);
+            std::vector<mcscf::ProductIndex> touched;
+
+            touched.reserve(topology_->products.size());
+            for (std::size_t group = 0; group < topology_->products.size(); ++group)
+                if (topology_->offsets[group] != topology_->offsets[group + 1])
+                    touched.push_back(topology_->products[group]);
+            auto support =
+                std::make_shared<mcscf::ProductSupport>(n_active_orbitals,
+                                                        direct_ci_->alpha_transform.strings(),
+                                                        direct_ci_->beta_transform().strings(),
+                                                        touched);
+            if (profiling::phase_totals().enabled)
+                std::fprintf(stderr,
+                             "XMVB_SUPPORT,structures=%d,alpha=%d,beta=%d,seeds=%zu,full=%d\n",
+                             n_structures_,
+                             n_unique_alpha_,
+                             n_unique_beta_,
+                             touched.size(),
+                             support->full());
+            if (!support->full())
+                product_support_ = std::move(support);
+        }
         source_contraction_ = prefer_source_contraction(
             direct_ci_->alpha_transform, direct_ci_->beta_transform(), direct_ci_->sigma);
         // A sparse original source benefits from operator-first neighborhoods.
         // Full original support retains its complete-space contraction order.
         const auto order = mcscf::RawCiPlan::work(direct_ci_->sigma.alpha_connections(),
                                                   direct_ci_->sigma.beta_connections_view(),
-                                                  spin_products_.size());
-        if (spin_products_.size() < static_cast<std::size_t>(n_unique_alpha_) * n_unique_beta_ &&
+                                                  topology_->products.size());
+        if (topology_->products.size() <
+                static_cast<std::size_t>(n_unique_alpha_) * n_unique_beta_ &&
             order.prefer_source()) {
             auto candidate =
                 std::make_unique<OperatorFirstAction>(orthogonal_view(),
@@ -651,7 +685,8 @@ StructureAction::StructureAction(
     if (!direct_ci_ && direct_ci_plan.carrier_complete()) {
         // Transport and metric factors share this topology with every H backend.
         // No CI sigma, transformed integrals, or physical product arrays are built.
-        sources_ = std::make_unique<SpinSources>(spin_products_, n_unique_alpha_, n_unique_beta_);
+        sources_ =
+            std::make_unique<SpinSources>(topology_->products, n_unique_alpha_, n_unique_beta_);
     }
 
     if (mode == StructureActionMode::ActionOnly)
@@ -677,16 +712,17 @@ StructureAction::StructureAction(
     for (std::size_t structure = 0; structure < n_structures_; ++structure) {
         double hamiltonian = 0.0;
         double overlap = 0.0;
-        const std::size_t first = structure_term_offsets_[structure];
-        const std::size_t last = structure_term_offsets_[structure + 1];
+        const std::size_t first = topology_->structure_offsets[structure];
+        const std::size_t last = topology_->structure_offsets[structure + 1];
         for (std::size_t left_position = first; left_position < last; ++left_position) {
-            const StructureTerm& left = spin_terms_[structure_term_indices_[left_position]];
+            const StructureTerm& left = topology_->terms[topology_->structure_terms[left_position]];
             for (std::size_t right_position = first; right_position < last; ++right_position) {
-                const StructureTerm& right = spin_terms_[structure_term_indices_[right_position]];
+                const StructureTerm& right =
+                    topology_->terms[topology_->structure_terms[right_position]];
                 const DeterminantPairScalars pair =
                     evaluate_spin_product_pair(same_spin_pair_cache,
-                                               spin_products_[left.group],
-                                               spin_products_[right.group],
+                                               topology_->products[left.group],
+                                               topology_->products[right.group],
                                                n_unique_beta_,
                                                two_electron_view,
                                                n_active_orbitals,
@@ -703,26 +739,36 @@ StructureAction::StructureAction(
 
 Eigen::MatrixXd StructureAction::contract_spin_product_block(
     const Eigen::Ref<const Eigen::MatrixXd>& spin_images) const {
+    return contract_spin_product_block(spin_images, 0);
+}
+
+Eigen::MatrixXd StructureAction::contract_spin_product_block(
+    const Eigen::Ref<const Eigen::MatrixXd>& spin_images, int exchange_parity) const {
     if (spin_images.rows() != n_unique_alpha_ || spin_images.cols() <= 0 ||
         spin_images.cols() % n_unique_beta_ != 0) {
         throw std::invalid_argument(
             "unique-string-product image block has incompatible dimensions");
     }
-    const int block_width = core::checked_index<std::int64_t>(spin_images.cols()) / n_unique_beta_;
+    const Eigen::Index block_width = spin_images.cols() / n_unique_beta_;
     Eigen::MatrixXd result = Eigen::MatrixXd::Zero(n_structures_, block_width);
     const int n_threads = std::max<Eigen::Index>(
         1, std::min<Eigen::Index>(xmvb::effective_openmp_thread_count(), n_structures_));
 #pragma omp parallel for schedule(static) if (n_threads > 1) num_threads(n_threads)
     for (std::size_t structure = 0; structure < n_structures_; ++structure) {
-        for (std::size_t position = structure_term_offsets_[structure];
-             position < structure_term_offsets_[structure + 1];
+        for (std::size_t position = topology_->structure_offsets[structure];
+             position < topology_->structure_offsets[structure + 1];
              ++position) {
-            const StructureTerm& term = spin_terms_[structure_term_indices_[position]];
-            const std::int64_t alpha = spin_products_[term.group] / n_unique_beta_;
-            const std::int64_t beta = spin_products_[term.group] % n_unique_beta_;
-            for (int vector = 0; vector < block_width; ++vector) {
-                result(structure, vector) +=
-                    term.coefficient * spin_images(alpha, vector * n_unique_beta_ + beta);
+            const StructureTerm& term = topology_->terms[topology_->structure_terms[position]];
+            const std::int64_t alpha = topology_->products[term.group] / n_unique_beta_;
+            const std::int64_t beta = topology_->products[term.group] % n_unique_beta_;
+            if (exchange_parity != 0 && alpha > beta)
+                continue;
+            for (Eigen::Index vector = 0; vector < block_width; ++vector) {
+                const auto column_offset = vector * n_unique_beta_;
+                double image = spin_images(alpha, column_offset + beta);
+                if (exchange_parity != 0 && alpha < beta)
+                    image += exchange_parity * spin_images(beta, column_offset + alpha);
+                result(structure, vector) += term.coefficient * image;
             }
         }
     }
@@ -749,15 +795,16 @@ void StructureAction::add_spin_product_tile(const Eigen::Ref<const Eigen::Matrix
         const std::int64_t alpha = alpha_begin + alpha_local;
         const auto first_product = mcscf::product_index(alpha, beta_begin, n_unique_beta_);
         const auto last_product = first_product + beta_size;
-        auto group = std::lower_bound(spin_products_.begin(), spin_products_.end(), first_product);
-        while (group != spin_products_.end() && *group < last_product) {
+        auto group =
+            std::lower_bound(topology_->products.begin(), topology_->products.end(), first_product);
+        while (group != topology_->products.end() && *group < last_product) {
             const std::size_t group_index =
-                static_cast<std::size_t>(group - spin_products_.begin());
+                static_cast<std::size_t>(group - topology_->products.begin());
             const std::int64_t beta_local = *group - first_product;
-            for (std::size_t term_index = spin_term_offsets_[group_index];
-                 term_index < spin_term_offsets_[group_index + 1];
+            for (std::size_t term_index = topology_->offsets[group_index];
+                 term_index < topology_->offsets[group_index + 1];
                  ++term_index) {
-                const StructureTerm& term = spin_terms_[term_index];
+                const StructureTerm& term = topology_->terms[term_index];
                 for (int vector = 0; vector < block_width; ++vector) {
                     (*structure_images)(term.structure, vector) +=
                         term.coefficient *
@@ -771,29 +818,41 @@ void StructureAction::add_spin_product_tile(const Eigen::Ref<const Eigen::Matrix
 
 Eigen::MatrixXd
 StructureAction::expand_structure_block(const Eigen::Ref<const Eigen::MatrixXd>& vectors) const {
+    return expand_structure_block(vectors, 0);
+}
+
+Eigen::MatrixXd StructureAction::expand_structure_block(
+    const Eigen::Ref<const Eigen::MatrixXd>& vectors, int exchange_parity) const {
     if (vectors.rows() != n_structures_ || vectors.cols() <= 0) {
         throw std::invalid_argument("structure vector block has incompatible dimensions");
     }
 
-    const int block_width = core::checked_index<std::int64_t>(vectors.cols());
-    Eigen::MatrixXd spin_vectors =
-        Eigen::MatrixXd::Zero(n_unique_alpha_, block_width * n_unique_beta_);
-    const auto n_groups = spin_products_.size();
+    const Eigen::Index block_width = vectors.cols();
+    Eigen::MatrixXd spin_vectors(n_unique_alpha_, block_width * n_unique_beta_);
+    const auto n_groups = topology_->products.size();
+    if (n_groups != static_cast<std::size_t>(n_unique_alpha_) * n_unique_beta_)
+        spin_vectors.setZero();
     const int n_threads = std::max<std::size_t>(
         1, std::min<std::size_t>(xmvb::effective_openmp_thread_count(), n_groups));
 #pragma omp parallel for schedule(static) if (n_threads > 1) num_threads(n_threads)
     for (std::size_t group = 0; group < n_groups; ++group) {
-        const auto spin_product = spin_products_[group];
+        const auto spin_product = topology_->products[group];
         const std::int64_t alpha = spin_product / n_unique_beta_;
         const std::int64_t beta = spin_product % n_unique_beta_;
-        for (std::size_t term_index = spin_term_offsets_[group];
-             term_index < spin_term_offsets_[group + 1];
-             ++term_index) {
-            const StructureTerm& term = spin_terms_[term_index];
-            for (int vector = 0; vector < block_width; ++vector) {
-                spin_vectors(alpha, vector * n_unique_beta_ + beta) +=
-                    term.coefficient * vectors(term.structure, vector);
+        if (exchange_parity != 0 && alpha > beta)
+            continue;
+        for (Eigen::Index vector = 0; vector < block_width; ++vector) {
+            double value = 0.0;
+            for (std::size_t term_index = topology_->offsets[group];
+                 term_index < topology_->offsets[group + 1];
+                 ++term_index) {
+                const StructureTerm& term = topology_->terms[term_index];
+                value += term.coefficient * vectors(term.structure, vector);
             }
+            const auto column_offset = vector * n_unique_beta_;
+            spin_vectors(alpha, column_offset + beta) = value;
+            if (exchange_parity != 0 && alpha < beta)
+                spin_vectors(beta, column_offset + alpha) = exchange_parity * value;
         }
     }
     return spin_vectors;
@@ -819,15 +878,16 @@ StructureAction::expand_structure_tile(const Eigen::Ref<const Eigen::MatrixXd>& 
         const std::int64_t alpha = alpha_begin + alpha_local;
         const auto first_product = mcscf::product_index(alpha, beta_begin, n_unique_beta_);
         const auto last_product = first_product + beta_size;
-        auto group = std::lower_bound(spin_products_.begin(), spin_products_.end(), first_product);
-        while (group != spin_products_.end() && *group < last_product) {
+        auto group =
+            std::lower_bound(topology_->products.begin(), topology_->products.end(), first_product);
+        while (group != topology_->products.end() && *group < last_product) {
             const std::size_t group_index =
-                static_cast<std::size_t>(group - spin_products_.begin());
+                static_cast<std::size_t>(group - topology_->products.begin());
             const std::int64_t beta_local = *group - first_product;
-            for (std::size_t term_index = spin_term_offsets_[group_index];
-                 term_index < spin_term_offsets_[group_index + 1];
+            for (std::size_t term_index = topology_->offsets[group_index];
+                 term_index < topology_->offsets[group_index + 1];
                  ++term_index) {
-                const StructureTerm& term = spin_terms_[term_index];
+                const StructureTerm& term = topology_->terms[term_index];
                 for (int vector = 0; vector < block_width; ++vector) {
                     tile(alpha_local, vector * beta_size + beta_local) +=
                         term.coefficient * vectors(term.structure, vector);
@@ -1049,9 +1109,28 @@ StructureAction::complete_space_residual_norm(const Eigen::Ref<const Eigen::Vect
     return residual.stableNorm() / norm;
 }
 
-Eigen::MatrixXd
-StructureAction::apply_carrier_hamiltonian(const Eigen::Ref<const Eigen::MatrixXd>& carrier) const {
-    return direct_ci_->sigma.apply(carrier, spin_exchange_parity_);
+Eigen::MatrixXd StructureAction::apply_recoupled_hamiltonian(
+    const Eigen::Ref<const Eigen::MatrixXd>& vectors) const {
+    using Clock = std::chrono::steady_clock;
+    const bool trace = mcscf::diagnostics::ciah_event_trace_enabled();
+    const auto start = trace ? Clock::now() : Clock::time_point{};
+    const int parity = spin_exchange_parity_;
+    const auto carrier = expand_structure_block(vectors, parity);
+    const auto expanded = trace ? Clock::now() : Clock::time_point{};
+    // W^T P_eta = W^T. Fold both raw output entries into one orientation
+    // of each paired structure term, without projecting the carrier.
+    const auto sigma = direct_ci_->sigma.apply_before_exchange_projection(carrier, parity);
+    const auto contracted = trace ? Clock::now() : Clock::time_point{};
+    auto result = contract_spin_product_block(sigma, parity);
+    if (trace)
+        mcscf::diagnostics::ciah_trace(
+            "ciah_ci_sigma_cost",
+            "parity=%d,expand=%.9f,sigma=%.9f,project=%.9f",
+            parity,
+            std::chrono::duration<double>(expanded - start).count(),
+            std::chrono::duration<double>(contracted - expanded).count(),
+            std::chrono::duration<double>(Clock::now() - contracted).count());
+    return result;
 }
 
 void StructureAction::adjoint_orbital_transform(Eigen::MatrixXd* carrier) const {
@@ -1094,13 +1173,13 @@ StructureAction::OrthogonalView StructureAction::orthogonal_view() const {
     return {direct_ci_->alpha_transform,
             direct_ci_->beta_transform(),
             direct_ci_->sigma,
-            spin_products_,
-            spin_term_offsets_,
-            spin_terms_,
+            topology_->products,
+            topology_->offsets,
+            topology_->terms,
             spin_exchange_parity_,
             product_support_.get(),
-            structure_term_offsets_,
-            structure_term_indices_};
+            topology_->structure_offsets,
+            topology_->structure_terms};
 }
 
 Eigen::MatrixXd
@@ -1371,8 +1450,8 @@ Eigen::MatrixXd StructureAction::source_generator_adjoint(const StructureAdjoint
     if (right != left)
         b = expand_support(state.structure_coefficients.col(right));
     const auto bra = sources_->orthogonal_source(
-        spin_products_, a, direct_ci_->alpha_transform, direct_ci_->beta_transform(), true);
-    const auto ket = sources_->orthogonal_source(spin_products_,
+        topology_->products, a, direct_ci_->alpha_transform, direct_ci_->beta_transform(), true);
+    const auto ket = sources_->orthogonal_source(topology_->products,
                                                  right == left ? a : b,
                                                  direct_ci_->alpha_transform,
                                                  direct_ci_->beta_transform());
@@ -1460,8 +1539,8 @@ StructureAdjointState StructureAction::prepare_active_adjoint(
             continue;
         const Eigen::VectorXd values = expand_support(structure_coefficients.col(state));
         const auto y = sources_->orthogonal_source(
-            spin_products_, values, direct_ci_->alpha_transform, direct_ci_->beta_transform());
-        const auto physical = sources_->orthogonal_source(spin_products_,
+            topology_->products, values, direct_ci_->alpha_transform, direct_ci_->beta_transform());
+        const auto physical = sources_->orthogonal_source(topology_->products,
                                                           values,
                                                           direct_ci_->alpha_transform,
                                                           direct_ci_->beta_transform(),
@@ -1804,11 +1883,11 @@ StructureActionStorage StructureAction::storage() const noexcept {
     if (tiled_pairs_) {
         result.factor_bytes += tiled_pairs_->dynamic_bytes();
     }
-    result.expansion_bytes = spin_products_.size() * sizeof(mcscf::ProductIndex) +
-                             spin_term_offsets_.size() * sizeof(std::size_t) +
-                             spin_terms_.size() * sizeof(StructureTerm) +
-                             structure_term_offsets_.size() * sizeof(std::size_t) +
-                             structure_term_indices_.size() * sizeof(std::size_t);
+    result.expansion_bytes = topology_->products.size() * sizeof(mcscf::ProductIndex) +
+                             topology_->offsets.size() * sizeof(std::size_t) +
+                             topology_->terms.size() * sizeof(StructureTerm) +
+                             topology_->structure_offsets.size() * sizeof(std::size_t) +
+                             topology_->structure_terms.size() * sizeof(std::size_t);
     if (sources_)
         result.expansion_bytes += sources_->dynamic_bytes();
     result.diagonal_bytes = static_cast<std::size_t>(preconditioner_diagonal_.hamiltonian.size() +

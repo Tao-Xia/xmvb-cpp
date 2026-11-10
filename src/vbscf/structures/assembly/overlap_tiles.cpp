@@ -55,8 +55,10 @@ int panel_width(std::size_t bytes, int na, int nb, int columns, int copies) {
 } // namespace
 
 bool StructureAction::shared_overlap_sources() const noexcept {
-    return sources_ && std::all_of(sources_->columns.begin(), sources_->columns.end(),
-                                  [&](Eigen::Index b) { return sources_->beta_groups[b].size() == 1; });
+    return sources_ &&
+           std::all_of(sources_->columns.begin(), sources_->columns.end(), [&](Eigen::Index b) {
+               return sources_->beta_groups[b].size() == 1;
+           });
 }
 
 Eigen::MatrixXd StructureAction::cross_overlap(const Eigen::Ref<const Eigen::MatrixXd>& vectors,
@@ -81,7 +83,7 @@ Eigen::MatrixXd StructureAction::cross_overlap(const Eigen::Ref<const Eigen::Mat
     // maps. Generate each common basis image once, not once per CI RHS.
     const bool singleton = shared_overlap_sources();
     if (singleton && vectors.cols() > 1) {
-        const std::size_t groups = spin_products_.size();
+        const std::size_t groups = topology_->products.size();
         const std::size_t factor_rows =
             (directional ? 4 : 2) * (static_cast<std::size_t>(n_unique_alpha_) + n_unique_beta_);
         // Source factors do not depend on the CI RHS. Project each factor panel
@@ -102,8 +104,8 @@ Eigen::MatrixXd StructureAction::cross_overlap(const Eigen::Ref<const Eigen::Mat
                 Factor a(n_unique_alpha_, count, directional),
                     b(n_unique_beta_, count, directional);
                 for (int j = 0; j < count; ++j) {
-                    a.value(spin_products_[begin + j] / n_unique_beta_, j) = 1;
-                    b.value(spin_products_[begin + j] % n_unique_beta_, j) = 1;
+                    a.value(topology_->products[begin + j] / n_unique_beta_, j) = 1;
+                    b.value(topology_->products[begin + j] % n_unique_beta_, j) = 1;
                 }
                 transform(ra, dra, a);
                 transform(la, dla, a, true);
@@ -112,11 +114,12 @@ Eigen::MatrixXd StructureAction::cross_overlap(const Eigen::Ref<const Eigen::Mat
                 Eigen::MatrixXd projected = Eigen::MatrixXd::Zero(n_structures_, count);
 #pragma omp parallel for schedule(static) if (n_structures_ > 32)
                 for (Eigen::Index s = 0; s < n_structures_; ++s)
-                    for (auto t = structure_term_offsets_[s]; t < structure_term_offsets_[s + 1];
+                    for (auto t = topology_->structure_offsets[s];
+                         t < topology_->structure_offsets[s + 1];
                          ++t) {
-                        const auto& term = spin_terms_[structure_term_indices_[t]];
-                        const std::int64_t ai = spin_products_[term.group] / n_unique_beta_;
-                        const std::int64_t bi = spin_products_[term.group] % n_unique_beta_;
+                        const auto& term = topology_->terms[topology_->structure_terms[t]];
+                        const std::int64_t ai = topology_->products[term.group] / n_unique_beta_;
+                        const std::int64_t bi = topology_->products[term.group] % n_unique_beta_;
                         if (directional)
                             projected.row(s).array() +=
                                 term.coefficient *
@@ -131,10 +134,10 @@ Eigen::MatrixXd StructureAction::cross_overlap(const Eigen::Ref<const Eigen::Mat
                     Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(count, count_rhs);
 #pragma omp parallel for schedule(static) if (count > 32)
                     for (int j = 0; j < count; ++j)
-                        for (auto t = spin_term_offsets_[begin + j];
-                             t < spin_term_offsets_[begin + j + 1];
+                        for (auto t = topology_->offsets[begin + j];
+                             t < topology_->offsets[begin + j + 1];
                              ++t) {
-                            const auto& term = spin_terms_[t];
+                            const auto& term = topology_->terms[t];
                             coefficients.row(j).noalias() +=
                                 term.coefficient *
                                 vectors.row(term.structure).segment(first, count_rhs);
@@ -152,14 +155,14 @@ Eigen::MatrixXd StructureAction::cross_overlap(const Eigen::Ref<const Eigen::Mat
                                    directional ? 8 : 4);
     Eigen::MatrixXd result = Eigen::MatrixXd::Zero(n_structures_, vectors.cols());
     for (std::int64_t column = 0; column < vectors.cols(); ++column) {
-        Eigen::VectorXd coefficients = Eigen::VectorXd::Zero(spin_products_.size());
-        Eigen::VectorXd products = Eigen::VectorXd::Zero(spin_products_.size());
-#pragma omp parallel for schedule(static) if (spin_products_.size() > 32)
-        for (std::size_t group = 0; group < spin_products_.size(); ++group)
-            for (std::size_t term = spin_term_offsets_[group]; term < spin_term_offsets_[group + 1];
+        Eigen::VectorXd coefficients = Eigen::VectorXd::Zero(topology_->products.size());
+        Eigen::VectorXd products = Eigen::VectorXd::Zero(topology_->products.size());
+#pragma omp parallel for schedule(static) if (topology_->products.size() > 32)
+        for (std::size_t group = 0; group < topology_->products.size(); ++group)
+            for (std::size_t term = topology_->offsets[group]; term < topology_->offsets[group + 1];
                  ++term)
-                coefficients[group] +=
-                    spin_terms_[term].coefficient * vectors(spin_terms_[term].structure, column);
+                coefficients[group] += topology_->terms[term].coefficient *
+                                       vectors(topology_->terms[term].structure, column);
 
         for (std::int64_t begin = 0;
              begin < core::checked_index<std::int64_t>(sources.columns.size());
@@ -170,7 +173,7 @@ Eigen::MatrixXd StructureAction::cross_overlap(const Eigen::Ref<const Eigen::Mat
                 const std::int64_t beta = sources.columns[begin + j];
                 b.value(beta, j) = 1.0;
                 for (const auto group : sources.beta_groups[beta])
-                    a.value(spin_products_[group] / n_unique_beta_, j) = coefficients[group];
+                    a.value(topology_->products[group] / n_unique_beta_, j) = coefficients[group];
             }
             // K_alpha X_J and K_beta E_J, with K_sigma = T_left^T T_right.
             // Associativity removes the transformed alpha-by-beta product entirely.
@@ -178,10 +181,10 @@ Eigen::MatrixXd StructureAction::cross_overlap(const Eigen::Ref<const Eigen::Mat
             transform(la, dla, a, true);
             transform(rb, drb, b);
             transform(lb, dlb, b, true);
-#pragma omp parallel for schedule(static) if (spin_products_.size() > 32)
-            for (std::size_t group = 0; group < spin_products_.size(); ++group) {
-                const std::int64_t alpha = spin_products_[group] / n_unique_beta_;
-                const std::int64_t beta = spin_products_[group] % n_unique_beta_;
+#pragma omp parallel for schedule(static) if (topology_->products.size() > 32)
+            for (std::size_t group = 0; group < topology_->products.size(); ++group) {
+                const std::int64_t alpha = topology_->products[group] / n_unique_beta_;
+                const std::int64_t beta = topology_->products[group] % n_unique_beta_;
                 products[group] += directional ? a.tangent.row(alpha).dot(b.value.row(beta)) +
                                                      a.value.row(alpha).dot(b.tangent.row(beta))
                                                : a.value.row(alpha).dot(b.value.row(beta));
@@ -189,10 +192,10 @@ Eigen::MatrixXd StructureAction::cross_overlap(const Eigen::Ref<const Eigen::Mat
         }
 #pragma omp parallel for schedule(static) if (n_structures_ > 32)
         for (Eigen::Index structure = 0; structure < n_structures_; ++structure)
-            for (std::size_t offset = structure_term_offsets_[structure];
-                 offset < structure_term_offsets_[structure + 1];
+            for (std::size_t offset = topology_->structure_offsets[structure];
+                 offset < topology_->structure_offsets[structure + 1];
                  ++offset) {
-                const auto& term = spin_terms_[structure_term_indices_[offset]];
+                const auto& term = topology_->terms[topology_->structure_terms[offset]];
                 result(structure, column) += term.coefficient * products[term.group];
             }
     }
@@ -242,11 +245,11 @@ UpperPair StructureAction::cross_overlap_adjoint(const Eigen::VectorXd& left,
         dra = ra.direction(*delta_right);
         drb = rb.direction(*delta_right);
     }
-    Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(spin_products_.size(), 2);
-#pragma omp parallel for schedule(static) if (spin_products_.size() > 32)
-    for (std::size_t group = 0; group < spin_products_.size(); ++group)
-        for (std::size_t t = spin_term_offsets_[group]; t < spin_term_offsets_[group + 1]; ++t) {
-            const auto& term = spin_terms_[t];
+    Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(topology_->products.size(), 2);
+#pragma omp parallel for schedule(static) if (topology_->products.size() > 32)
+    for (std::size_t group = 0; group < topology_->products.size(); ++group)
+        for (std::size_t t = topology_->offsets[group]; t < topology_->offsets[group + 1]; ++t) {
+            const auto& term = topology_->terms[t];
             coefficients(group, 0) += term.coefficient * left[term.structure];
             coefficients(group, 1) += term.coefficient * right[term.structure];
         }
@@ -261,7 +264,7 @@ UpperPair StructureAction::cross_overlap_adjoint(const Eigen::VectorXd& left,
             const std::int64_t beta = sources.columns[begin + j];
             v.value(beta, j) = 1.0;
             for (const auto group : sources.beta_groups[beta])
-                u.value(spin_products_[group] / n_unique_beta_, j) = coefficients(group, 1);
+                u.value(topology_->products[group] / n_unique_beta_, j) = coefficients(group, 1);
         }
         transform(ra, directional ? &dra : nullptr, u);
         transform(rb, directional ? &drb : nullptr, v);
@@ -275,7 +278,7 @@ UpperPair StructureAction::cross_overlap_adjoint(const Eigen::VectorXd& left,
             for (std::size_t group = sources.alpha_offsets[alpha];
                  group < sources.alpha_offsets[alpha + 1];
                  ++group) {
-                const std::int64_t beta = spin_products_[group] % n_unique_beta_;
+                const std::int64_t beta = topology_->products[group] % n_unique_beta_;
                 za.value.row(alpha).noalias() += coefficients(group, 0) * b.value.row(beta);
                 if (directional)
                     za.tangent.row(alpha).noalias() += coefficients(group, 0) * b.tangent.row(beta);
@@ -283,7 +286,7 @@ UpperPair StructureAction::cross_overlap_adjoint(const Eigen::VectorXd& left,
 #pragma omp parallel for schedule(static) if (n_unique_beta_ > 32)
         for (std::int64_t beta = 0; beta < n_unique_beta_; ++beta)
             for (const auto group : sources.beta_groups[beta]) {
-                const std::int64_t alpha = spin_products_[group] / n_unique_beta_;
+                const std::int64_t alpha = topology_->products[group] / n_unique_beta_;
                 zb.value.row(beta).noalias() += coefficients(group, 0) * a.value.row(alpha);
                 if (directional)
                     zb.tangent.row(beta).noalias() += coefficients(group, 0) * a.tangent.row(alpha);

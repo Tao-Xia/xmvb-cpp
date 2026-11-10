@@ -63,11 +63,11 @@ StructureAction::cross_overlap_transport_gradient(const Eigen::VectorXd& lambda,
             if (alpha) {
                 for (Eigen::Index ai = 0; ai < n_unique_alpha_; ++ai)
                     for (auto g = sources.alpha_offsets[ai]; g < sources.alpha_offsets[ai + 1]; ++g)
-                        out[ai] += weights[g] * in[spin_products_[g] % n_unique_beta_];
+                        out[ai] += weights[g] * in[topology_->products[g] % n_unique_beta_];
             } else {
                 for (Eigen::Index bi = 0; bi < n_unique_beta_; ++bi)
                     for (const auto g : sources.beta_groups[bi])
-                        out[bi] += weights[g] * in[spin_products_[g] / n_unique_beta_];
+                        out[bi] += weights[g] * in[topology_->products[g] / n_unique_beta_];
             }
         });
         to.apply_left(&image);
@@ -82,9 +82,9 @@ StructureAction::cross_overlap_transport_gradient(const Eigen::VectorXd& lambda,
             const std::int64_t b = sources.columns[begin + j];
             v(b, j) = vc(b, j) = 1;
             for (const auto g : sources.beta_groups[b]) {
-                const std::int64_t a = spin_products_[g] / n_unique_beta_;
-                for (auto t = spin_term_offsets_[g]; t < spin_term_offsets_[g + 1]; ++t) {
-                    const auto& term = spin_terms_[t];
+                const std::int64_t a = topology_->products[g] / n_unique_beta_;
+                for (auto t = topology_->offsets[g]; t < topology_->offsets[g + 1]; ++t) {
+                    const auto& term = topology_->terms[t];
                     u(a, j) += term.coefficient * reference[term.structure];
                     ub(a, j) += term.coefficient * base[term.structure];
                     uc(a, j) += term.coefficient * transported[term.structure];
@@ -131,9 +131,9 @@ StructureAction::cross_overlap_transport_gradient(const Eigen::VectorXd& lambda,
             oa.apply_adjoint_left_block(first_left);
             for (int j = 0; j < count; ++j)
                 for (const auto g : sources.beta_groups[sources.columns[begin + j]]) {
-                    const double value = first_left(spin_products_[g] / n_unique_beta_, j);
-                    for (auto t = spin_term_offsets_[g]; t < spin_term_offsets_[g + 1]; ++t) {
-                        const auto& term = spin_terms_[t];
+                    const double value = first_left(topology_->products[g] / n_unique_beta_, j);
+                    for (auto t = topology_->offsets[g]; t < topology_->offsets[g + 1]; ++t) {
+                        const auto& term = topology_->terms[t];
                         result.image[term.structure] += term.coefficient * value;
                     }
                 }

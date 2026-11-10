@@ -62,14 +62,20 @@ class StateJet {
         StateJet get_return_object() noexcept {
             return StateJet{std::coroutine_handle<promise_type>::from_promise(*this)};
         }
-        std::suspend_always initial_suspend() const noexcept { return {}; }
-        std::suspend_always final_suspend() const noexcept { return {}; }
+        std::suspend_always initial_suspend() const noexcept {
+            return {};
+        }
+        std::suspend_always final_suspend() const noexcept {
+            return {};
+        }
         std::suspend_always yield_value(StateSigma& value) noexcept {
             sigma = &value;
             return {};
         }
         void return_void() const noexcept {}
-        void unhandled_exception() noexcept { error = std::current_exception(); }
+        void unhandled_exception() noexcept {
+            error = std::current_exception();
+        }
     };
 
     StateJet(StateJet&& other) noexcept : handle_(std::exchange(other.handle_, {})) {}
@@ -82,7 +88,9 @@ class StateJet {
         if (handle_.promise().error)
             std::rethrow_exception(handle_.promise().error);
     }
-    StateSigma& sigma() const noexcept { return *handle_.promise().sigma; }
+    StateSigma& sigma() const noexcept {
+        return *handle_.promise().sigma;
+    }
 
   private:
     explicit StateJet(std::coroutine_handle<promise_type> handle) noexcept : handle_(handle) {}
@@ -178,7 +186,7 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
     int sampled_beta_columns = 0;
     for (const int panel : reachable)
         sampled_beta_columns += std::min<Eigen::Index>(extent, n_unique_beta_ - panel * extent);
-    const bool ordered_beta = detail::prefer_ordered_beta(spin_products_.size(),
+    const bool ordered_beta = detail::prefer_ordered_beta(topology_->products.size(),
                                                           n_unique_alpha_,
                                                           n_unique_beta_,
                                                           beta.shear_pair_count(),
@@ -271,8 +279,7 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
     // projection images and output caches separately before opening a group.
     const auto state_capacity =
         projection_bytes / (16 * sizeof(double)) / n_unique_alpha_ / n_unique_beta_;
-    const int group_width =
-        std::max<std::size_t>(1, std::min<std::size_t>(states, state_capacity));
+    const int group_width = std::max<std::size_t>(1, std::min<std::size_t>(states, state_capacity));
     const auto state_jet = [&](int state_id) -> StateJet {
         const double weight = state.weights[state_id], energy = state.energies[state_id];
         const bool cached = cached_state(state_id);
@@ -377,11 +384,11 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
                     cooperative_openmp_for(n_unique_alpha_, workers, [&](std::ptrdiff_t a) {
                         const auto first_product = mcscf::product_index(a, 0, n_unique_beta_);
                         auto group = std::lower_bound(
-                            spin_products_.begin(), spin_products_.end(), first_product);
-                        for (; group != spin_products_.end() &&
+                            topology_->products.begin(), topology_->products.end(), first_product);
+                        for (; group != topology_->products.end() &&
                                *group < first_product + n_unique_beta_;
                              ++group) {
-                            const auto id = group - spin_products_.begin();
+                            const auto id = group - topology_->products.begin();
                             const std::int64_t b = *group - first_product;
                             if (coefficients.size())
                                 primal.row(a).noalias() +=
@@ -678,7 +685,7 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
             [&](int block) {
                 const auto begin = static_cast<std::size_t>(block) * group_extent;
                 const auto count =
-                    std::min<Eigen::Index>(group_extent, spin_products_.size() - begin);
+                    std::min<Eigen::Index>(group_extent, topology_->products.size() - begin);
                 auto pattern = std::make_shared<detail::ColumnPattern>();
                 pattern->full = true;
                 pattern->offsets.resize(2);
@@ -695,8 +702,8 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
                         if (value == 0.0)
                             continue;
                         const auto g = begin + local;
-                        for (auto t = spin_term_offsets_[g]; t < spin_term_offsets_[g + 1]; ++t) {
-                            const auto& term = spin_terms_[t];
+                        for (auto t = topology_->offsets[g]; t < topology_->offsets[g + 1]; ++t) {
+                            const auto& term = topology_->terms[t];
                             projection_targets[target][term.structure] += term.coefficient * value;
                         }
                     }
@@ -704,7 +711,8 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
             [&](int block) {
                 const auto begin = static_cast<std::size_t>(block) * group_extent;
                 return sizeof(double) *
-                           std::min<Eigen::Index>(group_extent, spin_products_.size() - begin) *
+                           std::min<Eigen::Index>(group_extent,
+                                                  topology_->products.size() - begin) *
                            projection_count +
                        2 * sizeof(int);
             });
@@ -773,16 +781,16 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
             if (differentiate)
                 dr = beta_directions.get(panel).unpack(n_unique_beta_).transpose();
             workspace::Temporary dr_temporary(sizeof(double) * dr.size());
-            for (std::size_t begin = 0; begin < spin_products_.size(); begin += group_extent) {
+            for (std::size_t begin = 0; begin < topology_->products.size(); begin += group_extent) {
                 auto& tile = projections.get(begin / group_extent);
                 const auto size =
-                    std::min<Eigen::Index>(group_extent, spin_products_.size() - begin);
+                    std::min<Eigen::Index>(group_extent, topology_->products.size() - begin);
                 const int workers = coarse_openmp_thread_count(cooperative_openmp_thread_count(),
                                                                size * count * lane);
                 cooperative_openmp_for(size, workers, [&](std::ptrdiff_t local) {
                     const auto g = begin + local;
-                    const std::int64_t a = spin_products_[g] / n_unique_beta_,
-                                       b = spin_products_[g] % n_unique_beta_;
+                    const std::int64_t a = topology_->products[g] / n_unique_beta_,
+                                       b = topology_->products[g] % n_unique_beta_;
                     for (int v = 0; v < lane; ++v)
                         tile.values(local, target_ids[v]) +=
                             differentiate
@@ -1090,14 +1098,18 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
                 const auto forcing_writer =
                     forcing ? writer(w - 1, 1, forcing_slot) : mcscf::DirectCiTileWriter{};
                 if (joint) {
-                    sigma_work.requests.push_back(
-                        {interleaved_reader(q_reader, w, w - 1), writer(w - 1, 1, q_slot),
-                         nullptr, {}, right});
+                    sigma_work.requests.push_back({interleaved_reader(q_reader, w, w - 1),
+                                                   writer(w - 1, 1, q_slot),
+                                                   nullptr,
+                                                   {},
+                                                   right});
                     sigma_work.requests.push_back({read, add, delta_sigma, forcing_writer});
                 } else
-                    sigma_work.requests.push_back(
-                        {read, add, delta_sigma, forcing_writer,
-                         tangent ? right : mcscf::DirectCiTileReader{}});
+                    sigma_work.requests.push_back({read,
+                                                   add,
+                                                   delta_sigma,
+                                                   forcing_writer,
+                                                   tangent ? right : mcscf::DirectCiTileReader{}});
                 co_yield sigma_work;
                 project_accepted_connection();
                 if (joint) {
@@ -1302,9 +1314,13 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
             for (const auto& jet : batch)
                 jet.sigma().release(columns);
         };
-        auto adjoints = sigma.apply_tiled_responses(
-            batch.front().sigma().width, requests, {}, support, spin_exchange_parity_,
-            release, work_bytes);
+        auto adjoints = sigma.apply_tiled_responses(batch.front().sigma().width,
+                                                    requests,
+                                                    {},
+                                                    support,
+                                                    spin_exchange_parity_,
+                                                    release,
+                                                    work_bytes);
         ++result.images.tiles.integral_adjoint_sweeps;
         std::size_t next = 0;
         for (auto& jet : batch) {
