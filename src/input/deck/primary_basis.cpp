@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <cctype>
+#include <cstdlib>
 #include <fstream>
 #include <optional>
 #include <set>
@@ -219,6 +220,13 @@ std::filesystem::path resolve_basis_file_path(const std::string& basis_leaf_name
     const fs::path direct_path(basis_leaf_name);
     if (fs::exists(direct_path)) {
         return fs::absolute(direct_path);
+    }
+
+    if (const char* basis_dir = std::getenv("XMVB_BASIS_DIR"); basis_dir && *basis_dir) {
+        const fs::path candidate = fs::path(basis_dir) / basis_leaf_name;
+        if (fs::is_regular_file(candidate)) {
+            return fs::absolute(candidate);
+        }
     }
 
     fs::path current_path = fs::current_path();

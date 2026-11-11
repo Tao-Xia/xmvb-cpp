@@ -460,6 +460,7 @@ add_executable(xmvb
   cli/dft.cpp
   cli/casscf.cpp)
 set_target_properties(xmvb PROPERTIES OUTPUT_NAME xmvb-cpp.exe)
+install(TARGETS xmvb RUNTIME DESTINATION bin COMPONENT xmvb-program)
 target_link_libraries(xmvb
   PRIVATE
     xmvb_input

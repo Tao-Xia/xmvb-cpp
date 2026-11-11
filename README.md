@@ -50,23 +50,15 @@ counts use `n_bf`; active orbital counts use `n_active`.
 | [libcint](https://github.com/sunqm/libcint) | Gaussian integral evaluation |
 | [libxc](https://www.tddft.org/programs/libxc/) | Exchange-correlation functionals |
 
-## Build
+## Binary distribution
 
-Use a C++23 compiler (tested with GCC14), CMake3.20 or newer, and an environment providing ninja, eigen, openblas (with LAPACKE headers), libxc, and libcint, then build with CMake:
+The Linux CPU distribution consists of a reusable Apptainer runtime SIF and a
+versioned program archive. Select them with `XMVB_RUNTIME_IMAGE` and
+`XMVB_PROGRAM_DIR`, then run `"$XMVB_PROGRAM_DIR/bin/xmvb" input.xmi`.
+The program archive includes basis files and a CIAH example.
 
-```bash
-cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build --parallel
-```
-
-This produces `build/src/xmvb-cpp.exe`.
-
-To enable optional diagnostic and test targets:
-
-```bash
-cmake -B build -G Ninja -DXMVB_BUILD_DEV_TARGETS=ON
-cmake --build build
-```
+See [BUILDING.md](BUILDING.md) for installation, source compilation, the CPU
+Release preset and the persistent release-build cache.
 
 ## C++ and CUDA code style
 

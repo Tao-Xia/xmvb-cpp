@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+: "${XMVB_RUNTIME_IMAGE:?Set XMVB_RUNTIME_IMAGE to the runtime SIF path}"
+program_dir="${XMVB_PROGRAM_DIR:-$(dirname "$(dirname "$(readlink -f -- "${BASH_SOURCE[0]}")")")}"
+program_dir="$(realpath "$program_dir")"
+test -s "$program_dir/share/RUNTIME_ID"
+exec apptainer exec --cleanenv \
+    --bind "$program_dir:/opt/xmvb/program:ro" --bind "$PWD:$PWD" \
+    --env "OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}" \
+    --env "OPENBLAS_NUM_THREADS=${OPENBLAS_NUM_THREADS:-1}" \
+    --env XMVB_BASIS_DIR=/opt/xmvb/program/share/basis \
+    "$XMVB_RUNTIME_IMAGE" /bin/bash -ec '
+        if ! cmp -s /opt/xmvb/runtime-id /opt/xmvb/program/share/RUNTIME_ID; then
+            echo "Program package requires a different XMVB runtime" >&2
+            exit 2
+        fi
+        exec /opt/xmvb/program/bin/xmvb-cpp.exe "$@"
+    ' -- "$@"
