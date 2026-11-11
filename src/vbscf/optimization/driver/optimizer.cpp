@@ -103,7 +103,8 @@ VbScfOptimizerResult VbScfOptimizer::optimize(VbScfInput input,
     if (!input.orbital_preparation_input.maintain_inactive_gauge) {
         apply_support_preserving_inactive_gauge(&input.orbital_preparation_input);
     }
-    balance_active_gauge(&input.orbital_preparation_input);
+    bool active_inactive_orthogonal = false;
+    balance_active_gauge(&input.orbital_preparation_input, &active_inactive_orthogonal);
     const SparseParameterLayout parameter_view(input.orbital_preparation_input);
     Eigen::VectorXd parameter_vector = parameter_view.pack(input.orbital_preparation_input);
     Eigen::MatrixXd initial_normalized_orbital_matrix;
@@ -116,7 +117,8 @@ VbScfOptimizerResult VbScfOptimizer::optimize(VbScfInput input,
         nuclear_repulsion_energy,
         options_.structure_eigensolver,
         StructureSolveAccuracy{options_.energy_tolerance, options_.gradient_tolerance},
-        &orbital_gradient_evaluator_);
+        &orbital_gradient_evaluator_,
+        active_inactive_orthogonal);
     int n_iterations = 0;
     double final_gradient_l2_norm = 0.0;
     bool final_projected_gradient_ready = false;

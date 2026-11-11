@@ -102,6 +102,11 @@ class OrbitalChart {
         return active_subspace_gauge_;
     }
 
+    /** @brief Whether every active lift uses the full occupied-space complement. */
+    bool has_full_horizontal_active_lift() const noexcept {
+        return full_horizontal_active_lift_;
+    }
+
     StructuralDiagnostics structural_diagnostics() const noexcept;
 
     Eigen::VectorXd project_reduced_gradient(const Eigen::VectorXd& packed_gradient) const;
@@ -173,6 +178,10 @@ class OrbitalChart {
 
     /** @brief Maximum absolute orthogonal-frame rotation represented by a step. */
     double maximum_rotation_component(const Eigen::VectorXd& reduced_step) const;
+
+    /** Linear full-AO rotation map, in the same frame as the component cap. */
+    Eigen::Index rotation_component_count() const noexcept;
+    Eigen::VectorXd frame_rotation_components(const Eigen::Ref<const Eigen::VectorXd>& step) const;
 
     /** @brief Returns the signed analytic Hessian diagonal in reduced order. */
     Eigen::VectorXd augmented_hessian_diagonal() const;
@@ -268,6 +277,7 @@ class OrbitalChart {
 
     std::vector<BlockBasis> block_bases_;
     bool active_subspace_gauge_ = false;
+    bool full_horizontal_active_lift_ = false;
     bool whiten_tangent_ = true;
     int packed_parameter_size_ = 0;
     int reduced_size_ = 0;

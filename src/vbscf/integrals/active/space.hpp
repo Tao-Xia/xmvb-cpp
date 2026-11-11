@@ -10,6 +10,14 @@
 
 namespace xmvb::vb {
 
+struct ActiveFrame;
+
+/** Same-point orbital data borrowed from the finite CI retraction. */
+struct PreparedActiveOrbitalView {
+    const OrbitalPreparationResult& orbitals;
+    const ActiveFrame& frame;
+};
+
 struct PreparedActiveSpaceContext {
     int n_inactive_doubly_occupied_orbitals = 0;
     OrbitalPreparationResult orbital_result;
@@ -42,7 +50,8 @@ double compute_one_electron_reference_energy(
  */
 TimedPreparedActiveSpaceContext
 prepare_timed_active_space_context(const VbScfInput& input,
-                                   const Eigen::MatrixXd* fixed_integral_frame = nullptr);
+                                   const Eigen::MatrixXd* fixed_integral_frame = nullptr,
+                                   const PreparedActiveOrbitalView* prepared_orbitals = nullptr);
 
 /** @brief Map the active ERI adjoint to AO-by-active orbital coefficients.
  * Selects the integral representation; numerical contractions belong to the

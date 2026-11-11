@@ -5,6 +5,7 @@
 #include <Eigen/QR>
 #include <algorithm>
 #include <cmath>
+#include <chrono>
 #include <iomanip>
 #include <iostream>
 #include <string>
@@ -54,10 +55,11 @@ int main(int argc, char** argv) {
                std::string(argv[2]) == "--refine" || std::string(argv[2]) == "--identity" ||
                std::string(argv[2]) == "--repeat" || std::string(argv[2]) == "--soft-mesh" ||
                std::string(argv[2]) == "--dense-ah" || std::string(argv[2]) == "--joint-geometry" ||
-               std::string(argv[2]) == "--selected-curvature")))
+               std::string(argv[2]) == "--selected-curvature" ||
+               std::string(argv[2]) == "--fixed-overlap")))
             throw std::runtime_error("usage: check_ciah_derivatives INPUT.xmi "
                                      "[--refine|--identity|--repeat|--soft-mesh|--dense-ah|--joint-"
-                                     "geometry|--selected-curvature|--path=DIR]");
+                                     "geometry|--selected-curvature|--fixed-overlap|--path=DIR]");
         const bool soft_mesh = argc == 3 && std::string(argv[2]) == "--soft-mesh";
         const bool refine = argc == 3 && (std::string(argv[2]) == "--refine" || soft_mesh);
         const bool identity_audit = argc == 3 && std::string(argv[2]) == "--identity";
@@ -67,7 +69,8 @@ int main(int argc, char** argv) {
         auto& o = input.orbital_preparation_input;
         if (!o.maintain_inactive_gauge)
             apply_support_preserving_inactive_gauge(&o);
-        balance_active_gauge(&o);
+        bool balanced = false;
+        balance_active_gauge(&o, &balanced);
         const OrbitalGradientEvaluator evaluator;
         const auto accepted =
             evaluator.evaluate_without_reference_energy_gradient(input,
@@ -97,6 +100,107 @@ int main(int argc, char** argv) {
         const StructureTangentOperator structure(accepted.second_order_context,
                                                  hvp.structure_action());
         const AffineCoupling affine(context, hvp, structure);
+        if (argc == 3 && std::string_view(argv[2]) == "--fixed-overlap") {
+            if (!balanced || !chart.has_full_horizontal_active_lift() ||
+                !hvp.structure_action().supports_fixed_overlap_coupling() ||
+                input.standard_two_electron_mode != StandardTwoElectronMode::Exact ||
+                structure.tangent_size() == 0)
+                throw std::invalid_argument("audit needs a balanced FULL-OEO product-tile model");
+            const AffineCoupling fixed(context, hvp, structure, true);
+            using Clock = std::chrono::steady_clock;
+            const Eigen::Index no = chart.reduced_size(), ns = structure.tangent_size();
+            for (int trial = 0; trial < 13; ++trial) {
+                Eigen::VectorXd p(no), q(ns);
+                for (Eigen::Index i = 0; i < no; ++i)
+                    p[i] = std::sin(0.23 * (trial + 1) * (i + 1));
+                for (Eigen::Index i = 0; i < ns; ++i)
+                    q[i] = std::cos(0.37 * (trial + 1) * (i + 1));
+                p.normalize();
+                q.normalize();
+                const int mode = trial % 3;
+                if (mode == 0)
+                    p.setZero();
+                if (mode == 1)
+                    q.setZero();
+                const auto begin = Clock::now();
+                const auto a = affine.apply(p, q);
+                const auto middle = Clock::now();
+                const auto b = fixed.apply(p, q);
+                const auto end = Clock::now();
+                const auto error = [](const Eigen::VectorXd& x, const Eigen::VectorXd& y) {
+                    return (x - y).norm() / std::max(1.0, x.norm());
+                };
+                const auto reference = mode == 1 ? b.forcing :
+                    fixed.apply(p, Eigen::VectorXd::Zero(ns)).forcing;
+                const double forward = error(
+                    fixed.fixed_overlap_forcing(p), reference);
+                std::cout << std::setprecision(12) << "fixed_shared_forward," << trial << ','
+                          << forward << '\n';
+                if (forward > 2e-11)
+                    throw std::runtime_error("shared forward coupling differs from reference");
+                const double orbital = error(a.orbital.orbital_hessian, b.orbital.orbital_hessian);
+                const double forcing = error(a.forcing, b.forcing);
+                const double adjoint = error(a.adjoint, b.adjoint);
+                const double ci = error(a.ci.hessian_coordinates, b.ci.hessian_coordinates);
+                const double metric = error(a.ci.metric_coordinates, b.ci.metric_coordinates);
+                std::cout << std::setprecision(12) << "fixed_overlap," << trial << ',' << mode
+                          << ',' << orbital << ',' << forcing << ',' << adjoint << ',' << ci
+                          << ',' << metric << ','
+                          << std::chrono::duration<double>(middle - begin).count() << ','
+                          << std::chrono::duration<double>(end - middle).count() << '\n';
+                if (std::max({orbital, forcing, adjoint, ci, metric}) > 2e-11)
+                    throw std::runtime_error("fixed-overlap coupled action differs from reference");
+            }
+            const CiTransport transport(o, layout, chart, context, hvp.structure_action(),
+                                        structure);
+            Eigen::VectorXd p = Eigen::VectorXd::LinSpaced(no, -1.0, 1.0);
+            p *= 0.01 / p.norm();
+            const auto point = transport.retract(p, Eigen::VectorXd::Zero(ns));
+            const PreparedActiveOrbitalView geometry{point.prepared, point.frame};
+            auto trial_input = input;
+            trial_input.orbital_preparation_input = point.input;
+            const auto ordinary = evaluator.evaluate_fixed_structure(
+                trial_input, {0}, {1.0}, loaded.nuclear_repulsion_energy, point.coefficients,
+                point.selected_metric.get());
+            const auto reused = evaluator.evaluate_fixed_structure(
+                trial_input, {0}, {1.0}, loaded.nuclear_repulsion_energy, point.coefficients,
+                point.selected_metric.get(), false, nullptr, &geometry);
+            const auto delta_energy =
+                reused.gradient.scf_result.total_energy - ordinary.gradient.scf_result.total_energy;
+            const auto delta_gradient =
+                (layout.gather_from_full(reused.gradient.sparse_orbital_energy_gradient) -
+                 layout.gather_from_full(ordinary.gradient.sparse_orbital_energy_gradient)).norm();
+            std::cout << "keyframe_orbital_reuse," << delta_energy << ',' << delta_gradient << '\n';
+            if (std::abs(delta_energy) > 2e-11 || delta_gradient > 2e-11)
+                throw std::runtime_error("borrowed keyframe orbital preparation changed derivatives");
+            const CiTransport horizontal(o, layout, chart, context, hvp.structure_action(),
+                                         structure, true);
+            Eigen::VectorXd q = Eigen::VectorXd::LinSpaced(ns, 1.0, -0.5);
+            q *= 0.01 / q.norm();
+            const auto reference_point = transport.retract(p, q);
+            const auto horizontal_point = horizontal.retract(p, q);
+            trial_input.orbital_preparation_input = reference_point.input;
+            const auto fixed_evaluation = evaluator.evaluate_fixed_structure(
+                trial_input, {0}, {1.0}, loaded.nuclear_repulsion_energy,
+                reference_point.coefficients, reference_point.selected_metric.get());
+            VbScfCoupledKeyframeEvaluation keyframe;
+            keyframe.energy = fixed_evaluation.gradient.scf_result.total_energy;
+            keyframe.orbital_gradient =
+                layout.gather_from_full(fixed_evaluation.gradient.sparse_orbital_energy_gradient);
+            keyframe.coefficient_gradient = fixed_evaluation.coefficient_gradient;
+            const auto reference_model = transport.evaluate_model(reference_point, keyframe);
+            const auto horizontal_model = horizontal.evaluate_model(horizontal_point, keyframe);
+            const double coefficient_error =
+                (reference_point.coefficients - horizontal_point.coefficients).norm();
+            const double gradient_error =
+                (reference_model.gradient - horizontal_model.gradient).norm();
+            std::cout << "horizontal_transport," << reference_point.origin_direction.norm() << ','
+                      << coefficient_error << ',' << gradient_error << '\n';
+            if (coefficient_error > 2e-11 || gradient_error > 2e-11)
+                throw std::runtime_error("horizontal transport differs from the full pullback");
+            return 0;
+        }
+
         const CiTransport transport(o, layout, chart, context, hvp.structure_action(), structure);
         const NonredundantRetractionMetric metric(chart, layout, o);
         const Eigen::Index no = chart.reduced_size(), ns = structure.tangent_size(),
@@ -140,7 +244,7 @@ int main(int argc, char** argv) {
             keyframe.coefficient_gradient = fixed.coefficient_gradient;
             double frame_change = 0, span_change = 0;
             if (reference_active.size()) {
-                const Eigen::MatrixXd inverse = point.upper.triangularView<Eigen::Upper>().solve(
+                const Eigen::MatrixXd inverse = point.frame.upper.triangularView<Eigen::Upper>().solve(
                     Eigen::MatrixXd::Identity(na, na));
                 const Eigen::MatrixXd chi =
                     point.prepared.auxiliary_orbital_matrix.middleCols(nc, na) * inverse;

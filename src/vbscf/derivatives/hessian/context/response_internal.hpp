@@ -48,6 +48,7 @@ struct AcceptedSelectedStateGeneralizedEigenResponseOperator {
     Eigen::MatrixXd selected_metric;
     /** @brief Accepted Ritz residuals H C - S C E, retained without extra actions. */
     Eigen::MatrixXd selected_residuals;
+    double single_state_projected_residual = 0.0;
     const std::vector<double>* full_eigenvalues = nullptr;
     const Eigen::MatrixXd* full_eigenvectors = nullptr;
     std::vector<int> selected_root_indices;

@@ -5,6 +5,7 @@
 #include "mcscf/ci/scratch.hpp"
 
 #include <algorithm>
+#include <array>
 #include <exception>
 #include <limits>
 #include <optional>
@@ -116,7 +117,8 @@ DirectCiSigmaAction::contract_tiled(int width,
         reuse_bra |= &request != &requests.front() && has_state && !request.state;
         has_state |= static_cast<bool>(request.state);
         state_reads += static_cast<bool>(request.state);
-        if (!request.response || (!request.image && !collect_integrals) ||
+        if ((!request.response && (!request.forcing || request.image)) ||
+            (request.response && !request.image && !collect_integrals) ||
             (direction && !has_state) || (request.forcing && !direction))
             throw std::invalid_argument("invalid tiled direct-CI response callbacks");
         if (direction &&
@@ -265,6 +267,7 @@ DirectCiSigmaAction::contract_tiled(int width,
     auto& diagonal_images = plan.diagonal_rows;
     std::vector<StringIndex> same_group, offsets, positions, image_index;
     std::vector<detail::SigmaGatherRow> target_rows;
+    std::vector<unsigned char> contiguous_groups;
     const auto& channel_groups = plan.channel_groups;
     detail::ChannelLayout channel_layout;
     std::vector<Eigen::Index> beta_offsets;
@@ -380,7 +383,8 @@ DirectCiSigmaAction::contract_tiled(int width,
                                              count,
                                              n_columns,
                                              n_halo);
-                            requests.front().response(columns, halo, input, source_read);
+                            if (requests.front().response)
+                                requests.front().response(columns, halo, input, source_read);
                             const double batch_read_time = seconds(read_start, tick());
                             read_time += batch_read_time;
                             ++batches;
@@ -398,6 +402,7 @@ DirectCiSigmaAction::contract_tiled(int width,
                             image_index.assign(static_cast<std::size_t>(n_halo) * groups.size(),
                                                -1);
                             target_rows.resize(count);
+                            contiguous_groups.resize(groups.size());
                             offsets.assign(n_columns + 1, 0);
                             // Each beta group owns a disjoint target interval and image-map
                             // slice. Borrow the existing team; no per-worker arrays or
@@ -423,7 +428,11 @@ DirectCiSigmaAction::contract_tiled(int width,
                                     const auto before = [](const auto& a, const auto& b) {
                                         return a.alpha < b.alpha;
                                     };
-                                    if (!std::is_sorted(begin, end, before))
+                                    const bool ordered = std::is_sorted(begin, end, before);
+                                    contiguous_groups[g] =
+                                        ordered && channel_groups.empty() &&
+                                        (end - 1)->alpha - begin->alpha + 1 == end - begin;
+                                    if (!ordered)
                                         std::sort(begin, end, before);
                                     // Store one row-record index for all RHSs and responses. The
                                     // composed address already includes the packed group offset.
@@ -579,7 +588,7 @@ DirectCiSigmaAction::contract_tiled(int width,
                 const bool read_bra = request.state || (request_id == 0 && state);
                 distinct_bra |= read_bra;
                 auto& kernel_adjoint = kernel_adjoints[request_id];
-                if (request_id > 0) {
+                if (request_id > 0 && request.response) {
 #pragma omp single
                     {
                         try {
@@ -598,7 +607,8 @@ DirectCiSigmaAction::contract_tiled(int width,
                     if (failure)
                         break;
                 }
-                scatter_rows(scattered);
+                if (request.response)
+                    scatter_rows(scattered);
                 if (collect_integrals) {
                     if (read_bra) {
                         // The response scatter is complete. Refill the same input halo for
@@ -627,39 +637,41 @@ DirectCiSigmaAction::contract_tiled(int width,
                     // An identical bra borrows A directly: no second scatter or copy.
                     // A distinct B remains immutable across all temporal responses.
 #pragma omp barrier
-                    const int available = std::min<std::int64_t>(team, count * width);
-                    const auto full_area = static_cast<std::size_t>(pairs) * pairs;
-                    const bool row_partition = full_area <= scratch_size / (2 * available);
-                    const int parts = row_partition ? available : 1;
-                    if (timing) {
+                    if (request.response) {
+                        const int available = std::min<std::int64_t>(team, count * width);
+                        const auto full_area = static_cast<std::size_t>(pairs) * pairs;
+                        const bool row_partition = full_area <= scratch_size / (2 * available);
+                        const int parts = row_partition ? available : 1;
+                        if (timing) {
 #pragma omp single
-                        {
-                            gram_start = tick();
-                            gram_partitions = std::max(gram_partitions, parts);
-                            gram_extent = std::max(gram_extent, pairs);
-                            if (row_partition)
-                                gram_scratch_bytes = std::max(
-                                    gram_scratch_bytes, 2 * parts * full_area * sizeof(double));
+                            {
+                                gram_start = tick();
+                                gram_partitions = std::max(gram_partitions, parts);
+                                gram_extent = std::max(gram_extent, pairs);
+                                if (row_partition)
+                                    gram_scratch_bytes = std::max(
+                                        gram_scratch_bytes, 2 * parts * full_area * sizeof(double));
+                            }
                         }
-                    }
-                    detail::contract_channel_gram(channel_product,
-                                                  channel_layout,
-                                                  scattered,
-                                                  distinct_bra ? state_channels : scattered,
-                                                  kernel_adjoint,
-                                                  diagonal_images,
-                                                  count,
-                                                  width,
-                                                  exchange_parity != 0,
-                                                  workspace.get(),
-                                                  scratch_size,
-                                                  thread,
-                                                  team);
-                    if (timing) {
+                        detail::contract_channel_gram(channel_product,
+                                                      channel_layout,
+                                                      scattered,
+                                                      distinct_bra ? state_channels : scattered,
+                                                      kernel_adjoint,
+                                                      diagonal_images,
+                                                      count,
+                                                      width,
+                                                      exchange_parity != 0,
+                                                      workspace.get(),
+                                                      scratch_size,
+                                                      thread,
+                                                      team);
+                        if (timing) {
 #pragma omp single
-                        {
-                            gram_time += seconds(gram_start, tick());
-                            gram_tiles += parts * channel_product.groups();
+                            {
+                                gram_time += seconds(gram_start, tick());
+                                gram_tiles += parts * channel_product.groups();
+                            }
                         }
                     }
                 }
@@ -733,6 +745,76 @@ DirectCiSigmaAction::contract_tiled(int width,
                                                      const DirectCiTileWriter& writer,
                                                      const double* channel_values) {
                             const std::size_t image_rows = static_cast<std::size_t>(count) * width;
+                            const bool contiguous_exchange =
+                                !Projected && FirstRhs && exchange_parity != 0 &&
+                                std::all_of(contiguous_groups.begin(),
+                                            contiguous_groups.end(),
+                                            [](unsigned char group) { return group != 0; });
+                            const auto write_exchange_segment =
+                                [&](StringIndex source,
+                                    StringIndex first,
+                                    StringIndex last,
+                                    double* destination) {
+                                    // A raw exchange representative contributes through both
+                                    // spins. Combine them in one bounded destination segment;
+                                    // the consumer still applies the same parity projection.
+                                    constexpr StringIndex extent = 128;
+                                    std::array<double, extent> scratch;
+                                    const auto column = columns[source];
+                                    const auto beta_occupied = OccupiedOrbitals(beta_masks[column]);
+                                    const auto same = same_group[source];
+                                    for (auto lo = first; lo < last;) {
+                                        const auto size = std::min(extent, last - lo);
+                                        const auto hi = lo + size;
+                                        Eigen::Map<Eigen::VectorXd> panel(scratch.data(), size);
+                                        panel.setZero();
+                                        if (same >= 0) {
+                                            const auto& group = groups[same];
+                                            const auto group_first = target_rows[group.begin].alpha;
+                                            const auto group_size = group.end - group.begin;
+                                            const auto image = target_rows[group.begin].image;
+                                            const auto at = [&](StringIndex local, int pair) {
+                                                return channel_values[image + local +
+                                                                      pair * image_rows];
+                                            };
+                                            for (auto a = lo; a < hi; ++a) {
+                                                double sum = 0;
+                                                const auto local = a - group_first;
+                                                if (local >= 0 && local < group_size) {
+                                                    for (const int p : OccupiedOrbitals(alpha_masks[a]))
+                                                        sum += at(local, core::PairIndex::packed_pair_index(p, p));
+                                                    for (const int p : beta_occupied)
+                                                        sum += at(local, core::PairIndex::packed_pair_index(p, p));
+                                                }
+                                                for (const auto& link : alpha_->singles(a)) {
+                                                    const auto target = link.source - group_first;
+                                                    if (target >= 0 && target < group_size)
+                                                        sum += link.sign * at(target, link.pair);
+                                                }
+                                                panel[a - lo] = sum;
+                                            }
+                                        }
+                                        for (auto edge = offsets[source]; edge < offsets[source + 1];
+                                             ++edge) {
+                                            const auto& link = incoming[edge];
+                                            const auto& group = groups[link.group];
+                                            const auto group_first = target_rows[group.begin].alpha;
+                                            const auto begin = std::max(lo, group_first);
+                                            const auto end = std::min(hi, group_first + group.end - group.begin);
+                                            if (begin >= end)
+                                                continue;
+                                            const auto image = target_rows[group.begin].image +
+                                                               (begin - group_first) +
+                                                               link.pair * image_rows;
+                                            const Eigen::Map<const Eigen::VectorXd> values(
+                                                channel_values + image, end - begin);
+                                            panel.segment(begin - lo, end - begin).noalias() +=
+                                                link.sign * values;
+                                        }
+                                        Eigen::Map<Eigen::VectorXd>(destination + lo, size) += panel;
+                                        lo = hi;
+                                    }
+                                };
                             const auto value = [&](std::int64_t row, int rhs, int pair) {
                                 const auto& target = target_rows[row];
                                 if constexpr (!Projected && FirstRhs)
@@ -767,6 +849,12 @@ DirectCiSigmaAction::contract_tiled(int width,
                                                     StringIndex n_rows) {
                                     if (first == last)
                                         return;
+                                    if (contiguous_exchange && !rows &&
+                                        halo[last - 1] - halo[first] + 1 == last - first) {
+                                        write_exchange_segment(
+                                            source, halo[first], halo[last - 1] + 1, destination);
+                                        return;
+                                    }
                                     StringIndex begin = first, end = last;
                                     if (rows) {
                                         begin = std::lower_bound(rows, rows + n_rows, halo[first]) -
@@ -969,7 +1057,8 @@ DirectCiSigmaAction::contract_tiled(int width,
     std::vector<DirectCiIntegralAdjoint> results(requests.size());
     if (collect_integrals)
         for (std::size_t r = 0; r < requests.size(); ++r)
-            results[r] = pullback_channel_kernel(kernel_adjoints[r]);
+            if (requests[r].response)
+                results[r] = pullback_channel_kernel(kernel_adjoints[r]);
     return results;
 }
 

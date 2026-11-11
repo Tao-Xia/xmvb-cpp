@@ -14,6 +14,47 @@
 #include "parallel/openmp.hpp"
 
 namespace xmvb::integrals {
+namespace detail {
+
+#if defined(__GNUC__) && !defined(__clang__) && defined(__x86_64__)
+__attribute__((target_clones("avx512f", "avx2", "default"), flatten, optimize("fp-contract=off")))
+#endif
+void form_exact_pair_half_panel(const AoPairGraph& graph,
+                          std::size_t block,
+                          int begin,
+                          int count,
+                          int n,
+                          int channels,
+                          const double* core,
+                          double* half) {
+    const Eigen::Index stride = static_cast<Eigen::Index>(n) * channels;
+    std::fill_n(half, count * stride, 0.0);
+    graph.tiles->visit_panel(block, begin, count, [&](std::size_t source, auto visit) {
+        const Eigen::Index k = graph.pair_first[source], l = graph.pair_second[source];
+        const auto* core_l = core + l * channels;
+        if (k == l) {
+            visit([&](int row, double value) {
+                auto* half_k = half + row * stride + k * channels;
+#pragma omp simd
+                for (int i = 0; i < channels; ++i)
+                    half_k[i] += value * core_l[i];
+            });
+        } else {
+            const auto* core_k = core + k * channels;
+            visit([&](int row, double value) {
+                auto* half_k = half + row * stride + k * channels;
+                auto* half_l = half + row * stride + l * channels;
+#pragma omp simd
+                for (int i = 0; i < channels; ++i) {
+                    half_k[i] += value * core_l[i];
+                    half_l[i] += value * core_k[i];
+                }
+            });
+        }
+    });
+}
+
+} // namespace detail
 
 bool apply_ao_core_diagonals(const AoIntegralInput& ao,
                              const Eigen::Ref<const Eigen::MatrixXd>& frame,
@@ -87,16 +128,8 @@ bool apply_ao_core_diagonals(const AoIntegralInput& ao,
             for (std::size_t block = 0; block < tiles.row_blocks(); ++block) {
                 for (int begin = 0; begin < tiles.row_count(block); begin += panel_pairs) {
                     const int count = std::min(panel_pairs, tiles.row_count(block) - begin);
-                    half.topRows(static_cast<Eigen::Index>(count) * n).setZero();
-                    tiles.visit_panel(block, begin, count, [&](std::size_t source, auto visit) {
-                        const int k = graph.pair_first[source], l = graph.pair_second[source];
-                        visit([&](int row, double value) {
-                            const auto offset = static_cast<Eigen::Index>(row) * n;
-                            half.row(offset + k).noalias() += value * core.row(l);
-                            if (k != l)
-                                half.row(offset + l).noalias() += value * core.row(k);
-                        });
-                    });
+                    detail::form_exact_pair_half_panel(
+                        graph, block, begin, count, n, n_core, core.data(), half.data());
                     for (int row = 0; row < count; ++row) {
                         const auto pair = tiles.row_begin(block) + begin + row;
                         consume_half(pair, graph.pair_first[pair], graph.pair_second[pair],

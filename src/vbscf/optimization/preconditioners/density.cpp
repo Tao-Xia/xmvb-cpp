@@ -113,13 +113,22 @@ DensityDiagonals density_diagonal_channels(const VbScfInput& input,
     if (!channels)
         return {Eigen::MatrixXd(n_bf, 0), std::move(cached_active), Eigen::MatrixXd(n_bf, 0)};
     const auto& graph = input.ao_integral_input.pair_graph;
-    // The half transform scans each left pair once. Use it for core-only dense
-    // pair rows, where a dense one-index transform is cheaper than updating
-    // both orientations of every stored quartet across all density channels.
-    const long double half_terms =
-        static_cast<long double>(graph.pair_first.size()) * n_bf * n_bf;
+    // A tiled half transform consumes only stored edges. Each visited edge
+    // contributes at most two updates and each panel row at most three more
+    // for the Coulomb reduction and the two exchange destinations.
+    const long double directed = graph.directed_count();
+    const long double panel_rows = static_cast<long double>(graph.pair_first.size()) * n_bf;
+    std::size_t diagonal_edges = 0;
+    if (graph.has_rows())
+        for (int mu = 0; mu < n_bf; ++mu) {
+            const auto pair = core::PairIndex::packed_pair_index(mu, mu);
+            graph.visit_row(pair, [&](std::size_t, double) { ++diagonal_edges; });
+        }
+    const long double ordered_rows = 2 * directed - diagonal_edges;
+    const bool half_cheaper = graph.tiles ? 2 * directed + 3 * panel_rows < 2 * ordered_rows
+                                          : panel_rows * n_bf < 4 * directed;
     if (reuse && n_core >= Eigen::internal::packet_traits<double>::size &&
-        graph.has_rows() && half_terms < 4.0L * graph.directed_count()) {
+        graph.has_rows() && half_cheaper) {
         Eigen::MatrixXd exchange, coulomb;
         if (integrals::apply_ao_core_diagonals(input.ao_integral_input,
                                               mo,
@@ -127,6 +136,7 @@ DensityDiagonals density_diagonal_channels(const VbScfInput& input,
                                               effective_openmp_thread_count(),
                                               &exchange,
                                               &coulomb)) {
+            mcscf::diagnostics::ciah_trace("ciah_diagonal_core_half", "used=1");
             exchange *= -1.0;
             exchange.noalias() += 2.0 * coulomb;
             return {std::move(exchange), std::move(cached_active), std::move(coulomb)};
@@ -183,13 +193,7 @@ DensityDiagonals density_diagonal_channels(const VbScfInput& input,
         // canonical scatter reads unique ERIs. Do not use the saved core action
         // to justify extra main-contraction reads: its fused projection also has
         // work, and is deliberately not priced as a free benefit in admission.
-        std::size_t row_records = 2 * graph.directed_count();
-        for (int mu = 0; mu < n_bf; ++mu) {
-            const auto diagonal_pair = core::PairIndex::packed_pair_index(mu, mu);
-            graph.visit_row(diagonal_pair, [&](std::size_t, double) { --row_records; });
-        }
-        const long double row_reads =
-            static_cast<long double>(row_records) * ((channels + width - 1) / width);
+        const long double row_reads = ordered_rows * ((channels + width - 1) / width);
         const long double stream_reads = static_cast<long double>(graph.integral_count()) *
                                          ((channels + stream_width - 1) / stream_width);
         // Both layouts are exact. The row consumer no longer pays for an AO

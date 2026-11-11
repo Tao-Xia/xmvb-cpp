@@ -147,7 +147,8 @@ void retain_structure_action(const VbScfInput& input, ActiveSpaceGradientForward
 linalg::DavidsonOptions structure_solve_options(Eigen::Index n_structures,
                                                 int n_roots,
                                                 StructureSolveAccuracy accuracy,
-                                                bool identity_overlap) {
+                                                bool identity_overlap,
+                                                double exploratory_stationarity = 0.0) {
     accuracy.validate();
     memory::prepare_ci(0);
     // Leave headroom for the action and its reclaimable numerical tiles.
@@ -155,7 +156,8 @@ linalg::DavidsonOptions structure_solve_options(Eigen::Index n_structures,
                                          n_roots,
                                          accuracy.energy_tolerance,
                                          accuracy.gradient_tolerance,
-                                         accuracy.stationarity_tolerance(),
+                                         std::max(accuracy.stationarity_tolerance(),
+                                                  exploratory_stationarity),
                                          workspace::available() / 2,
                                          identity_overlap);
 }
@@ -171,9 +173,10 @@ xmvb::linalg::DavidsonResult solve_selected_structure_roots(
     const xmvb::linalg::GeneralizedEigensolver& generalized_eigensolver,
     std::function<double(const Eigen::VectorXd&, double)> physical_residual_norm = {},
     std::function<Eigen::VectorXd(const Eigen::VectorXd&, double)> residual_preconditioner = {},
-    bool identity_overlap = false) {
-    auto options =
-        structure_solve_options(n_structures, n_roots, structure_solve_accuracy, identity_overlap);
+    bool identity_overlap = false,
+    double exploratory_stationarity = 0.0) {
+    auto options = structure_solve_options(
+        n_structures, n_roots, structure_solve_accuracy, identity_overlap, exploratory_stationarity);
     workspace::Reservation solver;
     const auto bytes = linalg::davidson_workspace_bytes(n_structures, options);
     if (!solver.try_resize(bytes))
@@ -186,6 +189,12 @@ xmvb::linalg::DavidsonResult solve_selected_structure_roots(
     options.physical_residual_norm = std::move(physical_residual_norm);
     options.residual_preconditioner = std::move(residual_preconditioner);
     if (mcscf::diagnostics::ciah_event_trace_enabled()) {
+        options.observe_work = [](double vectors, double projected, double action) {
+            mcscf::diagnostics::ciah_trace(
+                "ciah_ci_davidson_cost",
+                "vectors_control=%.9f,projected_eigen=%.9f,action=%.9f",
+                vectors, projected, action);
+        };
         options.observe_iteration = [start =
                                          std::chrono::steady_clock::now()](int iteration,
                                                                            int dimension,
@@ -279,7 +288,8 @@ solve_complete_structure_roots(const StructureAction& action,
             return Eigen::VectorXd(
                 (r.array() / (denominator.abs() < 1.0e-8).select(1.0e-8, denominator)).matrix());
         },
-        true);
+        true,
+        accuracy.exploratory_stationarity);
     const Eigen::Map<const Eigen::MatrixXd> x(
         result.eigenpairs.eigenvector_matrix.data(), n, n_roots);
     const Eigen::MatrixXd coefficients = coordinates.from_ci_coordinates(x);
@@ -1042,6 +1052,33 @@ void accumulate_active_space_gradient(const VbScfInput& input,
 
 } // namespace
 
+double refine_complete_ci_energy(const AcceptedPointContext& point,
+                                 double nuclear_repulsion_energy) {
+    const auto start = std::chrono::steady_clock::now();
+    profiling::ScopedPhase phase(profiling::Phase::StructureSolve, true);
+    auto accuracy = point.structure_solve_accuracy;
+    accuracy.exploratory_stationarity = 0.0;
+    const auto result = solve_complete_structure_roots(
+        point.structure_action.value(),
+        *point.structure_metric_inverse,
+        required_root_count(point.selected_state_indices),
+        accuracy,
+        point.root_eigenvectors,
+        linalg::GeneralizedEigensolver{});
+    const auto& energies = result.eigenpairs.eigenvalues;
+    mcscf::diagnostics::ciah_trace(
+        "ciah_ci_solved",
+        "seconds=%.17g,energy=%.17g,iterations=%d,actions=%d",
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count(),
+        energies[point.selected_state_indices.front()],
+        result.iterations,
+        result.block_actions);
+    return point.prepared_active_space.one_electron_reference_energy +
+           selected_state_average_energy(energies, point.selected_state_indices,
+                                         point.normalized_state_weights) +
+           nuclear_repulsion_energy;
+}
+
 struct ActiveSpaceForwardEvaluation::State {
     ActiveSpaceGradientForwardContext forward_context;
     std::vector<int> selected_state_indices;
@@ -1065,6 +1102,14 @@ double ActiveSpaceForwardEvaluation::total_energy() const noexcept {
 
 double ActiveSpaceForwardEvaluation::wall_time_seconds() const noexcept {
     return state_ == nullptr ? 0.0 : state_->wall_time_seconds;
+}
+
+Eigen::Map<const Eigen::MatrixXd> ActiveSpaceForwardEvaluation::root_coefficients() const {
+    const auto& eigen = state_->forward_context.eigen_result;
+    const auto columns = static_cast<Eigen::Index>(eigen.eigenvalues.size());
+    return {eigen.eigenvector_matrix.data(),
+            static_cast<Eigen::Index>(eigen.eigenvector_matrix.size()) / columns,
+            columns};
 }
 
 bool ActiveSpaceForwardEvaluation::valid() const noexcept {
@@ -1195,7 +1240,8 @@ ActiveSpaceFixedStructureGradient ActiveSpaceGradientEvaluator::evaluate_fixed_s
     const Eigen::Ref<const Eigen::MatrixXd>& structure_coefficients,
     const SelectedMetric* metric,
     bool retain_context,
-    const AcceptedPointContext* accepted_point) const {
+    const AcceptedPointContext* accepted_point,
+    const PreparedActiveOrbitalView* prepared_orbitals) const {
     const auto total_start_time = std::chrono::steady_clock::now();
     validate_state_selection(
         selected_state_indices, state_average_weights, input.structure_data.n_structures);
@@ -1208,7 +1254,8 @@ ActiveSpaceFixedStructureGradient ActiveSpaceGradientEvaluator::evaluate_fixed_s
     const std::vector<double> normalized_weights = mcscf::normalize_weights(state_average_weights);
 
     ActiveSpaceGradientForwardContext context;
-    context.timed_active_space_context = prepare_timed_active_space_context(input);
+    context.timed_active_space_context =
+        prepare_timed_active_space_context(input, nullptr, prepared_orbitals);
     const auto& prepared = context.timed_active_space_context.prepared_active_space;
     context.same_spin_pair_cache =
         build_orthogonal_spin_topology(input.structure_data.alpha(),

@@ -196,6 +196,10 @@ class ExactHvpOperator {
    * semantic foundation for fused block contractions; it never materializes
    * the reduced Hessian.
    */
+    /** Same reduced image, consuming an already lifted sparse AO direction. */
+    Eigen::VectorXd apply_packed(const Eigen::VectorXd& packed_direction,
+                                 HvpComponents components) const;
+
     Eigen::MatrixXd apply_reduced_batch(const Eigen::Ref<const Eigen::MatrixXd>& reduced_directions,
                                         HvpComponents components = {}) const;
 
@@ -207,7 +211,8 @@ class ExactHvpOperator {
    */
     OrbitalCouplingAction
     apply_orbital_coupling(const Eigen::VectorXd& reduced_direction,
-                           StructureResponseRequest* ci_response = nullptr) const;
+                           StructureResponseRequest* ci_response = nullptr,
+                           bool forcing_only = false) const;
 
     /**
    * @brief Applies the complete orbital operator without horizontal response.

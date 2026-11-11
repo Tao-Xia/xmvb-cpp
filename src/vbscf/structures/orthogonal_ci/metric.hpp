@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include <Eigen/Core>
@@ -63,6 +64,25 @@ class StructureMetricInverse {
     Eigen::MatrixXd apply_ci_preconditioner(const Eigen::Ref<const Eigen::MatrixXd>& covector,
                                             const Eigen::Ref<const Eigen::VectorXd>& energies,
                                             double eigenvalue) const;
+
+    /** @brief Transport coefficients in the closed FULL spin sector.
+     * Applies the relative exterior map on the existing carrier workspace.
+     */
+    Eigen::MatrixXd transport_coefficients(
+        const Eigen::Ref<const Eigen::MatrixXd>& coefficients,
+        const ExteriorOrbitalTransform& relative_alpha,
+        const ExteriorOrbitalTransform& relative_beta) const;
+
+    bool supports_transport_pullback() const noexcept { return chunk_width_ >= 2; }
+
+    /** @brief Generator and base-CI covectors of a relative FULL transport.
+     * Reuses the two carrier lanes reserved for the complete-sector metric.
+     */
+    std::pair<Eigen::MatrixXd, Eigen::VectorXd> transport_pullback(
+        const Eigen::Ref<const Eigen::VectorXd>& coefficients,
+        const Eigen::Ref<const Eigen::VectorXd>& covector,
+        const ExteriorOrbitalTransform& relative_alpha,
+        const ExteriorOrbitalTransform& relative_beta) const;
 
     /** @brief Trial metric inverse sharing immutable selected-sector factors. */
     Eigen::MatrixXd apply_at_transform(const Eigen::Ref<const Eigen::MatrixXd>& rhs,

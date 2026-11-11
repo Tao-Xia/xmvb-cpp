@@ -3,6 +3,7 @@
 #include "mcscf/ci/string_table.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <limits>
 #include <stdexcept>
 #include <utility>
@@ -57,8 +58,15 @@ StructureMetricInverse::try_build(const StructureAction& action,
     if (!spin && !fits(action, alpha_strings, beta_strings, factors, scratch))
         return {};
     mcscf::diagnostics::ciah_trace("ciah_ci_spin_factors", "shared=%d", spin ? 1 : 0);
-    if (!spin)
+    if (!spin) {
         spin = std::make_shared<SpinMetric>(action, alpha_strings, beta_strings, factors);
+        mcscf::diagnostics::ciah_trace("ciah_ci_spin_layout",
+                                     "blocks=%zu,factors=%zu,contiguous=%zu,factor_bytes=%zu",
+                                     spin->block_count(),
+                                     spin->factor_count(),
+                                     spin->contiguous_block_count(),
+                                     spin->factor_bytes());
+    }
     return std::unique_ptr<StructureMetricInverse>(
         new StructureMetricInverse(action, std::move(spin), true, column, scratch));
 }
@@ -175,9 +183,8 @@ Eigen::MatrixXd StructureMetricInverse::ci_covector_to_structure(
 
 Eigen::MatrixXd StructureMetricInverse::apply_ci_hamiltonian(
     const Eigen::Ref<const Eigen::MatrixXd>& coordinates) const {
-    Eigen::MatrixXd result(coordinates.rows(), coordinates.cols());
     if (coordinates.cols() == 0)
-        return result;
+        return Eigen::MatrixXd(coordinates.rows(), 0);
     // Each lane holds both an input and an output carrier. The metric owns
     // the minimum scratch for this action; lease extra lanes only while
     // Davidson actually has them, leaving working space for the sigma tiles.
@@ -200,17 +207,41 @@ Eigen::MatrixXd StructureMetricInverse::apply_ci_hamiltonian(
     const Eigen::Index admitted =
         extra.try_resize(extra_lanes * lane_bytes) ? static_cast<Eigen::Index>(extra_lanes) : 0;
     const Eigen::Index width = std::min(requested, resident + admitted);
+    Eigen::MatrixXd result;
+    if (width < coordinates.cols())
+        result.resize(coordinates.rows(), coordinates.cols());
     mcscf::diagnostics::ciah_trace("ciah_ci_sigma_batch",
                                    "rhs=%ld,width=%ld,extra_bytes=%zu",
                                    static_cast<long>(coordinates.cols()),
                                    static_cast<long>(width),
                                    extra.bytes());
+    using Clock = std::chrono::steady_clock;
+    const bool trace = mcscf::diagnostics::ciah_event_trace_enabled();
+    const auto stamp = [&] { return trace ? Clock::now() : Clock::time_point{}; };
+    Clock::duration upper_time{}, lower_time{};
     for (Eigen::Index first = 0; first < coordinates.cols(); first += width) {
         const Eigen::Index count = std::min<Eigen::Index>(width, coordinates.cols() - first);
-        const auto image = action_->apply_recoupled_hamiltonian(
-            spin_->solve(coordinates.middleCols(first, count), SpinMetric::Part::Upper));
-        result.middleCols(first, count) = spin_->solve(image, SpinMetric::Part::Lower);
+        Eigen::MatrixXd image;
+        {
+            const auto start = stamp();
+            const auto coefficients =
+                spin_->solve(coordinates.middleCols(first, count), SpinMetric::Part::Upper);
+            upper_time += stamp() - start;
+            image = action_->apply_recoupled_hamiltonian(coefficients);
+        }
+        const auto start = stamp();
+        spin_->solve_in_place(image, SpinMetric::Part::Lower);
+        lower_time += stamp() - start;
+        if (count == coordinates.cols())
+            result = std::move(image);
+        else
+            result.middleCols(first, count) = image;
     }
+    if (trace)
+        mcscf::diagnostics::ciah_trace("ciah_ci_spin_solve_cost",
+                                     "upper=%.9f,lower=%.9f",
+                                     std::chrono::duration<double>(upper_time).count(),
+                                     std::chrono::duration<double>(lower_time).count());
     return result;
 }
 
@@ -232,6 +263,43 @@ StructureMetricInverse::apply_ci_preconditioner(const Eigen::Ref<const Eigen::Ma
             spin_->solve(action_->contract_spin_product_block(carrier), SpinMetric::Part::Lower);
     }
     return result;
+}
+
+Eigen::MatrixXd StructureMetricInverse::transport_coefficients(
+    const Eigen::Ref<const Eigen::MatrixXd>& coefficients,
+    const ExteriorOrbitalTransform& alpha,
+    const ExteriorOrbitalTransform& beta) const {
+    if (coefficients.rows() != action_->n_structures_ || coefficients.cols() <= 0 ||
+        !coefficients.allFinite())
+        throw std::invalid_argument("invalid complete-sector transport coefficients");
+    Eigen::MatrixXd result(coefficients.rows(), coefficients.cols());
+    for (Eigen::Index first = 0; first < coefficients.cols(); first += chunk_width_) {
+        const Eigen::Index count = std::min<Eigen::Index>(chunk_width_, coefficients.cols() - first);
+        Eigen::MatrixXd carrier = action_->expand_structure_block(coefficients.middleCols(first, count));
+        alpha.apply_left(&carrier);
+        for (Eigen::Index block = 0; block < count; ++block)
+            beta.apply_right_block(carrier.middleCols(block * beta.dimension(), beta.dimension()));
+        result.middleCols(first, count) = spin_->solve(action_->contract_spin_product_block(carrier));
+    }
+    return result;
+}
+
+std::pair<Eigen::MatrixXd, Eigen::VectorXd> StructureMetricInverse::transport_pullback(
+    const Eigen::Ref<const Eigen::VectorXd>& coefficients,
+    const Eigen::Ref<const Eigen::VectorXd>& covector,
+    const ExteriorOrbitalTransform& alpha,
+    const ExteriorOrbitalTransform& beta) const {
+    if (!supports_transport_pullback() || coefficients.size() != action_->n_structures_ ||
+        covector.size() != coefficients.size())
+        throw std::invalid_argument("invalid complete-sector transport pullback");
+    // Lift with W G^-1, the adjoint of the closed-sector coefficient projection.
+    Eigen::MatrixXd left = action_->expand_structure_block(spin_->solve(covector));
+    Eigen::MatrixXd generator = action_->carrier_generator_adjoint(
+        left, action_->expand_structure_block(coefficients));
+    alpha.apply_adjoint_left(&left);
+    beta.apply_adjoint_right(&left);
+    Eigen::VectorXd base = action_->contract_spin_product_block(left).col(0);
+    return {std::move(generator), std::move(base)};
 }
 
 Eigen::MatrixXd

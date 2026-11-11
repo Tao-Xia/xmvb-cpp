@@ -5,12 +5,15 @@
 #include <algorithm>
 #include <bit>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <map>
 #include <span>
 #include <stdexcept>
+#include <unordered_map>
 #include <utility>
 
+#include <cblas.h>
 #include <lapacke.h>
 
 #include "core/pair_index.hpp"
@@ -25,6 +28,10 @@ auto occupation_pattern(mcscf::ProductIndex product,
                         std::span<const std::uint64_t> beta) {
     const auto a = alpha[product / beta.size()], b = beta[product % beta.size()];
     return std::pair{a | b, a & b};
+}
+
+bool is_contiguous(const std::vector<Eigen::Index>& indices) {
+    return indices.back() - indices.front() + 1 == static_cast<Eigen::Index>(indices.size());
 }
 
 } // namespace
@@ -88,7 +95,7 @@ SpinMetric::SpinMetric(const StructureAction& action,
       n_beta_(beta_strings.electron_count()), diagonal_(Eigen::VectorXd::Zero(dimension_)) {
     auto groups = occupation_groups(action, alpha_strings, beta_strings);
     const std::size_t n = action.n_structures_;
-    // Admit all factor storage before allocating any dense block.
+    // Account for the uninterned Gram blocks during assembly.
     for (const auto& group : groups) {
         const std::size_t d = group.size();
         if (d > (factor_byte_limit - factor_bytes_) / sizeof(double) / d)
@@ -98,11 +105,13 @@ SpinMetric::SpinMetric(const StructureAction& action,
     if (!residency_.try_resize(factor_bytes_))
         throw std::runtime_error("spin-recoupling factors exceed shared workspace headroom");
     blocks_.reserve(groups.size());
+    std::vector<Eigen::MatrixXd> grams;
+    grams.reserve(groups.size());
     std::vector<Eigen::Index> group_id(n), local_id(n);
     for (auto& group : groups) {
         const Eigen::Index index = core::checked_index<Eigen::Index>(blocks_.size());
         const Eigen::Index d = core::checked_index<Eigen::Index>(group.size());
-        for (int local = 0; local < d; ++local) {
+        for (Eigen::Index local = 0; local < d; ++local) {
             group_id[group[local]] = index;
             local_id[group[local]] = local;
         }
@@ -112,7 +121,8 @@ SpinMetric::SpinMetric(const StructureAction& action,
             occupation_pattern(action.topology_->products[action.topology_->terms[term].group],
                                alpha_strings.masks(),
                                beta_strings.masks());
-        blocks_.push_back({std::move(group), Eigen::MatrixXd::Zero(d, d), occupied, doubled});
+        blocks_.push_back({std::move(group), 0, occupied, doubled});
+        grams.push_back(Eigen::MatrixXd::Zero(d, d));
         max_block_size_ = std::max(max_block_size_, d);
     }
     // C_0^T C_0 from sparse spin-product rows; never form the dense C_0 or Gram.
@@ -129,40 +139,145 @@ SpinMetric::SpinMetric(const StructureAction& action,
                 const Eigen::Index row = local_id[a.structure];
                 const Eigen::Index column = local_id[b.structure];
                 if (row >= column)
-                    blocks_[group_id[a.structure]].lower(row, column) +=
-                        a.coefficient * b.coefficient;
+                    grams[group_id[a.structure]](row, column) += a.coefficient * b.coefficient;
             }
         }
     }
-    for (auto& block : blocks_) {
-        for (Eigen::Index i = 0; i < core::checked_index<Eigen::Index>(block.indices.size()); ++i)
-            diagonal_[block.indices[i]] = block.lower(i, i);
-        const lapack_int d = static_cast<lapack_int>(block.lower.rows());
-        const lapack_int info = LAPACKE_dpotrf(LAPACK_COL_MAJOR, 'L', d, block.lower.data(), d);
-        if (info != 0 || !block.lower.allFinite())
+    factor_bytes_ = 0;
+    {
+        std::unordered_multimap<std::size_t, std::size_t> candidates;
+        for (std::size_t i = 0; i < blocks_.size(); ++i) {
+            auto& block = blocks_[i];
+            auto& gram = grams[i];
+            for (Eigen::Index row = 0; row < gram.rows(); ++row)
+                diagonal_[block.indices[row]] = gram(row, row);
+            // Equal occupation size alone does not fix the basis order or phase.
+            // Compare the actual Gram entries, with no tolerance or canonical rephasing.
+            std::size_t hash = gram.rows();
+            for (const double value : gram.reshaped())
+                hash = core::IndexPairHash{}({hash, std::hash<double>{}(value)});
+            const auto [first, last] = candidates.equal_range(hash);
+            const auto match = std::find_if(first, last, [&](const auto& candidate) {
+                const auto& other = factors_[candidate.second];
+                return gram.rows() == other.rows() && (gram.array() == other.array()).all();
+            });
+            if (match == last) {
+                block.factor = factors_.size();
+                candidates.emplace(hash, block.factor);
+                factor_bytes_ += static_cast<std::size_t>(gram.size()) * sizeof(double);
+                factors_.push_back(std::move(gram));
+            } else {
+                block.factor = match->second;
+                gram.resize(0, 0);
+            }
+        }
+    }
+    residency_.try_resize(factor_bytes_);
+    for (auto& lower : factors_) {
+        const auto d = core::checked_index<lapack_int>(lower.rows());
+        const lapack_int info = LAPACKE_dpotrf(LAPACK_COL_MAJOR, 'L', d, lower.data(), d);
+        if (info != 0 || !lower.allFinite())
             throw std::runtime_error(
                 "spin-recoupling metric block is not numerically positive definite");
+    }
+
+    const auto scattered = std::partition(blocks_.begin(), blocks_.end(), [](const Block& block) {
+        return is_contiguous(block.indices);
+    });
+    contiguous_blocks_ = static_cast<std::size_t>(scattered - blocks_.begin());
+    std::sort(blocks_.begin(), scattered, [](const Block& a, const Block& b) {
+        return a.indices.front() < b.indices.front();
+    });
+    std::sort(scattered, blocks_.end(), [](const Block& a, const Block& b) {
+        return std::pair{a.factor, a.indices.front()} < std::pair{b.factor, b.indices.front()};
+    });
+    for (std::size_t first = 0; first < blocks_.size();) {
+        const bool contiguous = first < contiguous_blocks_;
+        const auto end = contiguous ? contiguous_blocks_ : blocks_.size();
+        auto last = first + 1;
+        while (
+            last < end && blocks_[last].factor == blocks_[first].factor &&
+            (!contiguous || blocks_[last - 1].indices.back() + 1 == blocks_[last].indices.front()))
+            ++last;
+        solve_ranges_.push_back({first, last});
+        first = last;
     }
 }
 
 Eigen::MatrixXd SpinMetric::solve(const Eigen::Ref<const Eigen::MatrixXd>& rhs, Part factor) const {
+    Eigen::MatrixXd result = rhs;
+    solve_in_place(result, factor);
+    return result;
+}
+
+void SpinMetric::solve_in_place(Eigen::Ref<Eigen::MatrixXd> rhs, Part factor) const {
     if (rhs.rows() != dimension_ || rhs.cols() <= 0)
         throw std::invalid_argument("spin metric RHS has incompatible dimensions");
-    Eigen::MatrixXd result(rhs.rows(), rhs.cols());
-    Eigen::MatrixXd local(max_block_size_, rhs.cols());
-    for (const auto& block : blocks_) {
-        const Eigen::Index d = core::checked_index<Eigen::Index>(block.indices.size());
-        auto values = local.topRows(d);
-        for (Eigen::Index row = 0; row < d; ++row)
-            values.row(row) = rhs.row(block.indices[row]);
+
+    // Bound the scattered packing scratch independently of the number of blocks.
+    constexpr Eigen::Index panel_values = 32768;
+    Eigen::VectorXd packed;
+    const auto solve_panel = [&](const Eigen::MatrixXd& lower, double* data, Eigen::Index width) {
+        const auto d = core::checked_index<lapack_int>(lower.rows());
+        if (d == 1) {
+            auto values = Eigen::Map<Eigen::VectorXd>(data, width);
+            values.array() /= lower(0, 0);
+            if (factor == Part::Gram)
+                values.array() /= lower(0, 0);
+            return;
+        }
+        const auto columns = core::checked_index<lapack_int>(width);
+        const auto triangular = [&](CBLAS_TRANSPOSE trans) {
+            cblas_dtrsm(CblasColMajor,
+                        CblasLeft,
+                        CblasLower,
+                        trans,
+                        CblasNonUnit,
+                        d,
+                        columns,
+                        1.0,
+                        lower.data(),
+                        d,
+                        data,
+                        d);
+        };
         if (factor != Part::Upper)
-            block.lower.triangularView<Eigen::Lower>().solveInPlace(values);
+            triangular(CblasNoTrans);
         if (factor != Part::Lower)
-            block.lower.transpose().triangularView<Eigen::Upper>().solveInPlace(values);
-        for (Eigen::Index row = 0; row < d; ++row)
-            result.row(block.indices[row]) = values.row(row);
+            triangular(CblasTrans);
+    };
+    for (const auto [first, last] : solve_ranges_) {
+        const auto& lower = factors_[blocks_[first].factor];
+        const Eigen::Index d = lower.rows();
+        const bool contiguous = first < contiguous_blocks_;
+        const auto width = contiguous ? std::numeric_limits<lapack_int>::max()
+                                      : std::max<Eigen::Index>(1, panel_values / d);
+        for (std::size_t begin = first; begin < last;) {
+            const auto count = std::min(width, core::checked_index<Eigen::Index>(last - begin));
+            if (!contiguous && packed.size() < d * count)
+                packed.resize(d * count);
+            for (Eigen::Index lane = 0; lane < rhs.cols(); ++lane) {
+                auto column = rhs.col(lane);
+                if (contiguous) {
+                    solve_panel(lower, column.data() + blocks_[begin].indices.front(), count);
+                    continue;
+                }
+                Eigen::Map<Eigen::MatrixXd> panel(packed.data(), d, count);
+                for (Eigen::Index j = 0; j < count; ++j) {
+                    const auto& indices = blocks_[begin + j].indices;
+                    for (Eigen::Index i = 0; i < d; ++i)
+                        panel(i, j) = column[indices[i]];
+                }
+                solve_panel(lower, packed.data(), count);
+                for (Eigen::Index j = 0; j < count; ++j) {
+                    const auto& indices = blocks_[begin + j].indices;
+                    for (Eigen::Index i = 0; i < d; ++i)
+                        column[indices[i]] = panel(i, j);
+                }
+            }
+            begin += count;
+        }
     }
-    return result;
 }
 
 Eigen::VectorXd SpinMetric::occupation_diagonal(const mcscf::ActiveIntegrals& integrals) const {
@@ -219,12 +334,12 @@ Eigen::VectorXd SpinMetric::precondition(const Eigen::VectorXd& rhs,
     Eigen::VectorXd result = solve(rhs).col(0);
     for (const auto& block : blocks_) {
         double spin_trace = 0.0, physical_trace = 0.0;
-        for (const int i : block.indices) {
+        for (const auto i : block.indices) {
             spin_trace += diagonal_[i];
             physical_trace += physical_diagonal[i];
         }
         const double scale = spin_trace / physical_trace;
-        for (const int i : block.indices)
+        for (const auto i : block.indices)
             result[i] *= scale;
     }
     return result;

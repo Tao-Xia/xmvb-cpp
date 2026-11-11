@@ -3149,6 +3149,13 @@ int main(int argc, char** argv) {
             std::cout << "FULL multi-lane sigma: passed\n";
             return 0;
         }
+        if (argc == 2 && std::string(argv[1]) == "--exchange-write") {
+            const auto strings = complete_space(4, 2);
+            for (const int parity : {-1, 1})
+                check_tiled_integral_direction_case(strings, strings, 1, parity);
+            std::cout << "single-RHS exchange write: passed\n";
+            return 0;
+        }
         if (argc == 2 && std::string(argv[1]) == "--benchmark-exchange") {
             check_exchange_adjoint(true);
             return 0;

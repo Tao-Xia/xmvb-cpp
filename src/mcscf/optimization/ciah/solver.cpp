@@ -84,7 +84,8 @@ struct HostBackend {
 
 detail::CiahNumerics numerics(const CiahOptions& options) {
     return {
-        options.tolerance, options.lindep, options.max_cycle, options.operator_relative_accuracy};
+        options.tolerance, options.lindep, options.max_cycle, options.operator_relative_accuracy,
+        options.complement_capacity};
 }
 
 } // namespace
@@ -122,6 +123,12 @@ void CiahWorkspace::set_step_limit(std::function<double(const Eigen::VectorXd&)>
     impl_->core.set_step_limit(std::move(maximum), cap);
 }
 
+void CiahWorkspace::set_projected_step_limit(
+    std::function<std::optional<double>(const std::vector<Eigen::VectorXd>&,
+                                       const Eigen::VectorXd&)> projected) {
+    impl_->core.set_projected_step_limit(std::move(projected));
+}
+
 void CiahWorkspace::reset_rhs() noexcept {
     impl_->core.reset_rhs();
 }
@@ -148,6 +155,39 @@ CiahResult CiahWorkspace::next(const Eigen::VectorXd& current_gradient) {
 
 double CiahWorkspace::projected_dual_norm(const Eigen::VectorXd& covector) const {
     return impl_->core.projected_dual_norm(covector);
+}
+
+void CiahWorkspace::append_complement_coordinate(Eigen::Index index,
+                                                 Eigen::VectorXd hessian_column,
+                                                 Eigen::VectorXd metric_column) {
+    if (index < 0 || index >= hessian_column.size() ||
+        metric_column.size() != hessian_column.size())
+        throw std::invalid_argument("CIAH complement coordinate is out of range");
+    Eigen::VectorXd unit = Eigen::VectorXd::Unit(hessian_column.size(), index);
+    impl_->core.append_complement_coordinate(
+        std::move(unit), std::move(hessian_column), std::move(metric_column),
+        [index](Eigen::VectorXd& h, Eigen::VectorXd& m, const Eigen::VectorXd& direction,
+                const Eigen::VectorXd& h_column, const Eigen::VectorXd& m_column) {
+            h[index] = direction.dot(h_column);
+            m[index] = direction.dot(m_column);
+        });
+}
+
+Eigen::VectorXd CiahWorkspace::softest_ritz_direction() const {
+    const auto& core = impl_->core;
+    const int width = core.basis_size();
+    if (width == 0)
+        return {};
+    const auto a = core.hessian_projection().topLeftCorner(width, width);
+    const auto m = core.metric_projection().topLeftCorner(width, width);
+    const Eigen::GeneralizedSelfAdjointEigenSolver<Eigen::MatrixXd> spectrum(
+        (0.5 * (a + a.transpose())).eval(), (0.5 * (m + m.transpose())).eval());
+    if (spectrum.info() != Eigen::Success)
+        throw std::runtime_error("CIAH soft Ritz direction failed");
+    Eigen::VectorXd direction = Eigen::VectorXd::Zero(core.basis().front().size());
+    for (int j = 0; j < width; ++j)
+        direction.noalias() += spectrum.eigenvectors()(j, 0) * core.basis()[j];
+    return direction;
 }
 
 std::optional<CiahOriginRay>

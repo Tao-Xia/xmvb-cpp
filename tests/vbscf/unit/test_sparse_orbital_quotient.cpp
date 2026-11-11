@@ -591,6 +591,9 @@ void check(const std::string& name, const OrbitalPreparationInput& input, int ex
         require(inverse_hessian.size() == 1, name + ": valid quotient secant was rejected");
         require((inverse_hessian.apply(secant_gradient_change) - secant_step).norm() < 1.0e-10,
                 name + ": quotient L-BFGS inverse violates its secant equation");
+        require((view.scatter_to_full(space.expand_step(d)).array() ==
+                 space.expand_retract_input_tangent(input, d).array()).all(),
+                name + ": packed and full retraction tangent differ");
         const auto trial = space.retract_step(input, d, 0.01);
         require((view.pack(trial) - x - 0.01 * u * d).norm() < 1e-12,
                 name + ": additive retraction");
@@ -654,6 +657,8 @@ void check_complete_oeo_active_subspace_gauge() {
 
     const OrbitalChart structure_subset_chart(
         input, view, orbitals, orbitals, nullptr, false, false);
+    require(!structure_subset_chart.has_full_horizontal_active_lift(),
+            "selected OEO space was treated as a full horizontal chart");
     require(structure_subset_chart.reduced_size() == 10,
             "OEO structure subset did not retain independent active rays");
     const auto subset_diagnostics = structure_subset_chart.structural_diagnostics();
@@ -662,6 +667,8 @@ void check_complete_oeo_active_subspace_gauge() {
             "OEO structure subset did not use S-tangent orbital rays");
 
     const OrbitalChart complete_cas_chart(input, view, orbitals, orbitals, nullptr, false, true);
+    require(complete_cas_chart.has_full_horizontal_active_lift(),
+            "full-AO complete CAS did not certify the horizontal active lift");
     require(complete_cas_chart.reduced_size() == 8,
             "complete-CAS OEO chart did not remove active--active gauge");
     const auto complete_diagnostics = complete_cas_chart.structural_diagnostics();

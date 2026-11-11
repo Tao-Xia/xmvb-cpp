@@ -550,8 +550,8 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch_impl(
         if (compute_outer_response && packed_outer_two_electron_required)
             delta_packed_active_two_electron = delta_packed_active_two_electron_columns.col(column);
         OrbitalCouplingAction column_coupling;
-        const Eigen::VectorXd response = apply_reduced_impl(
-            reduced_directions.col(column),
+        const Eigen::VectorXd response = apply_packed_impl(
+            precomputed_directions[column].packed_direction,
             components,
             &combined_ao,
             &active_projection,

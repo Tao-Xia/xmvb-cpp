@@ -374,10 +374,13 @@ std::vector<double> build_orbital_value_gradient_from_active_space_gradient_dire
         symmetric_active_one_electron_gradient_workspace != nullptr
             ? *symmetric_active_one_electron_gradient_workspace
             : local_symmetric_active_one_electron_gradient;
-    write_symmetric_active_matrix_average_local(
-        active_space_gradient_direction.active_orbital_overlap_gradient,
-        n_active_orbitals,
-        &symmetric_active_overlap_gradient);
+    if (active_space_gradient_direction.active_orbital_overlap_gradient.empty())
+        symmetric_active_overlap_gradient.clear();
+    else
+        write_symmetric_active_matrix_average_local(
+            active_space_gradient_direction.active_orbital_overlap_gradient,
+            n_active_orbitals,
+            &symmetric_active_overlap_gradient);
     write_symmetric_active_matrix_average_local(
         active_space_gradient_direction.active_one_electron_gradient,
         n_active_orbitals,

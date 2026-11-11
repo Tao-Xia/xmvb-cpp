@@ -14,9 +14,9 @@
 
 namespace xmvb::vb {
 
-StructureActionResult
-StructureAction::scalar_integral_action(const StructureAdjointState& state,
-                                        const OrthogonalActiveIntegrals& delta) const {
+SelectedIntegralScalars
+StructureAction::single_state_integral_scalars(const StructureAdjointState& state,
+                                               const OrthogonalActiveIntegrals& delta) const {
     const auto& r = orthogonal_view().alpha.orbital_transform();
     const Eigen::MatrixXd generator = r.transpose()
                                           .triangularView<Eigen::Lower>()
@@ -27,6 +27,13 @@ StructureAction::scalar_integral_action(const StructureAdjointState& state,
                        (state.pair_kernel_gradient.array() * delta.pair_kernel.array()).sum() +
                        (state.generator_gradient.array() * generator.array()).sum()) /
                       state.weights[0];
+    return {dm, de};
+}
+
+StructureActionResult
+StructureAction::scalar_integral_action(const StructureAdjointState& state,
+                                        const OrthogonalActiveIntegrals& delta) const {
+    const auto [dm, de] = single_state_integral_scalars(state, delta);
     const double c = state.structure_coefficients(0, 0);
     return {Eigen::MatrixXd::Constant(1, 1, (de + state.energies[0] * dm) / c),
             Eigen::MatrixXd::Constant(1, 1, dm / c)};

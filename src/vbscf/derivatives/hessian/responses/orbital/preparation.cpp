@@ -301,7 +301,6 @@ AcceptedOrbitalPreparationCache build_accepted_orbital_preparation_cache(
     cache.inverse_norms.assign(n_orbitals, 0.0);
     cache.orbital_basis_function_indices.resize(n_orbitals);
     cache.orbital_coefficient_counts.resize(n_orbitals, 0);
-    cache.orbital_overlap_submatrices.resize(n_orbitals);
 
     for (int orbital_index = 0; orbital_index < n_orbitals; ++orbital_index) {
         Eigen::VectorXd dense_raw = Eigen::VectorXd::Zero(n_basis_functions);
@@ -330,14 +329,6 @@ AcceptedOrbitalPreparationCache build_accepted_orbital_preparation_cache(
         const double norm = std::sqrt(squared_norm);
         cache.normalized_orbitals.col(orbital_index) = dense_raw / norm;
         cache.inverse_norms[orbital_index] = 1.0 / norm;
-
-        auto& overlap_sub = cache.orbital_overlap_submatrices[orbital_index];
-        overlap_sub = Eigen::MatrixXd::Zero(coefficient_count, coefficient_count);
-        for (int row = 0; row < coefficient_count; ++row) {
-            for (int column = 0; column < coefficient_count; ++column) {
-                overlap_sub(row, column) = basis_overlap(basis_indices[row], basis_indices[column]);
-            }
-        }
     }
 
     cache.basis_overlap_times_normalized = basis_overlap * cache.normalized_orbitals;
@@ -781,6 +772,7 @@ std::vector<double> apply_fixed_upstream_orbital_pullback_direction_impl(
 
     Eigen::MatrixXd delta_original_orbital_gradient =
         Eigen::MatrixXd::Zero(input.n_basis_functions, input.n_orbitals);
+    Eigen::MatrixXd delta_basis_overlap_times_inactive;
 
     if (n_inactive_doubly_occupied_orbitals == 0) {
         // original_orbital_gradient is just active_auxiliary_gradient,
@@ -821,8 +813,7 @@ std::vector<double> apply_fixed_upstream_orbital_pullback_direction_impl(
             n_inactive_doubly_occupied_orbitals, input.n_active_orbitals);
         const Eigen::MatrixXd basis_overlap_times_inactive =
             cache.basis_overlap_times_normalized.leftCols(n_inactive_doubly_occupied_orbitals);
-        const Eigen::MatrixXd delta_basis_overlap_times_inactive =
-            basis_overlap * delta_inactive_orbitals;
+        delta_basis_overlap_times_inactive.noalias() = basis_overlap * delta_inactive_orbitals;
         const Eigen::MatrixXd total_inactive_gradient =
             total_inactive_density_gradient -
             total_active_auxiliary_gradient * bs_active.transpose();
@@ -869,7 +860,8 @@ std::vector<double> apply_fixed_upstream_orbital_pullback_direction_impl(
     }
 
     std::vector<double> orbital_value_gradient_direction(input.orbital_value_table.size(), 0.0);
-    for (int orbital_index = 0; orbital_index < input.n_orbitals; ++orbital_index) {
+    const int occupied = n_inactive_doubly_occupied_orbitals + input.n_active_orbitals;
+    for (int orbital_index = 0; orbital_index < occupied; ++orbital_index) {
         const auto& basis_indices = cache.orbital_basis_function_indices[orbital_index];
         const int coefficient_count = cache.orbital_coefficient_counts[orbital_index];
         Eigen::VectorXd normalized_vector = Eigen::VectorXd::Zero(coefficient_count);
@@ -877,6 +869,9 @@ std::vector<double> apply_fixed_upstream_orbital_pullback_direction_impl(
         Eigen::VectorXd input_direction = Eigen::VectorXd::Zero(coefficient_count);
         Eigen::VectorXd dense_gradient = Eigen::VectorXd::Zero(coefficient_count);
         Eigen::VectorXd delta_dense_gradient = Eigen::VectorXd::Zero(coefficient_count);
+        Eigen::VectorXd overlap_times_normalized(coefficient_count);
+        Eigen::VectorXd delta_overlap_times_normalized(coefficient_count);
+        const bool inactive = orbital_index < n_inactive_doubly_occupied_orbitals;
 
         for (int coefficient_index = 0; coefficient_index < coefficient_count;
              ++coefficient_index) {
@@ -892,13 +887,15 @@ std::vector<double> apply_fixed_upstream_orbital_pullback_direction_impl(
                 original_orbital_gradient(basis_function_index, orbital_index);
             delta_dense_gradient(coefficient_index) =
                 delta_original_orbital_gradient(basis_function_index, orbital_index);
+            overlap_times_normalized[coefficient_index] =
+                cache.basis_overlap_times_normalized(basis_function_index, orbital_index);
+            delta_overlap_times_normalized[coefficient_index] = inactive
+                ? delta_basis_overlap_times_inactive(basis_function_index, orbital_index)
+                : basis_overlap_times_delta_active_orbitals(
+                    basis_function_index, orbital_index - n_inactive_doubly_occupied_orbitals);
         }
 
-        const auto& overlap_submatrix = cache.orbital_overlap_submatrices[orbital_index];
         const double inverse_norm = orbital_tangent_context.inverse_norms[orbital_index];
-        const Eigen::VectorXd overlap_times_normalized = overlap_submatrix * normalized_vector;
-        const Eigen::VectorXd delta_overlap_times_normalized =
-            overlap_submatrix * delta_normalized_vector;
         const double input_direction_projection =
             inverse_norm * input_direction.dot(overlap_times_normalized);
         const double delta_inverse_norm = -inverse_norm * input_direction_projection;

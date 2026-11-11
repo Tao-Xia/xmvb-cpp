@@ -183,11 +183,10 @@ BackendRunResult run_ciah_backend(VbScfObjective* objective,
 
         if (!accepted.trial.gradient_ready)
             objective->complete_trial(&accepted.trial);
-        accepted.parameters = parameter_view.pack(accepted.trial.orbital_preparation_input);
+        parameters = parameter_view.pack(accepted.trial.orbital_preparation_input);
         gradient = accepted.trial.gradient;
         energy = accepted.trial.energy;
         objective->commit(std::move(accepted.trial));
-        parameters = std::move(accepted.parameters);
         orbital_guess_packed = std::move(accepted.next_orbital_guess_packed);
         structure_guess = std::move(accepted.next_structure_guess);
         // CIAH may evaluate several fixed-structure keyframes before this final
@@ -213,7 +212,7 @@ BackendRunResult run_ciah_backend(VbScfObjective* objective,
             iteration_record.accepted_physical_gradient_norm =
                 next_metric.dual_norm(next_projected.reduced_gradient);
         }
-        const double energy_change = energy - previous_energy;
+        const double energy_change = energy - accepted.strict_source_energy.value_or(previous_energy);
         previous_energy = energy;
         if (std::abs(energy_change) < options.energy_tolerance &&
             (terminal_checked ||

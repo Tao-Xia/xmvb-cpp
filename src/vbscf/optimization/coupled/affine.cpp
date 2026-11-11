@@ -13,8 +13,11 @@ namespace xmvb::vb {
 
 AffineCoupling::AffineCoupling(const AcceptedPointContext& context,
                                const ExactHvpOperator& hessian,
-                               const StructureTangentOperator& structure)
-    : hessian_(hessian), structure_(structure) {
+                               const StructureTangentOperator& structure,
+                               bool fixed_active_overlap)
+    : hessian_(hessian), structure_(structure), fixed_active_overlap_(fixed_active_overlap) {
+    if (fixed_active_overlap_)
+        return;
     // Reuse the accepted images shared with StructureTangentOperator.
     const auto& images = context.selected_state_structure_images.value();
     const auto& c = context.selected_state_eigenvectors;
@@ -28,12 +31,25 @@ AffineCoupling::AffineCoupling(const AcceptedPointContext& context,
     metric_inverse_ = gram.llt().solve(Eigen::MatrixXd::Identity(c.cols(), c.cols()));
 }
 
+std::pair<Eigen::VectorXd, Eigen::VectorXd> AffineCoupling::fixed_overlap_orbital_images(
+    const Eigen::VectorXd& p, bool forcing_only) const {
+    if (!fixed_active_overlap_)
+        throw std::logic_error("fixed-overlap forcing requires a horizontal CI model");
+    const Eigen::MatrixXd no_ci;
+    StructureResponseRequest request{no_ci, {}, true};
+    auto result = hessian_.apply_orbital_coupling(p, &request, forcing_only);
+    return {std::move(result.orbital_hessian),
+            structure_.project_coordinates(result.scaled_structure_forcing)};
+}
+
 AffineCouplingAction AffineCoupling::apply(const Eigen::VectorXd& p,
                                            const Eigen::VectorXd& q) const {
     const bool direct_ci = hessian_.structure_action().supports_integral_direction();
     const Eigen::MatrixXd raw = structure_.coefficient_response_coordinates(q);
-    const Eigen::MatrixXd correction = -metric_inverse_ * residual_.transpose() * raw;
-    StructureResponseRequest request{raw};
+    Eigen::MatrixXd correction;
+    if (!fixed_active_overlap_)
+        correction = -metric_inverse_ * residual_.transpose() * raw;
+    StructureResponseRequest request{raw, {}, fixed_active_overlap_};
     AffineCouplingAction result;
     result.orbital = hessian_.apply_orbital_coupling(p, direct_ci ? &request : nullptr);
     profiling::ScopedPhase phase(profiling::Phase::CiahStructure, true);
@@ -42,7 +58,7 @@ AffineCouplingAction AffineCoupling::apply(const Eigen::VectorXd& p,
     if (direct_ci) {
         StructureActiveIntegralAdjoint adjoint;
         result.ci = structure_.finish_coupling_coordinates(
-            raw, std::move(request.result), &adjoint, &correction);
+            raw, std::move(request.result), &adjoint, fixed_active_overlap_ ? nullptr : &correction);
         coupling_end = std::chrono::steady_clock::now();
         result.adjoint = hessian_.apply_structure_coupling_adjoint(adjoint);
     } else {
@@ -53,11 +69,15 @@ AffineCouplingAction AffineCoupling::apply(const Eigen::VectorXd& p,
                                                                    result.ci.adjoint_multipliers);
     }
     const auto adjoint_end = std::chrono::steady_clock::now();
-    Eigen::MatrixXd forcing = residual_ * result.orbital.gauge_frame;
-    for (Eigen::Index i = 0; i < forcing.cols(); ++i)
-        forcing.col(i) *= scales_[i];
-    forcing += result.orbital.scaled_structure_forcing;
-    result.forcing = structure_.project_coordinates(forcing);
+    if (fixed_active_overlap_) {
+        result.forcing = structure_.project_coordinates(result.orbital.scaled_structure_forcing);
+    } else {
+        Eigen::MatrixXd forcing = residual_ * result.orbital.gauge_frame;
+        for (Eigen::Index i = 0; i < forcing.cols(); ++i)
+            forcing.col(i) *= scales_[i];
+        forcing += result.orbital.scaled_structure_forcing;
+        result.forcing = structure_.project_coordinates(forcing);
+    }
     mcscf::diagnostics::ciah_trace(
         "ciah_structure_cost",
         "coupling=%.17g,orbital_adjoint=%.17g,projection=%.17g",

@@ -61,7 +61,8 @@ OrthogonalActiveIntegrals orthogonalize_active_integral_direction(
     const Eigen::Ref<const Eigen::MatrixXd>& one_electron_direction,
     const std::vector<double>& packed_two_electron_direction,
     int n_active_orbitals,
-    const Eigen::MatrixXd* ri_factor_direction = nullptr);
+    const Eigen::MatrixXd* ri_factor_direction = nullptr,
+    bool fixed_active_overlap = false);
 
 /**
  * @brief Backpropagates an orthogonal-CI integral and orbital-generator adjoint.

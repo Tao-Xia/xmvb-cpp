@@ -22,20 +22,24 @@ CiTransport::CiTransport(const OrbitalPreparationInput& input,
                          const OrbitalChart& chart,
                          const AcceptedPointContext& origin,
                          const StructureAction& action,
-                         const StructureTangentOperator& structure)
+                         const StructureTangentOperator& structure,
+                         bool fixed_origin_overlap)
     : input_(input), layout_(layout), chart_(chart), origin_(origin), action_(action),
       structure_(structure),
       overlap_(action,
                origin.same_spin_pair_cache.alpha_reuse_table.unique_determinants,
                origin.same_spin_pair_cache.beta_reuse_table.unique_determinants,
                input.n_active_orbitals),
-      origin_pullback_(input, origin.prepared_active_space.orbital_result, layout),
       upper_(origin.prepared_active_space.active_space_two_electron_result.orbital_transform),
       zero_(Eigen::MatrixXd::Zero(input.n_active_orbitals, input.n_active_orbitals)),
       c0_(origin.selected_state_eigenvectors),
       coordinate_scale_(std::sqrt(2.0 * origin.normalized_state_weights.at(0))),
       diagonal_(action.preconditioner_diagonal().overlap), inverse_(origin.metric_inverse(action)),
       metric_upper_(upper_), selected_metric_(origin.selected_metric) {
+    if (fixed_origin_overlap && !chart.has_full_horizontal_active_lift())
+        throw std::invalid_argument("fixed origin overlap requires a horizontal active chart");
+    if (!fixed_origin_overlap)
+        origin_pullback_.emplace(input, origin.prepared_active_space.orbital_result, layout);
     const auto& images = origin.selected_state_structure_images.value();
     const Eigen::MatrixXd state_h = c0_.transpose() * images.hamiltonian;
     gc0_ =
@@ -172,23 +176,38 @@ CiTransportPoint CiTransport::retract(const Eigen::VectorXd& orbital_step,
     point.prepared = ActiveSpaceOrbitalPreparer{}.prepare(point.input);
     const auto active = point.prepared.auxiliary_orbital_matrix.middleCols(
         (input_.n_total_electrons - input_.n_active_electrons) / 2, input_.n_active_orbitals);
-    point.upper = active_frame(active,
-                               point.input.ao_overlap_matrix,
-                               Eigen::Map<const Eigen::MatrixXd>(
-                                   point.prepared.active_orbital_overlap_matrix.data(),
-                                   input_.n_active_orbitals,
-                                   input_.n_active_orbitals))
-                      .upper;
-    point.origin_direction = overlap_upper_direction(
-        upper_, origin_pullback_.overlap_direction(raw_direction(orbital_step)));
+    point.frame = active_frame(
+        active,
+        point.input.ao_overlap_matrix,
+        Eigen::Map<const Eigen::MatrixXd>(point.prepared.active_orbital_overlap_matrix.data(),
+                                          input_.n_active_orbitals,
+                                          input_.n_active_orbitals));
     point.base_coefficients = c0_ + structure_.coefficient_response_coordinates(structure_step);
-    const Eigen::MatrixXd rhs =
-        overlap_.apply(point.upper, upper_, point.base_coefficients) +
-        overlap_.apply_direction(point.upper, upper_, zero_, point.origin_direction, c0_);
+    if (inverse_ && !origin_pullback_) {
+        // W spans the complete spin sector and the common spatial transform
+        // preserves it. The trial adjoint cancels from the normal equation.
+        const Eigen::MatrixXd relative =
+            point.frame.upper.triangularView<Eigen::Upper>().solve(upper_);
+        const auto& alpha_strings = origin_.same_spin_pair_cache.alpha_reuse_table.unique_determinants;
+        const auto& beta_strings = origin_.same_spin_pair_cache.beta_reuse_table.unique_determinants;
+        point.relative_alpha = std::make_shared<ExteriorOrbitalTransform>(alpha_strings, relative);
+        point.relative_beta = alpha_strings == beta_strings
+            ? point.relative_alpha
+            : std::make_shared<ExteriorOrbitalTransform>(beta_strings, relative);
+        point.coefficients = inverse_->transport_coefficients(
+            point.base_coefficients, *point.relative_alpha, *point.relative_beta);
+        return point;
+    }
+    Eigen::MatrixXd rhs = overlap_.apply(point.frame.upper, upper_, point.base_coefficients);
+    if (origin_pullback_) {
+        point.origin_direction = overlap_upper_direction(
+            upper_, origin_pullback_->overlap_direction(raw_direction(orbital_step)));
+        rhs += overlap_.apply_direction(point.frame.upper, upper_, zero_, point.origin_direction, c0_);
+    }
     // The target already agrees with F' * base_coefficients to first order
     // in the orbital step (at zero independent CI step). Correct the defect
     // of this known representative, with the original RHS-relative tolerance.
-    point.coefficients = solve(point.upper, rhs, &point.base_coefficients);
+    point.coefficients = solve(point.frame.upper, rhs, &point.base_coefficients);
     // solve() has prepared this chart's Gram. Retain its immutable ownership,
     // since a later retraction may replace the transport workspace's trial point.
     if (!inverse_)
@@ -202,26 +221,36 @@ CiTransportModel CiTransport::evaluate_model(const CiTransportPoint& point,
     // E_hat = E - <gc0, C_transport-C_affine>. Its first jet is physical,
     // while the residual-weighted transport second jet cancels algebraically.
     // Retain the actual finite gc0: no stationarity cutoff or zero replacement.
-    const Eigen::MatrixXd lambda = solve(point.upper, fixed.coefficient_gradient - gc0_);
+    const Eigen::MatrixXd covector = fixed.coefficient_gradient - gc0_;
     Eigen::MatrixXd current_upper = zero_, origin_upper = zero_;
     Eigen::MatrixXd structure_gradient(c0_.rows(), c0_.cols());
-    for (Eigen::Index s = 0; s < c0_.cols(); ++s) {
-        const auto pullback = overlap_.transport_gradient(point.upper,
-                                                          upper_,
-                                                          point.origin_direction,
-                                                          lambda.col(s),
-                                                          point.base_coefficients.col(s),
-                                                          c0_.col(s),
-                                                          point.coefficients.col(s));
-        current_upper += pullback.charts.left;
-        origin_upper += pullback.charts.right;
-        structure_gradient.col(s) = (pullback.image + gc0_.col(s)) / coordinate_scale_;
+    if (point.relative_alpha && covector.cols() == 1 && inverse_->supports_transport_pullback()) {
+        const auto [generator, base] = inverse_->transport_pullback(
+            point.coefficients.col(0), covector.col(0), *point.relative_alpha, *point.relative_beta);
+        // Differentiating R'^-1 R yields the negative right generator R'^-1 dR'.
+        current_upper = -point.frame.upper.transpose().triangularView<Eigen::Lower>().solve(generator);
+        structure_gradient.col(0) = (base + gc0_.col(0)) / coordinate_scale_;
+    } else {
+        const Eigen::MatrixXd lambda = solve(point.frame.upper, covector);
+        for (Eigen::Index s = 0; s < c0_.cols(); ++s) {
+            const auto pullback = overlap_.transport_gradient(point.frame.upper,
+                                                              upper_,
+                                                              point.origin_direction,
+                                                              lambda.col(s),
+                                                              point.base_coefficients.col(s),
+                                                              c0_.col(s),
+                                                              point.coefficients.col(s));
+            current_upper += pullback.charts.left;
+            origin_upper += pullback.charts.right;
+            structure_gradient.col(s) = (pullback.image + gc0_.col(s)) / coordinate_scale_;
+        }
     }
     const OrbitalOverlapPullback current_pullback(point.input, point.prepared, layout_);
     Eigen::VectorXd orbital =
         fixed.orbital_gradient +
-        current_pullback.gradient(overlap_upper_gradient(point.upper, current_upper)) +
-        origin_pullback_.gradient(overlap_upper_gradient(upper_, origin_upper));
+        current_pullback.gradient(overlap_upper_gradient(point.frame.upper, current_upper));
+    if (origin_pullback_)
+        orbital += origin_pullback_->gradient(overlap_upper_gradient(upper_, origin_upper));
     CiTransportModel result;
     result.energy = fixed.energy -
                     (gc0_.array() * (point.coefficients - point.base_coefficients).array()).sum();

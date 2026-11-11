@@ -40,11 +40,16 @@ struct ExactHvpOperator::State {
     Eigen::VectorXd apply_reduced(const Eigen::VectorXd& reduced_direction,
                                   HvpComponents components) const;
 
+    /** Same reduced image, consuming an already lifted sparse AO direction. */
+    Eigen::VectorXd apply_packed(const Eigen::VectorXd& packed_direction,
+                                 HvpComponents components) const;
+
     Eigen::MatrixXd apply_reduced_batch(const Eigen::Ref<const Eigen::MatrixXd>& reduced_directions,
                                         HvpComponents components) const;
 
     OrbitalCouplingAction apply_orbital_coupling(const Eigen::VectorXd& reduced_direction,
-                                                 StructureResponseRequest* ci_response) const;
+                                                 StructureResponseRequest* ci_response,
+                                                 bool forcing_only = false) const;
 
     Eigen::VectorXd apply_orbital(const Eigen::VectorXd& reduced_direction) const;
 
@@ -93,10 +98,12 @@ struct ExactHvpOperator::State {
                                     const Eigen::Ref<const Eigen::MatrixXd>& delta_h1e_times_active,
                                     const Eigen::VectorXd* precomputed_delta_packed_two_electron,
                                     ActiveSpaceIntegralDirectionWorkspace* workspace,
-                                    bool packed_two_electron_required = true) const;
+                                    bool packed_two_electron_required = true,
+                                    bool fixed_active_overlap = false,
+                                    const Eigen::MatrixXd* projected_effective_h1e = nullptr) const;
 
-    Eigen::VectorXd apply_reduced_impl(
-        const Eigen::VectorXd& reduced_direction,
+    Eigen::VectorXd apply_packed_impl(
+        const Eigen::VectorXd& packed_direction,
         HvpComponents components,
         const Eigen::VectorXd* precomputed_ao_response,
         const Eigen::MatrixXd* precomputed_active_projection,
@@ -106,7 +113,8 @@ struct ExactHvpOperator::State {
         const PrecomputedDirection* precomputed_direction,
         OrbitalCouplingAction* coupling_output,
         bool horizontal_forcing = true,
-        StructureResponseRequest* ci_response = nullptr) const;
+        StructureResponseRequest* ci_response = nullptr,
+        bool forcing_only = false) const;
 
     Eigen::VectorXd apply_structure_response_adjoint(
         const Eigen::Ref<const Eigen::MatrixXd>& coefficient_response,

@@ -10,8 +10,11 @@ namespace {
 struct HostDriverBackend : detail::HostCiahVectorOps {
     const CiahMicroCallbacks& callbacks;
     const Eigen::Index orbital_size;
+    CiahMicroResult* continuation = nullptr;
 
     CiahMicroResult make_result(double energy, const Vector& gradient) const {
+        if (continuation)
+            return std::move(*continuation);
         return CiahMicroResult(energy, gradient);
     }
     CiahResult next(CiahWorkspace& workspace, const Vector& gradient) const {
@@ -91,6 +94,20 @@ CiahMicroResult run_ciah_microsteps(CiahWorkspace& workspace,
     workspace.set_step_limit(callbacks.maximum_component, detail::ciah_step_max_component);
     return detail::run_ciah_microsteps_core(
         HostDriverBackend{{}, callbacks, callbacks.orbital_size},
+        workspace,
+        initial_gradient,
+        energy,
+        outer_gradient_tolerance);
+}
+
+CiahMicroResult continue_ciah_microsteps(CiahWorkspace& workspace,
+                                         const Eigen::VectorXd& initial_gradient,
+                                         double energy,
+                                         double outer_gradient_tolerance,
+                                         const CiahMicroCallbacks& callbacks,
+                                         CiahMicroResult path) {
+    return detail::run_ciah_microsteps_core(
+        HostDriverBackend{{}, callbacks, callbacks.orbital_size, &path},
         workspace,
         initial_gradient,
         energy,

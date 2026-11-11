@@ -556,7 +556,7 @@ ScfResult solve_scf(Context& context,
             return norm(context, dr.view()) >
                    std::numeric_limits<double>::epsilon() * norm(context, accepted.raw.view());
         };
-        macro.evaluate = [&](const Matrix<double>& displacement, double step_scale) {
+        macro.evaluate = [&](const Matrix<double>& displacement, double step_scale, double) {
             AllocationPhase allocation(context, "macro CI relaxation");
             auto scaled = clone(context, displacement.view());
             scale(context, scaled.view(), step_scale);

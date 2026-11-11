@@ -70,22 +70,26 @@ pullback_active_matrices(const std::vector<double>& overlap_gradient,
                          bool ao_adjoint_required) {
     const Eigen::Index n = raw_active_coefficients.rows();
     const Eigen::Index a = raw_active_coefficients.cols();
-    if (overlap_gradient.size() != static_cast<std::size_t>(a * a) ||
+    if ((!overlap_gradient.empty() && overlap_gradient.size() != static_cast<std::size_t>(a * a)) ||
         one_electron_gradient.size() != static_cast<std::size_t>(a * a) ||
         one_electron.ao_image.rows() != n || one_electron.ao_image.cols() != a) {
         throw std::invalid_argument("active matrix pullback image size mismatch");
     }
-    const Eigen::Map<const Eigen::MatrixXd> gs(overlap_gradient.data(), a, a);
     const Eigen::Map<const Eigen::MatrixXd> gh(one_electron_gradient.data(), a, a);
-    const Eigen::MatrixXd symmetric_overlap = gs + gs.transpose();
     const Eigen::MatrixXd symmetric_h = gh + gh.transpose();
     // Contract R on the small cotangent, not on every AO response image.
     const Eigen::MatrixXd right_weight =
         frame.size() ? Eigen::MatrixXd(frame * symmetric_h) : symmetric_h;
     ActiveSpaceMatrixBackpropagationResult result;
-    result.active_auxiliary_orbital_gradient.noalias() =
-        (ao_overlap * raw_active_coefficients) * symmetric_overlap;
-    result.active_auxiliary_orbital_gradient.noalias() += one_electron.ao_image * right_weight;
+    if (overlap_gradient.empty()) {
+        result.active_auxiliary_orbital_gradient.noalias() = one_electron.ao_image * right_weight;
+    } else {
+        const Eigen::Map<const Eigen::MatrixXd> gs(overlap_gradient.data(), a, a);
+        const Eigen::MatrixXd symmetric_overlap = gs + gs.transpose();
+        result.active_auxiliary_orbital_gradient.noalias() =
+            (ao_overlap * raw_active_coefficients) * symmetric_overlap;
+        result.active_auxiliary_orbital_gradient.noalias() += one_electron.ao_image * right_weight;
+    }
     if (ao_adjoint_required) {
         const Eigen::MatrixXd weight =
             frame.size() ? Eigen::MatrixXd(frame * gh.transpose() * frame.transpose())

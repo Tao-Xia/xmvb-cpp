@@ -74,8 +74,10 @@ OrbitalOverlapPullback::overlap_direction(const Eigen::VectorXd& packed_raw_dire
 Eigen::VectorXd
 OrbitalOverlapPullback::gradient(const Eigen::Ref<const Eigen::MatrixXd>& overlap_adjoint) const {
     const Eigen::MatrixXd active_gradient = active_auxiliary_gradient(overlap_adjoint);
+    const Eigen::MatrixXd zero = Eigen::MatrixXd::Zero(
+        input_.n_basis_functions, geometry_.inactive_auxiliary.cols());
     const auto full_gradient = backpropagate_active_space_orbital_gradient(
-        active_gradient, zero_inactive_density_gradient_, input_, prepared_, geometry_);
+        active_gradient, InactiveDensityProjection{zero}, input_, prepared_, geometry_);
     return layout_.gather_from_full(full_gradient);
 }
 

@@ -20,7 +20,7 @@ class StructureAction;
 /** @brief Orbital-independent spin Gram G=W^T W, factored by occupation.
  * Valid for any independent selection of VB structures with a definite spatial
  * occupation per structure; neither CAS completeness nor orbital closure is
- * assumed. Stores sum of squared occupation-block sizes, not a global Gram.
+ * assumed. Occupations with identical ordered Gram blocks share one factor.
  */
 class SpinMetric {
   public:
@@ -34,6 +34,7 @@ class SpinMetric {
     /** @brief Exact G, L or L^T solve for G=L L^T. No orbital transform. */
     Eigen::MatrixXd solve(const Eigen::Ref<const Eigen::MatrixXd>& rhs,
                           Part part = Part::Gram) const;
+    void solve_in_place(Eigen::Ref<Eigen::MatrixXd> rhs, Part part) const;
 
     /** @brief SPD block-scaled inverse, matching the supplied diagonal sums.
    * One positive scalar per occupation preserves the full spin Gram geometry.
@@ -60,6 +61,12 @@ class SpinMetric {
     std::size_t block_count() const noexcept {
         return blocks_.size();
     }
+    std::size_t factor_count() const noexcept {
+        return factors_.size();
+    }
+    std::size_t contiguous_block_count() const noexcept {
+        return contiguous_blocks_;
+    }
     Eigen::Index max_block_size() const noexcept {
         return max_block_size_;
     }
@@ -81,9 +88,12 @@ class SpinMetric {
   private:
     struct Block {
         std::vector<Eigen::Index> indices;
-        Eigen::MatrixXd lower;
+        std::size_t factor;
         std::uint64_t occupied;
         std::uint64_t doubled;
+    };
+    struct SolveRange {
+        std::size_t first, last;
     };
     Eigen::Index dimension_;
     int n_alpha_, n_beta_;
@@ -91,6 +101,10 @@ class SpinMetric {
     workspace::Reservation residency_;
     Eigen::VectorXd diagonal_;
     std::vector<Block> blocks_;
+    std::vector<Eigen::MatrixXd> factors_;
+    // Adjacent contiguous blocks or a list of scattered blocks sharing one factor.
+    std::vector<SolveRange> solve_ranges_;
+    std::size_t contiguous_blocks_ = 0;
     std::size_t factor_bytes_ = 0;
     Eigen::Index max_block_size_ = 0;
 };

@@ -113,7 +113,9 @@ class RepresentationOverlap {
                                 const Eigen::Ref<const Eigen::VectorXd>& right_coeff,
                                 OverlapSide side = OverlapSide::Both) const;
 
-    /** @brief Pull back the finite selected-space transport in one tile sweep. */
+    /** @brief Pull back the finite selected-space transport in one tile sweep.
+     * An empty origin direction denotes an invariant origin chart, including its pullback.
+     */
     OverlapTransportGradient
     transport_gradient(const Eigen::Ref<const Eigen::MatrixXd>& current,
                        const Eigen::Ref<const Eigen::MatrixXd>& origin,

@@ -212,11 +212,21 @@ Eigen::VectorXd OrbitalChart::apply_inverse_rotation_diagonal(const Eigen::Vecto
     return result;
 }
 
-double OrbitalChart::maximum_frame_component(const Eigen::VectorXd& step) const {
-    std::array<Eigen::MatrixXd, 2> rotations;
-    for (int group = 0; group < 2; ++group)
-        rotations[group] = Eigen::MatrixXd::Zero(rotation_diagonals_[group].rows(),
-                                                 rotation_diagonals_[group].cols());
+Eigen::Index OrbitalChart::rotation_component_count() const noexcept {
+    return has_rotation_inverse_ ? rotation_diagonals_[0].size() + rotation_diagonals_[1].size()
+                                 : 0;
+}
+
+Eigen::VectorXd OrbitalChart::frame_rotation_components(
+    const Eigen::Ref<const Eigen::VectorXd>& step) const {
+    Eigen::VectorXd components = Eigen::VectorXd::Zero(rotation_component_count());
+    if (components.size() == 0)
+        return components;
+    std::array<Eigen::Map<Eigen::MatrixXd>, 2> rotations{
+        Eigen::Map<Eigen::MatrixXd>(components.data(), rotation_diagonals_[0].rows(),
+                                   rotation_diagonals_[0].cols()),
+        Eigen::Map<Eigen::MatrixXd>(components.data() + rotation_diagonals_[0].size(),
+                                   rotation_diagonals_[1].rows(), rotation_diagonals_[1].cols())};
     for (const auto& block : block_bases_)
         for (const auto& orbital : block.orbitals) {
             const int group = orbital.orbital_index < rotation_core_count_ ? 0 : 1;
@@ -225,11 +235,12 @@ double OrbitalChart::maximum_frame_component(const Eigen::VectorXd& step) const 
                 step.segment(orbital.local_reduced_offset, orbital.local_reduced_size);
             rotations[group].noalias() += external * orbital.ah_source_weights.transpose();
         }
-    double maximum = 0.0;
-    for (const auto& rotation : rotations)
-        if (rotation.size())
-            maximum = std::max(maximum, rotation.cwiseAbs().maxCoeff());
-    return maximum;
+    return components;
+}
+
+double OrbitalChart::maximum_frame_component(const Eigen::VectorXd& step) const {
+    const auto components = frame_rotation_components(step);
+    return components.size() ? components.cwiseAbs().maxCoeff() : 0.0;
 }
 
 } // namespace xmvb::vb

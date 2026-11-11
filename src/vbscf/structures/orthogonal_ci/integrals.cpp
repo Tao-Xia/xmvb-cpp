@@ -136,7 +136,8 @@ OrthogonalActiveIntegrals orthogonalize_active_integral_direction(
     const Eigen::Ref<const Eigen::MatrixXd>& one_electron_direction,
     const std::vector<double>& packed_two_electron_direction,
     int n_active_orbitals,
-    const Eigen::MatrixXd* ri_factor_direction) {
+    const Eigen::MatrixXd* ri_factor_direction,
+    bool fixed_active_overlap) {
     xmvb::profiling::ScopedPhase phase(xmvb::profiling::Phase::ActiveFrameDirection);
     if (n_active_orbitals <= 0 || accepted.orbital_transform.rows() != n_active_orbitals ||
         accepted.orbital_transform.cols() != n_active_orbitals ||
@@ -147,6 +148,22 @@ OrthogonalActiveIntegrals orthogonalize_active_integral_direction(
         one_electron_direction.rows() != n_active_orbitals ||
         one_electron_direction.cols() != n_active_orbitals || !one_electron_direction.allFinite()) {
         throw std::invalid_argument("invalid orthogonal active-integral direction");
+    }
+    if (fixed_active_overlap) {
+        OrthogonalActiveIntegrals result;
+        result.input_pretransformed = accepted.input_pretransformed;
+        result.one_electron = one_electron_direction;
+        result.pair_kernel =
+            unpack_two_electron_kernel(packed_two_electron_direction, n_active_orbitals);
+        if (!accepted.input_pretransformed) {
+            const Eigen::MatrixXd inverse =
+                accepted.orbital_transform.template triangularView<Eigen::Upper>().solve(
+                    Eigen::MatrixXd::Identity(n_active_orbitals, n_active_orbitals));
+            result.one_electron = (inverse.transpose() * result.one_electron * inverse).eval();
+            result.pair_kernel = xmvb::integrals::transform_pair_kernel(result.pair_kernel, inverse);
+        }
+        result.pair_kernel = (0.5 * (result.pair_kernel + result.pair_kernel.transpose())).eval();
+        return result;
     }
     const Eigen::Map<const Eigen::MatrixXd> delta_overlap_raw(
         overlap_direction.data(), n_active_orbitals, n_active_orbitals);
@@ -226,7 +243,8 @@ NonorthogonalActiveIntegralAdjoint backpropagate_orthogonal_active_integral_adjo
         orthogonal_one_electron_gradient.cols() != n_orbitals ||
         orthogonal_pair_kernel_gradient.rows() != n_pairs ||
         orthogonal_pair_kernel_gradient.cols() != n_pairs ||
-        generator_gradient.rows() != n_orbitals || generator_gradient.cols() != n_orbitals) {
+        (generator_gradient.size() &&
+         (generator_gradient.rows() != n_orbitals || generator_gradient.cols() != n_orbitals))) {
         throw std::invalid_argument(
             "orthogonal active-integral adjoint has incompatible dimensions");
     }
@@ -245,6 +263,8 @@ NonorthogonalActiveIntegralAdjoint backpropagate_orthogonal_active_integral_adjo
                                    orthogonal_pair_kernel_gradient, inverse_transform);
     result.pair_kernel = (0.5 * (result.pair_kernel + result.pair_kernel.transpose())).eval();
 
+    if (!generator_gradient.size())
+        return result;
     Eigen::MatrixXd relative_gradient = generator_gradient;
     relative_gradient.noalias() -=
         accepted.one_electron * orthogonal_one_electron_gradient.transpose() +

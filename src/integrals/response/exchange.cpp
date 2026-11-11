@@ -10,6 +10,7 @@
 #include "core/timing.hpp"
 #include "core/workspace.hpp"
 #include "integrals/ao/input.hpp"
+#include "integrals/ao/exact.hpp"
 
 namespace xmvb::integrals::detail {
 
@@ -23,11 +24,12 @@ void build_tiled_exchange(const AoPairGraph& graph,
                           const ExactCtxPairMatrix& coefficients,
                           int threads,
                           ExactCtxPairMatrix& result) {
-    const Eigen::Index n_bf = coefficients.rows(), n = coefficients.cols();
+    const int n_bf = coefficients.rows(), n = coefficients.cols();
     const auto& tiles = *graph.tiles;
     // Across the team, the half panels fit in the existing single AO slice.
     const int panel_rows = static_cast<int>(n_bf / threads);
-    const Eigen::Index stride = n_bf * n, width = n * n;
+    const Eigen::Index stride = static_cast<Eigen::Index>(n_bf) * n;
+    const Eigen::Index width = static_cast<Eigen::Index>(n) * n;
     std::vector<std::mutex> stripe_locks(n_bf);
 #pragma omp parallel num_threads(threads)
     {
@@ -40,23 +42,8 @@ void build_tiled_exchange(const AoPairGraph& graph,
         for (std::size_t block = 0; block < tiles.row_blocks(); ++block) {
             for (int begin = 0; begin < tiles.row_count(block); begin += panel_rows) {
                 const int rows = std::min(panel_rows, tiles.row_count(block) - begin);
-                half.topRows(rows).setZero();
-                tiles.visit_panel(block, begin, rows, [&](std::size_t pair, auto visit) {
-                    const int k = graph.pair_first[pair], l = graph.pair_second[pair];
-                    const double* c_k = coefficients.row(k).data();
-                    const double* c_l = coefficients.row(l).data();
-                    visit([&](int row, double value) {
-                        double* target = half.row(row).data();
-#pragma omp simd
-                        for (Eigen::Index b = 0; b < n; ++b)
-                            target[l * n + b] += value * c_k[b];
-                        if (k != l) {
-#pragma omp simd
-                            for (Eigen::Index b = 0; b < n; ++b)
-                                target[k * n + b] += value * c_l[b];
-                        }
-                    });
-                });
+                form_exact_pair_half_panel(
+                    graph, block, begin, rows, n_bf, n, coefficients.data(), half.data());
                 for (int row = 0; row < rows; ++row) {
                     const auto pair = tiles.row_begin(block) + begin + row;
                     const int i = graph.pair_first[pair], j = graph.pair_second[pair];
@@ -329,6 +316,51 @@ project_exact_active_density_response(const ExactPackedActiveTwoElectronAdjointC
         }
     }
     return result;
+}
+
+Eigen::MatrixXd project_exact_active_h1e_response(
+    const Eigen::Ref<const Eigen::MatrixXd>& density,
+    const ExactPackedActiveTwoElectronAdjointCache& cache) {
+    const Eigen::Index n_bf = cache.n_basis_functions;
+    const Eigen::Index n = cache.n_active_orbitals;
+    const Eigen::Index ao_pairs = n_bf * (n_bf + 1) / 2;
+    const Eigen::Index active_pairs = cache.active_pair_first_indices.size();
+    if (density.rows() != n_bf || density.cols() != n_bf ||
+        cache.accepted_pair_products == nullptr ||
+        cache.accepted_pair_products->rows() != ao_pairs ||
+        cache.accepted_pair_products->cols() != active_pairs ||
+        cache.exchange_integrals.rows() != ao_pairs || cache.exchange_integrals.cols() != n * n)
+        throw std::invalid_argument("active H1e response integral dimensions mismatch");
+
+    const int threads =
+        coarse_openmp_thread_count(effective_openmp_thread_count(), ao_pairs * n * n);
+    Eigen::MatrixXd coulomb = Eigen::MatrixXd::Zero(active_pairs, threads);
+    Eigen::MatrixXd exchange = Eigen::MatrixXd::Zero(n * n, threads);
+#pragma omp parallel for num_threads(threads) schedule(static)
+    for (int part = 0; part < threads; ++part) {
+        auto j = coulomb.col(part);
+        auto k = exchange.col(part);
+        for (Eigen::Index pair = ao_pairs * part / threads;
+             pair < ao_pairs * (part + 1) / threads; ++pair) {
+            const int mu = cache.ao_pair_first_indices[pair], nu = cache.ao_pair_second_indices[pair];
+            const double weight = mu == nu ? density(mu, mu) : density(mu, nu) + density(nu, mu);
+            j.noalias() += weight * cache.accepted_pair_products->row(pair).transpose();
+            k.noalias() += weight * cache.exchange_integrals.row(pair).transpose();
+        }
+    }
+    const Eigen::VectorXd j = coulomb.rowwise().sum();
+    const Eigen::VectorXd k = exchange.rowwise().sum();
+    const Eigen::Map<const ExactCtxPairMatrix> oriented_exchange(k.data(), n, n);
+    // Reversing a triangular AO pair transposes the active exchange indices.
+    Eigen::MatrixXd projected = -0.5 * (oriented_exchange + oriented_exchange.transpose());
+    for (Eigen::Index pair = 0; pair < active_pairs; ++pair) {
+        const int a = cache.active_pair_first_indices[pair];
+        const int b = cache.active_pair_second_indices[pair];
+        projected(a, b) += 2.0 * j[pair];
+        if (a != b)
+            projected(b, a) += 2.0 * j[pair];
+    }
+    return projected;
 }
 
 std::vector<double>

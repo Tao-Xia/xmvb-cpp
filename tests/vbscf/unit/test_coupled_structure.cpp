@@ -810,6 +810,14 @@ void check_affine_keyframe_hvp(int n_states, bool selected, bool stationary) {
     };
     Eigen::VectorXd p = Eigen::VectorXd::LinSpaced(no, -0.23, 0.71).normalized();
     Eigen::VectorXd q = Eigen::VectorXd::LinSpaced(ns, 0.63, -0.29).normalized();
+    if (n_states == 1 && hessian.structure_action().supports_integral_direction()) {
+        const auto reference = hessian.apply_orbital_coupling(p).orbital_hessian;
+        const double error = (hessian.apply_orbital(p) - reference).norm() /
+                             std::max(1.0, reference.norm());
+        std::cout << "orbital_normalization selected=" << selected
+                  << " stationary=" << stationary << " error=" << error << '\n';
+        require(error < 2e-11, "scalar normalization differs from the full projected orbital HVP");
+    }
     double worst = 0.0, old_error = 0.0, coarse_error = 0.0;
     for (int mode : {0, 1, 2}) {
         Eigen::VectorXd direction(no + ns);

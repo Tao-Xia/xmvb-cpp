@@ -80,14 +80,16 @@ struct StructureResponseSweep {
     StructureActionResult images;
     Eigen::MatrixXd one_electron;
     Eigen::MatrixXd pair_kernel;
-    /** Cholesky-generator cotangent; only its upper triangle is physical. */
+    /** Cholesky-generator cotangent. Empty when the reduced overlap pullback vanishes. */
     Eigen::MatrixXd generator;
 };
 
 /** @brief Borrowed CI direction and its independently accumulated response. */
 struct StructureResponseRequest {
+    // A 0-by-0 matrix in the fixed-overlap path requests orbital forcing only.
     const Eigen::MatrixXd& coefficients;
     StructureResponseSweep result{};
+    bool fixed_active_overlap = false;
 };
 
 /** @brief Direction-independent selected-state data for direct-CI adjoints. */
@@ -123,6 +125,11 @@ struct StructureIntegralDirection {
     /** Full-trace diagnostic request; never changes the physical action. */
     bool capture_connection = false;
     std::optional<StructureConnectionDirection> connection;
+};
+
+/** @brief Single-state fixed-coefficient directions C^T dM C and C^T(dH-E dM)C. */
+struct SelectedIntegralScalars {
+    double overlap, residual;
 };
 
 struct StructureActionStorage {
@@ -265,8 +272,18 @@ class StructureAction {
                              StructureResponseRequest* ci_response = nullptr,
                              const Eigen::MatrixXd* ri_factor_direction = nullptr) const;
 
+    /** @brief Normalization-only direction, sharing prepared integrals with the local adjoint. */
+    SelectedIntegralScalars project_single_state_integral_direction(
+        const StructureAdjointState& state,
+        const std::vector<double>& overlap_direction,
+        const std::vector<double>& one_electron_direction,
+        const std::vector<double>& packed_two_electron_direction,
+        StructureIntegralDirection& prepared,
+        const Eigen::MatrixXd* ri_factor_direction = nullptr) const;
+
     /** @brief Whether exact orthogonal direct-CI directional actions are available. */
     bool supports_integral_direction() const noexcept;
+    bool supports_fixed_overlap_coupling() const;
 
     /** @brief Precomputes direction-independent selected-state adjoint data.
    * Optional H/M images are consumed from the same sigma sweep, not replayed.
@@ -324,7 +341,8 @@ class StructureAction {
     /** @brief Computes Hq, Mq and the response adjoint in one direct-CI sweep. */
     StructureResponseSweep
     apply_response(const StructureAdjointState& state,
-                   const Eigen::Ref<const Eigen::MatrixXd>& coefficients) const;
+                   const Eigen::Ref<const Eigen::MatrixXd>& coefficients,
+                   bool fixed_active_overlap = false) const;
 
     /** @brief Adds the horizontal-gauge multiplier and pulls back active tensors. */
     StructureActiveIntegralAdjoint
@@ -502,7 +520,8 @@ class StructureAction {
                                        bool collect_images,
                                        StructureIntegralDirection* diagnostic = nullptr,
                                        StructureResponseSweep* ci_sweep = nullptr,
-                                       const Eigen::MatrixXd* overlap_image = nullptr) const;
+                                       const Eigen::MatrixXd* overlap_image = nullptr,
+                                       bool fixed_active_overlap = false) const;
 
     /** @brief Shared generated product graph for structure H/M actions. */
     StructureResponseSweep contract_product_tiles(const Eigen::Ref<const Eigen::MatrixXd>& vectors,
@@ -547,7 +566,15 @@ class StructureAction {
                                               const Eigen::MatrixXd* output_generator,
                                               bool project_output = true,
                                               double residual_energy = 0.0) const;
+    std::shared_ptr<const OrthogonalActiveIntegrals> prepare_integral_direction(
+        const std::vector<double>& overlap_direction,
+        const std::vector<double>& one_electron_direction,
+        const std::vector<double>& packed_two_electron_direction,
+        const Eigen::MatrixXd* ri_factor_direction,
+        bool fixed_active_overlap = false) const;
     /** @brief Exact scalar images from accepted adjoints, without exterior projection. */
+    SelectedIntegralScalars single_state_integral_scalars(
+        const StructureAdjointState& state, const OrthogonalActiveIntegrals& direction) const;
     StructureActionResult scalar_integral_action(const StructureAdjointState& state,
                                                  const OrthogonalActiveIntegrals& direction) const;
     /** @brief Direction H/M images without accepted or directional product arrays. */

@@ -25,6 +25,8 @@ enum class StructureEigensolver {
 struct StructureSolveAccuracy {
     double energy_tolerance = 1.0e-7;
     double gradient_tolerance = 1.0e-3;
+    // Optional intermediate FULL CIAH trial budget. Outer tolerances stay fixed.
+    double exploratory_stationarity = 0.0;
 
     /** @brief Validates both outer accuracy requirements. */
     void validate() const {

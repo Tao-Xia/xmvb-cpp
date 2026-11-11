@@ -1336,15 +1336,12 @@ StructureAction::apply(const Eigen::Ref<const Eigen::MatrixXd>& vectors) const {
     return evaluate(vectors, work_bytes);
 }
 
-StructureActionResult
-StructureAction::apply_integral_direction(const StructureAdjointState& state,
-                                          const std::vector<double>& overlap_direction,
-                                          const std::vector<double>& one_electron_direction,
-                                          const std::vector<double>& packed_two_electron_direction,
-                                          StructureIntegralDirection* direct_ci_direction,
-                                          StructureResponseRequest* ci_response,
-                                          const Eigen::MatrixXd* ri_factor_direction) const {
-    xmvb::profiling::ScopedPhase phase(xmvb::profiling::Phase::CiIntegralDirection);
+std::shared_ptr<const OrthogonalActiveIntegrals> StructureAction::prepare_integral_direction(
+    const std::vector<double>& overlap_direction,
+    const std::vector<double>& one_electron_direction,
+    const std::vector<double>& packed_two_electron_direction,
+    const Eigen::MatrixXd* ri_factor_direction,
+    bool fixed_active_overlap) const {
     if (!direct_ci_) {
         throw std::logic_error("integral-direction action requires orthogonal direct CI");
     }
@@ -1356,16 +1353,64 @@ StructureAction::apply_integral_direction(const StructureAdjointState& state,
     }
     const Eigen::Map<const Eigen::MatrixXd> delta_one_electron(
         one_electron_direction.data(), n_active_orbitals, n_active_orbitals);
-    const auto prepared_direction = std::make_shared<OrthogonalActiveIntegrals>(
+    return std::make_shared<OrthogonalActiveIntegrals>(
         orthogonalize_active_integral_direction(direct_ci_->integrals,
                                                 overlap_direction,
                                                 delta_one_electron,
                                                 packed_two_electron_direction,
                                                 n_active_orbitals,
-                                                ri_factor_direction));
+                                                ri_factor_direction,
+                                                fixed_active_overlap));
+}
+
+SelectedIntegralScalars StructureAction::project_single_state_integral_direction(
+    const StructureAdjointState& state,
+    const std::vector<double>& overlap_direction,
+    const std::vector<double>& one_electron_direction,
+    const std::vector<double>& packed_two_electron_direction,
+    StructureIntegralDirection& prepared,
+    const Eigen::MatrixXd* ri_factor_direction) const {
+    prepared.integrals = prepare_integral_direction(
+        overlap_direction, one_electron_direction, packed_two_electron_direction, ri_factor_direction);
+    return single_state_integral_scalars(state, *prepared.integrals);
+}
+
+StructureActionResult
+StructureAction::apply_integral_direction(const StructureAdjointState& state,
+                                          const std::vector<double>& overlap_direction,
+                                          const std::vector<double>& one_electron_direction,
+                                          const std::vector<double>& packed_two_electron_direction,
+                                          StructureIntegralDirection* direct_ci_direction,
+                                          StructureResponseRequest* ci_response,
+                                          const Eigen::MatrixXd* ri_factor_direction) const {
+    xmvb::profiling::ScopedPhase phase(xmvb::profiling::Phase::CiIntegralDirection);
+    const bool fixed_active_overlap = ci_response && ci_response->fixed_active_overlap;
+    const auto prepared_direction = prepare_integral_direction(overlap_direction,
+                                                               one_electron_direction,
+                                                               packed_two_electron_direction,
+                                                               ri_factor_direction,
+                                                               fixed_active_overlap);
     const auto& integral_direction = *prepared_direction;
     if (direct_ci_direction)
         direct_ci_direction->integrals = prepared_direction;
+    if (fixed_active_overlap) {
+        const mcscf::DirectCiSigmaAction delta_sigma(direct_ci_->sigma, integral_direction);
+        const bool joint = !ci_response->coefficients.isZero(0.0);
+        if (!joint && ci_response->coefficients.cols() != 0)
+            ci_response->result = apply_response(state, ci_response->coefficients, true);
+        return product_jet(state,
+                           joint ? &ci_response->coefficients : nullptr,
+                           nullptr,
+                           &delta_sigma,
+                           direct_ci_->alpha_transform,
+                           direct_ci_->beta_transform(),
+                           direct_ci_->sigma,
+                           true,
+                           nullptr,
+                           joint ? &ci_response->result : nullptr,
+                           nullptr,
+                           true).images;
+    }
     if (operator_first_ && !(direct_ci_direction && direct_ci_direction->capture_connection)) {
         // An exactly zero CI lane needs no numerical panels. Nonzero lanes
         // share the accepted sweep with the orbital direction.
@@ -1440,6 +1485,10 @@ StructureAction::apply_integral_direction(const StructureAdjointState& state,
 
 bool StructureAction::supports_integral_direction() const noexcept {
     return direct_ci_ != nullptr;
+}
+
+bool StructureAction::supports_fixed_overlap_coupling() const {
+    return direct_ci_ && !operator_first_ && !prefer_factor_response(direct_ci_->sigma);
 }
 
 Eigen::MatrixXd StructureAction::source_generator_adjoint(const StructureAdjointState& state,
@@ -1662,7 +1711,7 @@ StructureActiveIntegralAdjoint StructureAction::active_integral_adjoint_directio
                                      Eigen::MatrixXd::Zero(n_pairs, n_pairs),
                                      Eigen::MatrixXd::Zero(n_orbitals, n_orbitals)};
         if (include_integral_response) {
-            if (direct_ci_direction) {
+            if (direct_ci_direction && direct_ci_direction->generator_direction.size()) {
                 sweep.one_electron = direct_ci_direction->one_electron_direction;
                 sweep.pair_kernel = direct_ci_direction->pair_kernel_direction;
                 sweep.generator = direct_ci_direction->generator_direction;
@@ -1716,7 +1765,7 @@ StructureActiveIntegralAdjoint StructureAction::active_integral_adjoint_directio
                                  Eigen::MatrixXd::Zero(n_pairs, n_pairs),
                                  Eigen::MatrixXd::Zero(n_orbitals, n_orbitals)};
     if (include_integral_response) {
-        if (direct_ci_direction) {
+        if (direct_ci_direction && direct_ci_direction->generator_direction.size()) {
             sweep.one_electron = direct_ci_direction->one_electron_direction;
             sweep.pair_kernel = direct_ci_direction->pair_kernel_direction;
             sweep.generator = direct_ci_direction->generator_direction;
@@ -1762,15 +1811,35 @@ StructureActiveIntegralAdjoint StructureAction::active_integral_adjoint_directio
 
 StructureResponseSweep
 StructureAction::apply_response(const StructureAdjointState& state,
-                                const Eigen::Ref<const Eigen::MatrixXd>& coefficients) const {
+                                const Eigen::Ref<const Eigen::MatrixXd>& coefficients,
+                                bool fixed_active_overlap) const {
     if (coefficients.rows() != n_structures_ ||
         coefficients.cols() != static_cast<Eigen::Index>(state.weights.size()) ||
         !coefficients.allFinite())
         throw std::invalid_argument("invalid structure response columns");
     // A pure orbital AH direction has no CI response. Reuse the common exact
     // zero image instead of generating its accepted/tangent spin panels.
-    if (coefficients.isZero(0.0))
-        return contract_response(state, coefficients, true);
+    if (coefficients.isZero(0.0)) {
+        auto sweep = contract_response(state, coefficients, true);
+        if (fixed_active_overlap)
+            sweep.generator.resize(0, 0);
+        return sweep;
+    }
+    if (fixed_active_overlap) {
+        const Eigen::MatrixXd response = coefficients;
+        return product_jet(state,
+                           &response,
+                           nullptr,
+                           nullptr,
+                           direct_ci_->alpha_transform,
+                           direct_ci_->beta_transform(),
+                           direct_ci_->sigma,
+                           true,
+                           nullptr,
+                           nullptr,
+                           nullptr,
+                           true);
+    }
     if (operator_first_) {
         const Eigen::MatrixXd direction = coefficients;
         return operator_first_->jet(
@@ -1852,7 +1921,8 @@ StructureAction::finish_response(const StructureAdjointState& state,
     if (!direct_ci_ || state_multipliers.rows() != n_states ||
         state_multipliers.cols() != n_states || !state_multipliers.allFinite())
         throw std::invalid_argument("invalid response multiplier");
-    add_response_gauge(state, state_multipliers, sweep.generator);
+    if (sweep.generator.size())
+        add_response_gauge(state, state_multipliers, sweep.generator);
     NonorthogonalActiveIntegralAdjoint result = backpropagate_orthogonal_active_integral_adjoint(
         direct_ci_->integrals, sweep.one_electron, sweep.pair_kernel, sweep.generator);
     return StructureActiveIntegralAdjoint{

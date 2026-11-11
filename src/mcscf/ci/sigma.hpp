@@ -61,6 +61,8 @@ using DirectCiColumnRelease = std::function<void(std::span<const StringIndex>)>;
  * writers must consume a tile before the next request reuses its storage.
  */
 struct DirectCiTileRequest {
+    // Empty only for a forcing-only request: use the current accepted bra and
+    // apply the integral direction without a response scatter or adjoint.
     DirectCiTileReader response;
     DirectCiTileWriter image;
     const DirectCiSigmaAction* direction = nullptr;

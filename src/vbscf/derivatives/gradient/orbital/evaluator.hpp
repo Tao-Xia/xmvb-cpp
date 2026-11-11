@@ -129,7 +129,8 @@ class OrbitalGradientEvaluator {
                              const Eigen::Ref<const Eigen::MatrixXd>& structure_coefficients,
                              const SelectedMetric* metric = nullptr,
                              bool retain_context = false,
-                             const AcceptedPointContext* accepted_point = nullptr) const;
+                             const AcceptedPointContext* accepted_point = nullptr,
+                             const PreparedActiveOrbitalView* prepared_orbitals = nullptr) const;
 
     /**
    * @brief Evaluates the orbital gradient pullback from a precomputed active-space result.

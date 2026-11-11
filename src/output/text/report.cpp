@@ -230,8 +230,8 @@ void print_summary(const vb::VbScfOptimizerOptions& options,
     const int effective_thread_count = allocated_cpu_thread_count();
 
     print_scf_status(std::cout, command_converged, result.n_iterations, result.final_total_energy);
-    const double average_structure_overlap =
-        print_final_state_sections(std::cout, load_result, result);
+    const auto final_report = print_final_state_sections(std::cout, load_result, result);
+    const double average_structure_overlap = final_report.mean_structure_overlap;
     const auto command_finish_time = std::chrono::system_clock::now();
     const double total_job_wall_time_seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - command_start_steady_time)
@@ -388,6 +388,12 @@ void print_summary(const vb::VbScfOptimizerOptions& options,
                     format_seconds(load_result.structure_expansion_seconds));
     print_log_field("Input preparation wall time", format_seconds(load_result.total_seconds));
     print_log_field("SCF iteration wall time", format_seconds(optimizer_wall_time_seconds));
+    print_log_field("Structure analysis wall time",
+                    format_seconds(final_report.structure_analysis_seconds));
+    print_log_field("Structure table output wall time",
+                    format_seconds(final_report.structure_output_seconds));
+    print_log_field("Other final reports wall time",
+                    format_seconds(final_report.other_report_seconds));
     print_log_field("End-to-end wall time", format_seconds(total_job_wall_time_seconds));
     if (const auto bytes = workspace::peak_temporary_bytes()) {
         print_log_field(

@@ -25,6 +25,7 @@ struct CiahNumerics {
     double lindep = 1.0e-14;
     int max_cycle = 30;
     double operator_relative_accuracy = 0.0;
+    int complement_capacity = 0;
 };
 
 /** Signed inner product and absolute-product sum for roundoff certification. */
@@ -115,12 +116,15 @@ template <class Backend> class CiahCore {
         if (!(numerics_.tolerance > 0.0) || !std::isfinite(numerics_.tolerance) ||
             !(numerics_.lindep > 0.0) || !std::isfinite(numerics_.lindep) ||
             numerics_.lindep >= 1.0 || numerics_.max_cycle < 1 ||
+            numerics_.complement_capacity < 0 ||
             numerics_.operator_relative_accuracy < 0.0 ||
             !std::isfinite(numerics_.operator_relative_accuracy))
             throw std::invalid_argument("invalid CIAH Davidson options");
         if (initial_direction_ && !valid(*initial_direction_))
             throw std::invalid_argument("invalid CIAH initial direction");
-        const Eigen::Index capacity = std::min<Eigen::Index>(numerics_.max_cycle, backend_.size());
+        const Eigen::Index capacity = std::min<Eigen::Index>(
+            static_cast<Eigen::Index>(numerics_.max_cycle) + numerics_.complement_capacity,
+            backend_.size());
         hessian_projection_ = Eigen::MatrixXd::Zero(capacity, capacity);
         metric_projection_ = hessian_projection_;
         hessian_magnitude_ = hessian_projection_;
@@ -129,6 +133,10 @@ template <class Backend> class CiahCore {
 
     int basis_size() const noexcept {
         return static_cast<int>(basis_.size());
+    }
+    bool can_expand() const noexcept {
+        return basis_size() < hessian_projection_.rows() &&
+               basis_size() - reserved_complements_ < numerics_.max_cycle;
     }
     double lindep() const noexcept {
         return numerics_.lindep;
@@ -157,12 +165,51 @@ template <class Backend> class CiahCore {
         component_cap_ = cap;
     }
 
+    void set_projected_step_limit(
+        std::function<std::optional<double>(const std::vector<Vector>&,
+                                           const Eigen::VectorXd&)> projected) {
+        projected_step_limit_ = std::move(projected);
+    }
+
     void reset_rhs() noexcept {
         pending_residual_.reset();
         pending_eigenvalue_ = 0.0;
         pending_residual_norm_ = 0.0;
         previous_eigenvalue_.reset();
         exhausted_ = false;
+    }
+
+    /** Install a new coordinate orthogonal to every retained basis vector.
+     * The old projected matrices are unchanged. Only their full H/G images
+     * gain a row, supplied by reciprocity with the new coordinate's image.
+     */
+    template <class ExtendImages>
+    void append_complement_coordinate(Vector unit, Vector hessian_image, Vector metric_image,
+                                      ExtendImages extend_images) {
+        if (basis_size() >= hessian_projection_.rows() ||
+            (numerics_.complement_capacity > 0 &&
+             reserved_complements_ == numerics_.complement_capacity))
+            throw std::logic_error("CIAH has no room for the new coordinate");
+        if (!valid(unit) || !valid(hessian_image) || !valid(metric_image))
+            throw std::invalid_argument("invalid CIAH complement images");
+        for (std::size_t i = 0; i < basis_.size(); ++i) {
+            if (backend_.dot(unit, basis_[i]) != 0.0)
+                throw std::logic_error("CIAH coordinate is already in use");
+            extend_images(hessian_images_[i], metric_images_[i], basis_[i],
+                          hessian_image, metric_image);
+        }
+        hessian_squared_norm_ = 0.0;
+        for (const auto& image : hessian_images_)
+            hessian_squared_norm_ += backend_.dot(image, image);
+        metric_squared_norm_ = 0.0;
+        for (const auto& image : metric_images_)
+            metric_squared_norm_ += backend_.dot(image, image);
+        backend_.observe_images(unit, metric_image);
+        store_basis(std::move(unit), std::move(hessian_image), std::move(metric_image),
+                    diagnostics::ciah_event_trace_enabled());
+        if (numerics_.complement_capacity > 0)
+            ++reserved_complements_;
+        reset_rhs();
     }
 
     double projected_dual_norm(const Vector& covector) const {
@@ -242,9 +289,8 @@ template <class Backend> class CiahCore {
      * equation or lowest-eigenvector residual is oversolved after finding descent.
      */
     std::optional<OriginRay> find_negative_curvature(Vector direction, const Vector& gradient) {
-        const auto capacity = std::min<Eigen::Index>(numerics_.max_cycle, backend_.size());
         std::optional<Vector> raw_residual;
-        while (basis_size() < capacity) {
+        while (can_expand()) {
             if (!append(std::move(direction)) &&
                 (!raw_residual || !append(std::move(*raw_residual))))
                 break;
@@ -311,7 +357,7 @@ template <class Backend> class CiahCore {
             result.new_hvp_actions = 1;
             initial_direction_.reset();
         } else if (pending_residual_ && !exhausted_) {
-            if (basis_size() >= std::min<int>(numerics_.max_cycle, backend_.size())) {
+            if (!can_expand()) {
                 exhausted_ = true;
             } else {
                 Vector direction = precondition(*pending_residual_, pending_eigenvalue_);
@@ -451,10 +497,16 @@ template <class Backend> class CiahCore {
                 bounded_eigenvectors_ = model.eigenvectors();
             }
             Vector trial = backend_.zeros();
-            const auto maximum = [&](const Eigen::VectorXd& v) {
+            const auto direct_maximum = [&](const Eigen::VectorXd& v) {
                 backend_.scal(trial, 0.0);
                 accumulate_combination(basis_, v, trial);
                 return maximum_component_(trial);
+            };
+            const auto maximum = [&](const Eigen::VectorXd& v) {
+                if (projected_step_limit_)
+                    if (const auto value = projected_step_limit_(basis_, v))
+                        return *value;
+                return direct_maximum(v);
             };
             const auto bounded = bound_ciah_step(bounded_eigenvalues_,
                                                  bounded_eigenvectors_,
@@ -471,12 +523,13 @@ template <class Backend> class CiahCore {
             const double norm_squared = coefficients.dot(projected_metric * coefficients);
             result.reference_scale = std::sqrt(scale_squared);
             alpha = 1.0 / std::sqrt(1.0 + scale_squared * norm_squared);
-            diagnostics::ciah_trace("ciah_finite_step",
-                                    "basis=%d,scale=%.17g,shift=%.17g,maximum=%.17g",
-                                    basis_size(),
-                                    result.reference_scale,
-                                    bounded.shift,
-                                    maximum(coefficients));
+            if (diagnostics::ciah_event_trace_enabled())
+                diagnostics::ciah_trace("ciah_finite_step",
+                                        "basis=%d,scale=%.17g,shift=%.17g,maximum=%.17g",
+                                        basis_size(),
+                                        result.reference_scale,
+                                        bounded.shift,
+                                        direct_maximum(coefficients));
         }
         result.reference_component = alpha;
         result.step = combine(basis_, coefficients);
@@ -518,7 +571,7 @@ template <class Backend> class CiahCore {
         previous_eigenvalue_ = result.eigenvalue;
         result.basis_size = basis_size();
         result.exhaustion =
-            exhausted_ || basis_size() >= std::min<int>(numerics_.max_cycle, backend_.size());
+            exhausted_ || !can_expand();
         const double residual_scale =
             std::abs(alpha * result.reference_scale) *
             (backend_.stable_norm(current_gradient) + backend_.stable_norm(result.hessian_step) +
@@ -667,6 +720,11 @@ template <class Backend> class CiahCore {
                 std::chrono::duration<double>(hessian_start - metric_start).count(),
                 std::chrono::duration<double>(std::chrono::steady_clock::now() - hessian_start)
                     .count());
+        store_basis(std::move(direction), std::move(hessian_image), std::move(metric_image), trace);
+        return true;
+    }
+
+    void store_basis(Vector direction, Vector hessian_image, Vector metric_image, bool trace) {
         basis_.push_back(std::move(direction));
         metric_images_.push_back(std::move(metric_image));
         hessian_images_.push_back(std::move(hessian_image));
@@ -716,10 +774,11 @@ template <class Backend> class CiahCore {
                 basis_size(),
                 std::chrono::duration<double>(std::chrono::steady_clock::now() - projection_start)
                     .count());
-        return true;
     }
 
     std::function<double(const Vector&)> maximum_component_;
+    std::function<std::optional<double>(const std::vector<Vector>&,
+                                       const Eigen::VectorXd&)> projected_step_limit_;
     double component_cap_ = 0;
     Eigen::VectorXd bounded_eigenvalues_;
     Eigen::MatrixXd bounded_eigenvectors_;
@@ -733,6 +792,7 @@ template <class Backend> class CiahCore {
     Eigen::MatrixXd hessian_magnitude_, metric_magnitude_, projected_metric_;
     double basis_squared_norm_ = 0.0;
     double hessian_squared_norm_ = 0.0, metric_squared_norm_ = 0.0;
+    int reserved_complements_ = 0;
     bool exhausted_ = false;
 };
 

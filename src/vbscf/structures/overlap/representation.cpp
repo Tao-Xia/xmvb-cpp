@@ -580,7 +580,8 @@ OverlapTransportGradient RepresentationOverlap::transport_gradient(
     const Eigen::Ref<const Eigen::VectorXd>& transported) const {
     validate_chart(current, n_active_);
     validate_chart(origin, n_active_);
-    validate_direction(direction, n_active_);
+    if (direction.size())
+        validate_direction(direction, n_active_);
     if (lambda.size() != action_->n_structures() || base.size() != lambda.size() ||
         reference.size() != lambda.size() || transported.size() != lambda.size() ||
         !lambda.allFinite() || !base.allFinite() || !reference.allFinite() ||
@@ -598,9 +599,11 @@ OverlapTransportGradient RepresentationOverlap::transport_gradient(
     }
     const Eigen::MatrixXd zero = Eigen::MatrixXd::Zero(n_active_, n_active_);
     const auto a = adjoint(current, origin, lambda, base, OverlapSide::Left);
+    const auto m = adjoint(current, current, lambda, transported);
+    if (!direction.size())
+        return {{a.left - m.left - m.right, zero}, apply(origin, current, lambda).col(0)};
     const auto b =
         adjoint_direction(current, origin, zero, direction, lambda, reference, OverlapSide::Left);
-    const auto m = adjoint(current, current, lambda, transported);
     return {{a.left + b.left - m.left - m.right,
              adjoint(current, origin, lambda, reference, OverlapSide::Right).right},
             apply(origin, current, lambda).col(0)};

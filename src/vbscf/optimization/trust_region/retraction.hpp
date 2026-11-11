@@ -37,6 +37,7 @@ class NonredundantRetractionMetric {
 
     Eigen::VectorXd tangent(const Eigen::VectorXd& reduced_step) const;
     Eigen::VectorXd apply(const Eigen::VectorXd& reduced_step) const;
+    Eigen::VectorXd apply_packed(const Eigen::VectorXd& packed_step) const;
 
     /**
    * @brief Applies the inverse Riesz map without assembling the metric.

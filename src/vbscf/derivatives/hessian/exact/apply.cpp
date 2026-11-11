@@ -1,5 +1,6 @@
 #include "vbscf/derivatives/hessian/exact/operator.hpp"
 #include "core/timing.hpp"
+#include "mcscf/optimization/trace.hpp"
 
 #include "vbscf/derivatives/hessian/exact/apply_internal.hpp"
 #include "integrals/active/frame.hpp"
@@ -82,8 +83,18 @@ Eigen::VectorXd ExactHvpOperator::apply_reduced(const Eigen::VectorXd& reduced_d
 
 Eigen::VectorXd ExactHvpOperator::State::apply_reduced(const Eigen::VectorXd& reduced_direction,
                                                        HvpComponents components) const {
-    return apply_reduced_impl(reduced_direction,
-                              components,
+    return apply_packed(nonredundant_space_->expand_step(reduced_direction), components);
+}
+
+Eigen::VectorXd ExactHvpOperator::apply_packed(const Eigen::VectorXd& packed_direction,
+                                               HvpComponents components) const {
+    return state_->apply_packed(packed_direction, components);
+}
+
+Eigen::VectorXd ExactHvpOperator::State::apply_packed(const Eigen::VectorXd& packed_direction,
+                                                      HvpComponents components) const {
+    return apply_packed_impl(packed_direction,
+                             components,
                               nullptr,
                               nullptr,
                               nullptr,
@@ -95,8 +106,9 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced(const Eigen::VectorXd& re
 
 OrbitalCouplingAction
 ExactHvpOperator::apply_orbital_coupling(const Eigen::VectorXd& reduced_direction,
-                                         StructureResponseRequest* ci_response) const {
-    return state_->apply_orbital_coupling(reduced_direction, ci_response);
+                                         StructureResponseRequest* ci_response,
+                                         bool forcing_only) const {
+    return state_->apply_orbital_coupling(reduced_direction, ci_response, forcing_only);
 }
 
 Eigen::VectorXd ExactHvpOperator::apply_orbital(const Eigen::VectorXd& direction) const {
@@ -105,7 +117,7 @@ Eigen::VectorXd ExactHvpOperator::apply_orbital(const Eigen::VectorXd& direction
 
 Eigen::VectorXd ExactHvpOperator::State::apply_orbital(const Eigen::VectorXd& direction) const {
     OrbitalCouplingAction gauge;
-    return apply_reduced_impl(direction,
+    return apply_packed_impl(nonredundant_space_->expand_step(direction),
                               {.direct_core_response = true,
                                .fixed_upstream_pullback = true,
                                .local_active_response = true,
@@ -122,12 +134,15 @@ Eigen::VectorXd ExactHvpOperator::State::apply_orbital(const Eigen::VectorXd& di
 
 OrbitalCouplingAction
 ExactHvpOperator::State::apply_orbital_coupling(const Eigen::VectorXd& reduced_direction,
-                                                StructureResponseRequest* ci_response) const {
+                                                StructureResponseRequest* ci_response,
+                                                bool forcing_only) const {
     OrbitalCouplingAction result;
-    result.orbital_hessian = apply_reduced_impl(reduced_direction,
+    const bool fixed_active_overlap = ci_response && ci_response->fixed_active_overlap;
+    result.orbital_hessian = apply_packed_impl(
+        nonredundant_space_->expand_step(reduced_direction),
                                                 {.direct_core_response = true,
                                                  .fixed_upstream_pullback = true,
-                                                 .local_active_response = true,
+                                                 .local_active_response = !fixed_active_overlap,
                                                  .structure_response = false},
                                                 nullptr,
                                                 nullptr,
@@ -137,7 +152,8 @@ ExactHvpOperator::State::apply_orbital_coupling(const Eigen::VectorXd& reduced_d
                                                 nullptr,
                                                 &result,
                                                 true,
-                                                ci_response);
+                                                ci_response,
+                                                forcing_only);
     return result;
 }
 
@@ -257,8 +273,8 @@ Eigen::VectorXd ExactHvpOperator::State::apply_structure_coupling_adjoint(
         adjoint, current_input_->orbital_preparation_input.n_active_orbitals));
 }
 
-Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
-    const Eigen::VectorXd& reduced_direction,
+Eigen::VectorXd ExactHvpOperator::State::apply_packed_impl(
+    const Eigen::VectorXd& packed_direction,
     HvpComponents components,
     const Eigen::VectorXd* precomputed_ao_response,
     const Eigen::MatrixXd* precomputed_active_projection,
@@ -268,15 +284,19 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
     const PrecomputedDirection* precomputed_direction,
     OrbitalCouplingAction* coupling_output,
     bool horizontal_forcing,
-    StructureResponseRequest* ci_response) const {
+    StructureResponseRequest* ci_response,
+    bool forcing_only) const {
     xmvb::profiling::ScopedPhase apply_phase(xmvb::profiling::Phase::HvpApply, true);
     const auto apply_start_time = std::chrono::steady_clock::now();
+    const bool fixed_active_overlap = ci_response && ci_response->fixed_active_overlap;
+    if (forcing_only && (!fixed_active_overlap || !coupling_output))
+        throw std::invalid_argument("forward-only orbital coupling needs fixed active overlap");
     auto record_apply_wall_time = [&]() {
         ++apply_timing_totals_.apply_count;
         apply_timing_totals_.total_apply_wall_time_seconds +=
             detail::exact_hvp_elapsed_seconds(apply_start_time);
     };
-    Eigen::VectorXd response = Eigen::VectorXd::Zero(reduced_direction.size());
+    Eigen::VectorXd response = Eigen::VectorXd::Zero(nonredundant_space_->reduced_size());
 
     if (!supports_analytic_core_model()) {
         throw std::runtime_error(
@@ -299,15 +319,9 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
 
     const auto core_setup_start_time = std::chrono::steady_clock::now();
     xmvb::profiling::ScopedPhase setup_phase(xmvb::profiling::Phase::HvpSetup);
-    const Eigen::VectorXd local_packed_direction =
-        precomputed_direction == nullptr ? nonredundant_space_->expand_step(reduced_direction)
-                                         : Eigen::VectorXd();
-    const Eigen::VectorXd& packed_direction = precomputed_direction != nullptr
-                                                  ? precomputed_direction->packed_direction
-                                                  : local_packed_direction;
     if (packed_direction.norm() == 0.0) {
         // A pure CI direction needs no orbital integral transform or mixed sweep.
-        if (ci_response) {
+        if (ci_response && ci_response->coefficients.cols() != 0) {
             auto& accepted = accepted_point_context_->structure_adjoint_state;
             const auto& action = structure_action();
             if (!accepted)
@@ -315,26 +329,26 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
                     accepted_point_context_->selected_state_eigenvectors,
                     accepted_point_context_->normalized_state_weights,
                     accepted_point_context_->selected_state_energies);
-            ci_response->result = action.apply_response(*accepted, ci_response->coefficients);
+            ci_response->result =
+                action.apply_response(*accepted, ci_response->coefficients, fixed_active_overlap);
         }
         record_apply_wall_time();
-        return Eigen::VectorXd::Zero(reduced_direction.size());
+        return response;
     }
 
     const AcceptedOrbitalPreparationCache* orbital_preparation_cache =
         accepted_orbital_preparation_cache_.get();
     std::optional<PrecomputedDirection> local_precomputed_direction;
     if (precomputed_direction == nullptr) {
-        local_precomputed_direction.emplace(prepare_direction(local_packed_direction));
+        local_precomputed_direction.emplace(prepare_direction(packed_direction));
     }
     const PrecomputedDirection& prepared_direction =
         precomputed_direction != nullptr ? *precomputed_direction : *local_precomputed_direction;
     const DenseOrbitalTangentContext& dense_orbital_tangent_context =
         prepared_direction.dense_orbital_tangent_context;
     const Eigen::VectorXd input_retract_tangent =
-        components.fixed_upstream_pullback
-            ? nonredundant_space_->expand_retract_input_tangent(
-                  current_input_->orbital_preparation_input, reduced_direction)
+        components.fixed_upstream_pullback && !forcing_only
+            ? parameter_view_.scatter_to_full(prepared_direction.packed_direction)
             : Eigen::VectorXd();
     const OrbitalPreparationDirectionalResult& orbital_preparation_directional_result =
         prepared_direction.orbital_preparation_directional_result;
@@ -361,6 +375,7 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
     Eigen::MatrixXd total_inactive_density_direction;
     Eigen::MatrixXd inactive_density_projection;
     Eigen::MatrixXd delta_ao_effective_h1e_times_active_auxiliary_orbitals;
+    std::optional<Eigen::MatrixXd> projected_effective_h1e;
     Eigen::MatrixXd ri_factor_direction, ri_fixed_response;
     const Eigen::MatrixXd* supplied_ri_factor_direction =
         precomputed_ri_active_pair_factor_direction;
@@ -405,6 +420,15 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
                 supplied_ri_factor_direction = &ri_factor_direction;
                 fixed_ri_two_electron = &ri_fixed_response;
             }
+        } else if (forcing_only && accepted_exact_two_electron_cache_.accepted_pair_products &&
+                   accepted_exact_two_electron_cache_.exchange_integrals.size()) {
+            projected_effective_h1e.emplace(integrals::project_exact_active_h1e_response(
+                orbital_preparation_directional_result.delta_inactive_density,
+                accepted_exact_two_electron_cache_));
+            mcscf::diagnostics::ciah_trace(
+                "ciah_forward_projection",
+                "seconds=%.17g",
+                detail::exact_hvp_elapsed_seconds(ao_effective_one_electron_fused_start_time));
         } else {
             Eigen::MatrixXd total_ao_effective_one_electron_direction =
                 orbital_preparation_directional_result.delta_inactive_density;
@@ -527,7 +551,9 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
                       delta_ao_effective_h1e_times_active_auxiliary_orbitals,
                       packed_outer_two_electron_required ? packed_two_electron_direction : nullptr,
                       &outer_response_integral_direction_workspace_,
-                      packed_outer_two_electron_required);
+                      packed_outer_two_electron_required,
+                      fixed_active_overlap,
+                      projected_effective_h1e ? &*projected_effective_h1e : nullptr);
         if (precomputed_outer_response == nullptr) {
             apply_timing_totals_.outer_response_active_space_integrals_wall_time_seconds +=
                 detail::exact_hvp_elapsed_seconds(active_space_integrals_start_time);
@@ -572,7 +598,35 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
         std::optional<StructureIntegralDirection> local_direct_ci_direction;
         std::optional<ScaledStructureCoupling> local_gauge_coupling;
         const ScaledStructureCoupling* gauge_coupling = nullptr;
-        if (components.structure_response || build_orbital_coupling) {
+        const bool scalar_normalization =
+            build_orbital_coupling && !horizontal_forcing && direct_active_gradient &&
+            !precomputed_outer_response && accepted_point_context_->selected_state_energies.size() == 1;
+        if (scalar_normalization) {
+            const auto& eigen = outer_response_context().selected_state_eigen_response_operator;
+            const auto& structure_action = *eigen.structure_action;
+            auto& state = accepted_point_context_->structure_adjoint_state;
+            if (!state)
+                state = structure_action.prepare_active_adjoint(
+                    accepted_point_context_->selected_state_eigenvectors,
+                    accepted_point_context_->normalized_state_weights,
+                    accepted_point_context_->selected_state_energies);
+            const auto [overlap, residual] = structure_action.project_single_state_integral_direction(
+                *state,
+                active_space_integral_direction.overlap,
+                active_space_integral_direction.one_electron,
+                active_space_integral_direction.packed_two_electron,
+                local_direct_ci_direction.emplace(),
+                selected_ri_factor_direction);
+            const double metric = eigen.selected_metric(0, 0);
+            const double gauge = -0.5 * overlap / metric;
+            const double multiplier =
+                -(residual + eigen.single_state_projected_residual * gauge) / metric;
+            local_gauge_coupling.emplace();
+            local_gauge_coupling->gauge_frame = Eigen::MatrixXd::Constant(1, 1, gauge);
+            local_gauge_coupling->gauge_adjoint_multipliers =
+                Eigen::MatrixXd::Constant(1, 1, multiplier);
+            gauge_coupling = &*local_gauge_coupling;
+        } else if (components.structure_response || build_orbital_coupling) {
             if (precomputed_outer_response != nullptr) {
                 if (build_orbital_coupling) {
                     if (!precomputed_outer_response->gauge_coupling.has_value()) {
@@ -613,7 +667,17 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
                 apply_timing_totals_.outer_response_structure_matrices_wall_time_seconds +=
                     detail::exact_hvp_elapsed_seconds(structure_matrices_start_time);
 
-                if (build_orbital_coupling) {
+                if (fixed_active_overlap) {
+                    // With D M = 0, the forcing is D H C. The caller projects
+                    // it onto the same accepted CI tangent used by the adjoint.
+                    coupling_output->scaled_structure_forcing =
+                        std::sqrt(2.0 * accepted_point_context_->normalized_state_weights.front()) *
+                        images.delta_hamiltonian_selected;
+                    if (forcing_only) {
+                        record_apply_wall_time();
+                        return response;
+                    }
+                } else if (build_orbital_coupling) {
                     const auto& eigen =
                         outer_response_context().selected_state_eigen_response_operator;
                     const xmvb::linalg::EqualWeightEigenCoupling coupling =
@@ -703,126 +767,128 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
         }
 
         selected_direction_phase.stop();
-        xmvb::profiling::ScopedPhase backward_phase(xmvb::profiling::Phase::ActiveBackward);
-        std::optional<ActiveSpaceGradientDirection> local_active_gradient;
-        const ActiveSpaceGradientDirection* active_gradient =
-            precomputed_outer_response != nullptr && precomputed_outer_response->active_gradient
-                ? &*precomputed_outer_response->active_gradient
-                : nullptr;
-        if (active_gradient == nullptr) {
-            const auto* direct_ci =
-                precomputed_outer_response != nullptr &&
-                        precomputed_outer_response->direct_ci_direction
-                    ? &*precomputed_outer_response->direct_ci_direction
-                    : (local_direct_ci_direction ? &*local_direct_ci_direction : nullptr);
-            const auto* local = precomputed_outer_response != nullptr &&
-                                        precomputed_outer_response->local_active_gradient
-                                    ? &*precomputed_outer_response->local_active_gradient
-                                    : nullptr;
-            local_active_gradient = active_response_gradient({active_space_integral_direction,
-                                                              directional_selected_state_response,
-                                                              gauge_coupling,
-                                                              direct_ci,
-                                                              selected_ri_factor_direction,
-                                                              local,
-                                                              local_active_tile_accumulator.get()},
-                                                             components);
-            local_active_tile_accumulator.reset();
-            local_pair_capacity.try_resize(0);
-            active_gradient = &*local_active_gradient;
-        }
-        const auto& directional_active_space_gradient = *active_gradient;
+        if (!fixed_active_overlap) {
+            xmvb::profiling::ScopedPhase backward_phase(xmvb::profiling::Phase::ActiveBackward);
+            std::optional<ActiveSpaceGradientDirection> local_active_gradient;
+            const ActiveSpaceGradientDirection* active_gradient =
+                precomputed_outer_response != nullptr && precomputed_outer_response->active_gradient
+                    ? &*precomputed_outer_response->active_gradient
+                    : nullptr;
+            if (active_gradient == nullptr) {
+                const auto* direct_ci =
+                    precomputed_outer_response != nullptr &&
+                            precomputed_outer_response->direct_ci_direction
+                        ? &*precomputed_outer_response->direct_ci_direction
+                        : (local_direct_ci_direction ? &*local_direct_ci_direction : nullptr);
+                const auto* local = precomputed_outer_response != nullptr &&
+                                            precomputed_outer_response->local_active_gradient
+                                        ? &*precomputed_outer_response->local_active_gradient
+                                        : nullptr;
+                local_active_gradient = active_response_gradient({active_space_integral_direction,
+                                                                  directional_selected_state_response,
+                                                                  gauge_coupling,
+                                                                  direct_ci,
+                                                                  selected_ri_factor_direction,
+                                                                  local,
+                                                                  local_active_tile_accumulator.get()},
+                                                                 components);
+                local_active_tile_accumulator.reset();
+                local_pair_capacity.try_resize(0);
+                active_gradient = &*local_active_gradient;
+            }
+            const auto& directional_active_space_gradient = *active_gradient;
 
-        Eigen::MatrixXd two_electron_jet;
-        const Eigen::MatrixXd* two_electron_orbital_gradient = nullptr;
-        if (precomputed_outer_response != nullptr &&
-            precomputed_outer_response->changing_two_electron.size()) {
-            two_electron_jet = precomputed_outer_response->changing_two_electron;
-            if (components.direct_core_response) {
-                if (fixed_ri_two_electron)
-                    two_electron_jet += *fixed_ri_two_electron;
-                else
-                    two_electron_jet +=
-                        integrals::apply_ri_packed_active_two_electron_adjoint_hessian_vector(
+            Eigen::MatrixXd two_electron_jet;
+            const Eigen::MatrixXd* two_electron_orbital_gradient = nullptr;
+            if (precomputed_outer_response != nullptr &&
+                precomputed_outer_response->changing_two_electron.size()) {
+                two_electron_jet = precomputed_outer_response->changing_two_electron;
+                if (components.direct_core_response) {
+                    if (fixed_ri_two_electron)
+                        two_electron_jet += *fixed_ri_two_electron;
+                    else
+                        two_electron_jet +=
+                            integrals::apply_ri_packed_active_two_electron_adjoint_hessian_vector(
+                                accepted_point_context_->packed_active_two_electron_gradient,
+                                *accepted_ri_two_electron_cache_,
+                                delta_dense_active_coefficients,
+                                ri_directional_active_pair_factors);
+                    two_electron_jet_consumed = true;
+                }
+                two_electron_jet = integrals::active_frame_pullback(
+                    two_electron_jet,
+                    accepted_point_context_->prepared_active_space.active_space_two_electron_result
+                        .orbital_transform);
+                two_electron_orbital_gradient = &two_electron_jet;
+            } else if (components.direct_core_response) {
+                xmvb::profiling::ScopedPhase phase(xmvb::profiling::Phase::TwoElectronResponse);
+                const auto start = std::chrono::steady_clock::now();
+                if (accepted_ri_two_electron_cache_) {
+                    if (fixed_ri_two_electron) {
+                        // The fixed term already consumed the same L*D as the AO response.
+                        // Only the changing cotangent remains after the selected CI sweep.
+                        two_electron_jet =
+                            *fixed_ri_two_electron +
+                            integrals::backpropagate_ri_packed_active_two_electron_gradient(
+                                directional_active_space_gradient.packed_active_two_electron_gradient,
+                                *accepted_ri_two_electron_cache_);
+                    } else {
+                        two_electron_jet = integrals::apply_ri_active_two_electron_jet(
                             accepted_point_context_->packed_active_two_electron_gradient,
                             *accepted_ri_two_electron_cache_,
                             delta_dense_active_coefficients,
-                            ri_directional_active_pair_factors);
-                two_electron_jet_consumed = true;
-            }
-            two_electron_jet = integrals::active_frame_pullback(
-                two_electron_jet,
-                accepted_point_context_->prepared_active_space.active_space_two_electron_result
-                    .orbital_transform);
-            two_electron_orbital_gradient = &two_electron_jet;
-        } else if (components.direct_core_response) {
-            xmvb::profiling::ScopedPhase phase(xmvb::profiling::Phase::TwoElectronResponse);
-            const auto start = std::chrono::steady_clock::now();
-            if (accepted_ri_two_electron_cache_) {
-                if (fixed_ri_two_electron) {
-                    // The fixed term already consumed the same L*D as the AO response.
-                    // Only the changing cotangent remains after the selected CI sweep.
-                    two_electron_jet =
-                        *fixed_ri_two_electron +
-                        integrals::backpropagate_ri_packed_active_two_electron_gradient(
                             directional_active_space_gradient.packed_active_two_electron_gradient,
-                            *accepted_ri_two_electron_cache_);
+                            ri_directional_active_pair_factors);
+                    }
                 } else {
-                    two_electron_jet = integrals::apply_ri_active_two_electron_jet(
-                        accepted_point_context_->packed_active_two_electron_gradient,
-                        *accepted_ri_two_electron_cache_,
+                    const auto* products = precomputed_directional_pair_products
+                                               ? precomputed_directional_pair_products
+                                               : &outer_response_integral_direction_workspace_
+                                                      .two_electron.directional_pair_products;
+                    integrals::apply_exact_active_two_electron_jet(
+                        accepted_exact_two_electron_cache_,
                         delta_dense_active_coefficients,
                         directional_active_space_gradient.packed_active_two_electron_gradient,
-                        ri_directional_active_pair_factors);
+                        current_input_->ao_integral_input,
+                        &accepted_exact_two_electron_apply_workspace_,
+                        &two_electron_jet,
+                        products->size() ? products : nullptr);
                 }
-            } else {
-                const auto* products = precomputed_directional_pair_products
-                                           ? precomputed_directional_pair_products
-                                           : &outer_response_integral_direction_workspace_
-                                                  .two_electron.directional_pair_products;
-                integrals::apply_exact_active_two_electron_jet(
-                    accepted_exact_two_electron_cache_,
-                    delta_dense_active_coefficients,
-                    directional_active_space_gradient.packed_active_two_electron_gradient,
-                    current_input_->ao_integral_input,
-                    &accepted_exact_two_electron_apply_workspace_,
-                    &two_electron_jet,
-                    products->size() ? products : nullptr);
+                two_electron_jet = integrals::active_frame_pullback(
+                    two_electron_jet,
+                    accepted_point_context_->prepared_active_space.active_space_two_electron_result
+                        .orbital_transform);
+                two_electron_orbital_gradient = &two_electron_jet;
+                two_electron_jet_consumed = true;
+                apply_timing_totals_.active_two_electron_wall_time_seconds +=
+                    detail::exact_hvp_elapsed_seconds(start);
             }
-            two_electron_jet = integrals::active_frame_pullback(
-                two_electron_jet,
-                accepted_point_context_->prepared_active_space.active_space_two_electron_result
-                    .orbital_transform);
-            two_electron_orbital_gradient = &two_electron_jet;
-            two_electron_jet_consumed = true;
-            apply_timing_totals_.active_two_electron_wall_time_seconds +=
-                detail::exact_hvp_elapsed_seconds(start);
-        }
 
-        const auto orbital_pullback_start_time = std::chrono::steady_clock::now();
-        backward_phase.stop();
-        xmvb::profiling::ScopedPhase pullback_phase(xmvb::profiling::Phase::OrbitalPullback);
-        const std::vector<double> outer_response_orbital_value_gradient =
-            build_orbital_value_gradient_from_active_space_gradient_direction(
-                *current_input_,
-                *accepted_point_context_,
-                directional_active_space_gradient,
-                *orbital_preparation_cache,
-                accepted_ri_two_electron_cache_.has_value() ? nullptr
-                                                            : &accepted_exact_two_electron_cache_,
-                accepted_ri_two_electron_cache_.has_value() ? &*accepted_ri_two_electron_cache_
-                                                            : nullptr,
-                {accepted_ri_inactive_one_index_factors_.get(),
-                 accepted_ri_active_inactive_projection_.get(),
-                 accepted_ri_density_action_.get()},
-                &outer_response_symmetric_active_overlap_gradient_workspace_,
-                &outer_response_symmetric_active_one_electron_gradient_workspace_,
-                two_electron_orbital_gradient);
-        add_orbital_value_gradient_in_place(&combined_core_orbital_value_gradient,
-                                            outer_response_orbital_value_gradient,
-                                            "outer-response");
-        apply_timing_totals_.outer_response_orbital_pullback_wall_time_seconds +=
-            detail::exact_hvp_elapsed_seconds(orbital_pullback_start_time);
+            const auto orbital_pullback_start_time = std::chrono::steady_clock::now();
+            backward_phase.stop();
+            xmvb::profiling::ScopedPhase pullback_phase(xmvb::profiling::Phase::OrbitalPullback);
+            const std::vector<double> outer_response_orbital_value_gradient =
+                build_orbital_value_gradient_from_active_space_gradient_direction(
+                    *current_input_,
+                    *accepted_point_context_,
+                    directional_active_space_gradient,
+                    *orbital_preparation_cache,
+                    accepted_ri_two_electron_cache_.has_value() ? nullptr
+                                                                : &accepted_exact_two_electron_cache_,
+                    accepted_ri_two_electron_cache_.has_value() ? &*accepted_ri_two_electron_cache_
+                                                                : nullptr,
+                    {accepted_ri_inactive_one_index_factors_.get(),
+                     accepted_ri_active_inactive_projection_.get(),
+                     accepted_ri_density_action_.get()},
+                    &outer_response_symmetric_active_overlap_gradient_workspace_,
+                    &outer_response_symmetric_active_one_electron_gradient_workspace_,
+                    two_electron_orbital_gradient);
+            add_orbital_value_gradient_in_place(&combined_core_orbital_value_gradient,
+                                                outer_response_orbital_value_gradient,
+                                                "outer-response");
+            apply_timing_totals_.outer_response_orbital_pullback_wall_time_seconds +=
+                detail::exact_hvp_elapsed_seconds(orbital_pullback_start_time);
+        }
 
         apply_timing_totals_.outer_response_wall_time_seconds +=
             detail::exact_hvp_elapsed_seconds(outer_response_start_time);

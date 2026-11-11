@@ -27,6 +27,7 @@ namespace xmvb::output {
 namespace {
 
 namespace fs = std::filesystem;
+using ReportClock = std::chrono::steady_clock;
 
 constexpr int kStructureListPrefixWidth = 18;
 constexpr int kStructureValuePrefixWidth = 34;
@@ -298,7 +299,7 @@ std::string determinant_spin_string(const std::vector<int>& active_orbitals, int
     return text.str();
 }
 
-void print_determinant_coefficients(std::ostream& output,
+ReportClock::duration print_determinant_coefficients(std::ostream& output,
                                     const Eigen::VectorXd& structure_coefficients,
                                     const vb::StructureExpansion& determinants,
                                     int n_inactive) {
@@ -312,6 +313,7 @@ void print_determinant_coefficients(std::ostream& output,
     output << "\n\n          ******  UNNORMALIZED DETERMINANT COEFFICIENTS  ******\n\n"
            << "                                     INA   A\n"
            << "                                     INA   B\n";
+    const auto analysis_start = ReportClock::now();
     std::vector<std::size_t> display_order(n_determinants);
     std::iota(display_order.begin(), display_order.end(), std::size_t{0});
     std::stable_sort(display_order.begin(),
@@ -330,6 +332,7 @@ void print_determinant_coefficients(std::ostream& output,
                          }
                          return alpha_rows.less(right, left);
                      });
+    const auto analysis = ReportClock::now() - analysis_start;
     for (std::size_t display_index = 0; display_index < n_determinants; ++display_index) {
         const auto determinant = display_order[display_index];
         double coefficient = 0.0;
@@ -346,6 +349,7 @@ void print_determinant_coefficients(std::ostream& output,
                << std::string(37, ' ')
                << determinant_spin_string(beta_rows[determinant], n_inactive) << '\n';
     }
+    return analysis;
 }
 
 void print_structure_matrix(std::ostream& output,
@@ -385,13 +389,14 @@ void print_weight_table(std::ostream& output,
     }
 }
 
-void print_structure_weights(std::ostream& output,
+ReportClock::duration print_structure_weights(std::ostream& output,
                              const Eigen::VectorXd& coefficients,
                              const Eigen::MatrixXd& overlap,
                              const vb::RawStructureData& structures) {
     if (coefficients.size() == 0 || overlap.rows() != coefficients.size()) {
         throw std::invalid_argument("structure-weight dimensions are inconsistent");
     }
+    const auto analysis_start = ReportClock::now();
     const Eigen::VectorXd cc = coulson_chirgwin_weights(coefficients, overlap * coefficients);
 
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> solver(overlap);
@@ -430,26 +435,31 @@ void print_structure_weights(std::ostream& output,
     Eigen::VectorXd renormalized = coefficients.array().square();
     renormalized /= renormalized.sum();
 
+    const auto analysis = ReportClock::now() - analysis_start;
     output << "\n\n             ******  WEIGHTS OF STRUCTURES ******\n";
     print_weight_table(output, "Coulson-Chirgwin Weights", cc, structures);
     print_weight_table(output, "Lowdin Weights", lowdin, structures);
     print_weight_table(output, "Inverse Weights", inverse, structures);
     print_weight_table(output, "Renormalized Weights", renormalized, structures);
+    return analysis;
 }
 
-void print_matrix_free_structure_weights(std::ostream& output,
+ReportClock::duration print_matrix_free_structure_weights(std::ostream& output,
                                          const NormalizedStructureState& state,
                                          const vb::RawStructureData& structures) {
+    const auto analysis_start = ReportClock::now();
     const Eigen::VectorXd cc =
         coulson_chirgwin_weights(state.raw_coefficients, state.raw_overlap_product);
     Eigen::VectorXd renormalized = state.coefficients.array().square();
     renormalized /= renormalized.sum();
 
+    const auto analysis = ReportClock::now() - analysis_start;
     output << "\n\n             ******  WEIGHTS OF STRUCTURES ******\n";
     print_weight_table(output, "Coulson-Chirgwin Weights", cc, structures);
     print_weight_table(output, "Renormalized Weights", renormalized, structures);
     output << "\n Lowdin and inverse weights are omitted in matrix-free Davidson mode"
               " because they require global functions of the full overlap matrix.\n";
+    return analysis;
 }
 
 void print_orbital_table(std::ostream& output,
@@ -1016,9 +1026,10 @@ void print_input_sections(std::ostream& output,
     output << "---------------End of Guess--------------\n";
 }
 
-double print_final_state_sections(std::ostream& output,
+FinalStateReport print_final_state_sections(std::ostream& output,
                                   const vb::VbScfInputLoadResult& load_result,
                                   const vb::VbScfOptimizerResult& result) {
+    const auto report_start = ReportClock::now();
     const auto& scf = result.scf_result;
     const std::vector<int> selected_states =
         scf.selected_state_indices.empty() ? std::vector<int>{0} : scf.selected_state_indices;
@@ -1043,10 +1054,12 @@ double print_final_state_sections(std::ostream& output,
 
     // Only normalized structure analysis requests these norms. All states and
     // the summary reuse this one result; orbital/trace writers never request it.
+    const auto analysis_start = ReportClock::now();
     const auto norms = structure_norms(result);
     const NormalizedStructureState first_state =
         normalize_structure_state(scf, selected_states.front(), norms.values);
 
+    auto structure_analysis = ReportClock::now() - analysis_start;
     const bool has_full_structure_matrices = first_state.overlap.size() != 0;
     if (has_full_structure_matrices) {
         print_structure_matrix(output, "OVERLAP", first_state.overlap);
@@ -1056,10 +1069,12 @@ double print_final_state_sections(std::ostream& output,
                   " in matrix-free Davidson mode.\n";
     }
     for (std::size_t state_offset = 0; state_offset < selected_states.size(); ++state_offset) {
+        const auto state_analysis_start = ReportClock::now();
         const NormalizedStructureState normalized =
             state_offset == 0
                 ? first_state
                 : normalize_structure_state(scf, selected_states[state_offset], norms.values);
+        structure_analysis += ReportClock::now() - state_analysis_start;
         if (normalized.coefficients.size() == 0) {
             continue;
         }
@@ -1071,17 +1086,18 @@ double print_final_state_sections(std::ostream& output,
             output, normalized.coefficients, load_result.raw_structure_data);
         const auto& orbitals = result.optimized_input.orbital_preparation_input;
         const int n_inactive = (orbitals.n_total_electrons - orbitals.n_active_electrons) / 2;
-        print_determinant_coefficients(
+        structure_analysis += print_determinant_coefficients(
             output, normalized.coefficients, result.optimized_input.structure_data, n_inactive);
         if (has_full_structure_matrices) {
-            print_structure_weights(output,
-                                    normalized.coefficients,
-                                    normalized.overlap,
-                                    load_result.raw_structure_data);
+            structure_analysis += print_structure_weights(
+                output, normalized.coefficients, normalized.overlap, load_result.raw_structure_data);
         } else {
-            print_matrix_free_structure_weights(output, normalized, load_result.raw_structure_data);
+            structure_analysis +=
+                print_matrix_free_structure_weights(output, normalized, load_result.raw_structure_data);
         }
     }
+    output.flush();
+    const auto structure_end = ReportClock::now();
     print_orbitals(output,
                    load_result.static_molecule_metadata,
                    result.optimized_input.orbital_preparation_input);
@@ -1103,7 +1119,11 @@ double print_final_state_sections(std::ostream& output,
                               natural_orbitals.overlap_square_root,
                               orbitals.spin_multiplicity);
     print_dipole_and_virial_analysis(output, load_result, result);
-    return norms.mean_overlap;
+    output.flush();
+    return {norms.mean_overlap,
+            std::chrono::duration<double>(structure_analysis).count(),
+            std::chrono::duration<double>(structure_end - report_start - structure_analysis).count(),
+            std::chrono::duration<double>(ReportClock::now() - structure_end).count()};
 }
 
 } // namespace xmvb::output

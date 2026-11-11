@@ -42,8 +42,15 @@ void print_coulson_chirgwin_weights(std::ostream& output,
                                     const Eigen::Ref<const Eigen::VectorXd>& overlap_product,
                                     const vb::RawStructureData& structures);
 
-/** @brief Prints requested final analyses; returns the exact mean structure overlap. */
-double print_final_state_sections(std::ostream& output,
+struct FinalStateReport {
+    double mean_structure_overlap;
+    double structure_analysis_seconds;
+    double structure_output_seconds;
+    double other_report_seconds;
+};
+
+/** @brief Prints final analyses and separates their computation and output costs. */
+FinalStateReport print_final_state_sections(std::ostream& output,
                                   const vb::VbScfInputLoadResult& load_result,
                                   const vb::VbScfOptimizerResult& result);
 

@@ -44,7 +44,8 @@ double compute_one_electron_reference_energy(
 
 TimedPreparedActiveSpaceContext
 prepare_timed_active_space_context(const VbScfInput& input,
-                                   const Eigen::MatrixXd* fixed_integral_frame) {
+                                   const Eigen::MatrixXd* fixed_integral_frame,
+                                   const PreparedActiveOrbitalView* prepared_orbitals) {
     TimedPreparedActiveSpaceContext timed_context;
     auto& context = timed_context.prepared_active_space;
     const bool use_ri_active_space =
@@ -59,7 +60,9 @@ prepare_timed_active_space_context(const VbScfInput& input,
         (input.orbital_preparation_input.n_total_electrons -
          input.orbital_preparation_input.n_active_electrons) /
         2;
-    context.orbital_result = ActiveSpaceOrbitalPreparer{}.prepare(input.orbital_preparation_input);
+    context.orbital_result = prepared_orbitals
+                                 ? prepared_orbitals->orbitals
+                                 : ActiveSpaceOrbitalPreparer{}.prepare(input.orbital_preparation_input);
     timed_context.timings.orbital_preparation_wall_time_seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - stage_start_time).count();
 
@@ -88,7 +91,10 @@ prepare_timed_active_space_context(const VbScfInput& input,
     const auto raw_active_coefficients = context.orbital_result.auxiliary_orbital_matrix.middleCols(
         context.n_inactive_doubly_occupied_orbitals, n_active_orbitals);
     Eigen::MatrixXd integral_frame, framed_active_coefficients;
-    if (fixed_integral_frame != nullptr) {
+    if (prepared_orbitals != nullptr) {
+        integral_frame = prepared_orbitals->frame.upper;
+        framed_active_coefficients = prepared_orbitals->frame.coefficients;
+    } else if (fixed_integral_frame != nullptr) {
         integral_frame = *fixed_integral_frame;
     } else {
         const auto& overlap_storage = context.orbital_result.active_orbital_overlap_matrix;
@@ -105,7 +111,7 @@ prepare_timed_active_space_context(const VbScfInput& input,
         integral_frame = std::move(frame.upper);
         framed_active_coefficients = std::move(frame.coefficients);
     }
-    if (fixed_integral_frame != nullptr && integral_frame.size() != 0) {
+    if (!prepared_orbitals && fixed_integral_frame != nullptr && integral_frame.size() != 0) {
         if (integral_frame.rows() != n_active_orbitals ||
             integral_frame.cols() != n_active_orbitals || !integral_frame.allFinite()) {
             throw std::invalid_argument("fixed active integral frame is invalid");

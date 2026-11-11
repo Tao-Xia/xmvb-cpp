@@ -35,9 +35,13 @@ Eigen::VectorXd NonredundantRetractionMetric::tangent(const Eigen::VectorXd& red
 }
 
 Eigen::VectorXd NonredundantRetractionMetric::apply(const Eigen::VectorXd& reduced_step) const {
+    return apply_packed(space_.expand_step(reduced_step));
+}
+
+Eigen::VectorXd NonredundantRetractionMetric::apply_packed(
+    const Eigen::VectorXd& packed_step) const {
     xmvb::profiling::ScopedPhase phase(xmvb::profiling::Phase::MetricAction);
-    return space_.project_reduced_gradient(
-        physical_metric_.apply(parameter_view_, space_.expand_step(reduced_step)));
+    return space_.project_reduced_gradient(physical_metric_.apply(parameter_view_, packed_step));
 }
 
 Eigen::VectorXd NonredundantRetractionMetric::solve(const Eigen::VectorXd& covector) const {

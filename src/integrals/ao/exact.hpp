@@ -8,6 +8,22 @@
 
 namespace xmvb::integrals {
 
+namespace detail {
+/** Form T[(mu nu), k, i] = sum_l (mu nu|kl) C[l,i] for a directed AO-pair panel.
+ * The coefficients and output channels are contiguous in i. The caller owns
+ * the bounded scratch and consumes both orientations from the same panel.
+ */
+void form_exact_pair_half_panel(const AoPairGraph& graph,
+                                std::size_t block,
+                                int begin,
+                                int count,
+                                int n_basis,
+                                int n_channels,
+                                const double* coefficients,
+                                double* half);
+} // namespace detail
+
+
 /** @brief Shared inputs and reused worker outputs for two symmetric channels. */
 struct AoH1eSymmetricWorkspace {
     using Channels = Eigen::Matrix<double, Eigen::Dynamic, 2, Eigen::RowMajor>;

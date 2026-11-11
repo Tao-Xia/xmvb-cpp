@@ -225,7 +225,7 @@ void check(Case scenario) {
     std::vector<CiahMacroObservation> host_observations, device_observations;
     int host_evaluations = 0, device_evaluations = 0;
     xmvb::mcscf::CiahMacroCallbacks<xmvb::mcscf::detail::HostCiahVectorOps, Trial> host_callbacks;
-    host_callbacks.evaluate = [&](const Vector& displacement, double scale) {
+    host_callbacks.evaluate = [&](const Vector& displacement, double scale, double) {
         ++host_evaluations;
         const Vector step = scale * displacement;
         double energy = gradient.dot(step) + 0.5 * step.dot(h * step);
@@ -241,7 +241,7 @@ void check(Case scenario) {
     host_callbacks.observe = [&](const CiahMacroObservation& x) { host_observations.push_back(x); };
 
     xmvb::mcscf::CiahMacroCallbacks<xmvb::cuda::DeviceCiahVectorOps, Trial> device_callbacks;
-    device_callbacks.evaluate = [&](const xmvb::cuda::Matrix<double>& displacement, double scale) {
+    device_callbacks.evaluate = [&](const xmvb::cuda::Matrix<double>& displacement, double scale, double) {
         ++device_evaluations;
         auto step = device_ops.clone(displacement);
         device_ops.scal(step, scale);

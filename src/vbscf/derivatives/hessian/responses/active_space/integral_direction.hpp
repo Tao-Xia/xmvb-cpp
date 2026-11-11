@@ -54,6 +54,9 @@ struct ActiveSpaceIntegralTangent {
     const Eigen::VectorXd* precomputed_packed_two_electron = nullptr;
     /** Skip the packed 2e tangent when all consumers operate on RI factors. */
     bool packed_two_electron_required = true;
+    bool fixed_active_overlap = false;
+    /** Optional Cbar^T delta F Cbar for a CI-only consumer. */
+    const Eigen::MatrixXd* projected_effective_h1e = nullptr;
 };
 
 struct ActiveSpaceIntegralDirectionWorkspace {

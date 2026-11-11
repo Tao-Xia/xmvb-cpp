@@ -7,14 +7,24 @@ runtime SIF and a versioned program tarball. The SIF supplies the operating-syst
 and numerical runtime libraries. The program supplies the executable, launcher,
 basis files, examples, licenses and build metadata.
 
+Download the runtime and program with their independent GHCR tags.
+
+```bash
+apptainer pull runtime-cpu-ubuntu24.04-r1.sif \
+  oras://ghcr.io/tao-xia/xmvb-cpp-release:runtime-cpu-ubuntu24.04-r1
+oras pull ghcr.io/tao-xia/xmvb-cpp-release:xmvb-cpp-0.1.0
+sha256sum -c runtime-cpu-ubuntu24.04-r1.sif.sha256
+sha256sum -c xmvb-cpp-0.1.0.tar.gz.sha256
+```
+
 Extract the program into its own directory and select the matching runtime.
 
 ```bash
-mkdir -p programs/xmvb-cpp-0.1.0-rc.1
-tar -xzf xmvb-cpp-0.1.0-rc.1-linux-x86_64-cpu.tar.gz \
-  -C programs/xmvb-cpp-0.1.0-rc.1
+mkdir -p programs/xmvb-cpp-0.1.0
+tar -xzf xmvb-cpp-0.1.0.tar.gz \
+  -C programs/xmvb-cpp-0.1.0
 export XMVB_RUNTIME_IMAGE=/absolute/path/runtime-cpu-ubuntu24.04-r1.sif
-export XMVB_PROGRAM_DIR=/absolute/path/programs/xmvb-cpp-0.1.0-rc.1
+export XMVB_PROGRAM_DIR=/absolute/path/programs/xmvb-cpp-0.1.0
 OMP_NUM_THREADS=4 "$XMVB_PROGRAM_DIR/bin/xmvb" input.xmi
 ```
 
@@ -84,9 +94,9 @@ export XMVB_RELEASE_BASE_SIF=/persistent/ubuntu24.04.sif
 export XMVB_RELEASE_DEPENDENCY_PREFIX=/path/to/xmvb-cpp-dev
 export XMVB_RELEASE_CACHE_DIR=/persistent/xmvb-release-cache
 bash /release-work/source/packaging/apptainer/build.sh \
-  /release-work/source "$revision" 0.1.0-rc.1 /release-work/build \
+  /release-work/source "$revision" 0.1.0 /release-work/build \
   /release-artifacts/runtime-cpu-ubuntu24.04-r1.sif \
-  /release-artifacts/xmvb-cpp-0.1.0-rc.1-linux-x86_64-cpu.tar.gz
+  /release-artifacts/xmvb-cpp-0.1.0.tar.gz
 ```
 
 Acquire and hash the Ubuntu 24.04 base SIF before the first build. Builds require

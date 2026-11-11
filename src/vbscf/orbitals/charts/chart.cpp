@@ -439,6 +439,7 @@ OrbitalChart::OrbitalChart(const OrbitalPreparationInput& input,
     const bool use_active_subspace_gauge =
         complete_active_space && input.orbital_type == kOrbitalTypeOeo;
     active_subspace_gauge_ = use_active_subspace_gauge;
+    full_horizontal_active_lift_ = use_active_subspace_gauge;
     const auto blocks = detect_orbital_blocks(input);
     // Full-AO inactive orbitals share one gauge. Complete-space OEO active
     // orbitals share a second gauge. Reuse their exact complements only within
@@ -578,6 +579,10 @@ OrbitalChart::OrbitalChart(const OrbitalPreparationInput& input,
             }
             const Eigen::MatrixXd& U_p = *quotient;
             proj.local_gauge_rank = static_cast<int>(local_size - U_p.cols());
+            if (m.orbital_index >= n_inactive &&
+                (!full_support || proj.local_gauge_rank != n_occupied)) {
+                full_horizontal_active_lift_ = false;
+            }
             proj.local_combined_rank = static_cast<int>(local_size);
             proj.expected_quotient_dimension = static_cast<int>(U_p.cols());
             if (!U_p.allFinite()) {

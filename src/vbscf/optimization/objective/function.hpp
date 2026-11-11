@@ -18,6 +18,7 @@ namespace xmvb::vb {
 
 struct AcceptedPointContext;
 struct SelectedMetric;
+struct CiTransportPoint;
 
 /**
  * @brief Result of evaluating an orbital point without accepting it.
@@ -30,6 +31,7 @@ struct VbScfObjectiveTrialEvaluation {
     double gradient_inf_norm = 0.0;
     double wall_time_seconds = 0.0;
     bool chart_changed = false;
+    bool active_inactive_orthogonal = false;
     bool gradient_ready = false;
     bool valid = false;
 
@@ -63,7 +65,8 @@ class VbScfObjective {
                    double nuclear_repulsion_energy,
                    StructureEigensolver structure_eigensolver,
                    StructureSolveAccuracy structure_solve_accuracy,
-                   const OrbitalGradientEvaluator* orbital_gradient_evaluator);
+                   const OrbitalGradientEvaluator* orbital_gradient_evaluator,
+                   bool active_inactive_orthogonal = false);
 
     VbScfObjective(const VbScfObjective&) = delete;
     VbScfObjective& operator=(const VbScfObjective&) = delete;
@@ -81,6 +84,11 @@ class VbScfObjective {
     /** @brief Transfers the accepted input out after optimization. */
     VbScfInput take_input() && {
         return std::move(input_);
+    }
+
+    /** @brief Whether the accepted representative has undergone OEO active balancing. */
+    bool active_inactive_orthogonal() const noexcept {
+        return active_inactive_orthogonal_;
     }
 
     /** @brief Returns the gradient data at the accepted point. */
@@ -125,11 +133,19 @@ class VbScfObjective {
     evaluate_coupled_keyframe(const Eigen::VectorXd& parameter_vector,
                               const Eigen::Ref<const Eigen::MatrixXd>& structure_coefficients,
                               const SelectedMetric* metric = nullptr) const;
+    VbScfCoupledKeyframeEvaluation evaluate_coupled_keyframe(const CiTransportPoint& point) const;
 
     /** @brief Relax CI from the supplied guess without orbital gradient backpropagation. */
     TrialEvaluation evaluate_trial_energy_with_structure_guess(
         const Eigen::VectorXd& parameter_vector,
-        const Eigen::Ref<const Eigen::MatrixXd>& selected_structure_coefficients) const;
+        const Eigen::Ref<const Eigen::MatrixXd>& selected_structure_coefficients,
+        double exploratory_stationarity = 0.0) const;
+
+    /** @brief Re-solve the accepted point without rebuilding its FULL operator. */
+    double strict_accepted_energy() const;
+
+    /** @brief Re-solve an intermediate trial at the original CI accuracy. */
+    void refine_trial_ci(TrialEvaluation& evaluation) const;
 
     /** @brief Completes the exact gradient for an energy-screened trial. */
     void complete_trial(TrialEvaluation* evaluation) const;
@@ -146,16 +162,24 @@ class VbScfObjective {
     StructureEigensolver structure_eigensolver_ = StructureEigensolver::Davidson;
     StructureSolveAccuracy structure_solve_accuracy_;
     const OrbitalGradientEvaluator* gradient_evaluator_ = nullptr;
+    bool active_inactive_orthogonal_ = false;
 
     OrbitalGradientResult gradient_result_;
     std::vector<double> energy_history_;
     std::vector<double> gradient_inf_norm_history_;
     std::vector<double> iteration_time_history_seconds_;
 
+    VbScfCoupledKeyframeEvaluation evaluate_coupled_keyframe_at(
+        OrbitalPreparationInput trial_orbitals,
+        const Eigen::Ref<const Eigen::MatrixXd>& structure_coefficients,
+        const SelectedMetric* metric,
+        const PreparedActiveOrbitalView* prepared_orbitals) const;
+
     TrialEvaluation evaluate_trial_energy_with_initial_eigenvectors(
         const Eigen::VectorXd& parameter_vector,
         bool canonicalize_sparse_gauge,
-        const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors) const;
+        const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors,
+        double exploratory_stationarity = 0.0) const;
 };
 
 } // namespace xmvb::vb

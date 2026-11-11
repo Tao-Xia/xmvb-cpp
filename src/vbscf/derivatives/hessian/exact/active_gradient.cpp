@@ -13,8 +13,8 @@ ActiveSpaceGradientDirection
 make_active_gradient_direction(const StructureActiveIntegralAdjoint& adjoint,
                                int n_active_orbitals) {
     const int n_pairs = xmvb::integrals::packed_active_pair_count(n_active_orbitals);
-    if (adjoint.overlap.rows() != n_active_orbitals ||
-        adjoint.overlap.cols() != n_active_orbitals ||
+    if ((adjoint.overlap.size() && (adjoint.overlap.rows() != n_active_orbitals ||
+                                   adjoint.overlap.cols() != n_active_orbitals)) ||
         adjoint.one_electron.rows() != n_active_orbitals ||
         adjoint.one_electron.cols() != n_active_orbitals || adjoint.pair_kernel.rows() != n_pairs ||
         adjoint.pair_kernel.cols() != n_pairs) {
@@ -22,8 +22,11 @@ make_active_gradient_direction(const StructureActiveIntegralAdjoint& adjoint,
     }
     ActiveSpaceGradientDirection result =
         make_zero_active_space_gradient_direction(n_active_orbitals);
-    result.active_orbital_overlap_gradient.assign(adjoint.overlap.data(),
-                                                  adjoint.overlap.data() + adjoint.overlap.size());
+    if (adjoint.overlap.size())
+        result.active_orbital_overlap_gradient.assign(
+            adjoint.overlap.data(), adjoint.overlap.data() + adjoint.overlap.size());
+    else
+        result.active_orbital_overlap_gradient.clear();
     result.active_one_electron_gradient.assign(
         adjoint.one_electron.data(), adjoint.one_electron.data() + adjoint.one_electron.size());
     for (int column = 0; column < n_pairs; ++column) {

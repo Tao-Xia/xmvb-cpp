@@ -109,13 +109,16 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
                                                     bool collect_images,
                                                     StructureIntegralDirection* diagnostic,
                                                     StructureResponseSweep* ci_sweep,
-                                                    const Eigen::MatrixXd* overlap_image) const {
+                                                    const Eigen::MatrixXd* overlap_image,
+                                                    bool fixed_active_overlap) const {
     const mcscf::CiWorkspace operation;
     const bool joint = ci_sweep != nullptr;
-    if (joint && (!response || !delta_upper || !delta_sigma || !collect_images))
+    const bool forcing_only = fixed_active_overlap && delta_sigma;
+    if (joint && (!response || (!delta_upper && !forcing_only) || !delta_sigma || !collect_images))
         throw std::invalid_argument("joint product jet requires orbital and CI directions");
     const bool tangent = response || delta_upper || delta_sigma;
-    const int width = tangent ? 2 : 1, n = sigma.n_orbitals(), d = sigma.channel_kernel().rows();
+    const int width = tangent && !forcing_only ? 2 : 1;
+    const int n = sigma.n_orbitals(), d = sigma.channel_kernel().rows();
     const int input_width = width + (joint ? 1 : 0);
     const int states = state.structure_coefficients.cols();
     StructureResponseSweep result{
@@ -123,7 +126,7 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
          Eigen::MatrixXd::Zero(collect_images ? n_structures_ : 0, states)},
         Eigen::MatrixXd::Zero(n, n),
         Eigen::MatrixXd::Zero(d, d),
-        Eigen::MatrixXd::Zero(n, n)};
+        fixed_active_overlap ? Eigen::MatrixXd{} : Eigen::MatrixXd::Zero(n, n).eval()};
     if (collect_images && overlap_image)
         result.images.overlap = *overlap_image;
     if (joint)
@@ -131,7 +134,7 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
                       Eigen::MatrixXd::Zero(n_structures_, states)},
                      Eigen::MatrixXd::Zero(n, n),
                      Eigen::MatrixXd::Zero(d, d),
-                     Eigen::MatrixXd::Zero(n, n)};
+                     fixed_active_overlap ? Eigen::MatrixXd{} : Eigen::MatrixXd::Zero(n, n).eval()};
     // Reserve accepted panels across all roots, then divide the remaining
     // allowance among input, output, sigma and reverse-transform scratch.
     // Small explicit panel caps are useful for bounded-residency regressions.
@@ -300,7 +303,7 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
             if (!cached || delta_upper)
                 primal_image = expand_structure_block(state.structure_coefficients.col(state_id));
             primal_temporary.resize(sizeof(double) * primal_image.size());
-            if (tangent)
+            if (tangent && !forcing_only)
                 direction_image = response && !joint
                                       ? expand_structure_block(response->col(state_id))
                                       : Eigen::MatrixXd::Zero(n_unique_alpha_, n_unique_beta_);
@@ -319,7 +322,7 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
                     alpha.apply_left(&primal_image);
                     beta.apply_right(&primal_image);
                 }
-                if (tangent) {
+                if (direction_image.size()) {
                     alpha.apply_left(&direction_image);
                     beta.apply_right(&direction_image);
                 }
@@ -362,7 +365,7 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
                 workspace::Temporary primal_panel_temporary(sizeof(double) * primal.size());
                 const bool generator_only = anchored && (!response || joint);
                 Eigen::MatrixXd dy;
-                if (tangent) {
+                if (tangent && !forcing_only) {
                     if (generator_only)
                         dy.resize(n_unique_alpha_, count);
                     else
@@ -452,17 +455,24 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
                                 {pattern->rows.data(),
                                  static_cast<std::size_t>(pattern->rows.size())});
                     }
-                    if (tangent) {
+                    if (response_image.size()) {
                         if (pattern->full)
-                            alpha.apply_left(&dy);
+                            alpha.apply_left(&response_image);
                         else
                             alpha.apply_supported_left(
-                                &dy,
+                                &response_image,
                                 {pattern->offsets.data(),
                                  static_cast<std::size_t>(pattern->offsets.size())},
                                 {pattern->rows.data(),
                                  static_cast<std::size_t>(pattern->rows.size())});
                     }
+                }
+                if (forcing_only) {
+                    if (cached)
+                        return detail::pack_columns(std::move(dq), pattern);
+                    if (joint)
+                        return detail::pack_columns({&primal, &dq}, pattern);
+                    return detail::pack_columns(std::move(primal), pattern);
                 }
                 if (cached) {
                     if (!joint) {
@@ -487,7 +497,7 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
                 return pattern->bytes() +
                        sizeof(double) *
                            static_cast<std::size_t>(pattern->offsets[pattern->columns()]) *
-                           (cached ? (joint ? 2 : 1) : input_width);
+                           (cached ? (joint && !forcing_only ? 2 : 1) : input_width);
             });
         if (anchored && spin_exchange_parity_) {
             // One component on the accepted two-component support fits the same
@@ -528,7 +538,9 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
                          ++a)
                         position[rows[a]] = a;
                 const int component =
-                    cached ? ((family == 2 || family == 3) ? 1 : 0) : (family == 3 ? 2 : family);
+                    forcing_only ? (family == 3 && !cached ? 1 : 0)
+                                 : (cached ? ((family == 2 || family == 3) ? 1 : 0)
+                                           : (family == 3 ? 2 : family));
                 const auto copy_column = [&](int col, const detail::ColumnTile& tile) {
                     const std::int64_t b = betas[col] % extent;
                     const std::int64_t first = tile.pattern->offsets[b],
@@ -626,7 +638,9 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
                 const std::int64_t offset = tile.pattern->offsets[b % extent],
                                    last = tile.pattern->offsets[b % extent + 1];
                 const int component =
-                    cached ? ((family == 2 || family == 3) ? 1 : 0) : (family == 3 ? 2 : family);
+                    forcing_only ? (family == 3 && !cached ? 1 : 0)
+                                 : (cached ? ((family == 2 || family == 3) ? 1 : 0)
+                                           : (family == 3 ? 2 : family));
                 return {tile.values.col(component).data() + offset,
                         tile.pattern->full ? nullptr : tile.pattern->rows.data() + offset,
                         last - offset};
@@ -659,7 +673,8 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
                 dy(betas, rows, direction, mode);
             }
         };
-        const auto right = interleaved_reader(y, sigma_width, tangent && !cached ? 1 : 0);
+        const auto right = interleaved_reader(
+            y, sigma_width, tangent && !forcing_only && !cached ? 1 : 0);
         // C^T is linear: first sum emitted panels in bounded source-group tiles,
         // then visit the structure incidence once per completed/evicted tile.
         // Neither the full touched support nor per-thread structure arrays are
@@ -867,7 +882,7 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
                     const std::int64_t first = panel * extent, count = tile.pattern->columns();
                     Eigen::MatrixXd images = tile.unpack(n_unique_alpha_);
                     const auto h0 = images.leftCols(count);
-                    if (weight != 0) {
+                    if (!fixed_active_overlap && weight != 0) {
                         if (joint) {
                             // H*dy and H*q have the same right Y. Their cotangents stay
                             // independent while Y reads and signed spin links are shared.
@@ -1097,7 +1112,14 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
                 StateSigma sigma_work{w, {}, release, {}};
                 const auto forcing_writer =
                     forcing ? writer(w - 1, 1, forcing_slot) : mcscf::DirectCiTileWriter{};
-                if (joint) {
+                if (forcing_only) {
+                    if (joint)
+                        sigma_work.requests.push_back(
+                            {q_reader, writer(0, 1, q_slot), nullptr, {}, right});
+                    sigma_work.requests.push_back(
+                        {{}, {}, delta_sigma, writer(0, 1, 0),
+                         joint ? mcscf::DirectCiTileReader{} : right});
+                } else if (joint) {
                     sigma_work.requests.push_back({interleaved_reader(q_reader, w, w - 1),
                                                    writer(w - 1, 1, q_slot),
                                                    nullptr,
@@ -1119,10 +1141,12 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
                 }
                 const auto& gradient = sigma_work.adjoints.back();
                 // Keep state weights outside the shared scatter and both kernel actions.
-                result.one_electron.noalias() +=
-                    (tangent ? 2 * weight : weight) * gradient.one_electron;
-                result.pair_kernel.noalias() +=
-                    (tangent ? 2 * weight : weight) * gradient.pair_kernel;
+                if (!forcing_only) {
+                    result.one_electron.noalias() +=
+                        (tangent ? 2 * weight : weight) * gradient.one_electron;
+                    result.pair_kernel.noalias() +=
+                        (tangent ? 2 * weight : weight) * gradient.pair_kernel;
+                }
                 if (!tangent) {
                     // d<Y|H|Y>/dh is the same accepted 1-RDM as D(Y,Y).
                     // Reuse it for the norm multiplier; a second generator sweep
@@ -1180,7 +1204,18 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
         // Accepted fixed-state normalization already supplies M*C. The sigma
         // sweep has consumed Y for all densities/generator terms above; only the
         // redundant structure-overlap projection remains, so omit that reread.
-        if (tangent || (collect_images && !overlap_image) || capture)
+        if (forcing_only && joint) {
+            // The CI metric is the accepted F^T F. Only the q lane has an overlap image.
+            for (const int panel : reachable) {
+                const auto first = panel * extent;
+                const auto count = std::min<Eigen::Index>(extent, n_unique_beta_ - first);
+                std::vector<Eigen::Index> betas(count);
+                std::iota(betas.begin(), betas.end(), first);
+                Eigen::MatrixXd dq(n_unique_alpha_, count);
+                q_reader(betas, all_rows, dq, mcscf::DirectCiRead::Dense);
+                project(panel, std::move(dq), {ci_sweep->images.overlap.col(state_id).data()});
+            }
+        } else if (!forcing_only && (tangent || (collect_images && !overlap_image) || capture))
             for (const int panel : reachable) {
                 const std::int64_t first = panel * extent,
                                    count = std::min<Eigen::Index>(extent, n_unique_beta_ - first);
@@ -1201,7 +1236,7 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
                     dy(betas, all_rows, dv, mcscf::DirectCiRead::Dense);
                 if (joint)
                     q_reader(betas, all_rows, dq, mcscf::DirectCiRead::Dense);
-                if (weight != 0 && tangent) {
+                if (!fixed_active_overlap && weight != 0 && tangent) {
                     // D(R,Z)=D(Z,R)^T: both accepted cotangents share the generated
                     // Z panel and one spin-link traversal, without unpacking R first.
                     if (cached && joint) {

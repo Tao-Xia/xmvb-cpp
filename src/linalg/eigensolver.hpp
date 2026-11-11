@@ -85,6 +85,8 @@ struct DavidsonOptions {
    * unchanged. The caller must establish an isometric coordinate model.
    */
     bool identity_overlap = false;
+    /** @brief Optional solve totals for large-vector/control work, Ritz solve and H/M action. */
+    std::function<void(double, double, double)> observe_work = {};
 };
 
 /**

@@ -64,11 +64,13 @@ template <class Ops> class CiahEnergyModelT {
     void add(const Vector& step, const Vector& image) {
         ops_.axpy(step_, 1.0, step);
         ops_.axpy(image_, 1.0, image);
+        ++segment_steps_;
     }
 
     void remove(const Vector& step, const Vector& image) {
         ops_.axpy(step_, -1.0, step);
         ops_.axpy(image_, -1.0, image);
+        --segment_steps_;
     }
 
     void refresh(double energy, const Vector& gradient) {
@@ -76,6 +78,7 @@ template <class Ops> class CiahEnergyModelT {
         gradient_ = ops_.clone(gradient);
         step_ = ops_.zeros_like(gradient);
         image_ = ops_.zeros_like(gradient);
+        segment_steps_ = 0;
     }
 
     double energy() const {
@@ -95,6 +98,16 @@ template <class Ops> class CiahEnergyModelT {
         return energy_;
     }
 
+    const Vector& anchor_gradient() const noexcept { return gradient_; }
+
+    int segment_steps() const noexcept { return segment_steps_; }
+
+    /** Fill newly admitted coordinates of the anchor gradient and segment image. */
+    template <class Extend>
+    void extend_coordinates(Extend extend) {
+        extend(displacement(), gradient_, image_);
+    }
+
     /** @brief Incremental displacement since the last accepted keyframe. */
     const Vector& displacement() const noexcept {
         return step_;
@@ -104,6 +117,7 @@ template <class Ops> class CiahEnergyModelT {
     Ops ops_;
     double energy_;
     Vector gradient_, step_, image_;
+    int segment_steps_ = 0;
 };
 
 } // namespace detail
@@ -124,6 +138,8 @@ struct CiahOptions {
     double lindep = 1.0e-14;
     /** Maximum number of admitted directions (and Hessian actions). */
     int max_cycle = 30;
+    /** Explicit complement coordinates with known images do not consume Krylov expansions. */
+    int complement_capacity = 0;
     /** Declared relative error of the Hessian action for symmetry checks. */
     double operator_relative_accuracy = 0.0;
     /** @brief Observe a direction after its HVP, reusing the computed metric image. */
@@ -292,6 +308,12 @@ template <class Result, class Ops> class CiahKeyframesT {
     bool available() const noexcept {
         return checkpoint_.has_value();
     }
+
+    /** Extend a saved image after adding previously unused model coordinates. */
+    template <class Extend> void extend_image(Extend&& extend) {
+        if (checkpoint_)
+            extend(checkpoint_->displacement, checkpoint_->image);
+    }
     /** @brief Consume a checkpoint so backtracking cannot retry it indefinitely. */
     Checkpoint take() {
         Checkpoint point = std::move(checkpoint_.value());
@@ -344,6 +366,14 @@ class CiahWorkspace {
     /** @brief Use the existing physical component cap in the projected AH solve. */
     void set_step_limit(std::function<double(const Eigen::VectorXd&)> maximum, double cap);
 
+    /** Optional cap classification for a combination of the retained basis.
+     * A value must lie on the same side of the cap as the direct maximum.
+     * An empty result requests the original direct calculation.
+     */
+    void set_projected_step_limit(
+        std::function<std::optional<double>(const std::vector<Eigen::VectorXd>&,
+                                           const Eigen::VectorXd&)> projected);
+
     /** @brief Mark a changed RHS for a cached-space Ritz solve before expansion.
    * Retains every direction and its H/G images, but discards the old equation's
    * residual and eigenvalue-settling history. With a nonempty retained space,
@@ -356,6 +386,14 @@ class CiahWorkspace {
    * reprojects cached images. Subsequent calls may admit one HVP direction.
    */
     CiahResult next(const Eigen::VectorXd& current_gradient);
+
+    /** Activate a previously unused coordinate using its known H/G columns. */
+    void append_complement_coordinate(Eigen::Index index,
+                                      Eigen::VectorXd hessian_column,
+                                      Eigen::VectorXd metric_column);
+
+    /** Lowest unaugmented Ritz direction in the retained span. No new action. */
+    Eigen::VectorXd softest_ritz_direction() const;
 
     /** @brief Probe outside a gradient-only span, stopping at the first negative witness.
      * No negative direction found does not certify global positive curvature.

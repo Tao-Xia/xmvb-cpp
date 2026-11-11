@@ -21,7 +21,6 @@ struct AcceptedOrbitalPreparationCache {
 
     std::vector<std::vector<int>> orbital_basis_function_indices;
     std::vector<int> orbital_coefficient_counts;
-    std::vector<Eigen::MatrixXd> orbital_overlap_submatrices;
 
     Eigen::MatrixXd original_orbital_gradient;
     Eigen::MatrixXd inactive_density_gradient_symmetric;
