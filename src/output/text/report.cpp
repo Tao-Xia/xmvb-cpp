@@ -2,23 +2,19 @@
 #include "output/text/sections.hpp"
 #include "vbscf/core/contracts/orbital_type.hpp"
 #include "core/workspace.hpp"
+#include "parallel/runtime.hpp"
 
+#include <algorithm>
 #include <array>
-#include <cerrno>
 #include <chrono>
 #include <ctime>
-#include <cstdlib>
 #include <iomanip>
 #include <iostream>
-#include <limits>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 
-#ifdef _OPENMP
-#include <omp.h>
-#endif
 
 namespace xmvb::output {
 
@@ -89,28 +85,6 @@ std::string format_timestamp(const std::chrono::system_clock::time_point& time_p
     return buffer.data();
 }
 
-int openmp_max_thread_count() {
-    int n_threads = 1;
-#ifdef _OPENMP
-    n_threads = omp_get_max_threads();
-#endif
-    return n_threads;
-}
-
-int allocated_cpu_thread_count() {
-    const char* slurm_value = std::getenv("SLURM_CPUS_PER_TASK");
-    if (slurm_value != nullptr && slurm_value[0] != '\0') {
-        char* end = nullptr;
-        errno = 0;
-        const long parsed = std::strtol(slurm_value, &end, 10);
-        if (errno == 0 && end != slurm_value && (end == nullptr || end[0] == '\0') && parsed > 0 &&
-            parsed <= static_cast<long>(std::numeric_limits<int>::max())) {
-            return static_cast<int>(parsed);
-        }
-    }
-    return openmp_max_thread_count();
-}
-
 std::string physical_chart_name(const xmvb::vb::OrbitalPreparationInput& orbital_input) {
     for (const int basis_count : orbital_input.orbital_basis_counts) {
         if (basis_count > 0 && basis_count < orbital_input.n_basis_functions) {
@@ -155,9 +129,12 @@ void print_header(const std::string& input_path,
                   const xmvb::vb::VbScfOptimizerOptions& options,
                   const xmvb::vb::VbScfInputLoadResult& load_result,
                   const std::chrono::system_clock::time_point& start_time) {
-    print_program_preamble(std::cout, input_path, start_time, allocated_cpu_thread_count());
+    const auto threads = parallel::runtime_threads();
+    print_program_preamble(std::cout, input_path, start_time, threads.openmp_threads);
     print_input_sections(
         std::cout, input_path, load_result, optimizer_report_name(options), options.max_iterations);
+    print_log_field("OpenMP threads", std::to_string(threads.openmp_threads));
+    print_log_field("BLAS threads", std::to_string(threads.blas_threads));
     if (options.backend == xmvb::vb::VbScfOptimizerBackend::Ciah) {
         print_log_field("Orbital preconditioner",
                         orbital_preconditioner_name(options.orbital_preconditioner));
@@ -227,7 +204,7 @@ void print_summary(const vb::VbScfOptimizerOptions& options,
                                                       load_result.nuclear_repulsion_energy -
                                                       result.final_one_electron_reference_energy;
     const double optimizer_wall_time_seconds = result.total_wall_time_seconds;
-    const int effective_thread_count = allocated_cpu_thread_count();
+    const int effective_thread_count = parallel::runtime_threads().openmp_threads;
 
     print_scf_status(std::cout, command_converged, result.n_iterations, result.final_total_energy);
     const auto final_report = print_final_state_sections(std::cout, load_result, result);
@@ -245,6 +222,14 @@ void print_summary(const vb::VbScfOptimizerOptions& options,
         for (const auto& step : result.ciah_iteration_trace)
             actions += step.orbital_hvp_actions;
         print_log_field("CIAH total orbital HVP actions", std::to_string(actions));
+        if (!result.ciah_iteration_trace.empty()) {
+            const auto model = result.ciah_iteration_trace.front().response_model;
+            const bool same = std::all_of(result.ciah_iteration_trace.begin(),
+                result.ciah_iteration_trace.end(),
+                [model](const auto& step) { return step.response_model == model; });
+            print_log_field("CIAH response model", same ? vb::ciah_response_model_name(model)
+                                                        : "varied by accepted point");
+        }
     }
     print_log_field("Termination reason", result.termination_reason);
     print_log_field("Start time", format_timestamp(command_start_time));

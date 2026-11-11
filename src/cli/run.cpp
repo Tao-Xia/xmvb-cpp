@@ -24,6 +24,7 @@
 #include "input/loading/loader.hpp"
 #include "input/deck/model.hpp"
 #include "core/workspace.hpp"
+#include "parallel/runtime.hpp"
 #include "vbscf/optimization/driver/optimizer.hpp"
 
 namespace xmvb::cli {
@@ -31,6 +32,7 @@ namespace xmvb::cli {
 namespace fs = std::filesystem;
 
 int run(Options command_line) {
+    parallel::configure_runtime_threads();
     memory::configure(command_line.ci_workspace_bytes);
     const std::string& input_path = command_line.input_path;
     const auto deck = vb::parse_input_deck_model(input_path);

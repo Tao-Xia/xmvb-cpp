@@ -12,24 +12,28 @@ Download the runtime and program with their independent GHCR tags.
 ```bash
 apptainer pull runtime-cpu-ubuntu24.04-r1.sif \
   oras://ghcr.io/tao-xia/xmvb-cpp-release:runtime-cpu-ubuntu24.04-r1
-oras pull ghcr.io/tao-xia/xmvb-cpp-release:xmvb-cpp-0.1.0
+oras pull ghcr.io/tao-xia/xmvb-cpp-release:xmvb-cpp-0.1.1
 sha256sum -c runtime-cpu-ubuntu24.04-r1.sif.sha256
-sha256sum -c xmvb-cpp-0.1.0.tar.gz.sha256
+sha256sum -c xmvb-cpp-0.1.1.tar.gz.sha256
 ```
 
 Extract the program into its own directory and select the matching runtime.
 
 ```bash
-mkdir -p programs/xmvb-cpp-0.1.0
-tar -xzf xmvb-cpp-0.1.0.tar.gz \
-  -C programs/xmvb-cpp-0.1.0
+mkdir -p programs/xmvb-cpp-0.1.1
+tar -xzf xmvb-cpp-0.1.1.tar.gz \
+  -C programs/xmvb-cpp-0.1.1
 export XMVB_RUNTIME_IMAGE=/absolute/path/runtime-cpu-ubuntu24.04-r1.sif
-export XMVB_PROGRAM_DIR=/absolute/path/programs/xmvb-cpp-0.1.0
+export XMVB_PROGRAM_DIR=/absolute/path/programs/xmvb-cpp-0.1.1
 OMP_NUM_THREADS=4 "$XMVB_PROGRAM_DIR/bin/xmvb" input.xmi
 ```
 
 The launcher mounts the selected program read-only and checks the runtime ID.
-`OPENBLAS_NUM_THREADS` defaults to one. Relative input paths and outputs use the
+The native program and launcher honor explicit thread settings. Otherwise,
+OpenMP uses `SLURM_CPUS_PER_TASK` within the available CPU affinity, or the
+available CPUs outside Slurm; BLAS defaults to one worker. The launcher preserves
+Slurm CPU/memory allocation variables and user binding settings across the
+container boundary. Relative input paths and outputs use the
 current working directory. Apptainer also accepts additional data mounts through
 its standard `APPTAINER_BIND` setting.
 
@@ -94,9 +98,9 @@ export XMVB_RELEASE_BASE_SIF=/persistent/ubuntu24.04.sif
 export XMVB_RELEASE_DEPENDENCY_PREFIX=/path/to/xmvb-cpp-dev
 export XMVB_RELEASE_CACHE_DIR=/persistent/xmvb-release-cache
 bash /release-work/source/packaging/apptainer/build.sh \
-  /release-work/source "$revision" 0.1.0 /release-work/build \
+  /release-work/source "$revision" 0.1.1 /release-work/build \
   /release-artifacts/runtime-cpu-ubuntu24.04-r1.sif \
-  /release-artifacts/xmvb-cpp-0.1.0.tar.gz
+  /release-artifacts/xmvb-cpp-0.1.1.tar.gz
 ```
 
 Acquire and hash the Ubuntu 24.04 base SIF before the first build. Builds require

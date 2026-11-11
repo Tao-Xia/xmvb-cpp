@@ -53,7 +53,7 @@ counts use `n_bf`; active orbital counts use `n_active`.
 ## Binary distribution
 
 The Linux CPU distribution consists of a reusable Apptainer runtime SIF and the
-versioned `xmvb-cpp-0.1.0.tar.gz` program archive. Both are published in
+versioned `xmvb-cpp-0.1.1.tar.gz` program archive. Both are published in
 [GHCR](https://github.com/users/Tao-Xia/packages/container/package/xmvb-cpp-release). Select them with `XMVB_RUNTIME_IMAGE` and
 `XMVB_PROGRAM_DIR`, then run `"$XMVB_PROGRAM_DIR/bin/xmvb" input.xmi`.
 The program archive includes basis files and a CIAH example.

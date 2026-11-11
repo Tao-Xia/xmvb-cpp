@@ -4,7 +4,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
-#include <cstdlib>
 #include <chrono>
 #include <limits>
 #include <optional>
@@ -114,16 +113,17 @@ bool build_ciah_macro_step(VbScfObjective* objective,
     const bool fixed_overlap_coupling =
         full_ns != 0 && fixed_active_overlap &&
         hessian.structure_action().supports_fixed_overlap_coupling();
-    const char* small_ci_flag = std::getenv("XMVB_CIAH_SMALL_CI");
-    const bool small_ci = fixed_overlap_coupling && small_ci_flag &&
-                          std::string_view(small_ci_flag) == "1";
+    // The fixed-overlap identity supplies the exact orbital action and both
+    // coupling images. Enrich its CI response space within the existing AH
+    // budget; model selection is physical, not an environment override.
+    const bool small_ci = fixed_overlap_coupling;
     const Eigen::Index ns = small_ci ? std::min<Eigen::Index>(full_ns, ciah_options.max_cycle)
                                      : full_ns;
-    const char* split_budget = std::getenv("XMVB_CIAH_SPLIT_BUDGET");
-    if (small_ci && split_budget && std::string_view(split_budget) == "1")
-        ciah_options.complement_capacity = static_cast<int>(ns);
     const Eigen::Index dimension = no + ns;
     const bool fixed_density_orbital_hvp = (ns == 0 || small_ci) && fixed_active_overlap;
+    record->response_model = small_ci ? CiahResponseModel::Adaptive
+                            : ns     ? CiahResponseModel::Coupled
+                                     : CiahResponseModel::OrbitalOnly;
     mcscf::diagnostics::ciah_trace(
         "ciah_orbital_hvp_model",
         "fixed_density=%d,balanced=%d,full_horizontal=%d,coupled=%d,fixed_overlap_coupling=%d",

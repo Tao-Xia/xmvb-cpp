@@ -5,10 +5,21 @@ set -euo pipefail
 program_dir="${XMVB_PROGRAM_DIR:-$(dirname "$(dirname "$(readlink -f -- "${BASH_SOURCE[0]}")")")}"
 program_dir="$(realpath "$program_dir")"
 test -s "$program_dir/share/RUNTIME_ID"
+# Forward user and scheduler resources before the numerical runtimes initialize.
+# Apptainer's environment prefix preserves values such as OMP_PLACES lists.
+for name in OMP_NUM_THREADS OMP_PLACES OMP_PROC_BIND OMP_MAX_ACTIVE_LEVELS \
+    OMP_DYNAMIC OMP_WAIT_POLICY OPENBLAS_NUM_THREADS GOTO_NUM_THREADS \
+    MKL_NUM_THREADS BLIS_NUM_THREADS SLURM_CPUS_PER_TASK SLURM_CPUS_ON_NODE \
+    SLURM_MEM_PER_NODE SLURM_MEM_PER_CPU SLURM_JOB_ID; do
+    destination="APPTAINERENV_$name"
+    if [[ -v "$name" && ! -v "$destination" ]]; then
+        export "$destination=${!name}"
+    fi
+done
+export APPTAINERENV_OMP_PROC_BIND="${APPTAINERENV_OMP_PROC_BIND:-close}"
+export APPTAINERENV_OMP_PLACES="${APPTAINERENV_OMP_PLACES:-cores}"
 exec apptainer exec --cleanenv \
     --bind "$program_dir:/opt/xmvb/program:ro" --bind "$PWD:$PWD" \
-    --env "OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}" \
-    --env "OPENBLAS_NUM_THREADS=${OPENBLAS_NUM_THREADS:-1}" \
     --env XMVB_BASIS_DIR=/opt/xmvb/program/share/basis \
     "$XMVB_RUNTIME_IMAGE" /bin/bash -ec '
         if ! cmp -s /opt/xmvb/runtime-id /opt/xmvb/program/share/RUNTIME_ID; then
