@@ -2,29 +2,30 @@
 
 ## Run the binary distribution
 
-Install Apptainer on the Linux x86-64 host. A release consists of a reusable
-runtime SIF and a versioned program tarball. The SIF supplies the operating-system
-and numerical runtime libraries. The program supplies the executable, launcher,
+Prebuilt artifacts currently target Linux x86-64 CPUs. Platform and backend are
+explicit in canonical filenames and GHCR tags. Install Apptainer on the host.
+A release consists of a reusable runtime SIF and a versioned program tarball.
+The SIF supplies the operating-system and numerical runtime libraries. The program supplies the executable, launcher,
 basis files, examples, licenses and build metadata.
 
 Download the runtime and program with their independent GHCR tags.
 
 ```bash
-apptainer pull runtime-cpu-ubuntu24.04-r1.sif \
-  oras://ghcr.io/tao-xia/xmvb-cpp-release:runtime-cpu-ubuntu24.04-r1
-oras pull ghcr.io/tao-xia/xmvb-cpp-release:xmvb-cpp-0.1.1
-sha256sum -c runtime-cpu-ubuntu24.04-r1.sif.sha256
-sha256sum -c xmvb-cpp-0.1.1.tar.gz.sha256
+apptainer pull runtime-linux-x86_64-cpu-ubuntu24.04-r1.sif \
+  oras://ghcr.io/tao-xia/xmvb-cpp-release:runtime-linux-x86_64-cpu-ubuntu24.04-r1
+oras pull ghcr.io/tao-xia/xmvb-cpp-release:xmvb-cpp-0.1.1-linux-x86_64-cpu
+sha256sum -c runtime-linux-x86_64-cpu-ubuntu24.04-r1.sif.sha256
+sha256sum -c xmvb-cpp-0.1.1-linux-x86_64-cpu.tar.gz.sha256
 ```
 
 Extract the program into its own directory and select the matching runtime.
 
 ```bash
-mkdir -p programs/xmvb-cpp-0.1.1
-tar -xzf xmvb-cpp-0.1.1.tar.gz \
-  -C programs/xmvb-cpp-0.1.1
-export XMVB_RUNTIME_IMAGE=/absolute/path/runtime-cpu-ubuntu24.04-r1.sif
-export XMVB_PROGRAM_DIR=/absolute/path/programs/xmvb-cpp-0.1.1
+mkdir -p programs/xmvb-cpp-0.1.1-linux-x86_64-cpu
+tar -xzf xmvb-cpp-0.1.1-linux-x86_64-cpu.tar.gz \
+  -C programs/xmvb-cpp-0.1.1-linux-x86_64-cpu
+export XMVB_RUNTIME_IMAGE=/absolute/path/runtime-linux-x86_64-cpu-ubuntu24.04-r1.sif
+export XMVB_PROGRAM_DIR=/absolute/path/programs/xmvb-cpp-0.1.1-linux-x86_64-cpu
 OMP_NUM_THREADS=4 "$XMVB_PROGRAM_DIR/bin/xmvb" input.xmi
 ```
 
@@ -42,6 +43,10 @@ The program's `share/build-info.json` records its source revision, compiler,
 CMake options, dependency versions, binary hash, required runtime ID and SIF
 SHA-256. `SHA256SUMS` verifies the extracted program files. When an update uses
 the same runtime ID, download the new program and change `XMVB_PROGRAM_DIR`.
+Architecture-qualified names are distribution labels: the renamed 0.1.1 archive
+and runtime retain their original SHA-256 values and runtime identity. Original
+build metadata retains its build-time filenames. Previously published tags remain
+available as historical download entries.
 
 The supplied F₂ example uses CIAH (`ISCF=9`). This first packaged backend is CPU.
 
@@ -99,8 +104,8 @@ export XMVB_RELEASE_DEPENDENCY_PREFIX=/path/to/xmvb-cpp-dev
 export XMVB_RELEASE_CACHE_DIR=/persistent/xmvb-release-cache
 bash /release-work/source/packaging/apptainer/build.sh \
   /release-work/source "$revision" 0.1.1 /release-work/build \
-  /release-artifacts/runtime-cpu-ubuntu24.04-r1.sif \
-  /release-artifacts/xmvb-cpp-0.1.1.tar.gz
+  /release-artifacts/runtime-linux-x86_64-cpu-ubuntu24.04-r1.sif \
+  /release-artifacts/xmvb-cpp-0.1.1-linux-x86_64-cpu.tar.gz
 ```
 
 Acquire and hash the Ubuntu 24.04 base SIF before the first build. Builds require
