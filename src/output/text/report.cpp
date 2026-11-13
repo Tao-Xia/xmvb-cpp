@@ -375,8 +375,12 @@ void print_summary(const vb::VbScfOptimizerOptions& options,
     print_log_field("SCF iteration wall time", format_seconds(optimizer_wall_time_seconds));
     print_log_field("Structure analysis wall time",
                     format_seconds(final_report.structure_analysis_seconds));
+    print_log_field("Structure normalization wall time",
+                    format_seconds(final_report.structure_normalization_seconds));
     print_log_field("Structure table output wall time",
                     format_seconds(final_report.structure_output_seconds));
+    print_log_field("Determinant table output wall time",
+                    format_seconds(final_report.determinant_output_seconds));
     print_log_field("Other final reports wall time",
                     format_seconds(final_report.other_report_seconds));
     print_log_field("End-to-end wall time", format_seconds(total_job_wall_time_seconds));

@@ -162,6 +162,7 @@ set(XMVB_OUTPUT_SOURCES
   output/text/report.cpp
   output/text/sections.cpp
   output/text/structure.cpp
+  output/text/determinants.cpp
   output/text/normalization.cpp
   output/trace/accepted_iteration.cpp
   output/trace/ciah.cpp
@@ -553,6 +554,10 @@ if (BUILD_TESTING)
   target_link_libraries(test_output_normalization PRIVATE xmvb_output)
   add_test(NAME output_normalization COMMAND test_output_normalization)
 
+  add_executable(test_output_determinants ${CMAKE_SOURCE_DIR}/tests/output/test_determinants.cpp)
+  target_link_libraries(test_output_determinants PRIVATE xmvb_output)
+  add_test(NAME output_determinants COMMAND test_output_determinants)
+
   add_executable(
     test_cli_options
     cli/options.cpp
@@ -634,6 +639,7 @@ if (BUILD_TESTING)
       ${CMAKE_COMMAND}
       -DXMVB_EXECUTABLE=$<TARGET_FILE:xmvb>
       -DXMVB_INPUT=${CMAKE_SOURCE_DIR}/testdata/vbscf/F2.xmi
+      -DXMVB_VERSION=${PROJECT_VERSION}
       -P ${CMAKE_SOURCE_DIR}/tests/output/check_f2_report.cmake)
   set_tests_properties(
     text_report_f2

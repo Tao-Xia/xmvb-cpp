@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <sstream>
 #include <iomanip>
+#include <limits>
 
 #include "output/text/sections.hpp"
 
@@ -79,6 +80,30 @@ void check_common_report_layout() {
     xmvb::output::print_scf_status(output, false, 2, -198.751);
     require(output.str().find("VBSCF did not converge in     2 iterations") != std::string::npos,
             "nonconverged calculation was reported as converged");
+}
+
+void check_structure_table_bytes() {
+    // Independent iostream formatting is the existing XMVB text contract,
+    // including rounding, signed zero, tiny values and wide fixed fields.
+    Eigen::VectorXd values(8);
+    values << 0.125, -0.2, -0.0, std::numeric_limits<double>::max(),
+        std::numeric_limits<double>::denorm_min(), 0.000000005, 0.0001, -1.25e13;
+    xmvb::vb::RawStructureData structures;
+    structures.n_structures = values.size();
+    structures.n_total_electrons = structures.n_active_electrons = 2;
+    structures.spin_multiplicity = 1;
+    for (Eigen::Index i = 0; i < values.size(); ++i)
+        structures.raw_structure_orbitals.insert(structures.raw_structure_orbitals.end(), {1, 2});
+    std::ostringstream expected, actual;
+    expected << "\n\n              ******  COEFFICIENTS OF STRUCTURES ******\n\n";
+    for (Eigen::Index i = 0; i < values.size(); ++i)
+        expected << "    " << std::setw(4) << i + 1 << "    " << std::fixed
+                 << std::setprecision(8) << std::setw(13) << values[i]
+                 << "  ******   1-2    \n";
+    actual << std::scientific << std::unitbuf << std::setprecision(16);
+    xmvb::output::print_structure_coefficients(actual, values, structures);
+    require(actual.str() == expected.str(),
+            "streamed coefficient rows differ from the XMVB fixed-format text");
 }
 
 void check_available_norms() {
@@ -163,6 +188,7 @@ void check_selected_open_shell() {
 int main() {
     check_cached_structure_weights();
     check_common_report_layout();
+    check_structure_table_bytes();
     check_available_norms();
     check_selected_open_shell();
 }

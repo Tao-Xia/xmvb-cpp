@@ -47,6 +47,8 @@ struct FinalStateReport {
     double structure_analysis_seconds;
     double structure_output_seconds;
     double other_report_seconds;
+    double structure_normalization_seconds;
+    double determinant_output_seconds;
 };
 
 /** @brief Prints final analyses and separates their computation and output costs. */

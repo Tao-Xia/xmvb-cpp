@@ -2,6 +2,7 @@
 #include "output/text/sections.hpp"
 
 #include "output/text/structure.hpp"
+#include "output/text/determinants.hpp"
 #include "output/text/normalization.hpp"
 
 #include <Eigen/Eigenvalues>
@@ -15,6 +16,7 @@
 #include <limits>
 #include <map>
 #include <numeric>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <vector>
@@ -67,30 +69,6 @@ std::string read_input_file(const std::string& input_path) {
     std::ostringstream contents;
     contents << stream.rdbuf();
     return contents.str();
-}
-
-std::string orbital_range(const std::vector<int>& orbitals) {
-    if (orbitals.empty()) {
-        return {};
-    }
-    std::ostringstream text;
-    std::size_t begin = 0;
-    while (begin < orbitals.size()) {
-        std::size_t end = begin;
-        while (end + 1 < orbitals.size() && orbitals[end + 1] == orbitals[end] + 1) {
-            ++end;
-        }
-        if (begin != 0) {
-            text << ' ';
-        }
-        if (end > begin) {
-            text << orbitals[begin] << '-' << orbitals[end];
-        } else {
-            text << orbitals[begin];
-        }
-        begin = end + 1;
-    }
-    return text.str();
 }
 
 std::string centered_field(const std::string& value, int width) {
@@ -237,16 +215,15 @@ NormalizedStructureState normalize_structure_state(const vb::VbScfResult& result
     const Eigen::MatrixXd raw_hamiltonian =
         structure_matrix(result.structure_matrices.hamiltonian_matrix, n_str);
     double coefficient_phase = 1.0;
-    const Eigen::VectorXd raw_coefficients =
-        selected_structure_coefficients(result, state, &coefficient_phase);
+    NormalizedStructureState normalized;
+    normalized.raw_coefficients = selected_structure_coefficients(result, state, &coefficient_phase);
+    const auto& raw_coefficients = normalized.raw_coefficients;
     const bool has_full_matrices = raw_overlap.rows() == n_str && raw_hamiltonian.rows() == n_str;
     if (raw_coefficients.size() != n_str || structure_norms.size() != n_str) {
         throw std::invalid_argument(
             "final structure state requires exact norms and consistent dimensions");
     }
 
-    NormalizedStructureState normalized;
-    normalized.raw_coefficients = raw_coefficients;
     if (has_full_matrices) {
         normalized.raw_overlap_product = raw_overlap * raw_coefficients;
         normalized.overlap.resize(n_str, n_str);
@@ -276,80 +253,6 @@ NormalizedStructureState normalize_structure_state(const vb::VbScfResult& result
     // |Psi> = sum_i c_i |Phi_i> requires c_i' = sqrt(S_ii) c_i.
     normalized.coefficients = structure_norms.array() * raw_coefficients.array();
     return normalized;
-}
-
-std::string determinant_spin_string(const std::vector<int>& active_orbitals, int n_inactive) {
-    std::ostringstream text;
-    if (n_inactive == 1) {
-        text << '1';
-    } else if (n_inactive > 1) {
-        text << "1-" << n_inactive;
-    }
-    std::vector<int> absolute_active_orbitals;
-    absolute_active_orbitals.reserve(active_orbitals.size());
-    for (const int orbital : active_orbitals) {
-        absolute_active_orbitals.push_back(n_inactive + orbital + 1);
-    }
-    if (!absolute_active_orbitals.empty()) {
-        if (n_inactive > 0) {
-            text << ' ';
-        }
-        text << orbital_range(absolute_active_orbitals);
-    }
-    return text.str();
-}
-
-ReportClock::duration print_determinant_coefficients(std::ostream& output,
-                                    const Eigen::VectorXd& structure_coefficients,
-                                    const vb::StructureExpansion& determinants,
-                                    int n_inactive) {
-    const auto alpha_rows = determinants.alpha(), beta_rows = determinants.beta();
-    const auto n_determinants = alpha_rows.size();
-    if (beta_rows.size() != alpha_rows.size() ||
-        determinants.incidence().size() != alpha_rows.size()) {
-        throw std::invalid_argument("final determinant topology has inconsistent dimensions");
-    }
-
-    output << "\n\n          ******  UNNORMALIZED DETERMINANT COEFFICIENTS  ******\n\n"
-           << "                                     INA   A\n"
-           << "                                     INA   B\n";
-    const auto analysis_start = ReportClock::now();
-    std::vector<std::size_t> display_order(n_determinants);
-    std::iota(display_order.begin(), display_order.end(), std::size_t{0});
-    std::stable_sort(display_order.begin(),
-                     display_order.end(),
-                     [&determinants, &alpha_rows](std::size_t left, std::size_t right) {
-                         const auto& left_terms = determinants.incidence()[left];
-                         const auto& right_terms = determinants.incidence()[right];
-                         const std::size_t left_structure =
-                             left_terms.empty() ? std::numeric_limits<std::size_t>::max()
-                                                : left_terms.front().structure_index;
-                         const std::size_t right_structure =
-                             right_terms.empty() ? std::numeric_limits<std::size_t>::max()
-                                                 : right_terms.front().structure_index;
-                         if (left_structure != right_structure) {
-                             return left_structure < right_structure;
-                         }
-                         return alpha_rows.less(right, left);
-                     });
-    const auto analysis = ReportClock::now() - analysis_start;
-    for (std::size_t display_index = 0; display_index < n_determinants; ++display_index) {
-        const auto determinant = display_order[display_index];
-        double coefficient = 0.0;
-        for (const auto& term : determinants.incidence()[determinant]) {
-            if (term.structure_index < 0 || term.structure_index >= structure_coefficients.size()) {
-                throw std::out_of_range(
-                    "determinant expansion refers to an invalid structure index");
-            }
-            coefficient += term.coefficient * structure_coefficients[term.structure_index];
-        }
-        output << std::setw(8) << display_index + 1 << std::fixed << std::setprecision(8)
-               << std::setw(17) << coefficient << "  ******    "
-               << determinant_spin_string(alpha_rows[determinant], n_inactive) << '\n'
-               << std::string(37, ' ')
-               << determinant_spin_string(beta_rows[determinant], n_inactive) << '\n';
-    }
-    return analysis;
 }
 
 void print_structure_matrix(std::ostream& output,
@@ -1056,10 +959,16 @@ FinalStateReport print_final_state_sections(std::ostream& output,
     // the summary reuse this one result; orbital/trace writers never request it.
     const auto analysis_start = ReportClock::now();
     const auto norms = structure_norms(result);
+    const auto normalization_end = ReportClock::now();
     const NormalizedStructureState first_state =
         normalize_structure_state(scf, selected_states.front(), norms.values);
 
+    const auto& orbital_input = result.optimized_input.orbital_preparation_input;
+    const int n_inactive =
+        (orbital_input.n_total_electrons - orbital_input.n_active_electrons) / 2;
+    DeterminantReport determinant_report(result.optimized_input.structure_data, n_inactive);
     auto structure_analysis = ReportClock::now() - analysis_start;
+    ReportClock::duration determinant_output{};
     const bool has_full_structure_matrices = first_state.overlap.size() != 0;
     if (has_full_structure_matrices) {
         print_structure_matrix(output, "OVERLAP", first_state.overlap);
@@ -1070,10 +979,11 @@ FinalStateReport print_final_state_sections(std::ostream& output,
     }
     for (std::size_t state_offset = 0; state_offset < selected_states.size(); ++state_offset) {
         const auto state_analysis_start = ReportClock::now();
-        const NormalizedStructureState normalized =
-            state_offset == 0
-                ? first_state
-                : normalize_structure_state(scf, selected_states[state_offset], norms.values);
+        std::optional<NormalizedStructureState> other_state;
+        if (state_offset != 0)
+            other_state.emplace(
+                normalize_structure_state(scf, selected_states[state_offset], norms.values));
+        const auto& normalized = state_offset == 0 ? first_state : *other_state;
         structure_analysis += ReportClock::now() - state_analysis_start;
         if (normalized.coefficients.size() == 0) {
             continue;
@@ -1084,10 +994,9 @@ FinalStateReport print_final_state_sections(std::ostream& output,
         }
         print_structure_coefficients(
             output, normalized.coefficients, load_result.raw_structure_data);
-        const auto& orbitals = result.optimized_input.orbital_preparation_input;
-        const int n_inactive = (orbitals.n_total_electrons - orbitals.n_active_electrons) / 2;
-        structure_analysis += print_determinant_coefficients(
-            output, normalized.coefficients, result.optimized_input.structure_data, n_inactive);
+        const auto determinant_start = ReportClock::now();
+        determinant_report.write(output, normalized.raw_coefficients);
+        determinant_output += ReportClock::now() - determinant_start;
         if (has_full_structure_matrices) {
             structure_analysis += print_structure_weights(
                 output, normalized.coefficients, normalized.overlap, load_result.raw_structure_data);
@@ -1123,7 +1032,9 @@ FinalStateReport print_final_state_sections(std::ostream& output,
     return {norms.mean_overlap,
             std::chrono::duration<double>(structure_analysis).count(),
             std::chrono::duration<double>(structure_end - report_start - structure_analysis).count(),
-            std::chrono::duration<double>(ReportClock::now() - structure_end).count()};
+            std::chrono::duration<double>(ReportClock::now() - structure_end).count(),
+            std::chrono::duration<double>(normalization_end - analysis_start).count(),
+            std::chrono::duration<double>(determinant_output).count()};
 }
 
 } // namespace xmvb::output

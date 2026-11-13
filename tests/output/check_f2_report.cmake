@@ -16,7 +16,7 @@ endif()
 set(required_report_patterns
   "Developed by: Tao Xia"
   "Software development assistance: OpenAI Codex"
-  "Version: 0.1.0"
+  "Version: ${XMVB_VERSION}"
   "VBSCF algorithm: TNHVP [(]matrix-free truncated Newton[)]"
   "Differentiable sparse-orbital coefficients[ ]+:[ ]+60"
   "Structure eigensolver[ ]+:[ ]+davidson"
