@@ -45,8 +45,8 @@ SHA-256. `SHA256SUMS` verifies the extracted program files. When an update uses
 the same runtime ID, download the new program and change `XMVB_PROGRAM_DIR`.
 Architecture-qualified names are distribution labels: the renamed 0.1.1 archive
 and runtime retain their original SHA-256 values and runtime identity. Original
-build metadata retains its build-time filenames. Previously published tags remain
-available as historical download entries.
+build metadata retains its build-time filenames. Unqualified GHCR tags have been
+removed; use the architecture-qualified download entries above.
 
 The supplied F₂ example uses CIAH (`ISCF=9`). This first packaged backend is CPU.
 
