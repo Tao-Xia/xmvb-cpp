@@ -153,7 +153,10 @@ struct CpuBackend {
         if (!action) {
             throw std::invalid_argument("generalized eigenvalue action is empty");
         }
-        Matrix input = download(vectors);
+        // The action borrows its input for this call, just as the basis view does.
+        // Keep its column stride instead of copying a full CI block first.
+        const Eigen::Map<const Matrix, 0, Eigen::OuterStride<>> input(
+            vectors.data, vectors.rows, vectors.cols, Eigen::OuterStride<>(vectors.ld));
         GeneralizedEigenActionResult images = action(input);
         if (images.hamiltonian.rows() != h.rows || images.hamiltonian.cols() != h.cols ||
             !images.hamiltonian.allFinite() ||

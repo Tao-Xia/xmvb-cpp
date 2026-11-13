@@ -104,13 +104,6 @@ class StructureMetricInverse {
         return spin_->max_block_size();
     }
 
-    /** @brief Plans factor/workspace admission without allocating dense blocks. */
-    static bool fits(const StructureAction& action,
-                     const xmvb::mcscf::StringTable& alpha_strings,
-                     const xmvb::mcscf::StringTable& beta_strings,
-                     std::size_t factor_byte_limit,
-                     std::size_t workspace_byte_limit);
-
     /** @brief Build FULL coordinates within the shared allowance. */
     static std::unique_ptr<StructureMetricInverse>
     try_build(const StructureAction& action,

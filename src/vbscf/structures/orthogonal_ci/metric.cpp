@@ -24,26 +24,14 @@ std::size_t carrier_column_bytes(Eigen::Index structures, std::size_t alpha, std
 
 } // namespace
 
-bool StructureMetricInverse::fits(const StructureAction& action,
-                                  const xmvb::mcscf::StringTable& alpha_strings,
-                                  const xmvb::mcscf::StringTable& beta_strings,
-                                  std::size_t factor_byte_limit,
-                                  std::size_t workspace_byte_limit) {
-    if (!action.storage().orthogonal_direct_ci)
-        return false;
-    const auto column_bytes =
-        carrier_column_bytes(action.n_structures_, alpha_strings.size(), beta_strings.size());
-    if (column_bytes == 0 || column_bytes > workspace_byte_limit)
-        return false;
-    return SpinMetric::fits(action, alpha_strings, beta_strings, factor_byte_limit);
-}
-
 std::unique_ptr<StructureMetricInverse>
 StructureMetricInverse::try_build(const StructureAction& action,
                                   const xmvb::mcscf::StringTable& alpha_strings,
                                   const xmvb::mcscf::StringTable& beta_strings,
                                   std::size_t other_work_bytes,
                                   const StructureMetricInverse* accepted) {
+    if (!action.storage().orthogonal_direct_ci)
+        return {};
     const auto column =
         carrier_column_bytes(action.n_structures_, alpha_strings.size(), beta_strings.size());
     // The Hamiltonian application holds one input and one output carrier.
@@ -55,11 +43,11 @@ StructureMetricInverse::try_build(const StructureAction& action,
     std::shared_ptr<const SpinMetric> spin;
     if (accepted && action.topology_ == accepted->action_->topology_)
         spin = accepted->spin_;
-    if (!spin && !fits(action, alpha_strings, beta_strings, factors, scratch))
-        return {};
     mcscf::diagnostics::ciah_trace("ciah_ci_spin_factors", "shared=%d", spin ? 1 : 0);
     if (!spin) {
-        spin = std::make_shared<SpinMetric>(action, alpha_strings, beta_strings, factors);
+        spin = SpinMetric::try_build(action, alpha_strings, beta_strings, factors);
+        if (!spin)
+            return {};
         mcscf::diagnostics::ciah_trace("ciah_ci_spin_layout",
                                      "blocks=%zu,factors=%zu,contiguous=%zu,factor_bytes=%zu",
                                      spin->block_count(),

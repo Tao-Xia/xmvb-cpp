@@ -419,64 +419,65 @@ StructureAction::build_topology(StructureIncidence determinant_to_structure_term
                                 const SameSpinPairCacheContext& same_spin_pair_cache) const {
     profiling::ScopedPhase topology_phase(profiling::Phase::SpinTopology, true);
     auto topology = std::make_shared<Topology>();
-    struct PendingSpinTerm {
-        mcscf::ProductIndex spin_product = 0;
-        StructureTerm term;
+    struct PairRow {
+        mcscf::ProductIndex product;
+        std::size_t source;
     };
-    std::vector<PendingSpinTerm> pending_terms;
-    std::size_t n_expansion_terms = 0;
-    for (const auto& determinant_terms : determinant_to_structure_terms) {
-        n_expansion_terms += determinant_terms.size();
+    // The input already owns CSR rows of pair-to-structure terms. Sort only
+    // pair addresses, not a second array containing every expansion term.
+    std::vector<PairRow> rows;
+    rows.reserve(n_determinants_);
+    std::size_t n_terms = 0;
+    for (std::size_t source = 0; source < n_determinants_; ++source) {
+        const auto terms = determinant_to_structure_terms[source];
+        if (terms.empty())
+            continue;
+        n_terms += terms.size();
+        const auto alpha = same_spin_pair_cache.alpha_reuse_table.determinant_to_unique_id[source];
+        const auto beta = same_spin_pair_cache.beta_reuse_table.determinant_to_unique_id[source];
+        rows.push_back({mcscf::product_index(alpha, beta, n_unique_beta_), source});
     }
-    pending_terms.reserve(n_expansion_terms);
-    for (std::size_t determinant = 0; determinant < n_determinants_; ++determinant) {
-        const std::int64_t alpha =
-            same_spin_pair_cache.alpha_reuse_table.determinant_to_unique_id[determinant];
-        const std::int64_t beta =
-            same_spin_pair_cache.beta_reuse_table.determinant_to_unique_id[determinant];
-        const auto spin_product = mcscf::product_index(alpha, beta, n_unique_beta_);
-        for (const auto& term : determinant_to_structure_terms[determinant]) {
-            if (term.structure_index < 0 || term.structure_index >= n_structures_) {
-                throw std::out_of_range("determinant expansion structure index is out of range");
-            }
-            pending_terms.push_back(PendingSpinTerm{
-                spin_product, StructureTerm{0, term.structure_index, term.coefficient}});
-        }
-    }
-
-    std::sort(pending_terms.begin(),
-              pending_terms.end(),
-              [](const PendingSpinTerm& left, const PendingSpinTerm& right) {
-                  if (left.spin_product != right.spin_product) {
-                      return left.spin_product < right.spin_product;
-                  }
-                  return left.term.structure < right.term.structure;
-              });
-    topology->products.reserve(
-        std::min<Eigen::Index>(pending_terms.size(), static_cast<std::size_t>(n_determinants_)));
-    topology->terms.reserve(pending_terms.size());
-    topology->offsets.reserve(topology->products.capacity() + 1);
+    std::sort(rows.begin(), rows.end(), [](const PairRow& a, const PairRow& b) {
+        return std::pair{a.product, a.source} < std::pair{b.product, b.source};
+    });
+    topology->products.reserve(rows.size());
+    topology->terms.reserve(n_terms);
+    topology->offsets.reserve(rows.size() + 1);
     topology->offsets.push_back(0);
-    std::size_t pending = 0;
-    while (pending < pending_terms.size()) {
-        const auto spin_product = pending_terms[pending].spin_product;
-        topology->products.push_back(spin_product);
-        while (pending < pending_terms.size() &&
-               pending_terms[pending].spin_product == spin_product) {
-            const auto structure = pending_terms[pending].term.structure;
+    const auto by_structure = [](const StructureExpansionTerm& a, const StructureExpansionTerm& b) {
+        return a.structure_index < b.structure_index;
+    };
+    std::vector<StructureExpansionTerm> merged;
+    for (std::size_t first = 0; first < rows.size();) {
+        auto last = first + 1;
+        while (last < rows.size() && rows[last].product == rows[first].product)
+            ++last;
+        auto terms = determinant_to_structure_terms[rows[first].source];
+        // Native CSR rows are already ordered by structure. Legacy inputs may
+        // repeat a pair or supply unordered terms; merge only that one row.
+        if (last != first + 1 || !std::is_sorted(terms.begin(), terms.end(), by_structure)) {
+            merged.clear();
+            for (auto row = first; row < last; ++row) {
+                const auto source = determinant_to_structure_terms[rows[row].source];
+                merged.insert(merged.end(), source.begin(), source.end());
+            }
+            std::sort(merged.begin(), merged.end(), by_structure);
+            terms = merged;
+        }
+        topology->products.push_back(rows[first].product);
+        for (std::size_t position = 0; position < terms.size();) {
+            const auto structure = terms[position].structure_index;
+            if (structure < 0 || structure >= n_structures_)
+                throw std::out_of_range("determinant expansion structure index is out of range");
             double coefficient = 0.0;
-            while (pending < pending_terms.size() &&
-                   pending_terms[pending].spin_product == spin_product &&
-                   pending_terms[pending].term.structure == structure) {
-                coefficient += pending_terms[pending].term.coefficient;
-                ++pending;
-            }
-            if (coefficient != 0.0) {
-                topology->terms.push_back(
-                    StructureTerm{topology->products.size() - 1, structure, coefficient});
-            }
+            do {
+                coefficient += terms[position++].coefficient;
+            } while (position < terms.size() && terms[position].structure_index == structure);
+            if (coefficient != 0.0)
+                topology->terms.push_back({topology->products.size() - 1, structure, coefficient});
         }
         topology->offsets.push_back(topology->terms.size());
+        first = last;
     }
 
     topology->structure_offsets.assign(static_cast<std::size_t>(n_structures_) + 1, 0);

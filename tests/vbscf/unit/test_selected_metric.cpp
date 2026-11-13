@@ -306,9 +306,15 @@ void check_selected_spin_metric() {
                 !xmvb::vb::SpinMetric::fits(action, fixture.alpha, fixture.beta, bytes - 1),
             "selected spin metric factor budget is not exact");
     const xmvb::vb::SpinMetric spin(action, fixture.alpha, fixture.beta, bytes);
+    const auto admitted = xmvb::vb::SpinMetric::try_build(action, fixture.alpha, fixture.beta, bytes);
+    require(admitted &&
+                !xmvb::vb::SpinMetric::try_build(action, fixture.alpha, fixture.beta, bytes - 1),
+            "single-pass spin factor admission changed its exact byte boundary");
     require(spin.block_count() == 2 && spin.max_block_size() == 2 && spin.factor_bytes() == bytes,
             "selected spin metric did not preserve occupation blocks");
     const Eigen::VectorXd rhs = Eigen::Vector3d(0.31, -0.47, 0.28);
+    require((gram * admitted->solve(rhs).col(0) - rhs).norm() < 1e-12,
+            "single-pass spin factor admission changed the selected-space inverse");
     require((gram * spin.solve(rhs).col(0) - rhs).norm() < 1e-12 &&
                 (spin.diagonal() - gram.diagonal()).norm() < 1e-12,
             "selected spin Gram solve disagrees with independent dense oracle");

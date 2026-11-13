@@ -1271,12 +1271,6 @@ void check_sigma_action() {
     check_joint_structure_response(full_action, alpha.size(), beta.size());
     check_joint_structure_response(topology_action, alpha.size(), beta.size());
     const std::size_t one_column_bytes = 5 * product_dimension * sizeof(double);
-    require(xmvb::vb::StructureMetricInverse::fits(full_action,
-                                                   topology.alpha_reuse_table.unique_determinants,
-                                                   topology.beta_reuse_table.unique_determinants,
-                                                   65536,
-                                                   one_column_bytes),
-            "structure metric planner rejected an affordable block factorization");
     const xmvb::vb::StructureMetricInverse full_metric(
         full_action,
         topology.alpha_reuse_table.unique_determinants,
@@ -1390,13 +1384,6 @@ void check_sigma_action() {
     require((moved_metric.apply(metric_rhs) - metric_solution).norm() < 1e-11,
             "moving a forward action invalidated its reusable metric factors");
     for (bool factor_limit : {true, false}) {
-        require(!xmvb::vb::StructureMetricInverse::fits(
-                    full_action,
-                    topology.alpha_reuse_table.unique_determinants,
-                    topology.beta_reuse_table.unique_determinants,
-                    factor_limit ? 0 : 65536,
-                    factor_limit ? one_column_bytes : one_column_bytes - 1),
-                "structure metric planner ignored its byte budget");
         bool rejected = false;
         try {
             const xmvb::vb::StructureMetricInverse invalid(
@@ -2849,6 +2836,10 @@ void check_full_square_tiled_gram() {
         const std::array<xmvb::mcscf::DirectCiIntegralAdjoint, 2> expected_adjoints{
             action.integral_adjoint(response, state, parity),
             action.integral_adjoint(second, state, parity)};
+        // Recursive and concurrent calls can run on different OpenMP threads.
+        // Give their two live scratch owners disjoint shares before either leases
+        // capacity; a thread-local parent scope cannot serve as a shared budget.
+        const std::size_t shared_action_workspace = xmvb::workspace::available() / 2;
         const auto verify = [&](bool recursive = false, std::barrier<>* rendezvous = nullptr) {
             std::array<Eigen::MatrixXd, 2> images{Eigen::MatrixXd::Zero(u, width * u),
                                                   Eigen::MatrixXd::Zero(u, width * u)};
@@ -2877,7 +2868,15 @@ void check_full_square_tiled_gram() {
                 {{first_reader, writer(images[0]), nullptr, {}},
                  {reader(responses[1]), writer(images[1]), nullptr, {}}}};
             const auto actual =
-                action.apply_tiled_responses(width, requests, reader(state), nullptr, parity);
+                action.apply_tiled_responses(width,
+                                              requests,
+                                              reader(state),
+                                              nullptr,
+                                              parity,
+                                              {},
+                                              (recursive || rendezvous)
+                                                  ? shared_action_workspace
+                                                  : xmvb::workspace::available());
             require(actual.size() == requests.size(),
                     "full-square Gram lost a temporal integral adjoint");
             for (std::size_t i = 0; i < requests.size(); ++i) {
@@ -2906,7 +2905,12 @@ void check_full_square_tiled_gram() {
 #ifdef _OPENMP
             omp_set_num_threads(2);
 #endif
-            verify(false, &rendezvous);
+            try {
+                verify(false, &rendezvous);
+            } catch (...) {
+                rendezvous.arrive_and_drop();
+                throw;
+            }
         };
         auto first = std::async(std::launch::async, concurrent);
         auto second_call = std::async(std::launch::async, concurrent);
@@ -3138,11 +3142,53 @@ void benchmark_sigma() {
     }
 }
 
+/** Unordered legacy rows, repeated pairs and cancelling coefficients share the native CSR path. */
+void check_unordered_pair_rows() {
+    constexpr int n = 2;
+    const std::vector<std::vector<int>> alpha{{1}, {0}, {0}, {1}, {1}};
+    const std::vector<std::vector<int>> beta{{0}, {1}, {0}, {0}, {1}};
+    const std::vector<std::vector<xmvb::vb::StructureExpansionTerm>> terms{
+        {{1, 0.25}, {0, 0.75}, {0, 0.25}}, {{0, -1.0}}, {{1, 1.0}}, {{1, -0.25}}, {}};
+    const auto topology = xmvb::vb::build_same_spin_pair_topology(alpha, beta, n);
+    const Eigen::Matrix2d overlap = Eigen::Matrix2d::Identity();
+    Eigen::Matrix2d h;
+    h << -1.0, 0.13, 0.13, 0.4;
+    xmvb::integrals::ActiveSpaceTwoElectronResult eri;
+    eri.packed_active_two_electron_integrals.resize(
+        xmvb::integrals::packed_active_two_electron_integral_count(n), 0.0);
+    const xmvb::vb::StructureAction action(terms,
+                                           2,
+                                           topology,
+                                           {overlap.data(), overlap.data() + 4},
+                                           h,
+                                           eri,
+                                           n,
+                                           nullptr,
+                                           xmvb::vb::StructureActionMode::ActionOnly);
+    const auto& a = topology.alpha_reuse_table.basis;
+    const auto& b = topology.beta_reuse_table.basis;
+    Eigen::MatrixXd expanded = Eigen::MatrixXd::Zero(2, 4);
+    expanded(a.index(2), b.index(1)) = 1.0;
+    expanded(a.index(1), b.index(2)) = -1.0;
+    expanded(a.index(1), 2 + b.index(1)) = 1.0;
+    const Eigen::Matrix2d identity = Eigen::Matrix2d::Identity();
+    require((action.expand_structure_block(identity) - expanded).norm() < 1e-14,
+            "pair-row construction lost a reordered, repeated or cancelling term");
+    const xmvb::mcscf::DirectCiSigmaAction sigma(a, b, action.orthogonal_integrals());
+    const Eigen::MatrixXd image = sigma.apply(expanded);
+    const Eigen::Map<const Eigen::MatrixXd> W(expanded.data(), 4, 2), H(image.data(), 4, 2);
+    const auto actual = action.apply(identity);
+    require((actual.overlap - W.transpose() * W).norm() < 1e-12 &&
+                (actual.hamiltonian - W.transpose() * H).norm() < 1e-12,
+            "pair-row construction changed the independently projected H/S action");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string(argv[1]) == "--full-batch") {
+            check_unordered_pair_rows();
             check_sigma_action();
             check_occupation_diagonal();
             check_spin_sector_carrier_inverse();
@@ -3168,6 +3214,7 @@ int main(int argc, char** argv) {
             benchmark_sigma();
             return 0;
         }
+        check_unordered_pair_rows();
         check_generated_exterior_rows();
         check_exterior_transform(7);
         check_exterior_transform(259);

@@ -129,6 +129,8 @@ enum class Phase {
     SpinTopology,
     CiOperatorSetup,
     CiPreconditioner,
+    CiSigmaAlpha,
+    CiSigmaBeta,
     Count
 };
 
@@ -266,7 +268,9 @@ class PhaseTotals {
                                          "active_preparation",
                                          "spin_topology",
                                          "ci_operator_setup",
-                                         "ci_preconditioner"};
+                                         "ci_preconditioner",
+                                         "ci_sigma_alpha",
+                                         "ci_sigma_beta"};
         static_assert(sizeof(names) / sizeof(names[0]) == static_cast<std::size_t>(Phase::Count));
         return names[static_cast<std::size_t>(phase)];
     }

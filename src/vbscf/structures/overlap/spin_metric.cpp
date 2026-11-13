@@ -34,6 +34,18 @@ bool is_contiguous(const std::vector<Eigen::Index>& indices) {
     return indices.back() - indices.front() + 1 == static_cast<Eigen::Index>(indices.size());
 }
 
+bool gram_blocks_fit(const std::vector<std::vector<Eigen::Index>>& groups,
+                     std::size_t byte_limit) {
+    std::size_t bytes = 0;
+    for (const auto& group : groups) {
+        const std::size_t d = group.size();
+        if (d > (byte_limit - bytes) / sizeof(double) / d)
+            return false;
+        bytes += d * d * sizeof(double);
+    }
+    return true;
+}
+
 } // namespace
 
 std::vector<std::vector<Eigen::Index>>
@@ -77,23 +89,37 @@ bool SpinMetric::fits(const StructureAction& action,
                       const mcscf::StringTable& alpha,
                       const mcscf::StringTable& beta,
                       std::size_t byte_limit) {
-    std::size_t bytes = 0;
-    for (const auto& group : occupation_groups(action, alpha, beta)) {
-        const std::size_t d = group.size();
-        if (d > (byte_limit - bytes) / sizeof(double) / d)
-            return false;
-        bytes += d * d * sizeof(double);
-    }
-    return true;
+    return gram_blocks_fit(occupation_groups(action, alpha, beta), byte_limit);
+}
+
+std::shared_ptr<SpinMetric> SpinMetric::try_build(const StructureAction& action,
+                                                const mcscf::StringTable& alpha,
+                                                const mcscf::StringTable& beta,
+                                                std::size_t byte_limit) {
+    auto groups = occupation_groups(action, alpha, beta);
+    if (!gram_blocks_fit(groups, byte_limit))
+        return {};
+    return std::shared_ptr<SpinMetric>(
+        new SpinMetric(action, std::move(groups), alpha, beta, byte_limit));
 }
 
 SpinMetric::SpinMetric(const StructureAction& action,
                        const xmvb::mcscf::StringTable& alpha_strings,
                        const xmvb::mcscf::StringTable& beta_strings,
                        std::size_t factor_byte_limit)
+    : SpinMetric(action,
+                   occupation_groups(action, alpha_strings, beta_strings),
+                   alpha_strings,
+                   beta_strings,
+                   factor_byte_limit) {}
+
+SpinMetric::SpinMetric(const StructureAction& action,
+                       std::vector<std::vector<Eigen::Index>> groups,
+                       const mcscf::StringTable& alpha_strings,
+                       const mcscf::StringTable& beta_strings,
+                       std::size_t factor_byte_limit)
     : dimension_(action.n_structures_), n_alpha_(alpha_strings.electron_count()),
       n_beta_(beta_strings.electron_count()), diagonal_(Eigen::VectorXd::Zero(dimension_)) {
-    auto groups = occupation_groups(action, alpha_strings, beta_strings);
     const std::size_t n = action.n_structures_;
     // Account for the uninterned Gram blocks during assembly.
     for (const auto& group : groups) {

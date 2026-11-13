@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 #include <Eigen/Core>
@@ -80,12 +81,23 @@ class SpinMetric {
                      const mcscf::StringTable& beta,
                      std::size_t byte_limit);
 
+    /** Build the occupation layout once for both admission and factorization. */
+    static std::shared_ptr<SpinMetric> try_build(const StructureAction& action,
+                                                 const mcscf::StringTable& alpha,
+                                                 const mcscf::StringTable& beta,
+                                                 std::size_t byte_limit);
+
     /** @brief Occupation topology only; performs no numerical Gram contraction. */
     static std::vector<std::vector<Eigen::Index>> occupation_groups(const StructureAction& action,
                                                                     const mcscf::StringTable& alpha,
                                                                     const mcscf::StringTable& beta);
 
   private:
+    SpinMetric(const StructureAction& action,
+               std::vector<std::vector<Eigen::Index>> groups,
+               const mcscf::StringTable& alpha,
+               const mcscf::StringTable& beta,
+               std::size_t byte_limit);
     struct Block {
         std::vector<Eigen::Index> indices;
         std::size_t factor;

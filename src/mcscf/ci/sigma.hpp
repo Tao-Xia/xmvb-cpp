@@ -19,6 +19,7 @@ namespace xmvb::mcscf {
 
 namespace detail {
 class SigmaSchedule;
+struct SigmaSweepTimings;
 }
 
 class ProductSupport;
@@ -498,11 +499,13 @@ class DirectCiSigmaAction {
                           StringIndex beta_begin,
                           std::int64_t beta_count,
                           int exchange_parity,
+                          int beta_batch,
                           const Eigen::Ref<const Eigen::MatrixXd>& coefficients,
                           const Eigen::Ref<const Eigen::MatrixXd>& scattered,
                           Eigen::Ref<Eigen::MatrixXd> scatter_scratch,
                           Eigen::Ref<Eigen::MatrixXd> workspace,
-                          Eigen::Ref<Eigen::MatrixXd> sigma) const;
+                          Eigen::Ref<Eigen::MatrixXd> sigma,
+                          detail::SigmaSweepTimings* timings) const;
 
     int n_orbitals_ = 0;
     StringIndex n_alpha_ = 0;

@@ -609,8 +609,7 @@ void solve_structure_problem(
                     context->same_spin_pair_cache.alpha_reuse_table.unique_determinants;
                 const auto& beta =
                     context->same_spin_pair_cache.beta_reuse_table.unique_determinants;
-                if (SpinMetric::fits(structure_action, alpha, beta, budget)) {
-                    auto spin = std::make_shared<SpinMetric>(structure_action, alpha, beta, budget);
+                if (auto spin = SpinMetric::try_build(structure_action, alpha, beta, budget)) {
                     context->spin_metric = spin;
                     preconditioner = [spin, &structure_action](const Eigen::VectorXd& r,
                                                                double energy) {
