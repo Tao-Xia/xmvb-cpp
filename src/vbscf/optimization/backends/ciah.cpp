@@ -30,7 +30,8 @@ OrbitalPreconditioner resolve_ciah_preconditioner(OrbitalPreconditioner requeste
 bool admit_structure_response(const VbScfObjective& objective,
                               const StructureTangentOperator& structure_hessian,
                               const StructureAction& structure_action,
-                              Eigen::Index orbital_dimension) {
+                              const OrbitalChart& chart,
+                              bool accepted_exchange) {
     if (structure_hessian.tangent_size() == 0)
         return false;
 
@@ -44,10 +45,23 @@ bool admit_structure_response(const VbScfObjective& objective,
     // Exact HVP applies the AO-pair operator to active-pair columns. Its work
     // scales with graph edges, not just the number of AO-pair rows.
     const long double ao_pair_actions =
-        graph.empty()           ? n_ao_pairs
-        : graph.has_rows()      ? static_cast<long double>(graph.directed_count())
-                                : 2.0L * static_cast<long double>(graph.integral_count());
-    const long double core_pair_work = ao_pair_actions * n_active_pairs;
+        graph.empty()      ? n_ao_pairs
+        : graph.has_rows() ? static_cast<long double>(graph.directed_count())
+                           : 2.0L * static_cast<long double>(graph.integral_count());
+    const bool fixed_overlap_image =
+        context.selected_state_indices.size() == 1 &&
+        objective.input().standard_two_electron_mode == StandardTwoElectronMode::Exact &&
+        objective.active_inactive_orthogonal() && chart.has_full_horizontal_active_lift() &&
+        accepted_exchange;
+    // Compare against the orbital action actually available at this point.
+    // Fixed-overlap A traverses the AO graph for one combined density, while
+    // its remaining response uses accepted half images (ao_one_electron.cpp,
+    // exchange.cpp). It does not regenerate an AO response for every active pair.
+    const long double legacy_work = ao_pair_actions * n_active_pairs;
+    const long double core_pair_work = fixed_overlap_image
+                                           ? ao_pair_actions + n_ao * n_ao * n_active * n_active +
+                                                 n_ao * n_active * n_active * n_active * n_active
+                                           : legacy_work;
     // The orthogonal direct-CI branch uses pair-channel GEMM on spin products,
     // not the U_alpha^2 U_beta + U_alpha U_beta^2 cofactor sandwiches.
     // These are mathematical dimensions, independent of whether any numerical
@@ -67,7 +81,17 @@ bool admit_structure_response(const VbScfObjective& objective,
     // contraction.  Otherwise use orbital-only CIAH and let the exact trial
     // energy and gradient globalize it.  Both tests compare mathematical work
     // dimensions; neither contains a molecule, active-space, or timing cutoff.
-    return structure_hessian.tangent_size() <= orbital_dimension || response_work <= core_pair_work;
+    const bool admit =
+        structure_hessian.tangent_size() <= chart.reduced_size() || response_work <= core_pair_work;
+    mcscf::diagnostics::ciah_trace(
+        "ciah_response_work",
+        "fixed_overlap_image=%d,orbital=%.9Lg,legacy_orbital=%.9Lg,ci=%.9Lg,admit=%d",
+        fixed_overlap_image,
+        core_pair_work,
+        legacy_work,
+        response_work,
+        admit);
+    return admit;
 }
 
 bool build_accepted_ciah_keyframe(VbScfObjective* objective,
@@ -98,8 +122,12 @@ bool build_accepted_ciah_keyframe(VbScfObjective* objective,
         *objective, chart, preconditioner, true, orbital_hessian.accepted_exchange_integrals());
     StructureTangentOperator structure_hessian(objective->second_order_context(),
                                                orbital_hessian.structure_action());
-    const bool use_structure_response = admit_structure_response(
-        *objective, structure_hessian, orbital_hessian.structure_action(), chart.reduced_size());
+    const bool use_structure_response =
+        admit_structure_response(*objective,
+                                 structure_hessian,
+                                 orbital_hessian.structure_action(),
+                                 chart,
+                                 orbital_hessian.accepted_exchange_integrals() != nullptr);
     mcscf::diagnostics::ciah_trace_context = {record->accepted_iteration_index, 0, "ciah"};
     return build_ciah_macro_step(objective,
                                  parameter_view,
@@ -212,7 +240,8 @@ BackendRunResult run_ciah_backend(VbScfObjective* objective,
             iteration_record.accepted_physical_gradient_norm =
                 next_metric.dual_norm(next_projected.reduced_gradient);
         }
-        const double energy_change = energy - accepted.strict_source_energy.value_or(previous_energy);
+        const double energy_change =
+            energy - previous_energy;
         previous_energy = energy;
         if (std::abs(energy_change) < options.energy_tolerance &&
             (terminal_checked ||

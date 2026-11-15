@@ -1,6 +1,8 @@
 #include "core/index.hpp"
 #include "mcscf/ci/sigma.hpp"
 #include "mcscf/ci/sigma_schedule.hpp"
+#include "mcscf/ci/sigma_scatter.hpp"
+#include "mcscf/ci/sigma_diagonal.hpp"
 #include "mcscf/ci/workspace.hpp"
 
 #include <algorithm>
@@ -25,7 +27,7 @@ struct SigmaSweepTimings {
 namespace {
 
 // Use the same contiguous alpha extent for standalone and fused sigma work.
-constexpr int kSigmaAlphaTile = 160;
+constexpr int kSigmaAlphaTile = detail::sigma_alpha_tile;
 
 /** @brief Packed rows of a rectangular tile intersected with an exchange triangle.
  * Offsets are exact arithmetic prefix sums; no product-sized index array.
@@ -45,7 +47,6 @@ struct AdjointRows {
         const auto ramp = std::clamp<StringIndex>(alpha_count - first, 0, beta);
         return block_count * (ramp * first + ramp * (ramp - 1) / 2 + (beta - ramp) * alpha_count);
     }
-
 };
 
 void weight_exchange_channels(Eigen::Ref<Eigen::MatrixXd> panel,
@@ -108,6 +109,7 @@ DirectCiSigmaAction::DirectCiSigmaAction(SpinStrings alpha,
     if (beta.masks() != alpha.masks()) {
         distinct_beta_ = std::make_shared<const SpinConnections>(build_spin_connections(beta));
     }
+    diagonal_channels_ = std::make_shared<detail::DiagonalChannelCache>();
 }
 
 DirectCiSigmaAction::DirectCiSigmaAction(const DirectCiSigmaAction& reference,
@@ -122,6 +124,7 @@ DirectCiSigmaAction::DirectCiSigmaAction(const DirectCiSigmaAction& reference,
     const int n_electrons =
         static_cast<int>(alpha_->n_occupied() + beta_connections().n_occupied());
     hamiltonian_pair_kernel_ = build_hamiltonian_pair_kernel(integrals, n_electrons);
+    diagonal_channels_ = std::make_shared<detail::DiagonalChannelCache>();
 }
 
 std::size_t DirectCiSigmaAction::spin_link_count() const noexcept {
@@ -306,7 +309,8 @@ void DirectCiSigmaAction::scatter_one_body_intermediate(
     std::int64_t alpha_count,
     std::int64_t beta_target,
     Eigen::Ref<Eigen::MatrixXd> intermediate,
-    int exchange_parity) const {
+    int exchange_parity,
+    const detail::AlphaChannelSources* alpha_sources) const {
     const int block_width = core::checked_index<std::int64_t>(coefficients.cols()) / n_beta_;
     const int active_columns = alpha_count * block_width;
     const SpinConnections& beta_graph = beta_connections();
@@ -314,6 +318,17 @@ void DirectCiSigmaAction::scatter_one_body_intermediate(
         beta_target < 0 || beta_target >= n_beta_ || intermediate.rows() != active_columns ||
         intermediate.cols() != hamiltonian_pair_kernel_.rows()) {
         throw std::invalid_argument("direct-CI scatter intermediate has incompatible dimensions");
+    }
+    if (alpha_sources) {
+        // Each generator channel has at most one source per spin string.
+        // Assign beta + alpha directly, instead of zeroing and scattering
+        // both terms through the same output slab. Only beta's addresses
+        // depend on this spectator; alpha's tile addresses are shared.
+        alpha_sources->scatter(
+            beta_graph, coefficients, alpha_begin, alpha_count, beta_target, intermediate);
+        weight_exchange_channels(
+            intermediate, alpha_count, beta_target - alpha_begin, exchange_parity);
+        return;
     }
     intermediate.setZero();
 
@@ -358,7 +373,7 @@ Eigen::MatrixXd DirectCiSigmaAction::apply(const Eigen::Ref<const Eigen::MatrixX
                                            int exchange_parity) const {
     profiling::ScopedPhase phase(profiling::Phase::CiSigma);
     Eigen::MatrixXd result;
-    contract_channels(coefficients, coefficients, &result, exchange_parity, false);
+    apply_sigma_panels(coefficients, &result, exchange_parity, true);
     return result;
 }
 
@@ -366,7 +381,7 @@ Eigen::MatrixXd DirectCiSigmaAction::apply_before_exchange_projection(
     const Eigen::Ref<const Eigen::MatrixXd>& coefficients, int exchange_parity) const {
     profiling::ScopedPhase phase(profiling::Phase::CiSigma);
     Eigen::MatrixXd result;
-    contract_channels(coefficients, coefficients, &result, exchange_parity, false, false);
+    apply_sigma_panels(coefficients, &result, exchange_parity, false);
     return result;
 }
 
@@ -439,7 +454,7 @@ DirectCiSigmaAction::integral_adjoint(const Eigen::Ref<const Eigen::MatrixXd>& l
                                       const Eigen::Ref<const Eigen::MatrixXd>& right,
                                       int exchange_parity) const {
     xmvb::profiling::ScopedPhase phase(xmvb::profiling::Phase::CiIntegralAdjoint);
-    return contract_channels(left, right, nullptr, exchange_parity, true);
+    return contract_channels(left, right, nullptr, exchange_parity);
 }
 
 DirectCiResponse
@@ -448,7 +463,7 @@ DirectCiSigmaAction::apply_with_adjoint(const Eigen::Ref<const Eigen::MatrixXd>&
                                         int exchange_parity) const {
     xmvb::profiling::ScopedPhase phase(xmvb::profiling::Phase::CiResponse);
     DirectCiResponse result;
-    result.integrals = contract_channels(response, state, &result.sigma, exchange_parity, true);
+    result.integrals = contract_channels(response, state, &result.sigma, exchange_parity);
     return result;
 }
 
@@ -459,13 +474,11 @@ void DirectCiSigmaAction::apply_sigma_tile(StringIndex alpha_begin,
                                            StringIndex beta_begin,
                                            std::int64_t beta_count,
                                            int exchange_parity,
-                                           int beta_batch,
-                                           const Eigen::Ref<const Eigen::MatrixXd>& coefficients,
                                            const Eigen::Ref<const Eigen::MatrixXd>& scattered,
-                                           Eigen::Ref<Eigen::MatrixXd> scatter_scratch,
                                            Eigen::Ref<Eigen::MatrixXd> workspace,
                                            Eigen::Ref<Eigen::MatrixXd> sigma,
                                            detail::SigmaSweepTimings* timings) const {
+    constexpr int beta_batch = 1;
     const AdjointRows layout{alpha_begin, alpha_count, beta_begin, block_count, exchange_parity};
     const int n_pairs = core::checked_index<std::int64_t>(hamiltonian_pair_kernel_.rows());
     int worker = 0;
@@ -506,23 +519,8 @@ void DirectCiSigmaAction::apply_sigma_tile(StringIndex alpha_begin,
         // shared slab is needed.
         Eigen::Map<Eigen::MatrixXd> transformed(
             workspace.data() + first_row * n_pairs, rows, n_pairs);
-        if (scattered.size() != 0) {
-            transformed.noalias() = scattered.middleRows(first_row, rows) *
-                                    hamiltonian_pair_kernel_.transpose();
-        } else {
-            Eigen::Map<Eigen::MatrixXd> panel(scatter_scratch.data(), rows, n_pairs);
-            for (auto column = beta; column < end; ++column) {
-                auto input = panel.middleRows(layout.offset(column) - first_row,
-                                              layout.count(column) * block_count);
-                scatter_one_body_intermediate(coefficients,
-                                              alpha_begin,
-                                              layout.count(column),
-                                              beta_begin + column,
-                                              input,
-                                              exchange_parity);
-            }
-            transformed.noalias() = panel * hamiltonian_pair_kernel_.transpose();
-        }
+        transformed.noalias() =
+            scattered.middleRows(first_row, rows) * hamiltonian_pair_kernel_.transpose();
         for (auto column = beta; column < end; ++column)
             scatter_alpha(column,
                           transformed.middleRows(layout.offset(column) - first_row,
@@ -557,9 +555,8 @@ void DirectCiSigmaAction::apply_sigma_tile(StringIndex alpha_begin,
             const auto first_row = layout.offset(group_beta);
             const auto rows = layout.offset(group_end) - first_row;
             for (int block = 0; block < block_count; ++block) {
-                const double* source =
-                    workspace.data() + first_row * n_pairs + pair * rows +
-                    layout.offset(local_beta) - first_row + block * count;
+                const double* source = workspace.data() + first_row * n_pairs + pair * rows +
+                                       layout.offset(local_beta) - first_row + block * count;
                 double* target =
                     sigma.col((block_begin + block) * n_beta_ + beta).data() + alpha_begin;
 #pragma omp simd
@@ -590,16 +587,14 @@ DirectCiIntegralAdjoint
 DirectCiSigmaAction::contract_channels(const Eigen::Ref<const Eigen::MatrixXd>& left,
                                        const Eigen::Ref<const Eigen::MatrixXd>& right,
                                        Eigen::MatrixXd* sigma,
-                                       int exchange_parity,
-                                       bool collect_integrals,
-                                       bool project_exchange) const {
+                                       int exchange_parity) const {
     if (exchange_parity < -1 || exchange_parity > 1 || (exchange_parity != 0 && distinct_beta_)) {
         throw std::invalid_argument(
             "direct-CI adjoint exchange sector requires identical spin lists");
     }
     if (left.rows() != n_alpha_ || right.rows() != n_alpha_ || left.cols() <= 0 ||
         left.cols() != right.cols() || left.cols() % n_beta_ != 0 ||
-        (collect_integrals && (!left.allFinite() || !right.allFinite()))) {
+        (!left.allFinite() || !right.allFinite())) {
         throw std::invalid_argument(
             "direct-CI adjoint coefficient blocks have incompatible dimensions");
     }
@@ -633,40 +628,17 @@ DirectCiSigmaAction::contract_channels(const Eigen::Ref<const Eigen::MatrixXd>& 
     const int beta_tile = static_cast<int>(
         std::min<std::size_t>(n_beta_, workspace_bytes / (bytes_per_alpha * alpha_tile)));
     const int maximum_rows = rows_per_beta * beta_tile;
-    const int parallel_width = collect_integrals ? std::max(beta_tile, n_pairs) : beta_tile;
+    const int parallel_width = std::max(beta_tile, n_pairs);
     const int n_threads = std::max(1, std::min(effective_openmp_thread_count(), parallel_width));
-    // Reuse Eigen's hardware cache query rather than a fixed byte allowance.
-    // Both the borrowed input and the worker's GEMM result fit beside K in L2.
-    // Worker panels together occupy at most the second slab already reserved
-    // by bytes_per_row; the first slab remains the shared beta-gather input.
-    int beta_batch = 1;
-    if (sigma && !collect_integrals) {
-        const auto cache_bytes =
-            static_cast<std::size_t>(std::max<std::ptrdiff_t>(0, Eigen::l2CacheSize()));
-        const auto kernel_bytes = static_cast<std::size_t>(n_pairs) * n_pairs * sizeof(double);
-        const auto panel_bytes = static_cast<std::size_t>(rows_per_beta) * n_pairs * sizeof(double);
-        const auto cache_batch = cache_bytes > kernel_bytes
-                                     ? (cache_bytes - kernel_bytes) / panel_bytes / 2
-                                     : 0;
-        beta_batch = static_cast<int>(std::max<std::size_t>(
-            1, std::min<std::size_t>(beta_tile / n_threads, cache_batch)));
-        if (profiling::phase_totals().enabled)
-            std::fprintf(stderr,
-                         "XMVB_SIGMA_PANEL,beta_batch=%d,l2_bytes=%zu,worker_bytes=%zu\n",
-                         beta_batch,
-                         cache_bytes,
-                         panel_bytes * beta_batch);
-    }
     // Among exact factorizations of the worker count, the most nearly square
     // output grid minimizes repeated reads of these equally sized operands.
     int row_parts = static_cast<int>(std::sqrt(n_threads));
     while (n_threads % row_parts != 0)
         --row_parts;
     const int column_parts = n_threads / row_parts;
-    Eigen::MatrixXd left_intermediate(collect_integrals ? maximum_rows : 0, n_pairs);
+    Eigen::MatrixXd left_intermediate(maximum_rows, n_pairs);
     Eigen::MatrixXd right_intermediate(maximum_rows, n_pairs);
-    Eigen::MatrixXd effective_kernel_adjoint =
-        Eigen::MatrixXd::Zero(collect_integrals ? n_pairs : 0, collect_integrals ? n_pairs : 0);
+    Eigen::MatrixXd effective_kernel_adjoint = Eigen::MatrixXd::Zero(n_pairs, n_pairs);
     if (sigma != nullptr)
         sigma->setZero(n_alpha_, left.cols());
 
@@ -676,10 +648,6 @@ DirectCiSigmaAction::contract_channels(const Eigen::Ref<const Eigen::MatrixXd>& 
 
 #pragma omp parallel if (n_threads > 1) num_threads(n_threads)
     {
-        // Pure sigma consumes each input panel immediately. Only the transformed
-        // panels have to survive the barrier for the beta gather.
-        Eigen::MatrixXd scatter_scratch(
-            collect_integrals ? 0 : static_cast<Eigen::Index>(rows_per_beta) * beta_batch, n_pairs);
         for (int block_begin = 0; block_begin < block_width; block_begin += block_tile) {
             const int block_count = std::min(block_tile, block_width - block_begin);
             const auto left_block = left.middleCols(block_begin * n_beta_, block_count * n_beta_);
@@ -696,54 +664,46 @@ DirectCiSigmaAction::contract_channels(const Eigen::Ref<const Eigen::MatrixXd>& 
                     const AdjointRows layout{
                         alpha_begin, alpha_count, beta_begin, block_count, exchange_parity};
                     const std::int64_t used_rows = layout.offset(beta_count);
-                    if (collect_integrals) {
 #pragma omp for schedule(static)
-                        for (StringIndex beta = 0; beta < beta_count; ++beta) {
-                            const std::int64_t count = layout.count(beta);
-                            const StringIndex rows = count * block_count;
-                            auto active_left =
-                                left_intermediate.middleRows(layout.offset(beta), rows);
-                            auto active_right =
-                                right_intermediate.middleRows(layout.offset(beta), rows);
+                    for (StringIndex beta = 0; beta < beta_count; ++beta) {
+                        const std::int64_t count = layout.count(beta);
+                        const StringIndex rows = count * block_count;
+                        auto active_left = left_intermediate.middleRows(layout.offset(beta), rows);
+                        auto active_right =
+                            right_intermediate.middleRows(layout.offset(beta), rows);
+                        scatter_one_body_intermediate(
+                            left_block, alpha_begin, count, beta_begin + beta, active_left);
+                        if (same_input)
+                            active_right = active_left;
+                        else
                             scatter_one_body_intermediate(
-                                left_block, alpha_begin, count, beta_begin + beta, active_left);
-                            if (same_input)
-                                active_right = active_left;
-                            else
-                                scatter_one_body_intermediate(right_block,
-                                                              alpha_begin,
-                                                              count,
-                                                              beta_begin + beta,
-                                                              active_right);
-                            weight_exchange_channels(
-                                active_left, count, beta_begin + beta - alpha_begin, exchange_parity);
-                        }
-                        // The scatter barrier publishes every shared row before GEMM.
+                                right_block, alpha_begin, count, beta_begin + beta, active_right);
+                        weight_exchange_channels(
+                            active_left, count, beta_begin + beta - alpha_begin, exchange_parity);
+                    }
+                    // The scatter barrier publishes every shared row before GEMM.
 #pragma omp for schedule(static)
-                        for (int partition = 0; partition < n_threads; ++partition) {
-                            const int row_partition = partition / column_parts;
-                            const int column_partition = partition % column_parts;
-                            const int row_first = static_cast<int>(
-                                static_cast<std::int64_t>(n_pairs) * row_partition / row_parts);
-                            const int row_end =
-                                static_cast<std::int64_t>(static_cast<std::int64_t>(n_pairs) *
-                                                          (row_partition + 1) / row_parts);
-                            const StringIndex first =
-                                static_cast<std::int64_t>(static_cast<std::int64_t>(n_pairs) *
-                                                          column_partition / column_parts);
-                            const StringIndex end =
-                                static_cast<std::int64_t>(static_cast<std::int64_t>(n_pairs) *
-                                                          (column_partition + 1) / column_parts);
-                            if (first == end || row_first == row_end)
-                                continue;
-                            effective_kernel_adjoint
-                                .block(row_first, first, row_end - row_first, end - first)
-                                .noalias() += left_intermediate.topRows(used_rows)
-                                                  .middleCols(row_first, row_end - row_first)
-                                                  .transpose() *
-                                              right_intermediate.topRows(used_rows).middleCols(
-                                                  first, end - first);
-                        }
+                    for (int partition = 0; partition < n_threads; ++partition) {
+                        const int row_partition = partition / column_parts;
+                        const int column_partition = partition % column_parts;
+                        const int row_first = static_cast<int>(static_cast<std::int64_t>(n_pairs) *
+                                                               row_partition / row_parts);
+                        const int row_end = static_cast<std::int64_t>(
+                            static_cast<std::int64_t>(n_pairs) * (row_partition + 1) / row_parts);
+                        const StringIndex first = static_cast<std::int64_t>(
+                            static_cast<std::int64_t>(n_pairs) * column_partition / column_parts);
+                        const StringIndex end =
+                            static_cast<std::int64_t>(static_cast<std::int64_t>(n_pairs) *
+                                                      (column_partition + 1) / column_parts);
+                        if (first == end || row_first == row_end)
+                            continue;
+                        effective_kernel_adjoint
+                            .block(row_first, first, row_end - row_first, end - first)
+                            .noalias() +=
+                            left_intermediate.topRows(used_rows)
+                                .middleCols(row_first, row_end - row_first)
+                                .transpose() *
+                            right_intermediate.topRows(used_rows).middleCols(first, end - first);
                     }
                     if (sigma != nullptr) {
                         // The adjoint has consumed the right tile. Reuse its storage for
@@ -755,10 +715,7 @@ DirectCiSigmaAction::contract_channels(const Eigen::Ref<const Eigen::MatrixXd>& 
                                          beta_begin,
                                          beta_count,
                                          exchange_parity,
-                                         beta_batch,
-                                         left_block,
                                          left_intermediate,
-                                         scatter_scratch,
                                          right_intermediate,
                                          *sigma,
                                          timings.get());
@@ -768,7 +725,7 @@ DirectCiSigmaAction::contract_channels(const Eigen::Ref<const Eigen::MatrixXd>& 
         }
     }
 
-    if (sigma != nullptr && exchange_parity != 0 && project_exchange) {
+    if (sigma != nullptr && exchange_parity != 0) {
         // H commutes with exchange. P_eta E^T Q^T D K Q E X = H X.
         // Each unordered pair has one owner; no transpose-sized temporary.
 #pragma omp parallel for schedule(static) if (n_threads > 1) num_threads(n_threads)
@@ -786,8 +743,6 @@ DirectCiSigmaAction::contract_channels(const Eigen::Ref<const Eigen::MatrixXd>& 
         }
     }
 
-    if (!collect_integrals)
-        return {};
     return pullback_channel_kernel(effective_kernel_adjoint);
 }
 

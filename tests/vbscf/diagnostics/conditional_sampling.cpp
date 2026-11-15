@@ -131,7 +131,7 @@ int main(int argc, char** argv) {
         Eigen::VectorXd values = Eigen::VectorXd::Zero(view.products.size());
         for (std::size_t p = 0; p < view.products.size(); ++p)
             for (std::size_t t = view.offsets[p]; t < view.offsets[p + 1]; ++t)
-                values[p] += view.terms[t].coefficient * c[view.terms[t].structure];
+                values[p] += view.terms[t].coefficient * c[view.terms[t].structure_index];
         const xmvb::mcscf::RawCiPlan source(
             view.sigma.alpha_connections(), view.sigma.beta_connections_view(), view.products);
         const double preparation = elapsed(start);

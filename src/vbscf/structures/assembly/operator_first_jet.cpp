@@ -188,13 +188,13 @@ StructureResponseSweep OperatorFirstAction::jet(const StructureAdjointState& sta
         for (auto t = view.offsets[p]; t < view.offsets[p + 1]; ++t) {
             const auto& term = view.terms[t];
             x.row(p).noalias() +=
-                term.coefficient * state.structure_coefficients.row(term.structure);
+                term.coefficient * state.structure_coefficients.row(term.structure_index);
             if (coefficient_direction)
                 directions[0].source.row(p).noalias() +=
-                    term.coefficient * coefficient_direction->row(term.structure);
+                    term.coefficient * coefficient_direction->row(term.structure_index);
             if (ci_response)
                 directions.back().source.row(p).noalias() +=
-                    term.coefficient * ci_response->coefficients.row(term.structure);
+                    term.coefficient * ci_response->coefficients.row(term.structure_index);
         }
     StructureResponseSweep out = result(collect_images);
     Eigen::MatrixXd h_image =

@@ -239,6 +239,7 @@ build_selected_state_determinant_matrices_from_column_provider_impl(
             touched_diagonal_indices.reserve(n_determinants);
         }
 
+        const auto incidence = full_determinant_data.incidence();
         const int n_threads = std::max<Eigen::Index>(
             1, std::min<Eigen::Index>(xmvb::effective_openmp_thread_count(), n_determinants));
         std::vector<std::vector<SpinPairContribution>> partial_contributions(n_threads);
@@ -259,7 +260,7 @@ build_selected_state_determinant_matrices_from_column_provider_impl(
 #pragma omp for schedule(static)
             for (Eigen::Index determinant_index = 0; determinant_index < n_determinants;
                  ++determinant_index) {
-                const auto& structure_terms = full_determinant_data.incidence()[determinant_index];
+                const auto& structure_terms = incidence[determinant_index];
                 double coefficient = 0.0;
                 bool valid = true;
                 for (const auto& term : structure_terms) {

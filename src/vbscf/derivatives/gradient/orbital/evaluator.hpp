@@ -130,7 +130,9 @@ class OrbitalGradientEvaluator {
                              const SelectedMetric* metric = nullptr,
                              bool retain_context = false,
                              const AcceptedPointContext* accepted_point = nullptr,
-                             const PreparedActiveOrbitalView* prepared_orbitals = nullptr) const;
+                             const PreparedActiveOrbitalView* prepared_orbitals = nullptr,
+                             bool coefficient_gradient = true,
+                             FixedStructureUpdate update = FixedStructureUpdate::None) const;
 
     /**
    * @brief Evaluates the orbital gradient pullback from a precomputed active-space result.

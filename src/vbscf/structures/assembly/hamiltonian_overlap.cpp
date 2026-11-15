@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cassert>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -34,6 +35,8 @@
 #include "vbscf/structures/assembly/block_kernels.hpp"
 #include "vbscf/structures/assembly/coefficient_blocks.hpp"
 #include "core/pair_index.hpp"
+#include "core/workspace.hpp"
+#include "mcscf/optimization/trace.hpp"
 #include "integrals/active/two_electron.hpp"
 
 namespace xmvb::vb {
@@ -1067,6 +1070,18 @@ build_unique_spin_self_entries(const xmvb::mcscf::StringTable& unique_spin_deter
                             entry.first_order_projection.packed_pair_indices,
                             entry.first_order_projection.packed_pair_values);
                 }
+                // These immutable projections are reused by every opposite-spin
+                // pair. Validate each one-spin descriptor here, not inside each
+                // product-row dot contraction.
+                const auto& projection = entry.first_order_projection;
+                const auto pairs = xmvb::integrals::packed_active_pair_count(n_orbitals);
+                if (projection.packed_pair_indices.size() != projection.packed_pair_values.size() ||
+                    std::any_of(projection.packed_pair_indices.begin(),
+                                projection.packed_pair_indices.end(),
+                                [pairs](int p) { return p < 0 || p >= pairs; }) ||
+                    (retain_projected_pair_values && !projection.packed_pair_indices.empty() &&
+                     projection.projected_pair_values.size() != static_cast<std::size_t>(pairs)))
+                    throw std::invalid_argument("invalid one-spin self projection");
                 entries[unique_index] = std::move(entry);
             } catch (...) {
 #pragma omp critical
@@ -1092,22 +1107,15 @@ double contract_self_opposite_spin_projection(
         projected_projection.packed_pair_indices.empty()) {
         return 0.0;
     }
-    if (sparse_projection.packed_pair_indices.size() !=
-        sparse_projection.packed_pair_values.size()) {
-        throw std::invalid_argument("self opposite-spin sparse projection is inconsistent");
-    }
-    if (projected_projection.projected_pair_values.empty()) {
-        throw std::invalid_argument("self opposite-spin projected values are unavailable");
-    }
+    assert(sparse_projection.packed_pair_indices.size() ==
+           sparse_projection.packed_pair_values.size());
+    assert(!projected_projection.projected_pair_values.empty());
 
     double coupling = 0.0;
     for (std::size_t entry = 0; entry < sparse_projection.packed_pair_indices.size(); ++entry) {
         const int packed_pair = sparse_projection.packed_pair_indices[entry];
-        if (packed_pair < 0 ||
-            packed_pair >= core::checked_index<std::int64_t>(
-                               projected_projection.projected_pair_values.size())) {
-            throw std::out_of_range("self opposite-spin packed pair is out of range");
-        }
+        assert(packed_pair >= 0 && static_cast<std::size_t>(packed_pair) <
+                                       projected_projection.projected_pair_values.size());
         coupling += sparse_projection.packed_pair_values[entry] *
                     projected_projection.projected_pair_values[packed_pair];
     }
@@ -1273,6 +1281,7 @@ build_determinant_diagonal_jacobi_preconditioner(StructureIncidence determinant_
                                                  int n_orbitals,
                                                  const TwoElectronInput& two_electron_input,
                                                  const DeterminantPairEvaluator& pair_evaluator) {
+    const auto start_time = std::chrono::steady_clock::now();
     const bool shared_spin_entries =
         alpha_reuse_table.unique_determinants == beta_reuse_table.unique_determinants;
     const bool project_alpha =
@@ -1313,6 +1322,7 @@ build_determinant_diagonal_jacobi_preconditioner(StructureIncidence determinant_
     }
     const std::vector<ForwardSpinPairEntry>& beta_entries_ref =
         shared_spin_entries ? alpha_entries : beta_entries;
+    const auto self_ready = std::chrono::steady_clock::now();
 
     if (alpha_reuse_table.determinant_to_unique_id.size() !=
             determinant_to_structure_terms.size() ||
@@ -1331,56 +1341,101 @@ build_determinant_diagonal_jacobi_preconditioner(StructureIncidence determinant_
     std::vector<Eigen::Index> touched_structures;
     touched_structures.reserve(n_structures);
     int generation = 0;
-    for (std::size_t determinant = 0; determinant < determinant_to_structure_terms.size();
-         ++determinant) {
-        const auto& expansion_terms = determinant_to_structure_terms[determinant];
-        if (expansion_terms.empty()) {
-            continue;
-        }
-        if (generation == std::numeric_limits<int>::max()) {
-            std::fill(coefficient_generation.begin(), coefficient_generation.end(), -1);
-            generation = 0;
-        }
-        ++generation;
-        touched_structures.clear();
-        for (const StructureExpansionTerm& term : expansion_terms) {
-            if (term.structure_index < 0 || term.structure_index >= n_structures) {
-                throw std::out_of_range(
-                    "determinant self-preconditioner structure index is out of range");
+    // Each product scalar depends only on its two immutable one-spin entries.
+    // Compute a cache-sized batch in parallel, then retain the original serial
+    // incidence sum order. Scratch holds only cache-sized scalar row images;
+    // it is shared, not a per-thread coefficient or response carrier.
+    const auto cache_bytes = static_cast<std::size_t>(
+        std::max<std::ptrdiff_t>(2 * sizeof(double), Eigen::l2CacheSize()));
+    const auto batch_size =
+        std::max<std::size_t>(1,
+                              std::min({determinant_to_structure_terms.size(),
+                                        cache_bytes / (2 * sizeof(double)),
+                                        workspace::available() / (2 * sizeof(double))}));
+    workspace::Temporary batch_storage(2 * sizeof(double) * batch_size);
+    std::vector<double> hamiltonians(batch_size), overlaps(batch_size);
+    double product_seconds = 0.0, projection_seconds = 0.0;
+    for (std::size_t begin = 0; begin < determinant_to_structure_terms.size();
+         begin += batch_size) {
+        const auto count = std::min(batch_size, determinant_to_structure_terms.size() - begin);
+        const auto product_start = std::chrono::steady_clock::now();
+        std::exception_ptr failure;
+        std::atomic<bool> failed(false);
+        const int workers = coarse_openmp_thread_count(effective_openmp_thread_count(), count);
+#pragma omp parallel for schedule(static) if (workers > 1) num_threads(workers)
+        for (std::size_t row = 0; row < count; ++row) {
+            const auto determinant = begin + row;
+            if (determinant_to_structure_terms[determinant].empty() ||
+                failed.load(std::memory_order_relaxed))
+                continue;
+            try {
+                const auto a = alpha_reuse_table.determinant_to_unique_id[determinant];
+                const auto b = beta_reuse_table.determinant_to_unique_id[determinant];
+                if (a < 0 || static_cast<std::size_t>(a) >= alpha_entries.size() || b < 0 ||
+                    static_cast<std::size_t>(b) >= beta_entries_ref.size())
+                    throw std::out_of_range(
+                        "determinant self-preconditioner unique-spin id is out of range");
+                const auto& alpha = alpha_entries[a];
+                const auto& beta = beta_entries_ref[b];
+                overlaps[row] = alpha.overlap_determinant * beta.overlap_determinant;
+                const double opposite_spin =
+                    project_alpha
+                        ? contract_self_opposite_spin_projection(beta.first_order_projection,
+                                                                 alpha.first_order_projection)
+                        : contract_self_opposite_spin_projection(alpha.first_order_projection,
+                                                                 beta.first_order_projection);
+                hamiltonians[row] = alpha.total_hamiltonian * beta.overlap_determinant +
+                                    beta.total_hamiltonian * alpha.overlap_determinant +
+                                    opposite_spin;
+            } catch (...) {
+#pragma omp critical
+                {
+                    if (!failed.load(std::memory_order_relaxed)) {
+                        failure = std::current_exception();
+                        failed.store(true, std::memory_order_relaxed);
+                    }
+                }
             }
-            if (coefficient_generation[term.structure_index] != generation) {
-                coefficient_generation[term.structure_index] = generation;
-                combined_structure_coefficients[term.structure_index] = 0.0;
-                touched_structures.push_back(term.structure_index);
+        }
+        if (failure)
+            std::rethrow_exception(failure);
+        const auto projection_start = std::chrono::steady_clock::now();
+        product_seconds += std::chrono::duration<double>(projection_start - product_start).count();
+        for (std::size_t row = 0; row < count; ++row) {
+            const auto determinant = begin + row;
+            const auto& expansion_terms = determinant_to_structure_terms[determinant];
+            if (expansion_terms.empty()) {
+                continue;
             }
-            combined_structure_coefficients[term.structure_index] += term.coefficient;
-        }
+            if (generation == std::numeric_limits<int>::max()) {
+                std::fill(coefficient_generation.begin(), coefficient_generation.end(), -1);
+                generation = 0;
+            }
+            ++generation;
+            touched_structures.clear();
+            for (const StructureExpansionTerm& term : expansion_terms) {
+                if (term.structure_index < 0 || term.structure_index >= n_structures) {
+                    throw std::out_of_range(
+                        "determinant self-preconditioner structure index is out of range");
+                }
+                if (coefficient_generation[term.structure_index] != generation) {
+                    coefficient_generation[term.structure_index] = generation;
+                    combined_structure_coefficients[term.structure_index] = 0.0;
+                    touched_structures.push_back(term.structure_index);
+                }
+                combined_structure_coefficients[term.structure_index] += term.coefficient;
+            }
 
-        const std::int64_t alpha_id = alpha_reuse_table.determinant_to_unique_id[determinant];
-        const std::int64_t beta_id = beta_reuse_table.determinant_to_unique_id[determinant];
-        if (alpha_id < 0 || alpha_id >= core::checked_index<std::int64_t>(alpha_entries.size()) ||
-            beta_id < 0 || beta_id >= core::checked_index<std::int64_t>(beta_entries_ref.size())) {
-            throw std::out_of_range(
-                "determinant self-preconditioner unique-spin id is out of range");
+            for (const Eigen::Index structure : touched_structures) {
+                const double coefficient = combined_structure_coefficients[structure];
+                const double squared_coefficient = coefficient * coefficient;
+                diagonal.hamiltonian[structure] += squared_coefficient * hamiltonians[row];
+                diagonal.overlap[structure] += squared_coefficient * overlaps[row];
+            }
         }
-        const ForwardSpinPairEntry& alpha = alpha_entries[alpha_id];
-        const ForwardSpinPairEntry& beta = beta_entries_ref[beta_id];
-        const double determinant_overlap = alpha.overlap_determinant * beta.overlap_determinant;
-        const double opposite_spin =
-            project_alpha ? contract_self_opposite_spin_projection(beta.first_order_projection,
-                                                                   alpha.first_order_projection)
-                          : contract_self_opposite_spin_projection(alpha.first_order_projection,
-                                                                   beta.first_order_projection);
-        const double determinant_hamiltonian = alpha.total_hamiltonian * beta.overlap_determinant +
-                                               beta.total_hamiltonian * alpha.overlap_determinant +
-                                               opposite_spin;
-
-        for (const Eigen::Index structure : touched_structures) {
-            const double coefficient = combined_structure_coefficients[structure];
-            const double squared_coefficient = coefficient * coefficient;
-            diagonal.hamiltonian[structure] += squared_coefficient * determinant_hamiltonian;
-            diagonal.overlap[structure] += squared_coefficient * determinant_overlap;
-        }
+        projection_seconds +=
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - projection_start)
+                .count();
     }
     for (Eigen::Index structure = 0; structure < n_structures; ++structure) {
         if (!std::isfinite(diagonal.hamiltonian[structure])) {
@@ -1394,6 +1449,12 @@ build_determinant_diagonal_jacobi_preconditioner(StructureIncidence determinant_
                 std::to_string(structure));
         }
     }
+    mcscf::diagnostics::ciah_trace("ciah_ci_jacobi_cost",
+                                   "self=%.9f,products=%.9f,projection=%.9f,scratch_bytes=%zu",
+                                   std::chrono::duration<double>(self_ready - start_time).count(),
+                                   product_seconds,
+                                   projection_seconds,
+                                   2 * sizeof(double) * batch_size);
     return diagonal;
 }
 

@@ -32,7 +32,9 @@ solve_lowest_projected_eigenpairs(const Eigen::Ref<const Eigen::MatrixXd>& hamil
                                   int n_roots) {
     const lapack_int dimension = core::checked_index<lapack_int>(hamiltonian.rows());
     Eigen::MatrixXd matrix = hamiltonian;
-    ProjectedEigenpairs result{Eigen::VectorXd(n_roots), Eigen::MatrixXd(dimension, n_roots)};
+    // DSYEVR requires W(N), even when RANGE='I' returns only the first M roots.
+    // Tridiagonal eigensolvers may use its remaining entries during selection.
+    ProjectedEigenpairs result{Eigen::VectorXd(dimension), Eigen::MatrixXd(dimension, n_roots)};
     std::vector<lapack_int> support(2 * n_roots);
     lapack_int n_converged = 0;
     const lapack_int info = LAPACKE_dsyevr(LAPACK_COL_MAJOR,
@@ -56,6 +58,7 @@ solve_lowest_projected_eigenpairs(const Eigen::Ref<const Eigen::MatrixXd>& hamil
         throw std::runtime_error(
             "Davidson projected eigensolve failed (info=" + std::to_string(info) + ")");
     }
+    result.eigenvalues.conservativeResize(n_roots);
     return result;
 }
 
@@ -77,6 +80,9 @@ inline void validate_davidson_options(Eigen::Index dimension, const DavidsonOpti
     if (!std::isfinite(options.stationarity_tolerance) || options.stationarity_tolerance <= 0.0) {
         throw std::invalid_argument("Davidson stationarity tolerance must be positive");
     }
+    if (options.stopping == DavidsonStoppingCriterion::EnergyAndResidual &&
+        !options.identity_overlap)
+        throw std::invalid_argument("energy/residual stopping requires identity overlap");
 }
 
 inline void
@@ -148,8 +154,9 @@ int append_s_orthonormal_block(Backend& backend,
                 backend.project(basis.columns(0, active_dimension), overlap_image);
             backend.subtract_projection(vector, basis.columns(0, active_dimension), coefficients);
             if (has_images)
-                backend.subtract_projection(
-                    hamiltonian_image, hamiltonian_basis.columns(0, active_dimension), coefficients);
+                backend.subtract_projection(hamiltonian_image,
+                                            hamiltonian_basis.columns(0, active_dimension),
+                                            coefficients);
             if (!identity_overlap) {
                 backend.subtract_projection(
                     overlap_image, overlap_basis.columns(0, active_dimension), coefficients);
@@ -443,9 +450,23 @@ Result solve_davidson(Backend& backend,
                 relative_residual <= first_iteration_residual_tolerance;
             const double required_residual =
                 std::min(options.residual_tolerance, spectral_energy_residual_tolerance);
-            bool root_converged = relative_residual <= required_residual &&
-                                  stationarity_residual <= options.stationarity_tolerance &&
-                                  (ritz_energy_stable || independently_certified);
+            bool root_converged;
+            if (options.stopping == DavidsonStoppingCriterion::EnergyAndResidual) {
+                // A preconverged initial vector has no previous Ritz energy.
+                // Its absolute residual bounds the distance to the spectrum;
+                // do not force a spurious expansion of an exact eigenvector.
+                // A complete Ritz basis likewise has no further direction;
+                // as in Davidson's exhausted-space exit, check its residual.
+                const bool initial_energy_resolved =
+                    iteration == 1 && stationarity_residual <= options.energy_tolerance;
+                root_converged = stationarity_residual <= options.stationarity_tolerance &&
+                                 (ritz_energy_stable || initial_energy_resolved ||
+                                  active_dimension == dimension);
+            } else {
+                root_converged = relative_residual <= required_residual &&
+                                 stationarity_residual <= options.stationarity_tolerance &&
+                                 (ritz_energy_stable || independently_certified);
+            }
             if (root_converged && options.physical_residual_norm) {
                 if constexpr (Backend::supports_host_callbacks) {
                     const Eigen::VectorXd root_vector =
@@ -466,15 +487,10 @@ Result solve_davidson(Backend& backend,
             auto correction = backend.view(corrections).column(n_corrections);
             if (options.residual_preconditioner) {
                 if constexpr (Backend::supports_host_callbacks) {
-                    const Eigen::VectorXd host_residual = backend.download(backend.cview(residual));
-                    Eigen::VectorXd host_correction =
-                        options.residual_preconditioner(host_residual, eigenvalue);
-                    if (host_correction.size() != dimension || !host_correction.allFinite()) {
-                        throw std::runtime_error(
-                            "Davidson residual preconditioner returned an invalid vector");
-                    }
-                    host_correction = -host_correction;
-                    backend.upload_into(correction, host_correction);
+                    backend.precondition(correction,
+                                         backend.cview(residual),
+                                         eigenvalue,
+                                         options.residual_preconditioner);
                 }
             } else {
                 backend.precondition(correction,

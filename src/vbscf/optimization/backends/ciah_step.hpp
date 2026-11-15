@@ -19,7 +19,6 @@ struct CiahMacroStep {
     VbScfObjective::TrialEvaluation trial;
     Eigen::VectorXd next_orbital_guess_packed;
     Eigen::MatrixXd next_structure_guess;
-    std::optional<double> strict_source_energy;
     /** @brief Retained only after both existing terminal conditions pass. */
     std::optional<OrbitalChart> converged_geometry;
     /** @brief Check this trial's energy change and true gradient in its own chart. */

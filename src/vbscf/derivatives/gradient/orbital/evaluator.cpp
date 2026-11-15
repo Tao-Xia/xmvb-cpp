@@ -239,7 +239,9 @@ OrbitalFixedStructureGradient OrbitalGradientEvaluator::evaluate_fixed_structure
     const SelectedMetric* metric,
     bool retain_context,
     const AcceptedPointContext* accepted_point,
-    const PreparedActiveOrbitalView* prepared_orbitals) const {
+    const PreparedActiveOrbitalView* prepared_orbitals,
+    bool coefficient_gradient,
+    FixedStructureUpdate update) const {
     const auto total_start_time = std::chrono::steady_clock::now();
     ActiveSpaceFixedStructureGradient active =
         active_space_gradient_evaluator_.evaluate_fixed_structure(input,
@@ -250,7 +252,9 @@ OrbitalFixedStructureGradient OrbitalGradientEvaluator::evaluate_fixed_structure
                                                                   metric,
                                                                   retain_context,
                                                                   accepted_point,
-                                                                  prepared_orbitals);
+                                                                  prepared_orbitals,
+                                                                  coefficient_gradient,
+                                                                  update);
     OrbitalFixedStructureGradient result;
     result.normalized_coefficients = std::move(active.normalized_coefficients);
     result.structure_residuals = std::move(active.structure_residuals);

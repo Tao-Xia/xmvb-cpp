@@ -117,13 +117,13 @@ bool build_ciah_macro_step(VbScfObjective* objective,
     // coupling images. Enrich its CI response space within the existing AH
     // budget; model selection is physical, not an environment override.
     const bool small_ci = fixed_overlap_coupling;
-    const Eigen::Index ns = small_ci ? std::min<Eigen::Index>(full_ns, ciah_options.max_cycle)
-                                     : full_ns;
+    const Eigen::Index ns =
+        small_ci ? std::min<Eigen::Index>(full_ns, ciah_options.max_cycle) : full_ns;
     const Eigen::Index dimension = no + ns;
     const bool fixed_density_orbital_hvp = (ns == 0 || small_ci) && fixed_active_overlap;
     record->response_model = small_ci ? CiahResponseModel::Adaptive
-                            : ns     ? CiahResponseModel::Coupled
-                                     : CiahResponseModel::OrbitalOnly;
+                             : ns     ? CiahResponseModel::Coupled
+                                      : CiahResponseModel::OrbitalOnly;
     mcscf::diagnostics::ciah_trace(
         "ciah_orbital_hvp_model",
         "fixed_density=%d,balanced=%d,full_horizontal=%d,coupled=%d,fixed_overlap_coupling=%d",
@@ -138,9 +138,13 @@ bool build_ciah_macro_step(VbScfObjective* objective,
             orbitals, context->selected_state_eigenvectors, "origin", energy);
     std::unique_ptr<CiTransport> transport;
     if (ns)
-        transport = std::make_unique<CiTransport>(
-            orbitals, layout, chart, *context, hessian.structure_action(), structure,
-            fixed_active_overlap);
+        transport = std::make_unique<CiTransport>(orbitals,
+                                                  layout,
+                                                  chart,
+                                                  *context,
+                                                  hessian.structure_action(),
+                                                  structure,
+                                                  fixed_active_overlap);
     std::optional<AffineCoupling> affine;
     if (ns)
         affine.emplace(*context, hessian, structure, fixed_overlap_coupling);
@@ -175,7 +179,8 @@ bool build_ciah_macro_step(VbScfObjective* objective,
         Eigen::VectorXd image(dimension);
         const bool has_orbital = !small_ci || !x.head(no).isZero(0.0);
         const bool share_lift = has_orbital && fixed_density_orbital_hvp && !sample_startup;
-        const Eigen::VectorXd packed = share_lift ? chart.expand_step(x.head(no)) : Eigen::VectorXd{};
+        const Eigen::VectorXd packed =
+            share_lift ? chart.expand_step(x.head(no)) : Eigen::VectorXd{};
         if (metric_image) {
             metric_image->resize(dimension);
             if (!has_orbital)
@@ -194,12 +199,12 @@ bool build_ciah_macro_step(VbScfObjective* objective,
                 ++record->coupled_block_actions;
             } else if (has_orbital) {
                 image.head(no) = fixed_density_orbital_hvp
-                        ? hessian.apply_packed(packed,
-                                                {.direct_core_response = true,
-                                                 .fixed_upstream_pullback = true,
-                                                 .local_active_response = false,
-                                                 .structure_response = false})
-                        : hessian.apply_orbital(x.head(no));
+                                     ? hessian.apply_packed(packed,
+                                                            {.direct_core_response = true,
+                                                             .fixed_upstream_pullback = true,
+                                                             .local_active_response = false,
+                                                             .structure_response = false})
+                                     : hessian.apply_orbital(x.head(no));
             }
             if (response) {
                 response->add_hessian_image(x.head(no), x.tail(ns), image.head(no), image.tail(ns));
@@ -348,7 +353,8 @@ bool build_ciah_macro_step(VbScfObjective* objective,
         [&](const Eigen::VectorXd& g) {
             return std::hypot(metric.dual_norm(g.head(no)),
                               response ? g.tail(ns).norm()
-                                       : ns ? structure.dual_norm(g.tail(ns)) : 0.0);
+                              : ns     ? structure.dual_norm(g.tail(ns))
+                                       : 0.0);
         });
     ciah_options.apply_images = [&](const Eigen::VectorXd& x) {
         Eigen::VectorXd metric_image;
@@ -375,6 +381,10 @@ bool build_ciah_macro_step(VbScfObjective* objective,
     mcscf::CiahWorkspace workspace(problem, seed, ciah_options);
 
     const Eigen::MatrixXd& c0 = context->selected_state_eigenvectors;
+    const bool update_keyframe_ci = !ns && fixed_density_orbital_hvp &&
+                                    context->selected_state_indices.front() == 0 &&
+                                    context->structure_metric_inverse;
+    Eigen::MatrixXd keyframe_ci;
     std::optional<CiTransportPoint> transported;
     Eigen::VectorXd transported_step;
     const auto transport_at = [&](const Eigen::VectorXd& displacement) -> const CiTransportPoint& {
@@ -392,7 +402,8 @@ bool build_ciah_macro_step(VbScfObjective* objective,
         return *transported;
     };
     const auto evaluate_keyframe = [&](const Eigen::VectorXd& displacement,
-                                       Eigen::VectorXd* full_ci_gradient = nullptr) {
+                                       Eigen::VectorXd* full_ci_gradient = nullptr,
+                                       bool advance_ci = false) {
         xmvb::profiling::ScopedPhase keyframe_phase(xmvb::profiling::Phase::CiahKeyframe, true);
         mcscf::CiahKeyframe keyframe;
         if (has_ci()) {
@@ -416,7 +427,17 @@ bool build_ciah_macro_step(VbScfObjective* objective,
         } else {
             const auto parameters = build_nonredundant_lifted_trial_parameters(
                 orbitals, chart, layout, displacement.head(no));
-            const auto exact = objective->evaluate_coupled_keyframe(parameters, c0);
+            // This macro model consumes no CI gradient. Keep its exact energy
+            // and orbital pullback, without producing unused structure images.
+            const auto exact = objective->evaluate_coupled_keyframe(
+                parameters,
+                keyframe_ci.size() ? keyframe_ci : c0,
+                nullptr,
+                false,
+                update_keyframe_ci && advance_ci ? FixedStructureUpdate::Krylov
+                                                 : FixedStructureUpdate::None);
+            if (update_keyframe_ci && advance_ci)
+                keyframe_ci = exact.normalized_structure_coefficients;
             keyframe.gradient = Eigen::VectorXd::Zero(dimension);
             keyframe.gradient.head(no) = chart.project_reduced_gradient(exact.orbital_gradient);
             keyframe.energy = exact.energy;
@@ -439,18 +460,19 @@ bool build_ciah_macro_step(VbScfObjective* objective,
             return largest;
         ++ci_step_limit_calls;
         const auto y = direction.tail(ns);
-        const bool bounded = response
-            ? response->bounded_by(y, ci_scale * largest, ciah_options.operator_relative_accuracy)
-            : y.isZero(0.0);
+        const bool bounded =
+            response ? response->bounded_by(
+                           y, ci_scale * largest, ciah_options.operator_relative_accuracy)
+                     : y.isZero(0.0);
         if (bounded && !mcscf::diagnostics::ciah_trace_enabled()) {
             ++ci_step_limit_skipped;
             return largest;
         }
         const auto start = trace_step_limit ? std::chrono::steady_clock::now()
                                             : std::chrono::steady_clock::time_point{};
-        const double ci_largest = response
-            ? structure.maximum_coefficient_component_coordinates(response->lift(y))
-            : structure.maximum_coefficient_component_coordinates(y);
+        const double ci_largest =
+            response ? structure.maximum_coefficient_component_coordinates(response->lift(y))
+                     : structure.maximum_coefficient_component_coordinates(y);
         if (trace_step_limit)
             ci_step_limit_seconds +=
                 std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
@@ -464,56 +486,58 @@ bool build_ciah_macro_step(VbScfObjective* objective,
     int rotation_limit_samples = 0, rotation_limit_screened = 0;
     const Eigen::Index rotation_size = chart.rotation_component_count();
     if (rotation_size && (response || ns == 0)) {
-        workspace.set_projected_step_limit(
-            [&](const std::vector<Eigen::VectorXd>& basis,
-                const Eigen::VectorXd& weights) -> std::optional<double> {
-                ++rotation_limit_samples;
-                if (rotation_images.size() != basis.size()) {
-                    const auto bytes = core::checked_multiply(
-                        sizeof(double) * (basis.size() + 3), static_cast<std::size_t>(rotation_size));
-                    if (!rotation_limit_memory.try_resize(bytes))
-                        return std::nullopt;
-                    while (rotation_images.size() < basis.size())
-                        rotation_images.push_back(chart.frame_rotation_components(
-                            basis[rotation_images.size()].head(no)));
-                }
-                rotation_trial.setZero(rotation_size);
-                double absolute_bound = 0.0;
-                for (Eigen::Index j = 0; j < weights.size(); ++j) {
-                    rotation_trial.noalias() += weights[j] * rotation_images[j];
-                    absolute_bound += std::abs(weights[j]) * rotation_images[j].lpNorm<Eigen::Infinity>();
-                }
-                const double orbital = rotation_trial.lpNorm<Eigen::Infinity>();
-                const double cap = mcscf::detail::ciah_step_max_component;
-                // Only screen away from the roundoff-scale decision boundary.
-                const double guard = std::sqrt(std::numeric_limits<double>::epsilon()) *
-                                     std::max(cap, absolute_bound);
-                if (!std::isfinite(orbital) || std::abs(orbital - cap) <= guard)
+        workspace.set_projected_step_limit([&](const std::vector<Eigen::VectorXd>& basis,
+                                               const Eigen::VectorXd& weights)
+                                               -> std::optional<double> {
+            ++rotation_limit_samples;
+            if (rotation_images.size() != basis.size()) {
+                const auto bytes = core::checked_multiply(sizeof(double) * (basis.size() + 3),
+                                                          static_cast<std::size_t>(rotation_size));
+                if (!rotation_limit_memory.try_resize(bytes))
                     return std::nullopt;
-                if (response && orbital < cap) {
-                    Eigen::VectorXd y = Eigen::VectorXd::Zero(ns);
-                    for (Eigen::Index j = 0; j < weights.size(); ++j)
-                        y.noalias() += weights[j] * basis[j].tail(ns);
-                    if (!response->bounded_by(y, ci_scale * cap, ciah_options.operator_relative_accuracy))
-                        return std::nullopt;
-                }
-                if (mcscf::diagnostics::ciah_trace_enabled()) {
-                    Eigen::VectorXd direction = Eigen::VectorXd::Zero(dimension);
-                    for (Eigen::Index j = 0; j < weights.size(); ++j)
-                        direction.noalias() += weights[j] * basis[j];
-                    if ((callbacks.maximum_component(direction) <= cap) != (orbital <= cap))
-                        throw std::logic_error("CIAH projected step bound changed cap classification");
-                }
-                ++rotation_limit_screened;
-                return orbital;
-            });
+                while (rotation_images.size() < basis.size())
+                    rotation_images.push_back(
+                        chart.frame_rotation_components(basis[rotation_images.size()].head(no)));
+            }
+            rotation_trial.setZero(rotation_size);
+            double absolute_bound = 0.0;
+            for (Eigen::Index j = 0; j < weights.size(); ++j) {
+                rotation_trial.noalias() += weights[j] * rotation_images[j];
+                absolute_bound +=
+                    std::abs(weights[j]) * rotation_images[j].lpNorm<Eigen::Infinity>();
+            }
+            const double orbital = rotation_trial.lpNorm<Eigen::Infinity>();
+            const double cap = mcscf::detail::ciah_step_max_component;
+            // Only screen away from the roundoff-scale decision boundary.
+            const double guard =
+                std::sqrt(std::numeric_limits<double>::epsilon()) * std::max(cap, absolute_bound);
+            if (!std::isfinite(orbital) || std::abs(orbital - cap) <= guard)
+                return std::nullopt;
+            if (response && orbital < cap) {
+                Eigen::VectorXd y = Eigen::VectorXd::Zero(ns);
+                for (Eigen::Index j = 0; j < weights.size(); ++j)
+                    y.noalias() += weights[j] * basis[j].tail(ns);
+                if (!response->bounded_by(
+                        y, ci_scale * cap, ciah_options.operator_relative_accuracy))
+                    return std::nullopt;
+            }
+            if (mcscf::diagnostics::ciah_trace_enabled()) {
+                Eigen::VectorXd direction = Eigen::VectorXd::Zero(dimension);
+                for (Eigen::Index j = 0; j < weights.size(); ++j)
+                    direction.noalias() += weights[j] * basis[j];
+                if ((callbacks.maximum_component(direction) <= cap) != (orbital <= cap))
+                    throw std::logic_error("CIAH projected step bound changed cap classification");
+            }
+            ++rotation_limit_screened;
+            return orbital;
+        });
     }
     Eigen::VectorXd keyframe_ci_gradient;
     if (response)
         keyframe_ci_gradient = ci_gradient;
     callbacks.evaluate_keyframe = [&](const Eigen::VectorXd& displacement) {
         if (!response)
-            return evaluate_keyframe(displacement);
+            return evaluate_keyframe(displacement, nullptr, true);
         keyframe_ci_gradient.resize(0);
         return evaluate_keyframe(displacement, &keyframe_ci_gradient);
     };
@@ -634,8 +658,8 @@ bool build_ciah_macro_step(VbScfObjective* objective,
         return response->forcing(direction);
     };
     const auto has_capacity = [&] {
-        return response->rank() < ns &&
-               (ciah_options.complement_capacity || workspace.basis_size() < ciah_options.max_cycle);
+        return response->rank() < ns && (ciah_options.complement_capacity ||
+                                         workspace.basis_size() < ciah_options.max_cycle);
     };
     const auto install_column = [&] {
         const Eigen::Index j = no + response->rank() - 1;
@@ -658,13 +682,14 @@ bool build_ciah_macro_step(VbScfObjective* objective,
     };
     if (response) {
         const auto start = std::chrono::steady_clock::now();
-        workspace.set_step_limit(callbacks.maximum_component, mcscf::detail::ciah_step_max_component);
+        workspace.set_step_limit(callbacks.maximum_component,
+                                 mcscf::detail::ciah_step_max_component);
         const double target = std::hypot(chart.coordinate_dual_norm(gradient), ci_gradient.norm()) /
                               mcscf::detail::ciah_gradient_trust;
         xmvb::workspace::Reservation startup_reservation;
-        const auto startup_bytes = core::checked_multiply(
-            sizeof(double) * mcscf::detail::ciah_ah_start_cycle,
-            static_cast<std::size_t>(no + full_ns));
+        const auto startup_bytes =
+            core::checked_multiply(sizeof(double) * mcscf::detail::ciah_ah_start_cycle,
+                                   static_cast<std::size_t>(no + full_ns));
         sample_startup = startup_reservation.try_resize(startup_bytes);
         if (sample_startup)
             startup_images.reserve(mcscf::detail::ciah_ah_start_cycle);
@@ -708,10 +733,10 @@ bool build_ciah_macro_step(VbScfObjective* objective,
         if (soft_independent)
             add(startup_forcing(soft), 0.0);
         mcscf::diagnostics::ciah_trace("ciah_small_ci_seed_images",
-                                      "sampled=%zu,reused=%d,standalone=%d",
-                                      startup_images.size(),
-                                      reused_forcing,
-                                      forward_actions);
+                                       "sampled=%zu,reused=%d,standalone=%d",
+                                       startup_images.size(),
+                                       reused_forcing,
+                                       forward_actions);
         startup_images.clear();
         startup_reservation.try_resize(0);
         Eigen::VectorXd omitted;
@@ -721,8 +746,8 @@ bool build_ciah_macro_step(VbScfObjective* objective,
             add(rhs - ci_gradient, 0.0);
         } else {
             while (true) {
-                Eigen::VectorXd orbital_residual =
-                    gradient + proposal.hessian_step.head(no) - omega * proposal.metric_step.head(no);
+                Eigen::VectorXd orbital_residual = gradient + proposal.hessian_step.head(no) -
+                                                   omega * proposal.metric_step.head(no);
                 if (!response->residual(rhs, omega, &omitted, &orbital_residual))
                     break;
                 omitted_norm = omitted.norm();
@@ -831,48 +856,20 @@ bool build_ciah_macro_step(VbScfObjective* objective,
         return (parameters - source_parameters).norm() >
                std::numeric_limits<double>::epsilon() * source_parameters.norm();
     };
-    const double ci_target = context->structure_solve_accuracy.stationarity_tolerance();
-    const bool adaptive_ci = context->structure_metric_inverse &&
-                             context->selected_state_indices == std::vector<int>{0};
-    std::optional<double> strict_source_energy;
-    macro_callbacks.evaluate = [&](const Eigen::VectorXd& step, double scale, double prediction) {
+    macro_callbacks.evaluate = [&](const Eigen::VectorXd& step, double scale, double) {
         xmvb::profiling::ScopedPhase trial_phase(xmvb::profiling::Phase::CiahTrial, true);
         if (step_audit)
             diagnostics::audit_orbital_step(
                 orbitals, chart, scale * step.head(no), "macro_trial", micro.micro_steps);
         const CiTransportPoint* point = has_ci() ? &transport_at(scale * step) : nullptr;
-        const Eigen::VectorXd parameters = point
-            ? layout.pack(point->input)
-            : build_nonredundant_lifted_trial_parameters(
-                  orbitals, chart, layout, scale * step.head(no));
-        const Eigen::MatrixXd& seed = point ? point->coefficients : c0;
-        accepted->strict_source_energy.reset();
-        // Forcing budget for intermediate trials. Both scales vanish toward
-        // stationarity. The old Ritz energy and relative residual tests still
-        // apply, and prospective terminal trials use the original CI target.
-        const double scale_budget = std::min(prediction, gradient_norm);
-        const double exploratory =
-            adaptive_ci && gradient_norm > options.gradient_tolerance &&
-                    scale_budget > options.energy_tolerance
-                ? std::sqrt(ci_target) * std::sqrt(scale_budget)
-                : 0.0;
-        mcscf::diagnostics::ciah_trace(
-            "ciah_ci_forcing", "predicted=%.17g,orbital_norm=%.17g,stationarity_target=%.17g",
-            prediction, gradient_norm, std::max(ci_target, exploratory));
-        auto trial = objective->evaluate_trial_energy_with_structure_guess(
-            parameters, seed, exploratory);
-        if (exploratory > ci_target && energy - trial.energy <= options.energy_tolerance) {
-            mcscf::diagnostics::ciah_trace("ciah_ci_polish", "point=trial");
-            objective->refine_trial_ci(trial);
-        }
-        if (context->structure_solve_accuracy.exploratory_stationarity > ci_target &&
-            std::abs(energy - trial.energy) < options.energy_tolerance) {
-            if (!strict_source_energy) {
-                mcscf::diagnostics::ciah_trace("ciah_ci_polish", "point=source");
-                strict_source_energy = objective->strict_accepted_energy();
-            }
-            accepted->strict_source_energy = strict_source_energy;
-        }
+        const Eigen::VectorXd parameters =
+            point ? layout.pack(point->input)
+                  : build_nonredundant_lifted_trial_parameters(
+                        orbitals, chart, layout, scale * step.head(no));
+        const Eigen::MatrixXd& seed = point                ? point->coefficients
+                                      : keyframe_ci.size() ? keyframe_ci
+                                                           : c0;
+        auto trial = objective->evaluate_trial_energy_with_structure_guess(parameters, seed);
         if (step_audit)
             diagnostics::audit_ciah_state(trial.orbital_preparation_input,
                                           seed,
@@ -884,9 +881,11 @@ bool build_ciah_macro_step(VbScfObjective* objective,
     macro_callbacks.terminal = [&](Trial& trial) {
         objective->complete_trial(&trial);
         accepted->trial = std::move(trial);
-        const bool converged = accepted->check_convergence(
-            layout, options, objective->input().complete_active_space,
-            accepted->strict_source_energy.value_or(energy));
+        const bool converged =
+            accepted->check_convergence(layout,
+                                        options,
+                                        objective->input().complete_active_space,
+                                        energy);
         trial = std::move(accepted->trial);
         return converged;
     };
@@ -934,7 +933,7 @@ bool build_ciah_macro_step(VbScfObjective* objective,
         if (std::string_view(path.stop_reason) != "micro_gradient" ||
             path.displacement.head(no).isZero(0.0))
             break;
-        const double source_energy = accepted->strict_source_energy.value_or(energy);
+        const double source_energy = energy;
         if (!refinement &&
             (accepted->converged_geometry ||
              (std::abs(macro.trial->energy - source_energy) < options.energy_tolerance &&
@@ -952,13 +951,17 @@ bool build_ciah_macro_step(VbScfObjective* objective,
         const Eigen::VectorXd omitted = response->omitted_residual(
             ci_gradient + probe(path.displacement.head(no)), path.displacement.tail(ns), 0.0);
         const double missing = omitted.norm();
-        mcscf::diagnostics::ciah_trace("ciah_small_ci_tail", "forward_actions=%d,omitted=%.17g",
-                                      forward_actions - original_probes, missing);
+        mcscf::diagnostics::ciah_trace("ciah_small_ci_tail",
+                                       "forward_actions=%d,omitted=%.17g",
+                                       forward_actions - original_probes,
+                                       missing);
         const double before = coordinate_norm(path.predicted_gradient);
         if (missing == 0.0 || !try_column(omitted, 0.0)) {
-            mcscf::diagnostics::ciah_trace(
-                "ciah_small_ci_feedback", "before=%.17g,target=%.17g,omitted=%.17g,tried=0",
-                before, target, missing);
+            mcscf::diagnostics::ciah_trace("ciah_small_ci_feedback",
+                                           "before=%.17g,target=%.17g,omitted=%.17g,tried=0",
+                                           before,
+                                           target,
+                                           missing);
             break;
         }
 
@@ -966,15 +969,18 @@ bool build_ciah_macro_step(VbScfObjective* objective,
         // one. Its orbital image is assembled from the retained B^T Z.
         Eigen::VectorXd feedback = Eigen::VectorXd::Zero(no);
         const bool positive = response->residual(omitted, 0.0, nullptr, &feedback);
-        const double after = std::hypot(
-            chart.coordinate_dual_norm(path.predicted_gradient.head(no) + feedback),
-            path.predicted_gradient.tail(ns).norm());
+        const double after =
+            std::hypot(chart.coordinate_dual_norm(path.predicted_gradient.head(no) + feedback),
+                       path.predicted_gradient.tail(ns).norm());
         if (positive && after < target) {
             response->discard_last_column();
             mcscf::diagnostics::ciah_trace(
                 "ciah_small_ci_feedback",
                 "before=%.17g,after=%.17g,target=%.17g,omitted=%.17g,tried=1,continued=0",
-                before, after, target, missing);
+                before,
+                after,
+                target,
+                missing);
             break;
         }
 
@@ -992,31 +998,40 @@ bool build_ciah_macro_step(VbScfObjective* objective,
         const bool reused_keyframe = keyframe_ci_gradient.size() == full_ns;
         if (reused_keyframe) {
             const double gradient_j = response->project(keyframe_ci_gradient)[j];
-            refined.energy_model.extend_coordinates(
-                [&](const Eigen::VectorXd& step, Eigen::VectorXd& gradient, Eigen::VectorXd& image) {
-                    extend_image(step, image);
-                    gradient[no + j] = gradient_j;
-                    refined.predicted_gradient[no + j] = gradient[no + j] + image[no + j];
-                });
+            refined.energy_model.extend_coordinates([&](const Eigen::VectorXd& step,
+                                                        Eigen::VectorXd& gradient,
+                                                        Eigen::VectorXd& image) {
+                extend_image(step, image);
+                gradient[no + j] = gradient_j;
+                refined.predicted_gradient[no + j] = gradient[no + j] + image[no + j];
+            });
         } else {
             auto anchor = callbacks.evaluate_keyframe(refined.displacement);
-            refined.keyframes.save(anchor.energy, refined.displacement, refined.hessian_displacement,
-                                   refined.last_step, refined.candidate);
+            refined.keyframes.save(anchor.energy,
+                                   refined.displacement,
+                                   refined.hessian_displacement,
+                                   refined.last_step,
+                                   refined.candidate);
             refined.predicted_gradient = std::move(anchor.gradient);
             refined.energy_model.refresh(anchor.energy, refined.predicted_gradient);
         }
 
         refined = mcscf::continue_ciah_microsteps(workspace,
-                                                 initial_gradient,
-                                                 energy,
-                                                 options.gradient_tolerance,
-                                                 callbacks,
-                                                 std::move(refined));
+                                                  initial_gradient,
+                                                  energy,
+                                                  options.gradient_tolerance,
+                                                  callbacks,
+                                                  std::move(refined));
         mcscf::diagnostics::ciah_trace(
             "ciah_small_ci_feedback",
             "before=%.17g,after=%.17g,target=%.17g,omitted=%.17g,tried=1,continued=1,"
             "reused_keyframe=%d,positive_ci=%d,columns=%ld,seconds=%.17g",
-            before, after, target, missing, reused_keyframe, positive,
+            before,
+            after,
+            target,
+            missing,
+            reused_keyframe,
+            positive,
             static_cast<long>(response->rank()),
             std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
     }
@@ -1024,31 +1039,34 @@ bool build_ciah_macro_step(VbScfObjective* objective,
         // All intermediate candidates live in the frozen AH model. Globalize
         // only the final one, retaining the original physical trial.
         auto& refined = *refinement;
-        const auto original_source = accepted->strict_source_energy;
         auto original_convergence = std::move(accepted->converged_geometry);
         accepted->converged_geometry.reset();
         auto alternative = run_macro(refined);
-        const bool replaced = alternative.trial &&
-                              (accepted->converged_geometry ||
-                               alternative.trial->energy < macro.trial->energy);
+        const bool replaced =
+            alternative.trial &&
+            (accepted->converged_geometry || alternative.trial->energy < macro.trial->energy);
         mcscf::diagnostics::ciah_trace("ciah_small_ci_macro", "replaced=%d", replaced);
         if (replaced) {
             micro = std::move(refined);
             macro = std::move(alternative);
         } else {
             record->micro_iterations += refined.micro_iterations - micro.micro_iterations;
-            record->rejected_trial_count += refined.rejected_trial_count - micro.rejected_trial_count;
-            accepted->strict_source_energy = original_source;
+            record->rejected_trial_count +=
+                refined.rejected_trial_count - micro.rejected_trial_count;
             accepted->converged_geometry = std::move(original_convergence);
         }
     }
     mcscf::diagnostics::ciah_trace("ciah_ci_step_limit",
-                                  "calls=%d,skipped=%d,carrier_seconds=%.17g",
-                                  ci_step_limit_calls, ci_step_limit_skipped, ci_step_limit_seconds);
+                                   "calls=%d,skipped=%d,carrier_seconds=%.17g",
+                                   ci_step_limit_calls,
+                                   ci_step_limit_skipped,
+                                   ci_step_limit_seconds);
     mcscf::diagnostics::ciah_trace("ciah_projected_step_limit",
-                                  "calls=%d,screened=%d,images=%zu,bytes=%zu",
-                                  rotation_limit_samples, rotation_limit_screened,
-                                  rotation_images.size(), rotation_limit_memory.bytes());
+                                   "calls=%d,screened=%d,images=%zu,bytes=%zu",
+                                   rotation_limit_samples,
+                                   rotation_limit_screened,
+                                   rotation_images.size(),
+                                   rotation_limit_memory.bytes());
     record->micro_iterations += micro.micro_iterations;
     record->rejected_trial_count += micro.rejected_trial_count;
     const auto& displacement = micro.displacement;

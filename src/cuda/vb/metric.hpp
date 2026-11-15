@@ -35,6 +35,13 @@ class SelectedMetric {
     }
     void apply(linalg::ConstMatrixView rhs, linalg::MatrixView image) const;
     void solve(linalg::ConstMatrixView rhs, linalg::MatrixView image) const;
+    /** M=L L^T: y=L^T c, c=L^-T y, r_y=L^-1 r_c, r_c=L r_y.
+     * These maps preserve the selected space without a closure assumption.
+     */
+    void to_ci_coordinates(linalg::ConstMatrixView rhs, linalg::MatrixView image) const;
+    void from_ci_coordinates(linalg::ConstMatrixView rhs, linalg::MatrixView image) const;
+    void to_ci_covector(linalg::ConstMatrixView rhs, linalg::MatrixView image) const;
+    void ci_covector_to_structure(linalg::ConstMatrixView rhs, linalg::MatrixView image) const;
 
   private:
     Context* context_;

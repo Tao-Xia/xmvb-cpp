@@ -43,9 +43,17 @@ struct GeneralizedEigenActionResult {
 using GeneralizedEigenAction =
     std::function<GeneralizedEigenActionResult(const Eigen::Ref<const Eigen::MatrixXd>&)>;
 
-/**
- * @brief Explicit numerical and memory budgets for block Davidson.
- */
+/** Borrow the residual and fill the solver-owned inverse image without resizing it. */
+using DavidsonPreconditioner = std::function<void(
+    const Eigen::Ref<const Eigen::VectorXd>&, double, Eigen::Ref<Eigen::VectorXd>)>;
+
+enum class DavidsonStoppingCriterion {
+    BackwardError,
+    /** Consecutive Ritz-energy change and absolute normalized residual. */
+    EnergyAndResidual,
+};
+
+/** Explicit numerical and memory budgets for block Davidson. */
 struct DavidsonOptions {
     int n_roots;
     Eigen::Index max_iterations;
@@ -67,12 +75,12 @@ struct DavidsonOptions {
    */
     std::function<double(const Eigen::VectorXd&, double)> physical_residual_norm = {};
     /** @brief Optional inverse action on an algebraic residual covector.
-   * Given `(H - E S)c` and the Ritz energy E, return the positive inverse
-   * image in coefficient coordinates. The solver negates that image to form
+   * Given `(H - E S)c` and the Ritz energy E, fill the positive inverse
+   * image in the borrowed output coordinates. The solver negates that image to form
    * a Davidson correction. When unset, the diagonal `(H_ii - E S_ii)`
    * preconditioner is used.
    */
-    std::function<Eigen::VectorXd(const Eigen::VectorXd&, double)> residual_preconditioner = {};
+    DavidsonPreconditioner residual_preconditioner = {};
     /** @brief Optional per-iteration observation after all root residuals are
    * evaluated, including the final converged iteration. The arguments are
    * iteration number, active subspace size, lowest Ritz energy, and largest
@@ -85,6 +93,8 @@ struct DavidsonOptions {
    * unchanged. The caller must establish an isometric coordinate model.
    */
     bool identity_overlap = false;
+    /** EnergyAndResidual requires isometric coordinates (identity overlap). */
+    DavidsonStoppingCriterion stopping = DavidsonStoppingCriterion::BackwardError;
     /** @brief Optional solve totals for large-vector/control work, Ritz solve and H/M action. */
     std::function<void(double, double, double)> observe_work = {};
 };
@@ -113,6 +123,10 @@ Eigen::MatrixXd
 make_davidson_initial_vectors(const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
                               const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
                               int n_vectors);
+
+/** @brief Identity-metric seeds without materializing a unit diagonal vector. */
+Eigen::MatrixXd make_davidson_initial_vectors(const Eigen::Ref<const Eigen::VectorXd>& diagonal,
+                                              int n_vectors);
 
 /**
  * @brief Converged Davidson eigenpairs and solver diagnostics.

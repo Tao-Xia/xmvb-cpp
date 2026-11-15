@@ -15,8 +15,10 @@ void check_rows(bool shared) {
     data.pair_alpha = {0, 2, 1, 0, 0, 1};
     data.pair_beta = shared ? std::vector<xmvb::mcscf::StringIndex>{2, 0, 2, 1, 0, 1}
                             : std::vector<xmvb::mcscf::StringIndex>{0, 1, 0, 1, 0, 1};
-    data.offsets = {0, 1, 2, 4, 5, 6, 6};
-    data.terms = {{1, 2.0}, {0, 1.0}, {0, -1.0}, {1, 2.0}, {0, 0.3}, {0, 0.7}};
+    data.incidence_data = xmvb::vb::StructureIncidenceData::make(
+        {0, 1, 2, 4, 5, 6, 6},
+        {{1, 2.0}, {0, 1.0}, {0, -1.0}, {1, 2.0}, {0, 0.3}, {0, 0.7}},
+        data.n_structures);
     const std::array<std::size_t, 6> order{1, 2, 3, 4, 0, 5};
     const std::array<const char*, 3> alpha{"1 2-3", "1 2 4", "1 3-4"};
     const std::array<const char*, 2> beta{"1 2", "1 4"};
@@ -55,8 +57,8 @@ void check_one_off() {
     data.alpha_strings = {{0, 2}};
     data.beta_strings = {{}};
     data.pair_alpha = data.pair_beta = {0};
-    data.offsets = {0, 1};
-    data.terms = {{0, 1.0}};
+    data.incidence_data =
+        xmvb::vb::StructureIncidenceData::make({0, 1}, {{0, 1.0}}, data.n_structures);
     xmvb::output::DeterminantReport report(data, 2);
     std::ostringstream text;
     const Eigen::VectorXd c = Eigen::VectorXd::Constant(1, 0.25);
@@ -74,8 +76,8 @@ void check_original_structure_coefficients() {
     data.alpha_strings = data.beta_strings = {{0}, {1}};
     data.pair_alpha = {0, 1};
     data.pair_beta = {1, 0};
-    data.offsets = {0, 1, 2};
-    data.terms = {{0, 1.0}, {0, -1.0}};
+    data.incidence_data =
+        xmvb::vb::StructureIncidenceData::make({0, 1, 2}, {{0, 1.0}, {0, -1.0}}, data.n_structures);
     xmvb::output::DeterminantReport report(data, 0);
     const Eigen::VectorXd raw = Eigen::VectorXd::Constant(1, std::sqrt(0.5));
     std::ostringstream text;

@@ -24,6 +24,7 @@
 #include "integrals/active/two_electron.hpp"
 #include "mcscf/optimization/ciah/macro.hpp"
 #include "vbscf/determinants/pairs/same_spin_cache.hpp"
+#include "vbscf/core/contracts/eigensolver.hpp"
 
 namespace xmvb::cuda {
 namespace {
@@ -159,13 +160,17 @@ ScfResult solve_scf(Context& context,
             context, orbital, action, ao, core.view(), ao_metric.overlap(), nuclear);
     };
     const auto ci_options = [&] {
-        return linalg::make_davidson_options(nstr,
-                                             1,
-                                             1.0e-7,
-                                             options.gradient_tolerance,
-                                             options.energy_tolerance,
-                                             context.available_device_bytes() / 2,
-                                             ci_solver.identity_overlap());
+        auto ci = linalg::make_davidson_options(nstr,
+                                                1,
+                                                1.0e-7,
+                                                options.gradient_tolerance,
+                                                options.energy_tolerance,
+                                                context.available_device_bytes() / 2,
+                                                ci_solver.identity_overlap());
+        if (ci.identity_overlap)
+            vb::StructureSolveAccuracy{options.energy_tolerance, options.gradient_tolerance}
+                .configure_isometric_stopping(ci);
+        return ci;
     };
     ScfResult result;
     result.ao_upload_seconds = upload_seconds;

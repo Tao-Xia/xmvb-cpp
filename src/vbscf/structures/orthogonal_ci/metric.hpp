@@ -12,9 +12,14 @@
 #include "core/workspace.hpp"
 #include "vbscf/structures/overlap/spin_metric.hpp"
 
+namespace xmvb::mcscf {
+class CiOrbitalFrame;
+}
+
 namespace xmvb::vb {
 
 class StructureAction;
+struct StructureActiveIntegralAdjoint;
 class ExteriorOrbitalTransform;
 
 /** @brief Exact complete-space overlap inverse with occupation-block factors.
@@ -48,17 +53,36 @@ class StructureMetricInverse {
                                           double eigenvalue) const;
 
     /** @brief FULL-only isometric CI coordinates x=U^T T W C, U=W L^-T. */
-    Eigen::MatrixXd to_ci_coordinates(const Eigen::Ref<const Eigen::MatrixXd>& coefficients) const;
+    Eigen::MatrixXd to_ci_coordinates(const Eigen::Ref<const Eigen::MatrixXd>& coefficients,
+                                      const mcscf::CiOrbitalFrame* frame = nullptr) const;
     /** @brief Return structure coefficients J^-1 x without changing the physical state. */
-    Eigen::MatrixXd from_ci_coordinates(const Eigen::Ref<const Eigen::MatrixXd>& coordinates) const;
+    Eigen::MatrixXd from_ci_coordinates(const Eigen::Ref<const Eigen::MatrixXd>& coordinates,
+                                        const mcscf::CiOrbitalFrame* frame = nullptr) const;
     /** @brief Pull a CI covector back by J^T; also restores retained H/M Ritz images. */
-    Eigen::MatrixXd
-    ci_covector_to_structure(const Eigen::Ref<const Eigen::MatrixXd>& covector) const;
+    Eigen::MatrixXd ci_covector_to_structure(const Eigen::Ref<const Eigen::MatrixXd>& covector,
+                                             const mcscf::CiOrbitalFrame* frame = nullptr) const;
     /** @brief U^T H_orth U; no orbital exterior maps or overlap action. */
-    Eigen::MatrixXd
-    apply_ci_hamiltonian(const Eigen::Ref<const Eigen::MatrixXd>& coordinates) const;
+    Eigen::MatrixXd apply_ci_hamiltonian(const Eigen::Ref<const Eigen::MatrixXd>& coordinates,
+                                         const mcscf::CiOrbitalFrame* frame = nullptr) const;
     /** @brief Spin-preserving occupation-diagonal model in FULL CI coordinates. */
-    Eigen::VectorXd ci_occupation_diagonal() const;
+    Eigen::VectorXd ci_occupation_diagonal(const mcscf::CiOrbitalFrame* frame = nullptr) const;
+
+    /** Fixed-coefficient Rayleigh gradient from normalized physical CI and its
+     * already computed residual. Includes the finite-residual frame term.
+     * No new Hamiltonian action or exterior orbital transform is performed.
+     */
+    StructureActiveIntegralAdjoint
+    ci_state_adjoint(const Eigen::Ref<const Eigen::VectorXd>& coordinates,
+                     const Eigen::Ref<const Eigen::VectorXd>& residual) const;
+
+    /** Physical/product boundary maps, without an intervening U^T/U round trip. */
+    Eigen::MatrixXd to_ci_products(const Eigen::Ref<const Eigen::MatrixXd>& coefficients,
+                                   const mcscf::CiOrbitalFrame* frame = nullptr) const;
+    Eigen::MatrixXd from_ci_products(Eigen::MatrixXd carrier,
+                                     const mcscf::CiOrbitalFrame* frame = nullptr) const;
+    Eigen::MatrixXd
+    ci_product_covector_to_structure(Eigen::MatrixXd carrier,
+                                     const mcscf::CiOrbitalFrame* frame = nullptr) const;
 
     /** @brief U^T D^-1 U, congruent to the original complete-sector inverse. */
     Eigen::MatrixXd apply_ci_preconditioner(const Eigen::Ref<const Eigen::MatrixXd>& covector,
@@ -68,21 +92,22 @@ class StructureMetricInverse {
     /** @brief Transport coefficients in the closed FULL spin sector.
      * Applies the relative exterior map on the existing carrier workspace.
      */
-    Eigen::MatrixXd transport_coefficients(
-        const Eigen::Ref<const Eigen::MatrixXd>& coefficients,
-        const ExteriorOrbitalTransform& relative_alpha,
-        const ExteriorOrbitalTransform& relative_beta) const;
+    Eigen::MatrixXd transport_coefficients(const Eigen::Ref<const Eigen::MatrixXd>& coefficients,
+                                           const ExteriorOrbitalTransform& relative_alpha,
+                                           const ExteriorOrbitalTransform& relative_beta) const;
 
-    bool supports_transport_pullback() const noexcept { return chunk_width_ >= 2; }
+    bool supports_transport_pullback() const noexcept {
+        return chunk_width_ >= 2;
+    }
 
     /** @brief Generator and base-CI covectors of a relative FULL transport.
      * Reuses the two carrier lanes reserved for the complete-sector metric.
      */
-    std::pair<Eigen::MatrixXd, Eigen::VectorXd> transport_pullback(
-        const Eigen::Ref<const Eigen::VectorXd>& coefficients,
-        const Eigen::Ref<const Eigen::VectorXd>& covector,
-        const ExteriorOrbitalTransform& relative_alpha,
-        const ExteriorOrbitalTransform& relative_beta) const;
+    std::pair<Eigen::MatrixXd, Eigen::VectorXd>
+    transport_pullback(const Eigen::Ref<const Eigen::VectorXd>& coefficients,
+                       const Eigen::Ref<const Eigen::VectorXd>& covector,
+                       const ExteriorOrbitalTransform& relative_alpha,
+                       const ExteriorOrbitalTransform& relative_beta) const;
 
     /** @brief Trial metric inverse sharing immutable selected-sector factors. */
     Eigen::MatrixXd apply_at_transform(const Eigen::Ref<const Eigen::MatrixXd>& rhs,

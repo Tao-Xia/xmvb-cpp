@@ -31,6 +31,7 @@
 #include "parallel/openmp.hpp"
 #include "vbscf/determinants/pairs/same_spin_cache.hpp"
 #include "vbscf/structures/assembly/action.hpp"
+#include "vbscf/structures/expansion/expander.hpp"
 #include "vbscf/structures/assembly/operator_first.hpp"
 #include "vbscf/structures/assembly/input_columns.hpp"
 #include "vbscf/structures/assembly/states.hpp"
@@ -382,6 +383,44 @@ void check_fixed_states(const xmvb::vb::StructureAction& action) {
                 (fused.one_electron_gradient - separate.one_electron_gradient).norm() < 3e-11 &&
                 (fused.pair_kernel_gradient - separate.pair_kernel_gradient).norm() < 3e-11,
             "requesting shared sigma images changed the accepted adjoint");
+}
+
+void check_shared_selected_incidence() {
+    using namespace xmvb::vb;
+    RawStructureData raw;
+    raw.n_structures = 3;
+    raw.n_total_electrons = raw.n_active_electrons = 4;
+    raw.spin_multiplicity = 1;
+    // A mixed covalent/ionic, non-closed selection with incomplete native
+    // single-spin support. The complete carrier uses a different index range.
+    raw.raw_structure_orbitals = {1, 2, 3, 4, 1, 1, 2, 3, 2, 2, 4, 4};
+    auto expansion = StructureExpander{}.expand(raw);
+    const auto fixture = make_fixture(4, 2, 2);
+    const auto cache = build_orthogonal_spin_topology(expansion.alpha(), expansion.beta(), 4);
+    Terms rows;
+    Strings alpha, beta;
+    for (std::size_t p = 0; p < expansion.incidence().size(); ++p) {
+        const auto row = expansion.incidence()[p];
+        rows.emplace_back(row.begin(), row.end());
+        alpha.push_back(expansion.alpha()[p]);
+        beta.push_back(expansion.beta()[p]);
+    }
+    const auto* coefficients = expansion.incidence_data->terms.data();
+    const StructureAction action(expansion.incidence(),
+                                 3,
+                                 cache,
+                                 fixture.overlap,
+                                 fixture.one_electron,
+                                 fixture.two_electron,
+                                 4,
+                                 nullptr,
+                                 StructureActionMode::ActionOnly);
+    require(action.orthogonal_view().terms.data() == coefficients,
+            "selected native incidence was copied after carrier completion");
+    // The action must own the data even after the original input is replaced.
+    expansion = StructureExpansion{};
+    const auto vectors = test_vectors(3, 2);
+    check_images(action.apply(vectors), reference_images(fixture, rows, alpha, beta, vectors));
 }
 
 void check_rumer_case(int n) {
@@ -1146,12 +1185,13 @@ void check_product_response(int parity, bool unequal) {
             const auto single = action.prepare_active_adjoint(roots.col(k), {1.0}, {energies[k]});
             xmvb::vb::StructureIntegralDirection single_delta;
             xmvb::vb::StructureResponseRequest single_ci{response.col(k), {}};
-            const auto single_images =
-                action.apply_integral_direction(single, overlap, one, two, &single_delta, &single_ci);
+            const auto single_images = action.apply_integral_direction(
+                single, overlap, one, two, &single_delta, &single_ci);
             require((multi_images.hamiltonian.col(k) - single_images.hamiltonian).norm() < 3e-11 &&
                         (multi_images.overlap.col(k) - single_images.overlap).norm() < 3e-11 &&
                         (multi_ci.result.images.hamiltonian.col(k) -
-                         single_ci.result.images.hamiltonian).norm() < 3e-11,
+                         single_ci.result.images.hamiltonian)
+                                .norm() < 3e-11,
                     "shared four-state tile changed an H/S image");
             moment += 0.25 * single_delta.generator_direction;
             one_moment += 0.25 * single_delta.one_electron_direction;
@@ -5271,6 +5311,8 @@ int main(int argc, char** argv) {
                                  std::string(argv[1]) == "--tile-adjoint12-reference")) {
             benchmark_tile_adjoint(std::string(argv[1]) == "--tile-adjoint12-reference");
         } else if (argc == 1) {
+            check_case("check_shared_selected_incidence",
+                       [&] { check_shared_selected_incidence(); });
             check_case("check_operator_first", [&] { check_operator_first(); });
             const auto vacuum =
                 xmvb::vb::build_orthogonal_spin_topology(Strings{{}}, Strings{{}}, 0);

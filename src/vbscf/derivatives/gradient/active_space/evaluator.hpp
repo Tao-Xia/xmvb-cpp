@@ -17,9 +17,8 @@ namespace xmvb::vb {
 struct AcceptedPointContext;
 struct SelectedMetric;
 
-/** Re-solve the retained FULL Davidson problem at the original CI accuracy. */
-double refine_complete_ci_energy(const AcceptedPointContext& point,
-                                 double nuclear_repulsion_energy);
+/** Optional variational CI update inside a keyframe; never a terminal solve. */
+enum class FixedStructureUpdate { None, Krylov };
 
 /**
  * @brief Move-only forward evaluation awaiting the active-space adjoint.
@@ -140,7 +139,9 @@ class ActiveSpaceGradientEvaluator {
                              const SelectedMetric* metric = nullptr,
                              bool retain_context = false,
                              const AcceptedPointContext* accepted_point = nullptr,
-                             const PreparedActiveOrbitalView* prepared_orbitals = nullptr) const;
+                             const PreparedActiveOrbitalView* prepared_orbitals = nullptr,
+                             bool coefficient_gradient = true,
+                             FixedStructureUpdate update = FixedStructureUpdate::None) const;
 
     /**
    * @brief Evaluates a state-averaged gradient reusing a prebuilt active-space context.

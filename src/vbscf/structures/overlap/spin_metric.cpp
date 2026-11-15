@@ -1,6 +1,7 @@
 #include "vbscf/structures/overlap/spin_metric.hpp"
 
 #include "mcscf/ci/string_table.hpp"
+#include "mcscf/ci/occupation_diagonal.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -34,8 +35,7 @@ bool is_contiguous(const std::vector<Eigen::Index>& indices) {
     return indices.back() - indices.front() + 1 == static_cast<Eigen::Index>(indices.size());
 }
 
-bool gram_blocks_fit(const std::vector<std::vector<Eigen::Index>>& groups,
-                     std::size_t byte_limit) {
+bool gram_blocks_fit(const std::vector<std::vector<Eigen::Index>>& groups, std::size_t byte_limit) {
     std::size_t bytes = 0;
     for (const auto& group : groups) {
         const std::size_t d = group.size();
@@ -93,9 +93,9 @@ bool SpinMetric::fits(const StructureAction& action,
 }
 
 std::shared_ptr<SpinMetric> SpinMetric::try_build(const StructureAction& action,
-                                                const mcscf::StringTable& alpha,
-                                                const mcscf::StringTable& beta,
-                                                std::size_t byte_limit) {
+                                                  const mcscf::StringTable& alpha,
+                                                  const mcscf::StringTable& beta,
+                                                  std::size_t byte_limit) {
     auto groups = occupation_groups(action, alpha, beta);
     if (!gram_blocks_fit(groups, byte_limit))
         return {};
@@ -108,10 +108,10 @@ SpinMetric::SpinMetric(const StructureAction& action,
                        const xmvb::mcscf::StringTable& beta_strings,
                        std::size_t factor_byte_limit)
     : SpinMetric(action,
-                   occupation_groups(action, alpha_strings, beta_strings),
-                   alpha_strings,
-                   beta_strings,
-                   factor_byte_limit) {}
+                 occupation_groups(action, alpha_strings, beta_strings),
+                 alpha_strings,
+                 beta_strings,
+                 factor_byte_limit) {}
 
 SpinMetric::SpinMetric(const StructureAction& action,
                        std::vector<std::vector<Eigen::Index>> groups,
@@ -159,13 +159,14 @@ SpinMetric::SpinMetric(const StructureAction& action,
             const auto& a = action.topology_->terms[left];
             for (auto right = first; right < last; ++right) {
                 const auto& b = action.topology_->terms[right];
-                if (group_id[a.structure] != group_id[b.structure])
+                if (group_id[a.structure_index] != group_id[b.structure_index])
                     throw std::logic_error(
                         "one spin product touches inconsistent occupation blocks");
-                const Eigen::Index row = local_id[a.structure];
-                const Eigen::Index column = local_id[b.structure];
+                const Eigen::Index row = local_id[a.structure_index];
+                const Eigen::Index column = local_id[b.structure_index];
                 if (row >= column)
-                    grams[group_id[a.structure]](row, column) += a.coefficient * b.coefficient;
+                    grams[group_id[a.structure_index]](row, column) +=
+                        a.coefficient * b.coefficient;
             }
         }
     }
@@ -307,45 +308,13 @@ void SpinMetric::solve_in_place(Eigen::Ref<Eigen::MatrixXd> rhs, Part factor) co
 }
 
 Eigen::VectorXd SpinMetric::occupation_diagonal(const mcscf::ActiveIntegrals& integrals) const {
-    using core::PairIndex;
-    const auto n = integrals.one_electron.rows();
-    const auto& eri = integrals.pair_kernel;
-    Eigen::MatrixXd coulomb(n, n), exchange(n, n);
-    for (int p = 0; p < n; ++p)
-        for (int q = 0; q <= p; ++q) {
-            const auto pp = PairIndex::packed_pair_index(p, p);
-            const auto qq = PairIndex::packed_pair_index(q, q);
-            const auto pq = PairIndex::packed_pair_index(p, q);
-            coulomb(p, q) = eri(pp, qq);
-            exchange(p, q) = eri(pq, pq);
-        }
-
+    const mcscf::OccupationDiagonal model(integrals, n_alpha_, n_beta_);
     Eigen::VectorXd diagonal(dimension_);
     const int workers = coarse_openmp_thread_count(effective_openmp_thread_count(), blocks_.size());
 #pragma omp parallel for schedule(static) if (workers > 1) num_threads(workers)
     for (std::size_t i = 0; i < blocks_.size(); ++i) {
         const auto& block = blocks_[i];
-        const int doubles = std::popcount(block.doubled);
-        const int a = n_alpha_ - doubles, b = n_beta_ - doubles;
-        const int singles = a + b;
-        // Two singly occupied sites have the same spin in this fraction of
-        // all assignments at fixed alpha and beta electron counts.
-        const double equal_spin = singles < 2 ? 0.0
-                                              : static_cast<double>(a * (a - 1) + b * (b - 1)) /
-                                                    (singles * (singles - 1));
-        double energy = 0.0;
-        for (auto orbitals = block.occupied; orbitals; orbitals &= orbitals - 1) {
-            const int q = std::countr_zero(orbitals);
-            const bool double_q = (block.doubled >> q) & 1;
-            const int nq = 1 + double_q;
-            energy += nq * integrals.one_electron(q, q) + double_q * coulomb(q, q);
-            for (auto later = orbitals & (orbitals - 1); later; later &= later - 1) {
-                const int p = std::countr_zero(later);
-                const bool double_p = (block.doubled >> p) & 1;
-                const double same_spin = double_p || double_q ? double_p + double_q : equal_spin;
-                energy += (1 + double_p) * nq * coulomb(p, q) - same_spin * exchange(p, q);
-            }
-        }
+        const double energy = model(block.occupied, block.doubled);
         for (const auto row : block.indices)
             diagonal[row] = energy;
     }

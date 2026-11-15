@@ -246,7 +246,16 @@ void StructureCi::precondition(linalg::ConstMatrixView residual,
         context_->copy_to_device(energy_.data(), &energy, sizeof(double));
         full_->apply_ci_preconditioner(residual, energy_.view(), 0.0, output);
     } else if (point_->metric) {
-        point_->metric->solve(residual, output);
+        // L^T M^-1 L is identity in y=L^T c, as on the CPU adapter.
+        check_cuda(cudaMemcpy2DAsync(output.data,
+                                     output.ld * sizeof(double),
+                                     residual.data,
+                                     residual.ld * sizeof(double),
+                                     residual.rows * sizeof(double),
+                                     residual.cols,
+                                     cudaMemcpyDeviceToDevice,
+                                     context_->stream()),
+                   "selected CI isometric preconditioner");
     } else {
         const std::int64_t n = action_->size();
         positive_model<<<(n + 255) / 256, 256, 0, context_->stream()>>>(
@@ -279,21 +288,29 @@ DeviceDavidsonResult StructureCi::solve_device(linalg::ConstMatrixView initial,
         throw std::invalid_argument("CUDA structure CI initial block dimensions");
     Matrix<double> ci_guess;
     linalg::ConstMatrixView guess = initial;
-    if (full_) {
+    if (identity_overlap()) {
         ci_guess = Matrix<double>(*context_, initial.rows, initial.cols);
-        full_->to_ci_coordinates(initial, ci_guess.view());
+        if (full_)
+            full_->to_ci_coordinates(initial, ci_guess.view());
+        else
+            point_->metric->to_ci_coordinates(initial, ci_guess.view());
         guess = ci_guess.view();
     }
-    const DeviceEigenAction action =
-        [this](linalg::ConstMatrixView x, linalg::MatrixView h, linalg::MatrixView m) {
-            if (full_)
-                full_->apply_ci_hamiltonian(x, h);
-            else if (point_->metric) {
-                action_->apply_hamiltonian(x, h);
-                point_->metric->apply(x, m);
-            } else
-                action_->apply(x, h, m);
-        };
+    Matrix<double> selected_coefficients;
+    const DeviceEigenAction action = [this, &selected_coefficients](linalg::ConstMatrixView x,
+                                                                    linalg::MatrixView h,
+                                                                    linalg::MatrixView m) {
+        if (full_)
+            full_->apply_ci_hamiltonian(x, h);
+        else if (point_->metric) {
+            if (selected_coefficients.cols() != x.cols)
+                selected_coefficients = Matrix<double>(*context_, x.rows, x.cols);
+            point_->metric->from_ci_coordinates(x, selected_coefficients.view());
+            action_->apply_hamiltonian(selected_coefficients.view(), h);
+            point_->metric->to_ci_covector(h, h);
+        } else
+            action_->apply(x, h, m);
+    };
     const DeviceEigenPreconditioner inverse =
         [this](linalg::ConstMatrixView r, double e, linalg::MatrixView p) {
             precondition(r, e, p);
@@ -305,15 +322,24 @@ DeviceDavidsonResult StructureCi::solve_device(linalg::ConstMatrixView initial,
                                               guess,
                                               options,
                                               inverse);
-    if (full_) {
+    if (identity_overlap()) {
         const std::int64_t n = action_->size(), roots = options.n_roots;
         Matrix<double> m_structure(*context_, n, roots);
-        full_->ci_covector_to_structure(result.eigenpairs.eigenvector_matrix.view(),
-                                        m_structure.view());
-        full_->ci_covector_to_structure(result.hamiltonian_eigenvectors.view(),
-                                        result.hamiltonian_eigenvectors.view());
-        full_->from_ci_coordinates(result.eigenpairs.eigenvector_matrix.view(),
-                                   result.eigenpairs.eigenvector_matrix.view());
+        if (full_) {
+            full_->ci_covector_to_structure(result.eigenpairs.eigenvector_matrix.view(),
+                                            m_structure.view());
+            full_->ci_covector_to_structure(result.hamiltonian_eigenvectors.view(),
+                                            result.hamiltonian_eigenvectors.view());
+            full_->from_ci_coordinates(result.eigenpairs.eigenvector_matrix.view(),
+                                       result.eigenpairs.eigenvector_matrix.view());
+        } else {
+            point_->metric->ci_covector_to_structure(result.eigenpairs.eigenvector_matrix.view(),
+                                                     m_structure.view());
+            point_->metric->ci_covector_to_structure(result.hamiltonian_eigenvectors.view(),
+                                                     result.hamiltonian_eigenvectors.view());
+            point_->metric->from_ci_coordinates(result.eigenpairs.eigenvector_matrix.view(),
+                                                result.eigenpairs.eigenvector_matrix.view());
+        }
         result.overlap_eigenvectors = std::move(m_structure);
         result.identity_overlap = false;
     }

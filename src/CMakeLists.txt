@@ -74,7 +74,10 @@ set(XMVB_LINALG_SOURCES
   linalg/minres.cpp)
 
 set(XMVB_MCSCF_SOURCES
+  mcscf/ci/reference.cpp
+  mcscf/ci/orbital_frame.cpp
   mcscf/ci/sigma.cpp
+  mcscf/ci/sigma_panels.cpp
   mcscf/ci/sigma_tiles.cpp
   mcscf/ci/workspace.cpp
   mcscf/ci/sigma_plan.cpp

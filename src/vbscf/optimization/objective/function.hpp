@@ -8,6 +8,7 @@
 
 #include <Eigen/Core>
 
+#include "core/workspace.hpp"
 #include "vbscf/core/contracts/input.hpp"
 #include "vbscf/core/contracts/eigensolver.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
@@ -132,20 +133,15 @@ class VbScfObjective {
     VbScfCoupledKeyframeEvaluation
     evaluate_coupled_keyframe(const Eigen::VectorXd& parameter_vector,
                               const Eigen::Ref<const Eigen::MatrixXd>& structure_coefficients,
-                              const SelectedMetric* metric = nullptr) const;
+                              const SelectedMetric* metric = nullptr,
+                              bool coefficient_gradient = true,
+                              FixedStructureUpdate update = FixedStructureUpdate::None) const;
     VbScfCoupledKeyframeEvaluation evaluate_coupled_keyframe(const CiTransportPoint& point) const;
 
     /** @brief Relax CI from the supplied guess without orbital gradient backpropagation. */
     TrialEvaluation evaluate_trial_energy_with_structure_guess(
         const Eigen::VectorXd& parameter_vector,
-        const Eigen::Ref<const Eigen::MatrixXd>& selected_structure_coefficients,
-        double exploratory_stationarity = 0.0) const;
-
-    /** @brief Re-solve the accepted point without rebuilding its FULL operator. */
-    double strict_accepted_energy() const;
-
-    /** @brief Re-solve an intermediate trial at the original CI accuracy. */
-    void refine_trial_ci(TrialEvaluation& evaluation) const;
+        const Eigen::Ref<const Eigen::MatrixXd>& selected_structure_coefficients) const;
 
     /** @brief Completes the exact gradient for an energy-screened trial. */
     void complete_trial(TrialEvaluation* evaluation) const;
@@ -165,21 +161,26 @@ class VbScfObjective {
     bool active_inactive_orthogonal_ = false;
 
     OrbitalGradientResult gradient_result_;
+    // One previous accepted root block supplies a CI secant trial space.
+    // These are coefficient seeds only: no old Hamiltonian images are reused.
+    Eigen::MatrixXd previous_ci_roots_;
+    workspace::Temporary previous_ci_storage_;
     std::vector<double> energy_history_;
     std::vector<double> gradient_inf_norm_history_;
     std::vector<double> iteration_time_history_seconds_;
 
-    VbScfCoupledKeyframeEvaluation evaluate_coupled_keyframe_at(
-        OrbitalPreparationInput trial_orbitals,
-        const Eigen::Ref<const Eigen::MatrixXd>& structure_coefficients,
-        const SelectedMetric* metric,
-        const PreparedActiveOrbitalView* prepared_orbitals) const;
+    VbScfCoupledKeyframeEvaluation
+    evaluate_coupled_keyframe_at(OrbitalPreparationInput trial_orbitals,
+                                 const Eigen::Ref<const Eigen::MatrixXd>& structure_coefficients,
+                                 const SelectedMetric* metric,
+                                 const PreparedActiveOrbitalView* prepared_orbitals,
+                                 bool coefficient_gradient,
+                                 FixedStructureUpdate update = FixedStructureUpdate::None) const;
 
     TrialEvaluation evaluate_trial_energy_with_initial_eigenvectors(
         const Eigen::VectorXd& parameter_vector,
         bool canonicalize_sparse_gauge,
-        const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors,
-        double exploratory_stationarity = 0.0) const;
+        const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors) const;
 };
 
 } // namespace xmvb::vb

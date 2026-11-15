@@ -1,6 +1,8 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
+#include <memory>
 #include <iterator>
 #include <limits>
 #include <span>
@@ -31,6 +33,67 @@ struct StructureExpansionTerm {
    * intentionally allows any real coefficient.
    */
     double coefficient = 0.0;
+
+    /** CSR row, used by reverse structure projection. */
+    std::size_t group = 0;
+};
+
+/** Immutable, shared forward incidence and reverse structure index.
+ * Rows supplied to make() must be ordered by structure; equal entries are
+ * coalesced in place before the reverse index is built. No numerical matrix
+ * or orbital-dependent data belongs here.
+ */
+struct StructureIncidenceData {
+    std::vector<std::size_t> offsets;
+    std::vector<StructureExpansionTerm> terms;
+    std::vector<std::size_t> structure_offsets;
+    std::vector<std::size_t> structure_terms;
+
+    static std::shared_ptr<const StructureIncidenceData>
+    make(std::vector<std::size_t> offsets,
+         std::vector<StructureExpansionTerm> terms,
+         std::size_t n_structures) {
+        auto data = std::make_shared<StructureIncidenceData>();
+        if (offsets.empty())
+            offsets.push_back(0);
+        if (offsets.front() != 0 || offsets.back() != terms.size() ||
+            !std::is_sorted(offsets.begin(), offsets.end()))
+            throw std::invalid_argument("invalid structure incidence offsets");
+        data->structure_offsets.assign(core::checked_add(n_structures, std::size_t{1}), 0);
+        std::size_t write = 0;
+        for (std::size_t row = 0; row + 1 < offsets.size(); ++row) {
+            const auto end = offsets[row + 1];
+            auto read = offsets[row];
+            offsets[row] = write;
+            Eigen::Index previous = -1;
+            while (read < end) {
+                const auto structure = terms[read].structure_index;
+                if (structure < 0 || static_cast<std::size_t>(structure) >= n_structures ||
+                    structure <= previous)
+                    throw std::invalid_argument("invalid structure incidence ordering");
+                previous = structure;
+                double coefficient = 0.0;
+                do {
+                    coefficient += terms[read++].coefficient;
+                } while (read < end && terms[read].structure_index == structure);
+                if (coefficient != 0.0) {
+                    terms[write++] = {structure, coefficient, row};
+                    ++data->structure_offsets[structure + 1];
+                }
+            }
+        }
+        offsets.back() = write;
+        terms.resize(write);
+        for (std::size_t i = 0; i < n_structures; ++i)
+            data->structure_offsets[i + 1] += data->structure_offsets[i];
+        data->structure_terms.resize(write);
+        auto next = data->structure_offsets;
+        for (std::size_t i = 0; i < write; ++i)
+            data->structure_terms[next[terms[i].structure_index]++] = i;
+        data->offsets = std::move(offsets);
+        data->terms = std::move(terms);
+        return data;
+    }
 };
 
 /** @brief Borrowed spin-string pairs; topology queries never decode occupations. */
@@ -123,6 +186,12 @@ class SpinStringRows {
 /** Borrowed pair-to-structure rows backed by CSR or existing row storage. */
 class StructureIncidence {
   public:
+    StructureIncidence(std::shared_ptr<const StructureIncidenceData> owner)
+        : owner_(std::move(owner)), offsets_(&owner_->offsets), terms_(&owner_->terms) {}
+    const std::shared_ptr<const StructureIncidenceData>& owner() const {
+        return owner_;
+    }
+
     StructureIncidence(const std::vector<std::size_t>& offsets,
                        const std::vector<StructureExpansionTerm>& terms)
         : offsets_(&offsets), terms_(&terms) {}
@@ -193,6 +262,7 @@ class StructureIncidence {
     }
 
   private:
+    std::shared_ptr<const StructureIncidenceData> owner_;
     const std::vector<std::size_t>* offsets_ = nullptr;
     const std::vector<StructureExpansionTerm>* terms_ = nullptr;
     const std::vector<std::vector<StructureExpansionTerm>>* rows_ = nullptr;
@@ -337,13 +407,9 @@ struct StructureExpansion {
     std::vector<mcscf::StringIndex> pair_alpha;
     std::vector<mcscf::StringIndex> pair_beta;
 
-    /** CSR row boundaries for pair-to-structure terms. */
-    std::vector<std::size_t> offsets;
-
-    /**
-   * @brief Contiguous pair-to-structure expansion coefficients.
-   */
-    std::vector<StructureExpansionTerm> terms;
+    /** Shared immutable incidence; copying an input never copies its expansion. */
+    std::shared_ptr<const StructureIncidenceData> incidence_data =
+        StructureIncidenceData::make({}, {}, 0);
 
     SpinStringRows alpha() const {
         return {alpha_strings, pair_alpha};
@@ -352,7 +418,7 @@ struct StructureExpansion {
         return {beta_strings, pair_beta};
     }
     StructureIncidence incidence() const {
-        return {offsets, terms};
+        return {incidence_data};
     }
 };
 

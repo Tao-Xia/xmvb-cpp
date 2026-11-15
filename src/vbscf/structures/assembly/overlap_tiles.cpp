@@ -140,7 +140,7 @@ Eigen::MatrixXd StructureAction::cross_overlap(const Eigen::Ref<const Eigen::Mat
                             const auto& term = topology_->terms[t];
                             coefficients.row(j).noalias() +=
                                 term.coefficient *
-                                vectors.row(term.structure).segment(first, count_rhs);
+                                vectors.row(term.structure_index).segment(first, count_rhs);
                         }
                     result.middleCols(first, count_rhs).noalias() += projected * coefficients;
                 }
@@ -162,7 +162,7 @@ Eigen::MatrixXd StructureAction::cross_overlap(const Eigen::Ref<const Eigen::Mat
             for (std::size_t term = topology_->offsets[group]; term < topology_->offsets[group + 1];
                  ++term)
                 coefficients[group] += topology_->terms[term].coefficient *
-                                       vectors(topology_->terms[term].structure, column);
+                                       vectors(topology_->terms[term].structure_index, column);
 
         for (std::int64_t begin = 0;
              begin < core::checked_index<std::int64_t>(sources.columns.size());
@@ -250,8 +250,8 @@ UpperPair StructureAction::cross_overlap_adjoint(const Eigen::VectorXd& left,
     for (std::size_t group = 0; group < topology_->products.size(); ++group)
         for (std::size_t t = topology_->offsets[group]; t < topology_->offsets[group + 1]; ++t) {
             const auto& term = topology_->terms[t];
-            coefficients(group, 0) += term.coefficient * left[term.structure];
-            coefficients(group, 1) += term.coefficient * right[term.structure];
+            coefficients(group, 0) += term.coefficient * left[term.structure_index];
+            coefficients(group, 1) += term.coefficient * right[term.structure_index];
         }
     UpperPair result{left_requested ? Eigen::MatrixXd::Zero(la.n_orbitals(), la.n_orbitals()).eval()
                                     : Eigen::MatrixXd{},

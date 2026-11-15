@@ -97,9 +97,9 @@ StructureAction::cross_overlap_transport_gradient(const Eigen::VectorXd& lambda,
                 for (auto t = topology_->offsets[g]; t < topology_->offsets[g + 1]; ++t) {
                     const auto& term = topology_->terms[t];
                     if (varying_origin)
-                        u(a, j) += term.coefficient * reference[term.structure];
-                    ub(a, j) += term.coefficient * base[term.structure];
-                    uc(a, j) += term.coefficient * transported[term.structure];
+                        u(a, j) += term.coefficient * reference[term.structure_index];
+                    ub(a, j) += term.coefficient * base[term.structure_index];
+                    uc(a, j) += term.coefficient * transported[term.structure_index];
                 }
             }
         }
@@ -131,7 +131,8 @@ StructureAction::cross_overlap_transport_gradient(const Eigen::VectorXd& lambda,
                                                       {metric_left, uc, -1.0},
                                                       {u, second_left}};
             const double multiplicity = shared_moment ? 2.0 : 1.0;
-            result.charts.left += multiplicity *
+            result.charts.left +=
+                multiplicity *
                 ca.generator_pullback(std::span(alpha_terms).first(varying_origin ? 4 : 3));
             if (varying_origin)
                 result.charts.right += multiplicity * oa.generator_pullback(first_left, u);
@@ -160,7 +161,7 @@ StructureAction::cross_overlap_transport_gradient(const Eigen::VectorXd& lambda,
                     const double value = first_left(topology_->products[g] / n_unique_beta_, j);
                     for (auto t = topology_->offsets[g]; t < topology_->offsets[g + 1]; ++t) {
                         const auto& term = topology_->terms[t];
-                        result.image[term.structure] += term.coefficient * value;
+                        result.image[term.structure_index] += term.coefficient * value;
                     }
                 }
         }

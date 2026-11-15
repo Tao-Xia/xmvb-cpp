@@ -181,7 +181,7 @@ void check_product_jet(const xmvb::vb::StructureAction& source,
             for (int g = 0; g < view.products.size(); ++g)
                 for (auto t = view.offsets[g]; t < view.offsets[g + 1]; ++t)
                     result(view.products[g] / nb, view.products[g] % nb) +=
-                        view.terms[t].coefficient * x(view.terms[t].structure, 0);
+                        view.terms[t].coefficient * x(view.terms[t].structure_index, 0);
             ta.apply_left(&result);
             tb.apply_right(&result);
             return result;

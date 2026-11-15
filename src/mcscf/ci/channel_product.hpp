@@ -9,6 +9,8 @@
 #include <vector>
 #include <utility>
 #include <Eigen/Core>
+#include <cblas.h>
+#include <limits>
 #include "core/workspace.hpp"
 
 namespace xmvb::mcscf::detail {
@@ -342,16 +344,49 @@ inline void contract_channel_gram(const ChannelProduct& basis,
                                                 last - first,
                                                 k);
                 Eigen::Map<Eigen::MatrixXd> gram(scratch + (2 * thread + 1) * area, k, k);
-                gram.noalias() = (exchange ? 2.0 : 1.0) * a.transpose() * b;
+                const bool symmetric = left == right;
+                if (symmetric) {
+                    // A^T A has one independent triangle. Consume the existing
+                    // row-major panel as column-major A^T; no packing copy or
+                    // square-root exchange weights are needed.
+                    const auto dimension = core::checked_index<blasint>(k);
+                    std::int64_t begin = 0;
+                    while (begin < last - first) {
+                        const auto rows = core::checked_index<blasint>(std::min<std::int64_t>(
+                            last - first - begin, std::numeric_limits<blasint>::max()));
+                        cblas_dsyrk(CblasColMajor,
+                                    CblasLower,
+                                    CblasNoTrans,
+                                    dimension,
+                                    rows,
+                                    exchange ? 2.0 : 1.0,
+                                    a.data() + begin * k,
+                                    dimension,
+                                    begin ? 1.0 : 0.0,
+                                    gram.data(),
+                                    dimension);
+                        begin += rows;
+                    }
+                } else
+                    gram.noalias() = (exchange ? 2.0 : 1.0) * a.transpose() * b;
                 if (exchange)
                     for (int v = 0; v < width; ++v) {
                         const StringIndex shift = v * layout.rhs_stride(group);
                         for (const int base : layout.diagonals(
                                  diagonal_images, group, first - shift, last - shift)) {
                             const StringIndex local = base - layout.begin(group) + shift - first;
-                            gram.noalias() -= a.row(local).transpose() * b.row(local);
+                            if (symmetric)
+                                for (int j = 0; j < k; ++j)
+                                    for (int i = j; i < k; ++i)
+                                        gram(i, j) -= a(local, i) * a(local, j);
+                            else
+                                gram.noalias() -= a.row(local).transpose() * b.row(local);
                         }
                     }
+                if (symmetric)
+                    for (int j = 0; j < k; ++j)
+                        for (int i = j + 1; i < k; ++i)
+                            gram(j, i) = gram(i, j);
                 if (!group)
                     partial += gram;
                 else

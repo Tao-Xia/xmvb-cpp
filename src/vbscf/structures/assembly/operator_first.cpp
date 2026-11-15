@@ -135,7 +135,7 @@ OperatorFirstImages OperatorFirstAction::apply(const Eigen::Ref<const Eigen::Mat
     for (std::size_t p = 0; p < view.products.size(); ++p)
         for (std::size_t t = view.offsets[p]; t < view.offsets[p + 1]; ++t) {
             const auto& term = view.terms[t];
-            values.row(p).noalias() += term.coefficient * vectors.row(term.structure);
+            values.row(p).noalias() += term.coefficient * vectors.row(term.structure_index);
         }
     Eigen::MatrixXd h_products =
         Eigen::MatrixXd::Zero(overlap_only ? 0 : view.products.size(), rhs);

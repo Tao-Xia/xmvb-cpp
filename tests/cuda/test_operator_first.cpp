@@ -54,7 +54,7 @@ void check_reduction(xmvb::cuda::Context& c,
         alpha[p] = v.products[p] / nb;
         beta[p] = v.products[p] % nb;
         for (auto t = v.offsets[p]; t < v.offsets[p + 1]; ++t)
-            x(p, 0) += v.terms[t].coefficient * coefficients(v.terms[t].structure, 0);
+            x(p, 0) += v.terms[t].coefficient * coefficients(v.terms[t].structure_index, 0);
     }
     std::iota(ids.begin(), ids.end(), 0);
     const auto& masks = v.alpha.occupations();

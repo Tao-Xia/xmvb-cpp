@@ -97,9 +97,8 @@ void check_structure_table_bytes() {
     std::ostringstream expected, actual;
     expected << "\n\n              ******  COEFFICIENTS OF STRUCTURES ******\n\n";
     for (Eigen::Index i = 0; i < values.size(); ++i)
-        expected << "    " << std::setw(4) << i + 1 << "    " << std::fixed
-                 << std::setprecision(8) << std::setw(13) << values[i]
-                 << "  ******   1-2    \n";
+        expected << "    " << std::setw(4) << i + 1 << "    " << std::fixed << std::setprecision(8)
+                 << std::setw(13) << values[i] << "  ******   1-2    \n";
     actual << std::scientific << std::unitbuf << std::setprecision(16);
     xmvb::output::print_structure_coefficients(actual, values, structures);
     require(actual.str() == expected.str(),
@@ -137,8 +136,10 @@ void check_selected_open_shell() {
     data.beta_strings = {{0}, {1}, {2}};
     data.pair_alpha = {0, 1, 2};
     data.pair_beta = {0, 1, 2};
-    data.offsets = {0, 2, 4, 6};
-    data.terms = {{0, 1.0}, {1, -0.5}, {0, 0.3}, {1, 0.8}, {1, -0.2}, {2, 1.3}};
+    data.incidence_data = xmvb::vb::StructureIncidenceData::make(
+        {0, 2, 4, 6},
+        {{0, 1.0}, {1, -0.5}, {0, 0.3}, {1, 0.8}, {1, -0.2}, {2, 1.3}},
+        data.n_structures);
     result.optimized_input.orbital_preparation_input.n_active_orbitals = 3;
     Eigen::Matrix3d s;
     s << 1.1, 0.2, -0.1, 0.2, 1.3, 0.15, -0.1, 0.15, 0.9;

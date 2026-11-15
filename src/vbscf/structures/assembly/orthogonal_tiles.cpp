@@ -44,7 +44,7 @@ int StructureAction::detect_spin_exchange() const {
         for (std::size_t offset = 0; offset < end - begin; ++offset) {
             const auto& a = topology_->terms[begin + offset];
             const auto& b = topology_->terms[paired + offset];
-            if (a.structure != b.structure)
+            if (a.structure_index != b.structure_index)
                 return 0;
             const int sign = a.coefficient == b.coefficient    ? 1
                              : a.coefficient == -b.coefficient ? -1
@@ -235,7 +235,7 @@ StructureAction::contract_product_tiles(const Eigen::Ref<const Eigen::MatrixXd>&
                      ++term)
                     coefficients(group, vector) +=
                         topology_->terms[term].coefficient *
-                        vectors(topology_->terms[term].structure, vector_begin + vector);
+                        vectors(topology_->terms[term].structure_index, vector_begin + vector);
         Eigen::MatrixXd h_products =
             Eigen::MatrixXd::Zero(!ordered ? topology_->products.size() : 0, width);
         Eigen::MatrixXd m_products = Eigen::MatrixXd::Zero(

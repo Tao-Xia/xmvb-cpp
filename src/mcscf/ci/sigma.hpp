@@ -20,7 +20,9 @@ namespace xmvb::mcscf {
 namespace detail {
 class SigmaSchedule;
 struct SigmaSweepTimings;
-}
+class AlphaChannelSources;
+class DiagonalChannelCache;
+} // namespace detail
 
 class ProductSupport;
 class DirectCiSigmaAction;
@@ -240,8 +242,9 @@ class DirectCiSigmaAction {
                           int exchange_parity = 0) const;
 
     /** @brief Raw triangular-channel image for a consumer that projects spin exchange itself. */
-    Eigen::MatrixXd apply_before_exchange_projection(
-        const Eigen::Ref<const Eigen::MatrixXd>& coefficients, int exchange_parity) const;
+    Eigen::MatrixXd
+    apply_before_exchange_projection(const Eigen::Ref<const Eigen::MatrixXd>& coefficients,
+                                     int exchange_parity) const;
 
     /** @brief Stream the exact Hamiltonian action through beta-column callbacks.
    *
@@ -458,24 +461,27 @@ class DirectCiSigmaAction {
     Eigen::MatrixXd build_hamiltonian_pair_kernel(const ActiveIntegrals& integrals,
                                                   int n_electrons) const;
     /** @brief Scatter into (block_width * alpha_count, orbital_pairs), strings contiguous. */
-    void scatter_one_body_intermediate(const Eigen::Ref<const Eigen::MatrixXd>& coefficients,
-                                       StringIndex alpha_begin,
-                                       std::int64_t alpha_count,
-                                       std::int64_t beta_target,
-                                       Eigen::Ref<Eigen::MatrixXd> intermediate,
-                                       int exchange_parity = 0) const;
+    void
+    scatter_one_body_intermediate(const Eigen::Ref<const Eigen::MatrixXd>& coefficients,
+                                  StringIndex alpha_begin,
+                                  std::int64_t alpha_count,
+                                  std::int64_t beta_target,
+                                  Eigen::Ref<Eigen::MatrixXd> intermediate,
+                                  int exchange_parity = 0,
+                                  const detail::AlphaChannelSources* alpha_sources = nullptr) const;
     const SpinConnections& beta_connections() const noexcept;
+    void apply_sigma_panels(const Eigen::Ref<const Eigen::MatrixXd>& coefficients,
+                            Eigen::MatrixXd* sigma,
+                            int parity,
+                            bool project_exchange) const;
 
-    /** @brief Shared channel sweep for sigma, integral adjoints, or both.
-   * Non-null sigma receives H * left. A sigma-only request neither constructs
-   * a kernel gradient nor scatters/copies the unused right-hand channels.
+    /** @brief Fused integral-adjoint sweep. Non-null sigma also receives H * left.
+   * Pure Hamiltonian actions consume cache-local panels instead.
    */
     DirectCiIntegralAdjoint contract_channels(const Eigen::Ref<const Eigen::MatrixXd>& left,
                                               const Eigen::Ref<const Eigen::MatrixXd>& right,
                                               Eigen::MatrixXd* sigma,
-                                              int exchange_parity,
-                                              bool collect_integrals,
-                                              bool project_exchange = true) const;
+                                              int exchange_parity) const;
 
     /** @brief Generated channel graph shared by tiled sigma and its integral VJP. */
     std::vector<DirectCiIntegralAdjoint>
@@ -499,10 +505,7 @@ class DirectCiSigmaAction {
                           StringIndex beta_begin,
                           std::int64_t beta_count,
                           int exchange_parity,
-                          int beta_batch,
-                          const Eigen::Ref<const Eigen::MatrixXd>& coefficients,
                           const Eigen::Ref<const Eigen::MatrixXd>& scattered,
-                          Eigen::Ref<Eigen::MatrixXd> scatter_scratch,
                           Eigen::Ref<Eigen::MatrixXd> workspace,
                           Eigen::Ref<Eigen::MatrixXd> sigma,
                           detail::SigmaSweepTimings* timings) const;
@@ -515,6 +518,7 @@ class DirectCiSigmaAction {
     std::shared_ptr<const SpinConnections> alpha_;
     std::shared_ptr<const SpinConnections> distinct_beta_;
     std::shared_ptr<detail::SigmaSchedule> schedule_;
+    std::shared_ptr<detail::DiagonalChannelCache> diagonal_channels_;
 };
 
 } // namespace xmvb::mcscf

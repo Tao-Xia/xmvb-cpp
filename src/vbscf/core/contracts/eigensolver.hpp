@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
+#include "linalg/eigensolver.hpp"
 
 namespace xmvb::vb {
 
@@ -15,18 +16,14 @@ enum class StructureEigensolver {
 /**
  * @brief Accuracy requested from the structure-space eigensolver.
  *
- * The energy threshold is converted to a relative eigen-equation backward
- * error with the current Ritz-value scale. The gradient threshold independently
- * limits that backward error. A separate first-order CI stationarity budget
- * prevents energy convergence alone from accepting inaccurate state vectors.
- * Neither algebraic residual is a certificate of orbital-gradient accuracy:
- * small structure gaps can amplify their effect through orbital coupling.
+ * Exact isometric CI adapters use consecutive energy change and the physical
+ * residual norm. Streamed nonorthogonal adapters retain the backward-error and
+ * algebraic stationarity budgets. A residual tolerance alone does not certify
+ * orbital-gradient accuracy: small gaps can amplify orbital coupling.
  */
 struct StructureSolveAccuracy {
     double energy_tolerance = 1.0e-7;
     double gradient_tolerance = 1.0e-3;
-    // Optional intermediate FULL CIAH trial budget. Outer tolerances stay fixed.
-    double exploratory_stationarity = 0.0;
 
     /** @brief Validates both outer accuracy requirements. */
     void validate() const {
@@ -46,6 +43,19 @@ struct StructureSolveAccuracy {
     double stationarity_tolerance() const {
         validate();
         return std::min(energy_tolerance, gradient_tolerance);
+    }
+
+    /** Use the same CI energy/residual policy on CPU and GPU when the
+     * adapter supplies exact isometric coordinates of the selected space.
+     * A spin-only or diagonal preconditioner does not establish this property.
+     */
+    void configure_isometric_stopping(linalg::DavidsonOptions& options) const {
+        validate();
+        if (!options.identity_overlap)
+            throw std::invalid_argument("physical CI stopping requires isometric coordinates");
+        options.stopping = linalg::DavidsonStoppingCriterion::EnergyAndResidual;
+        options.energy_tolerance = std::min(energy_tolerance, 1.0e-8);
+        options.stationarity_tolerance = std::sqrt(options.energy_tolerance);
     }
 
     /**

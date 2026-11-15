@@ -12,10 +12,14 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
 #include <Eigen/Core>
+#include <Eigen/Eigenvalues>
+
+#include "linalg/davidson_core.hpp"
 #include <Eigen/LU>
 #include <Eigen/SparseCore>
 
@@ -29,11 +33,17 @@
 #include "mcscf/ci/planner.hpp"
 #include "mcscf/ci/product_support.hpp"
 #include "mcscf/ci/sigma.hpp"
+#include "mcscf/ci/sigma_scatter.hpp"
+#include "mcscf/ci/orbital_frame.hpp"
+#include "mcscf/ci/spin.hpp"
+#include "linalg/eigensolver.hpp"
+#include "parallel/openmp.hpp"
 #include "vbscf/determinants/pairs/evaluator.hpp"
 #include "vbscf/determinants/pairs/same_spin_cache.hpp"
 #include "core/pair_index.hpp"
 #include "integrals/active/two_electron.hpp"
 #include "vbscf/structures/assembly/action.hpp"
+#include "vbscf/structures/assembly/states.hpp"
 #include "vbscf/structures/assembly/selected_coefficients.hpp"
 #include "vbscf/structures/assembly/hamiltonian_overlap.hpp"
 
@@ -53,6 +63,10 @@ void check_fused_response(const xmvb::mcscf::DirectCiSigmaAction& action,
     const auto adjoint = action.integral_adjoint(response, state);
     const Eigen::MatrixXd moment = action.one_body_generator_adjoint(response, state);
     const Eigen::MatrixXd density = 0.5 * (moment + moment.transpose()).eval();
+    if ((fused.sigma - sigma).norm() >= 3e-12 * std::max(1.0, sigma.norm()))
+        std::cerr << "sigma mismatch rows=" << response.rows() << " cols=" << response.cols()
+                  << " difference=" << (fused.sigma - sigma).norm()
+                  << " reference=" << fused.sigma.norm() << " actual=" << sigma.norm() << '\n';
     require((fused.integrals.one_electron - density).norm() < 3e-12 * std::max(1.0, density.norm()),
             "one-electron integral adjoint differs from the symmetrized generator density");
     require((fused.sigma - sigma).norm() < 3e-12 * std::max(1.0, sigma.norm()),
@@ -82,6 +96,26 @@ void check_joint_structure_response(const xmvb::vb::StructureAction& action,
             raw(j, i) = std::sin(0.23 * (i + 1) * (j + 2));
         states.states[i].normalized_state_weight = states.normalized_state_weights[i];
         states.states[i].coefficient_matrix = action.expand_structure_block(raw.col(i));
+    }
+    for (const double scale : {0.37, 2.1}) {
+        const Eigen::MatrixXd c = scale * raw.leftCols(1);
+        const auto full = xmvb::vb::evaluate_fixed_states(action, c, {0.7});
+        const auto orbital = xmvb::vb::evaluate_fixed_states(action, c, {0.7}, nullptr, false);
+        require(std::abs(full.energies[0] - orbital.energies[0]) <
+                        3e-11 * std::max(1.0, std::abs(full.energies[0])) &&
+                    (full.coefficients - orbital.coefficients).norm() <
+                        3e-11 * std::max(1.0, full.coefficients.norm()),
+                "scalar keyframe changed normalized state or Rayleigh energy");
+        const auto& x = full.integral_adjoint.value();
+        const auto& y = orbital.integral_adjoint.value();
+        require((x.overlap - y.overlap).norm() < 3e-11 * std::max(1.0, x.overlap.norm()) &&
+                    (x.one_electron - y.one_electron).norm() <
+                        3e-11 * std::max(1.0, x.one_electron.norm()) &&
+                    (x.pair_kernel - y.pair_kernel).norm() <
+                        3e-11 * std::max(1.0, x.pair_kernel.norm()),
+                "scalar keyframe dropped a finite-residual orbital/overlap gradient term");
+        require(orbital.residuals.size() == 0 && orbital.coefficient_gradient.size() == 0,
+                "orbital-only keyframe still generated full CI residual images");
     }
     const auto accepted =
         action.prepare_active_adjoint(raw, states.normalized_state_weights, {-1.3, -0.9});
@@ -1282,6 +1316,19 @@ void check_sigma_action() {
     for (int column = 0; column < metric_rhs.cols(); ++column)
         for (int row = 0; row < metric_rhs.rows(); ++row)
             metric_rhs(row, column) = std::sin(0.19 * (row + 1) * (column + 2));
+    const xmvb::mcscf::CiOrbitalFrame frame(full_action.orthogonal_view().sigma,
+                                            full_action.orthogonal_integrals());
+    const Eigen::MatrixXd seed = metric_rhs.leftCols(2);
+    const Eigen::MatrixXd framed = full_metric.to_ci_coordinates(seed, &frame);
+    const auto physical = full_action.apply(seed);
+    require((full_metric.from_ci_coordinates(framed, &frame) - seed).norm() < 2e-10 &&
+                (full_metric.ci_covector_to_structure(
+                     full_metric.apply_ci_hamiltonian(framed, &frame), &frame) -
+                 physical.hamiltonian)
+                        .norm() < 2e-10 &&
+                (full_metric.ci_covector_to_structure(framed, &frame) - physical.overlap).norm() <
+                    2e-10,
+            "internal CI frame changed physical coefficients or H/M images");
     const Eigen::MatrixXd metric_solution = full_metric.apply(metric_rhs);
     for (int column = 0; column < metric_rhs.cols(); ++column) {
         const Eigen::VectorXd coefficients = metric_rhs.col(column);
@@ -1735,16 +1782,17 @@ void check_streamed_generator_adjoint_requests() {
                              bool transpose,
                              bool compact) -> xmvb::mcscf::DirectCiStreamedGeneratorRequest {
         const Eigen::MatrixXd* carrier = &right;
-        xmvb::mcscf::DirectCiTileReader read = [&, carrier](const std::vector<xmvb::mcscf::StringIndex>& betas,
-                                                            const std::vector<xmvb::mcscf::StringIndex>& rows,
-                                                            Eigen::Ref<Eigen::MatrixXd> values,
-                                                            xmvb::mcscf::DirectCiRead mode) {
-            borrowed_values.assign(n_alpha, -97.0);
-            borrowed_rows.clear();
-            for (int b = 0; b < static_cast<int>(betas.size()); ++b)
-                for (int a = 0; a < static_cast<int>(rows.size()); ++a)
-                    values(a, b) = (*carrier)(rows[a], betas[b]);
-        };
+        xmvb::mcscf::DirectCiTileReader read =
+            [&, carrier](const std::vector<xmvb::mcscf::StringIndex>& betas,
+                         const std::vector<xmvb::mcscf::StringIndex>& rows,
+                         Eigen::Ref<Eigen::MatrixXd> values,
+                         xmvb::mcscf::DirectCiRead mode) {
+                borrowed_values.assign(n_alpha, -97.0);
+                borrowed_rows.clear();
+                for (int b = 0; b < static_cast<int>(betas.size()); ++b)
+                    for (int a = 0; a < static_cast<int>(rows.size()); ++a)
+                        values(a, b) = (*carrier)(rows[a], betas[b]);
+            };
         xmvb::mcscf::DirectCiColumnReader column =
             [&, carrier, compact](int beta_column) -> xmvb::mcscf::DirectCiColumnView {
             borrowed_values.assign(n_alpha, -97.0);
@@ -1813,14 +1861,15 @@ void check_streamed_generator_adjoint_requests() {
             bool transpose,
             bool compact) -> xmvb::mcscf::DirectCiStreamedGeneratorRequest {
         const Eigen::MatrixXd* carrier = &right;
-        xmvb::mcscf::DirectCiTileReader read = [carrier](const std::vector<xmvb::mcscf::StringIndex>& betas,
-                                                         const std::vector<xmvb::mcscf::StringIndex>& rows,
-                                                         Eigen::Ref<Eigen::MatrixXd> values,
-                                                         xmvb::mcscf::DirectCiRead mode) {
-            for (int b = 0; b < static_cast<int>(betas.size()); ++b)
-                for (int a = 0; a < static_cast<int>(rows.size()); ++a)
-                    values(a, b) = (*carrier)(rows[a], betas[b]);
-        };
+        xmvb::mcscf::DirectCiTileReader read =
+            [carrier](const std::vector<xmvb::mcscf::StringIndex>& betas,
+                      const std::vector<xmvb::mcscf::StringIndex>& rows,
+                      Eigen::Ref<Eigen::MatrixXd> values,
+                      xmvb::mcscf::DirectCiRead mode) {
+                for (int b = 0; b < static_cast<int>(betas.size()); ++b)
+                    for (int a = 0; a < static_cast<int>(rows.size()); ++a)
+                        values(a, b) = (*carrier)(rows[a], betas[b]);
+            };
         xmvb::mcscf::DirectCiColumnReader column =
             [&, carrier, compact](int b) -> xmvb::mcscf::DirectCiColumnView {
             if (compact)
@@ -1978,14 +2027,15 @@ void check_exchange_reduced_generator() {
         const Eigen::MatrixXd other = (0.37 * left + 0.19 * right_a).eval();
         const auto request = [&](const Eigen::MatrixXd& right, double scale, bool transpose) {
             const auto* carrier = &right;
-            xmvb::mcscf::DirectCiTileReader read = [carrier](const std::vector<xmvb::mcscf::StringIndex>& betas,
-                                                             const std::vector<xmvb::mcscf::StringIndex>& rows,
-                                                             Eigen::Ref<Eigen::MatrixXd> values,
-                                                             xmvb::mcscf::DirectCiRead mode) {
-                for (int b = 0; b < static_cast<int>(betas.size()); ++b)
-                    for (int a = 0; a < static_cast<int>(rows.size()); ++a)
-                        values(a, b) = (*carrier)(rows[a], betas[b]);
-            };
+            xmvb::mcscf::DirectCiTileReader read =
+                [carrier](const std::vector<xmvb::mcscf::StringIndex>& betas,
+                          const std::vector<xmvb::mcscf::StringIndex>& rows,
+                          Eigen::Ref<Eigen::MatrixXd> values,
+                          xmvb::mcscf::DirectCiRead mode) {
+                    for (int b = 0; b < static_cast<int>(betas.size()); ++b)
+                        for (int a = 0; a < static_cast<int>(rows.size()); ++a)
+                            values(a, b) = (*carrier)(rows[a], betas[b]);
+                };
             xmvb::mcscf::DirectCiColumnReader column = [](int) -> xmvb::mcscf::DirectCiColumnView {
                 throw std::runtime_error("exchange reduction must not gather beta spectators");
             };
@@ -2326,7 +2376,8 @@ void check_occupation_diagonal() {
     for (const int n_beta : {1, 2}) {
         const auto alpha = complete_space(n, 2), beta = complete_space(n, n_beta);
         std::vector<std::vector<int>> pa, pb;
-        std::vector<std::vector<xmvb::vb::StructureExpansionTerm>> terms(alpha.size() * beta.size());
+        std::vector<std::vector<xmvb::vb::StructureExpansionTerm>> terms(alpha.size() *
+                                                                         beta.size());
         int product = 0;
         for (const auto& a : alpha)
             for (const auto& b : beta) {
@@ -2336,9 +2387,15 @@ void check_occupation_diagonal() {
                 ++product;
             }
         const auto topology = xmvb::vb::build_same_spin_pair_topology(pa, pb, n);
-        const xmvb::vb::StructureAction action(
-            terms, product, topology, overlap, h, eri, n, nullptr,
-            xmvb::vb::StructureActionMode::ActionOnly);
+        const xmvb::vb::StructureAction action(terms,
+                                               product,
+                                               topology,
+                                               overlap,
+                                               h,
+                                               eri,
+                                               n,
+                                               nullptr,
+                                               xmvb::vb::StructureActionMode::ActionOnly);
         const xmvb::vb::StructureMetricInverse metric(action, alpha, beta, true, 65536, 65536);
         const auto& integrals = action.orthogonal_integrals();
         const xmvb::mcscf::DirectCiSigmaAction sigma(alpha, beta, integrals);
@@ -2867,16 +2924,14 @@ void check_full_square_tiled_gram() {
             const std::array<xmvb::mcscf::DirectCiTileRequest, 2> requests{
                 {{first_reader, writer(images[0]), nullptr, {}},
                  {reader(responses[1]), writer(images[1]), nullptr, {}}}};
-            const auto actual =
-                action.apply_tiled_responses(width,
-                                              requests,
-                                              reader(state),
-                                              nullptr,
-                                              parity,
-                                              {},
-                                              (recursive || rendezvous)
-                                                  ? shared_action_workspace
-                                                  : xmvb::workspace::available());
+            const auto actual = action.apply_tiled_responses(
+                width,
+                requests,
+                reader(state),
+                nullptr,
+                parity,
+                {},
+                (recursive || rendezvous) ? shared_action_workspace : xmvb::workspace::available());
             require(actual.size() == requests.size(),
                     "full-square Gram lost a temporal integral adjoint");
             for (std::size_t i = 0; i < requests.size(); ++i) {
@@ -3185,9 +3240,216 @@ void check_unordered_pair_rows() {
 
 } // namespace
 
+namespace {
+
+void check_cpu_davidson_vectors() {
+    // Partial DSYEVR output still needs an N-entry eigenvalue work buffer.
+    for (const int dimension : {3, 4, 7}) {
+        Eigen::MatrixXd h = Eigen::MatrixXd::Zero(dimension, dimension);
+        h.diagonal() = Eigen::VectorXd::LinSpaced(dimension, -2, 1);
+        for (int i = 1; i < dimension; ++i)
+            h(i, i - 1) = h(i - 1, i) = 0.17;
+        const Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> reference(h);
+        for (const int roots : {1, 2}) {
+            const auto selected = xmvb::linalg::detail::solve_lowest_projected_eigenpairs(h, roots);
+            require(selected.eigenvalues.size() == roots &&
+                        (selected.eigenvalues - reference.eigenvalues().head(roots)).norm() < 2e-12 &&
+                        (h * selected.eigenvectors - selected.eigenvectors * selected.eigenvalues.asDiagonal()).norm() < 3e-12,
+                    "partial projected eigensolve changed roots or returned invalid eigenvectors");
+        }
+    }
+    const Eigen::VectorXd seed_diagonal = Eigen::VectorXd::LinSpaced(17, -2, 3).reverse();
+    require(
+        (xmvb::linalg::make_davidson_initial_vectors(seed_diagonal, 6).array() ==
+         xmvb::linalg::make_davidson_initial_vectors(seed_diagonal, Eigen::VectorXd::Ones(17), 6)
+             .array())
+            .all(),
+        "identity-coordinate Davidson seeds changed the diagonal/random construction");
+    const auto cache = std::max<std::ptrdiff_t>(1, Eigen::l1CacheSize());
+    const Eigen::Index n = 2 * cache * xmvb::effective_openmp_thread_count() / sizeof(double) + 257;
+    Eigen::VectorXd state(n);
+    for (Eigen::Index i = 0; i < n; ++i)
+        state[i] = std::sin(0.017 * (i + 1));
+    state.normalize();
+    const Eigen::VectorXd diagonal = Eigen::VectorXd::Ones(n) - 4 * state.array().square().matrix();
+    auto options = xmvb::linalg::make_davidson_options(n, 1, 1e-10, 1e-10, 1e-10, {}, true);
+    options.max_subspace_dimension = 8;
+    const xmvb::linalg::GeneralizedEigenAction action = [&](const auto& x) {
+        return xmvb::linalg::GeneralizedEigenActionResult{x - 4 * state * (state.transpose() * x),
+                                                          {}};
+    };
+    const auto solved = xmvb::linalg::GeneralizedEigensolver{}.solve_davidson(
+        action, diagonal, Eigen::VectorXd::Ones(n), options);
+    const Eigen::Map<const Eigen::VectorXd> vector(solved.eigenpairs.eigenvector_matrix.data(), n);
+    require(std::abs(solved.eigenpairs.eigenvalues[0] + 3) < 1e-10 &&
+                std::abs(std::abs(vector.dot(state)) - 1) < 1e-10,
+            "large-vector Davidson differs from its analytic eigenpair");
+}
+
+void check_shared_alpha_channels() {
+    for (const auto [n, na, nb] : {std::tuple{6, 3, 3},
+                                   std::tuple{10, 5, 5},
+                                   std::tuple{10, 5, 1},
+                                   std::tuple{4, 0, 4},
+                                   std::tuple{4, 4, 0}}) {
+        const auto pairs = n * (n + 1) / 2;
+        xmvb::mcscf::ActiveIntegrals integrals;
+        integrals.one_electron.resize(n, n);
+        integrals.pair_kernel.resize(pairs, pairs);
+        for (int p = 0; p < n; ++p)
+            for (int q = 0; q < n; ++q)
+                integrals.one_electron(p, q) = std::cos(0.3 * (p + q + 1));
+        for (int p = 0; p < pairs; ++p)
+            for (int q = 0; q < pairs; ++q)
+                integrals.pair_kernel(p, q) = std::sin(0.17 * (p + q + 1));
+        const xmvb::mcscf::SpinSpace spin(n, na, nb);
+        const xmvb::mcscf::DirectCiSigmaAction action(spin.alpha(), spin.beta(), integrals);
+        for (const int width : {1, 3}) {
+            Eigen::MatrixXd x(spin.alpha().size(), width * spin.beta().size());
+            for (Eigen::Index i = 0; i < x.size(); ++i)
+                x.data()[i] = std::sin(0.11 * (i + 1));
+            // Independent link traversal: pure sigma and fused adjoints now
+            // share channel addresses, so comparing those two is insufficient.
+            const auto& alpha = action.alpha_connections();
+            const auto& beta = action.beta_connections_view();
+            for (const Eigen::Index first : {Eigen::Index{0}, alpha.n_strings() / 2}) {
+                const auto count = std::min<Eigen::Index>(7, alpha.n_strings() - first);
+                xmvb::mcscf::detail::AlphaChannelSources sources;
+                sources.reset(alpha, first, count, pairs);
+                Eigen::MatrixXd channel(count * width, pairs);
+                for (Eigen::Index i = 0; i < channel.size(); ++i)
+                    channel.data()[i] = std::cos(0.07 * (i + 1));
+                Eigen::MatrixXd gathered = Eigen::MatrixXd::Zero(alpha.n_strings(), width);
+                sources.gather(count, channel, gathered, 0, 1, width);
+                Eigen::MatrixXd reference = Eigen::MatrixXd::Zero(alpha.n_strings(), width);
+                for (Eigen::Index a = 0; a < count; ++a) {
+                    const auto add = [&](auto source, int pair, double sign) {
+                        for (int lane = 0; lane < width; ++lane)
+                            reference(source, lane) += sign * channel(lane * count + a, pair);
+                    };
+                    for (int p : alpha.occupied(first + a))
+                        add(first + a, p * (p + 1) / 2 + p, 1.0);
+                    for (const auto& link : alpha.singles(first + a))
+                        add(link.source, link.pair, link.sign);
+                }
+                require((gathered - reference).norm() < 1e-14 * std::max(1.0, reference.norm()),
+                        "channel-major alpha gather differs from independent spin links");
+                for (Eigen::Index b = 0; b < beta.n_strings(); ++b) {
+                    Eigen::MatrixXd actual(count * width, pairs);
+                    sources.scatter(beta, x, first, count, b, actual);
+                    Eigen::MatrixXd expected = Eigen::MatrixXd::Zero(count * width, pairs);
+                    const auto add_beta = [&](auto source, int pair, double sign) {
+                        for (int lane = 0; lane < width; ++lane)
+                            expected.col(pair).segment(lane * count, count) +=
+                                sign *
+                                x.col(lane * beta.n_strings() + source).segment(first, count);
+                    };
+                    for (int p : beta.occupied(b))
+                        add_beta(b, p * (p + 1) / 2 + p, 1.0);
+                    for (const auto& link : beta.singles(b))
+                        add_beta(link.source, link.pair, link.sign);
+                    for (Eigen::Index a = 0; a < count; ++a) {
+                        const auto add_alpha = [&](auto source, int pair, double sign) {
+                            for (int lane = 0; lane < width; ++lane)
+                                expected(lane * count + a, pair) +=
+                                    sign * x(source, lane * beta.n_strings() + b);
+                        };
+                        for (int p : alpha.occupied(first + a))
+                            add_alpha(first + a, p * (p + 1) / 2 + p, 1.0);
+                        for (const auto& link : alpha.singles(first + a))
+                            add_alpha(link.source, link.pair, link.sign);
+                    }
+                    require((actual.array() == expected.array()).all(),
+                            "shared generator addresses differ from independent spin links");
+                }
+            }
+            for (const int parity : {-1, 0, 1}) {
+                if (na != nb && parity)
+                    continue;
+                Eigen::MatrixXd state = x;
+                if (parity)
+                    for (int block = 0; block < width; ++block) {
+                        auto lane =
+                            state.middleCols(block * spin.beta().size(), spin.beta().size());
+                        lane = (0.5 * (lane + parity * lane.transpose())).eval();
+                    }
+                const auto reference = action.apply_with_adjoint(state, state, parity);
+                const auto actual = action.apply(state, parity);
+                std::cout << "number-channel parity=" << parity << ",na=" << na << ",nb=" << nb
+                          << ",rhs=" << width << ",error="
+                          << (actual - reference.sigma).cwiseAbs().maxCoeff() << "\n";
+                require((actual - reference.sigma).norm() <
+                            3e-12 * std::max(1.0, reference.sigma.norm()),
+                        "shared alpha-channel scatter changed sigma across spin/RHS/tile layouts");
+            }
+        }
+    }
+}
+
+void check_internal_ci_frame() {
+    for (const auto [n, na, nb] : {std::tuple{1, 1, 0}, std::tuple{4, 2, 2}, std::tuple{5, 3, 1}}) {
+        const int pairs = n * (n + 1) / 2;
+        xmvb::mcscf::ActiveIntegrals integrals;
+        integrals.one_electron.resize(n, n);
+        integrals.pair_kernel.resize(pairs, pairs);
+        for (int p = 0; p < n; ++p)
+            for (int q = 0; q < n; ++q)
+                integrals.one_electron(p, q) = std::cos(0.37 * (p + q + 1));
+        for (int p = 0; p < pairs; ++p)
+            for (int q = 0; q < pairs; ++q)
+                integrals.pair_kernel(p, q) = std::sin(0.13 * (p + q + 1));
+        const xmvb::mcscf::SpinSpace spin(n, na, nb);
+        const xmvb::mcscf::DirectCiSigmaAction action(spin.alpha(), spin.beta(), integrals);
+        const xmvb::mcscf::CiOrbitalFrame frame(action, integrals);
+        const auto compound = [&](const auto& strings) {
+            Eigen::MatrixXd result(strings.size(), strings.size());
+            Eigen::MatrixXd minor(strings.electrons(), strings.electrons());
+            for (xmvb::mcscf::StringIndex i = 0; i < strings.size(); ++i)
+                for (xmvb::mcscf::StringIndex j = 0; j < strings.size(); ++j) {
+                    int r = 0;
+                    for (int p : strings.occupied(i)) {
+                        int c = 0;
+                        for (int q : strings.occupied(j))
+                            minor(r, c++) = frame.orbitals()(p, q);
+                        ++r;
+                    }
+                    result(i, j) = strings.electrons() ? minor.determinant() : 1.0;
+                }
+            return result;
+        };
+        const Eigen::MatrixXd a = compound(spin.alpha()), b = compound(spin.beta());
+        Eigen::MatrixXd x(spin.alpha().size(), 3 * spin.beta().size());
+        for (Eigen::Index i = 0; i < x.size(); ++i)
+            x.data()[i] = std::sin(0.17 * (i + 1));
+        Eigen::MatrixXd old = x;
+        frame.transform(old, false);
+        for (int block = 0; block < 3; ++block) {
+            const auto first = block * spin.beta().size();
+            const Eigen::MatrixXd expected =
+                a * x.middleCols(first, spin.beta().size()) * b.transpose();
+            require((old.middleCols(first, spin.beta().size()) - expected).norm() < 2e-12,
+                    "Givens CI frame differs from explicit small compound matrices");
+        }
+        auto image = frame.action().apply(x);
+        frame.transform(image, false);
+        require((image - action.apply(old)).norm() < 3e-11,
+                "internal CI gauge changed the Hamiltonian action");
+        frame.transform(old, true);
+        require((old - x).norm() < 3e-12, "internal CI frame failed inverse/RHS consistency");
+    }
+}
+
+} // namespace
+
 int main(int argc, char** argv) {
     try {
+        if (argc == 2 && std::string(argv[1]) == "--product-domain") {
+                return 0;
+        }
         if (argc == 2 && std::string(argv[1]) == "--full-batch") {
+                check_cpu_davidson_vectors();
+            check_shared_alpha_channels();
+            check_internal_ci_frame();
             check_unordered_pair_rows();
             check_sigma_action();
             check_occupation_diagonal();
@@ -3215,6 +3477,9 @@ int main(int argc, char** argv) {
             return 0;
         }
         check_unordered_pair_rows();
+        check_shared_alpha_channels();
+        check_internal_ci_frame();
+        check_cpu_davidson_vectors();
         check_generated_exterior_rows();
         check_exterior_transform(7);
         check_exterior_transform(259);

@@ -13,6 +13,7 @@
 #include "parallel/openmp.hpp"
 #include "vbscf/optimization/preconditioners/density.hpp"
 #include "vbscf/core/contracts/input.hpp"
+#include "vbscf/core/contracts/orbital_type.hpp"
 #include "mcscf/optimization/trace.hpp"
 #include "vbscf/derivatives/hessian/context/accepted_point.hpp"
 #include "core/pair_index.hpp"
@@ -133,9 +134,11 @@ std::vector<double> pack_symmetric_dm2(const std::vector<double>& dm2, int n) {
 
 } // namespace
 
-AnalyticOrbitalDiagonal build_analytic_orbital_diagonal(const VbScfInput& input,
-                                                        const AcceptedPointContext& accepted,
-                                                        const integrals::ExactCtxPairMatrix* exchange) {
+AnalyticOrbitalDiagonal
+build_analytic_orbital_diagonal(const VbScfInput& input,
+                                const AcceptedPointContext& accepted,
+                                const integrals::ExactCtxPairMatrix* exchange,
+                                bool auxiliary_frame) {
     profiling::ScopedPhase phase(profiling::Phase::AnalyticHessianDiagonal);
     const bool trace = mcscf::diagnostics::ciah_event_trace_enabled();
     const auto start =
@@ -190,7 +193,7 @@ AnalyticOrbitalDiagonal build_analytic_orbital_diagonal(const VbScfInput& input,
 
     const Eigen::Map<const Eigen::MatrixXd> original_dm1(
         accepted.active_one_electron_gradient.data(), n_active, n_active);
-    const Eigen::MatrixXd dm1 = active_transform * original_dm1 * active_transform.transpose();
+    Eigen::MatrixXd dm1 = active_transform * original_dm1 * active_transform.transpose();
     std::vector<double> owned_packed_dm2;
     const std::vector<double>* packed_dm2 = &accepted.packed_active_two_electron_gradient;
     if (!two_electron_pretransformed) {
@@ -205,9 +208,6 @@ AnalyticOrbitalDiagonal build_analytic_orbital_diagonal(const VbScfInput& input,
     AnalyticDiagonalIntermediates x;
     x.n_core = n_core;
     x.n_active = n_active;
-    x.h_core = mo.transpose() * input.ao_integral_input.ao_core_hamiltonian_matrix * mo;
-    x.v_core =
-        mo.transpose() * prepared.ao_effective_one_electron_result.ao_coulomb_exchange_matrix * mo;
 
     xmvb::integrals::ExactCtxPairMatrix owned_active_pair_products;
     const xmvb::integrals::ExactCtxPairMatrix* active_pair_products = &owned_active_pair_products;
@@ -244,6 +244,67 @@ AnalyticOrbitalDiagonal build_analytic_orbital_diagonal(const VbScfInput& input,
         owned_active_pair_products = apply_ao_pair_operator(input, active_pair_map);
     }
     const int n_active_pairs = n_active * (n_active + 1) / 2;
+    Eigen::MatrixXd auxiliary_rotation, active_to_exchange;
+    // This is a preconditioner frame only. No physical orbital or CI vector is
+    // changed. A selected expansion need not be closed under active rotations.
+    bool full_support =
+        orbital_input.orbital_basis_counts.size() >= static_cast<std::size_t>(n_occ);
+    for (int i = 0; full_support && i < n_occ; ++i) {
+        full_support = orbital_input.orbital_basis_counts[i] == n_bf;
+        for (int mu = 0; full_support && mu < n_bf; ++mu)
+            full_support = orbital_input.orbital_basis_index_table[i * n_bf + mu] == mu + 1;
+    }
+    if (auxiliary_frame && input.complete_active_space &&
+        orbital_input.orbital_type == kOrbitalTypeOeo && full_support &&
+        two_electron_pretransformed && exchange && exchange->size()) {
+        // F = h + J_core - K_core/2 + J_active - K_active/2.
+        // The accepted core potential already includes the doubly occupied density.
+        // Borrow the Coulomb and exchange images: no additional AO-integral sweep.
+        Eigen::VectorXd density_pairs(n_active_pairs);
+        for (int a = 0; a < n_active; ++a)
+            for (int b = 0; b <= a; ++b)
+                density_pairs[core::PairIndex::packed_pair_index(a, b)] =
+                    (a == b ? 1.0 : 2.0) * dm1(a, b);
+        const Eigen::VectorXd potential =
+            *active_pair_products * density_pairs -
+            0.5 * (*exchange * Eigen::Map<const Eigen::VectorXd>(dm1.data(), dm1.size()));
+        Eigen::MatrixXd fock = input.ao_integral_input.ao_core_hamiltonian_matrix +
+                               prepared.ao_effective_one_electron_result.ao_coulomb_exchange_matrix;
+        Eigen::Index pair = 0;
+        for (int mu = 0; mu < n_bf; ++mu)
+            for (int nu = 0; nu <= mu; ++nu, ++pair) {
+                fock(mu, nu) += potential[pair];
+                if (mu != nu)
+                    fock(nu, mu) += potential[pair];
+            }
+        auxiliary_rotation = Eigen::MatrixXd::Identity(n_bf, n_bf);
+        const int boundaries[] = {0, n_core, n_occ, n_bf};
+        for (int block = 0; block < 3; ++block) {
+            const int offset = boundaries[block], width = boundaries[block + 1] - offset;
+            if (!width)
+                continue;
+            const auto orbitals = mo.middleCols(offset, width);
+            const Eigen::MatrixXd projected = orbitals.transpose() * fock * orbitals;
+            Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> spectrum(projected);
+            if (spectrum.info() != Eigen::Success)
+                throw std::runtime_error("auxiliary preconditioner frame diagonalization failed");
+            auxiliary_rotation.block(offset, offset, width, width) = spectrum.eigenvectors();
+        }
+        active_to_exchange = auxiliary_rotation.block(n_core, n_core, n_active, n_active);
+        mo = (mo * auxiliary_rotation).eval();
+        dm1 = (active_to_exchange.transpose() * dm1 * active_to_exchange).eval();
+        owned_packed_dm2 =
+            pack_symmetric_dm2(transform_dm2(unpack_symmetric_active_two_rdm(*packed_dm2, n_active),
+                                             active_to_exchange.transpose()),
+                               n_active);
+        packed_dm2 = &owned_packed_dm2;
+        owned_active_pair_products =
+            (*active_pair_products * build_pair_transform(active_to_exchange)).eval();
+        active_pair_products = &owned_active_pair_products;
+    }
+    x.h_core = mo.transpose() * input.ao_integral_input.ao_core_hamiltonian_matrix * mo;
+    x.v_core =
+        mo.transpose() * prepared.ao_effective_one_electron_result.ao_coulomb_exchange_matrix * mo;
     {
         profiling::ScopedPhase phase(profiling::Phase::ActiveCoulombDiagonal);
         x.j_active.resize(static_cast<std::size_t>(n_bf) * n_active * n_active);
@@ -266,7 +327,7 @@ AnalyticOrbitalDiagonal build_analytic_orbital_diagonal(const VbScfInput& input,
     }
     x.active_eri.resize(static_cast<std::size_t>(n_active) * n_active * n_active * n_active);
     const auto& packed_active_eri = active_two_electron.packed_active_two_electron_integrals;
-    if (two_electron_pretransformed && !packed_active_eri.empty()) {
+    if (two_electron_pretransformed && !packed_active_eri.empty() && !auxiliary_rotation.size()) {
         const std::size_t expected_size =
             static_cast<std::size_t>(n_active_pairs) * (n_active_pairs + 1) / 2;
         if (packed_active_eri.size() != expected_size) {
@@ -296,15 +357,17 @@ AnalyticOrbitalDiagonal build_analytic_orbital_diagonal(const VbScfInput& input,
     const auto dm2 = unpack_symmetric_active_two_rdm(*packed_dm2, n_active);
     const auto active_end =
         trace ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-    const auto densities = contract_diagonal_densities(input,
-                                                         mo,
-                                                         n_core,
-                                                         dm1,
-                                                         dm2,
-                                                         x.j_active,
-                                                         exchange,
-                                                         two_electron_pretransformed
-                                                             ? nullptr : &inverse_active_transform);
+    const auto densities = contract_diagonal_densities(
+        input,
+        mo,
+        n_core,
+        dm1,
+        dm2,
+        x.j_active,
+        exchange,
+        active_to_exchange.size()
+            ? &active_to_exchange
+            : (two_electron_pretransformed ? nullptr : &inverse_active_transform));
     const auto& density_images = densities.active;
     const auto density_end =
         trace ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
@@ -400,6 +463,13 @@ AnalyticOrbitalDiagonal build_analytic_orbital_diagonal(const VbScfInput& input,
         orbitals.physical_orbital_frame.localized_representative_selector
             .inactive_inverse_transpose_right_transform.transpose();
     result.active_inverse_transform = inverse_active_transform;
+    if (auxiliary_rotation.size()) {
+        result.inactive_inverse_transform =
+            (result.inactive_inverse_transform * auxiliary_rotation.topLeftCorner(n_core, n_core))
+                .eval();
+        result.active_inverse_transform = (inverse_active_transform * active_to_exchange).eval();
+        result.auxiliary_rotation = std::move(auxiliary_rotation);
+    }
     if (trace)
         mcscf::diagnostics::ciah_trace(
             "ciah_diagonal_cost",

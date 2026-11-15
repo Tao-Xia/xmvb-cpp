@@ -262,15 +262,16 @@ void run(int count, const std::string& binary_path) {
         alpha_ids.emplace(fixture.alpha[i], i);
     for (int i = 0; i < static_cast<int>(fixture.beta.size()); ++i)
         beta_ids.emplace(fixture.beta[i], i);
-    determinant_data.offsets.push_back(0);
+    std::vector<std::size_t> offsets{0};
+    std::vector<xmvb::vb::StructureExpansionTerm> terms;
     for (std::size_t pair = 0; pair < expansion.terms.size(); ++pair) {
         determinant_data.pair_alpha.push_back(alpha_ids.at(expansion.product_alpha[pair]));
         determinant_data.pair_beta.push_back(beta_ids.at(expansion.product_beta[pair]));
-        determinant_data.terms.insert(determinant_data.terms.end(),
-                                      expansion.terms[pair].begin(),
-                                      expansion.terms[pair].end());
-        determinant_data.offsets.push_back(determinant_data.terms.size());
+        terms.insert(terms.end(), expansion.terms[pair].begin(), expansion.terms[pair].end());
+        offsets.push_back(terms.size());
     }
+    determinant_data.incidence_data = xmvb::vb::StructureIncidenceData::make(
+        std::move(offsets), std::move(terms), determinant_data.n_structures);
 
     const auto total_start = Clock::now();
     const auto construct_start = Clock::now();

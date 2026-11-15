@@ -8,6 +8,7 @@
 #include <Eigen/Core>
 
 #include "core/pair_index.hpp"
+#include "vbscf/core/contracts/orbital_type.hpp"
 #include "vbscf/optimization/preconditioners/hessian_diagonal.hpp"
 #include "vbscf/derivatives/hessian/context/accepted_point.hpp"
 #include "integrals/ao/graph.hpp"
@@ -548,10 +549,72 @@ int main() {
                     exchange(pair, a * na + b) = value;
                 }
     const auto reused = xmvb::vb::build_analytic_orbital_diagonal(input, accepted, &exchange);
-    const double reuse_error = (reused.rotation_diagonal - built.rotation_diagonal).cwiseAbs().maxCoeff();
+    const double reuse_error =
+        (reused.rotation_diagonal - built.rotation_diagonal).cwiseAbs().maxCoeff();
     if (reuse_error > 2.0e-12) {
         std::cerr << "cached exchange diagonal error = " << reuse_error << '\n';
         return 1;
+    }
+    // Auxiliary preconditioning rotates only its model. Independently rotate
+    // the AO Hamiltonian and the complete density tensor for an entrywise oracle.
+    {
+        auto full = input;
+        full.complete_active_space = true;
+        auto& o = full.orbital_preparation_input;
+        o.orbital_type = xmvb::vb::kOrbitalTypeOeo;
+        o.n_active_orbitals = na;
+        o.n_orbitals = nc + na;
+        o.orbital_basis_counts.assign(nc + na, n);
+        for (int i = 0; i < nc + na; ++i)
+            for (int mu = 0; mu < n; ++mu)
+                o.orbital_basis_index_table.push_back(mu + 1);
+        xmvb::vb::AcceptedPointContext framed;
+        framed.n_active_orbitals = accepted.n_active_orbitals;
+        framed.prepared_active_space = accepted.prepared_active_space;
+        framed.active_one_electron_gradient = accepted.active_one_electron_gradient;
+        framed.packed_active_two_electron_gradient = accepted.packed_active_two_electron_gradient;
+        auto& tensor = framed.prepared_active_space.active_space_two_electron_result;
+        tensor.orbital_transform = Eigen::MatrixXd::Identity(na, na);
+        tensor.dense_active_coefficients = mo.middleCols(nc, na);
+        const auto auxiliary = xmvb::vb::build_analytic_orbital_diagonal(full, framed, &exchange);
+        if (!auxiliary.auxiliary_rotation.size())
+            throw std::runtime_error("auxiliary diagonal was not exercised");
+        const Eigen::MatrixXd u = auxiliary.auxiliary_rotation.block(nc, nc, na, na);
+        const Eigen::MatrixXd d1 = u.transpose() * dm1 * u;
+        const auto d2 = rotate_eri(dm2, u);
+        std::vector<double> d2_packed(packed.size());
+        for (int p = 0; p < na; ++p)
+            for (int q = 0; q <= p; ++q) {
+                const auto pq = xmvb::core::PairIndex::packed_pair_index(p, q);
+                for (int r = 0; r < na; ++r)
+                    for (int s = 0; s <= r; ++s) {
+                        const auto rs = xmvb::core::PairIndex::packed_pair_index(r, s);
+                        if (rs <= pq)
+                            d2_packed[xmvb::core::PairIndex::packed_pair_of_pairs_index(pq, rs)] =
+                                0.5 * (p == q ? 1 : 2) * (r == s ? 1 : 2) * (pq == rs ? 1 : 2) *
+                                d2[eri_index(p, q, r, s, na)];
+                    }
+            }
+        auto hao = full;
+        hao.orbital_preparation_input.orbital_type = xmvb::vb::kOrbitalTypeHao;
+        if (xmvb::vb::build_analytic_orbital_diagonal(hao, framed, &exchange)
+                .auxiliary_rotation.size())
+            throw std::runtime_error("auxiliary FULL-OEO frame incorrectly enabled for HAO");
+        auto selected = full;
+        selected.complete_active_space = false;
+        if (xmvb::vb::build_analytic_orbital_diagonal(selected, framed, &exchange)
+                .auxiliary_rotation.size())
+            throw std::runtime_error(
+                "auxiliary FULL-OEO frame incorrectly enabled for selected space");
+        const auto& c = auxiliary.mo_coefficients;
+        const auto intermediate =
+            make_intermediates(c.transpose() * h * c, rotate_eri(g, c), nc, na);
+        const auto expected =
+            xmvb::mcscf::build_analytic_rotation_hessian_diagonal(intermediate, d1, d2_packed);
+        const double error = (expected - auxiliary.rotation_diagonal).cwiseAbs().maxCoeff();
+        std::cout << "Auxiliary-frame diagonal error: " << error << '\n';
+        if (error > 2e-12)
+            throw std::runtime_error("auxiliary-frame diagonal differs from independent AO oracle");
     }
     // Independent factorized-ERI reference for signed rank-two RI sources.
     auto ri = std::make_shared<xmvb::integrals::RiAoFactorization>();

@@ -295,6 +295,10 @@ DirectCiSigmaAction::contract_tiled(int width,
     std::size_t source_channels = 0;
     long double projected_products = 0, full_products = 0;
     Clock::time_point compute_start, prepare_start, gram_start, scatter_start;
+    // Budget scopes and tile-reader caches belong to the calling thread.
+    // Keep serial scheduling/callbacks there; `single` may choose a worker
+    // without the parent's thread-local reservation. Explicit barriers retain
+    // the former single-region synchronization and cooperative numerical work.
 #pragma omp parallel if (workers > 1) num_threads(workers)
     {
         int thread = 0, team = 1;
@@ -303,7 +307,7 @@ DirectCiSigmaAction::contract_tiled(int width,
         team = omp_get_num_threads();
 #endif
         for (;;) {
-#pragma omp single
+#pragma omp master
             {
                 try {
                     prepare_start = tick();
@@ -488,6 +492,7 @@ DirectCiSigmaAction::contract_tiled(int width,
                     failure = std::current_exception();
                 }
             }
+#pragma omp barrier
             if (failure || finished)
                 break;
 
@@ -563,19 +568,21 @@ DirectCiSigmaAction::contract_tiled(int width,
             // separately timed; scatter includes only the parallel channel fill.
             const auto scatter_rows = [&](double* values) {
                 if (timing) {
-#pragma omp single
+#pragma omp master
                     {
                         scatter_start = tick();
                     }
+#pragma omp barrier
                 }
                 for (std::int64_t row = first; row < last; ++row)
                     scatter(row, values);
                 if (timing) {
 #pragma omp barrier
-#pragma omp single
+#pragma omp master
                     {
                         scatter_time += seconds(scatter_start, tick());
                     }
+#pragma omp barrier
                 }
             };
             bool distinct_bra = false;
@@ -589,7 +596,7 @@ DirectCiSigmaAction::contract_tiled(int width,
                 distinct_bra |= read_bra;
                 auto& kernel_adjoint = kernel_adjoints[request_id];
                 if (request_id > 0 && request.response) {
-#pragma omp single
+#pragma omp master
                     {
                         try {
                             const auto begin = tick();
@@ -604,6 +611,7 @@ DirectCiSigmaAction::contract_tiled(int width,
                             failure = std::current_exception();
                         }
                     }
+#pragma omp barrier
                     if (failure)
                         break;
                 }
@@ -614,7 +622,7 @@ DirectCiSigmaAction::contract_tiled(int width,
                         // The response scatter is complete. Refill the same input halo for
                         // the unweighted state, then scatter it into the second channel slab.
 #pragma omp barrier
-#pragma omp single
+#pragma omp master
                         {
                             try {
                                 const auto begin = tick();
@@ -630,6 +638,7 @@ DirectCiSigmaAction::contract_tiled(int width,
                                 failure = std::current_exception();
                             }
                         }
+#pragma omp barrier
                         if (failure)
                             break;
                         scatter_rows(state_channels);
@@ -643,7 +652,7 @@ DirectCiSigmaAction::contract_tiled(int width,
                         const bool row_partition = full_area <= scratch_size / (2 * available);
                         const int parts = row_partition ? available : 1;
                         if (timing) {
-#pragma omp single
+#pragma omp master
                             {
                                 gram_start = tick();
                                 gram_partitions = std::max(gram_partitions, parts);
@@ -652,6 +661,7 @@ DirectCiSigmaAction::contract_tiled(int width,
                                     gram_scratch_bytes = std::max(
                                         gram_scratch_bytes, 2 * parts * full_area * sizeof(double));
                             }
+#pragma omp barrier
                         }
                         detail::contract_channel_gram(channel_product,
                                                       channel_layout,
@@ -667,11 +677,12 @@ DirectCiSigmaAction::contract_tiled(int width,
                                                       thread,
                                                       team);
                         if (timing) {
-#pragma omp single
+#pragma omp master
                             {
                                 gram_time += seconds(gram_start, tick());
                                 gram_tiles += parts * channel_product.groups();
                             }
+#pragma omp barrier
                         }
                     }
                 }
@@ -736,7 +747,7 @@ DirectCiSigmaAction::contract_tiled(int width,
                 // Publish grouped images before the single writer schedules tasks.
 #pragma omp barrier
 
-#pragma omp single
+#pragma omp master
                 {
                     try {
                         // Evaluate E^T K E directly in the caller's output panel. The callback
@@ -750,71 +761,75 @@ DirectCiSigmaAction::contract_tiled(int width,
                                 std::all_of(contiguous_groups.begin(),
                                             contiguous_groups.end(),
                                             [](unsigned char group) { return group != 0; });
-                            const auto write_exchange_segment =
-                                [&](StringIndex source,
-                                    StringIndex first,
-                                    StringIndex last,
-                                    double* destination) {
-                                    // A raw exchange representative contributes through both
-                                    // spins. Combine them in one bounded destination segment;
-                                    // the consumer still applies the same parity projection.
-                                    constexpr StringIndex extent = 128;
-                                    std::array<double, extent> scratch;
-                                    const auto column = columns[source];
-                                    const auto beta_occupied = OccupiedOrbitals(beta_masks[column]);
-                                    const auto same = same_group[source];
-                                    for (auto lo = first; lo < last;) {
-                                        const auto size = std::min(extent, last - lo);
-                                        const auto hi = lo + size;
-                                        Eigen::Map<Eigen::VectorXd> panel(scratch.data(), size);
-                                        panel.setZero();
-                                        if (same >= 0) {
-                                            const auto& group = groups[same];
-                                            const auto group_first = target_rows[group.begin].alpha;
-                                            const auto group_size = group.end - group.begin;
-                                            const auto image = target_rows[group.begin].image;
-                                            const auto at = [&](StringIndex local, int pair) {
-                                                return channel_values[image + local +
-                                                                      pair * image_rows];
-                                            };
-                                            for (auto a = lo; a < hi; ++a) {
-                                                double sum = 0;
-                                                const auto local = a - group_first;
-                                                if (local >= 0 && local < group_size) {
-                                                    for (const int p : OccupiedOrbitals(alpha_masks[a]))
-                                                        sum += at(local, core::PairIndex::packed_pair_index(p, p));
-                                                    for (const int p : beta_occupied)
-                                                        sum += at(local, core::PairIndex::packed_pair_index(p, p));
-                                                }
-                                                for (const auto& link : alpha_->singles(a)) {
-                                                    const auto target = link.source - group_first;
-                                                    if (target >= 0 && target < group_size)
-                                                        sum += link.sign * at(target, link.pair);
-                                                }
-                                                panel[a - lo] = sum;
+                            const auto write_exchange_segment = [&](StringIndex source,
+                                                                    StringIndex first,
+                                                                    StringIndex last,
+                                                                    double* destination) {
+                                // A raw exchange representative contributes through both
+                                // spins. Combine them in one bounded destination segment;
+                                // the consumer still applies the same parity projection.
+                                constexpr StringIndex extent = 128;
+                                std::array<double, extent> scratch;
+                                const auto column = columns[source];
+                                const auto beta_occupied = OccupiedOrbitals(beta_masks[column]);
+                                const auto same = same_group[source];
+                                for (auto lo = first; lo < last;) {
+                                    const auto size = std::min(extent, last - lo);
+                                    const auto hi = lo + size;
+                                    Eigen::Map<Eigen::VectorXd> panel(scratch.data(), size);
+                                    panel.setZero();
+                                    if (same >= 0) {
+                                        const auto& group = groups[same];
+                                        const auto group_first = target_rows[group.begin].alpha;
+                                        const auto group_size = group.end - group.begin;
+                                        const auto image = target_rows[group.begin].image;
+                                        const auto at = [&](StringIndex local, int pair) {
+                                            return channel_values[image + local +
+                                                                  pair * image_rows];
+                                        };
+                                        for (auto a = lo; a < hi; ++a) {
+                                            double sum = 0;
+                                            const auto local = a - group_first;
+                                            if (local >= 0 && local < group_size) {
+                                                for (const int p : OccupiedOrbitals(alpha_masks[a]))
+                                                    sum += at(
+                                                        local,
+                                                        core::PairIndex::packed_pair_index(p, p));
+                                                for (const int p : beta_occupied)
+                                                    sum += at(
+                                                        local,
+                                                        core::PairIndex::packed_pair_index(p, p));
                                             }
+                                            for (const auto& link : alpha_->singles(a)) {
+                                                const auto target = link.source - group_first;
+                                                if (target >= 0 && target < group_size)
+                                                    sum += link.sign * at(target, link.pair);
+                                            }
+                                            panel[a - lo] = sum;
                                         }
-                                        for (auto edge = offsets[source]; edge < offsets[source + 1];
-                                             ++edge) {
-                                            const auto& link = incoming[edge];
-                                            const auto& group = groups[link.group];
-                                            const auto group_first = target_rows[group.begin].alpha;
-                                            const auto begin = std::max(lo, group_first);
-                                            const auto end = std::min(hi, group_first + group.end - group.begin);
-                                            if (begin >= end)
-                                                continue;
-                                            const auto image = target_rows[group.begin].image +
-                                                               (begin - group_first) +
-                                                               link.pair * image_rows;
-                                            const Eigen::Map<const Eigen::VectorXd> values(
-                                                channel_values + image, end - begin);
-                                            panel.segment(begin - lo, end - begin).noalias() +=
-                                                link.sign * values;
-                                        }
-                                        Eigen::Map<Eigen::VectorXd>(destination + lo, size) += panel;
-                                        lo = hi;
                                     }
-                                };
+                                    for (auto edge = offsets[source]; edge < offsets[source + 1];
+                                         ++edge) {
+                                        const auto& link = incoming[edge];
+                                        const auto& group = groups[link.group];
+                                        const auto group_first = target_rows[group.begin].alpha;
+                                        const auto begin = std::max(lo, group_first);
+                                        const auto end =
+                                            std::min(hi, group_first + group.end - group.begin);
+                                        if (begin >= end)
+                                            continue;
+                                        const auto image = target_rows[group.begin].image +
+                                                           (begin - group_first) +
+                                                           link.pair * image_rows;
+                                        const Eigen::Map<const Eigen::VectorXd> values(
+                                            channel_values + image, end - begin);
+                                        panel.segment(begin - lo, end - begin).noalias() +=
+                                            link.sign * values;
+                                    }
+                                    Eigen::Map<Eigen::VectorXd>(destination + lo, size) += panel;
+                                    lo = hi;
+                                }
+                            };
                             const auto value = [&](std::int64_t row, int rhs, int pair) {
                                 const auto& target = target_rows[row];
                                 if constexpr (!Projected && FirstRhs)
@@ -994,6 +1009,7 @@ DirectCiSigmaAction::contract_tiled(int width,
                         failure = std::current_exception();
                     }
                 }
+#pragma omp barrier
                 if (failure)
                     break;
             } // temporal responses share the generated graph and accepted channels

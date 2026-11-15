@@ -4,12 +4,14 @@
 #include <bit>
 #include <cstdint>
 #include <limits>
+#include <numeric>
 #include <stdexcept>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include "vbscf/core/configuration/flags.hpp"
+#include "core/timing.hpp"
 #include "vbscf/structures/selection/subspace/selector.hpp"
 
 namespace xmvb::vb {
@@ -346,130 +348,202 @@ StructureExpansion StructureExpander::expand(const RawStructureData& raw) const 
         }
     };
 
-    for (std::size_t structure = 0; structure < raw.n_structures; ++structure) {
-        if (packed_pairs) {
-            enumerate_structure_fast(raw,
-                                     structure,
-                                     n_inactive,
-                                     n_active_beta,
-                                     active,
-                                     alpha,
-                                     beta,
-                                     flips,
-                                     choices,
-                                     [&](std::uint64_t a, std::uint64_t b, int) {
-                                         record_pair(packed_ids, a | (b << packed_width), [&] {
-                                             return std::pair{alpha_ids.intern_fast(a),
-                                                              beta_ids.intern_fast(b)};
+    {
+        profiling::ScopedPhase phase(profiling::Phase::ExpansionCount, true);
+        for (std::size_t structure = 0; structure < raw.n_structures; ++structure) {
+            if (packed_pairs) {
+                enumerate_structure_fast(raw,
+                                         structure,
+                                         n_inactive,
+                                         n_active_beta,
+                                         active,
+                                         alpha,
+                                         beta,
+                                         flips,
+                                         choices,
+                                         [&](std::uint64_t a, std::uint64_t b, int) {
+                                             record_pair(packed_ids, a | (b << packed_width), [&] {
+                                                 return std::pair{alpha_ids.intern_fast(a),
+                                                                  beta_ids.intern_fast(b)};
+                                             });
                                          });
-                                     });
-        } else if (fast_mask) {
-            enumerate_structure_fast(raw,
-                                     structure,
-                                     n_inactive,
-                                     n_active_beta,
-                                     active,
-                                     alpha,
-                                     beta,
-                                     flips,
-                                     choices,
-                                     [&](std::uint64_t a, std::uint64_t b, int) {
-                                         const auto alpha_id = alpha_ids.intern_fast(a);
-                                         const auto beta_id = beta_ids.intern_fast(b);
-                                         record_pair(pair_ids, pair_key(alpha_id, beta_id), [&] {
-                                             return std::pair{alpha_id, beta_id};
+            } else if (fast_mask) {
+                enumerate_structure_fast(raw,
+                                         structure,
+                                         n_inactive,
+                                         n_active_beta,
+                                         active,
+                                         alpha,
+                                         beta,
+                                         flips,
+                                         choices,
+                                         [&](std::uint64_t a, std::uint64_t b, int) {
+                                             const auto alpha_id = alpha_ids.intern_fast(a);
+                                             const auto beta_id = beta_ids.intern_fast(b);
+                                             record_pair(
+                                                 pair_ids, pair_key(alpha_id, beta_id), [&] {
+                                                     return std::pair{alpha_id, beta_id};
+                                                 });
                                          });
-                                     });
-        } else {
-            enumerate_structure(raw,
-                                structure,
-                                n_inactive,
-                                n_active_beta,
-                                active,
-                                alpha,
-                                beta,
-                                variable_pairs,
-                                choices,
-                                [&](const std::vector<int>& a, const std::vector<int>& b) {
-                                    encode_spin_string(a, false, alpha_mask, alpha_words);
-                                    encode_spin_string(b, false, beta_mask, beta_words);
-                                    const auto alpha_id = alpha_ids.intern_general(alpha_words);
-                                    const auto beta_id = beta_ids.intern_general(beta_words);
-                                    record_pair(pair_ids, pair_key(alpha_id, beta_id), [&] {
-                                        return std::pair{alpha_id, beta_id};
+            } else {
+                enumerate_structure(raw,
+                                    structure,
+                                    n_inactive,
+                                    n_active_beta,
+                                    active,
+                                    alpha,
+                                    beta,
+                                    variable_pairs,
+                                    choices,
+                                    [&](const std::vector<int>& a, const std::vector<int>& b) {
+                                        encode_spin_string(a, false, alpha_mask, alpha_words);
+                                        encode_spin_string(b, false, beta_mask, beta_words);
+                                        const auto alpha_id = alpha_ids.intern_general(alpha_words);
+                                        const auto beta_id = beta_ids.intern_general(beta_words);
+                                        record_pair(pair_ids, pair_key(alpha_id, beta_id), [&] {
+                                            return std::pair{alpha_id, beta_id};
+                                        });
                                     });
-                                });
+            }
         }
     }
 
-    result.offsets.reserve(counts.size() + 1);
-    result.offsets.push_back(0);
-    for (const std::size_t count : counts) {
-        if (count > result.terms.max_size() - result.offsets.back()) {
+    // Canonicalize addresses before emitting coefficients. Only O(number of
+    // strings + pairs) indices are sorted; the much larger term array is never
+    // permuted or copied into a second action-specific representation.
+    auto canonical_strings = [](const mcscf::StringTable& strings) {
+        std::vector<std::size_t> order(strings.size()), rank(strings.size());
+        std::iota(order.begin(), order.end(), std::size_t{0});
+        std::sort(order.begin(), order.end(), [&](auto a, auto b) {
+            const auto aw = strings.words(a), bw = strings.words(b);
+            return std::lexicographical_compare(aw.rbegin(), aw.rend(), bw.rbegin(), bw.rend());
+        });
+        mcscf::StringTable sorted;
+        sorted.reserve(strings.size());
+        for (std::size_t i = 0; i < order.size(); ++i) {
+            rank[order[i]] = i;
+            sorted.push_words(strings.words(order[i]));
+        }
+        return std::pair{std::move(sorted), std::move(rank)};
+    };
+    auto [alpha_sorted, alpha_rank] = canonical_strings(result.alpha_strings);
+    auto [beta_sorted, beta_rank] = canonical_strings(result.beta_strings);
+    std::vector<std::size_t> pair_order(counts.size());
+    std::iota(pair_order.begin(), pair_order.end(), std::size_t{0});
+    {
+        // Two stable counting passes order only touched pairs. Histogram sizes
+        // follow unique single-spin support, never the complete product space.
+        std::vector<std::size_t> scratch(pair_order.size());
+        auto pass = [&](const auto& ids, const auto& rank) {
+            std::vector<std::size_t> next(rank.size() + 1, 0);
+            for (const auto pair : pair_order)
+                ++next[rank[ids[pair]] + 1];
+            for (std::size_t i = 1; i < next.size(); ++i)
+                next[i] += next[i - 1];
+            for (const auto pair : pair_order)
+                scratch[next[rank[ids[pair]]]++] = pair;
+            pair_order.swap(scratch);
+        };
+        pass(result.pair_beta, beta_rank);
+        pass(result.pair_alpha, alpha_rank);
+    }
+    std::vector<std::size_t> offsets;
+    std::vector<StructureExpansionTerm> terms;
+    offsets.reserve(counts.size() + 1);
+    offsets.push_back(0);
+    for (const auto pair : pair_order) {
+        const auto count = counts[pair];
+        if (count > terms.max_size() - offsets.back())
             throw std::overflow_error("too many structure expansion terms");
-        }
-        result.offsets.push_back(result.offsets.back() + count);
+        // The discovery-order pair lookup now writes straight to its sorted row.
+        counts[pair] = offsets.back();
+        offsets.push_back(offsets.back() + count);
     }
-    result.terms.resize(result.offsets.back());
-    // Reuse the count pass workspace as CSR write cursors.
-    std::copy(result.offsets.begin(), result.offsets.end() - 1, counts.begin());
+    terms.resize(offsets.back());
 
-    for (std::size_t structure = 0; structure < raw.n_structures; ++structure) {
-        if (packed_pairs) {
-            enumerate_structure_fast(
-                raw,
-                structure,
-                n_inactive,
-                n_active_beta,
-                active,
-                alpha,
-                beta,
-                flips,
-                choices,
-                [&](std::uint64_t a, std::uint64_t b, int sign) {
-                    const std::size_t pair_id = packed_ids.at(a | (b << packed_width));
-                    result.terms[counts[pair_id]++] = {static_cast<Eigen::Index>(structure),
-                                                       static_cast<double>(sign)};
-                });
-        } else if (fast_mask) {
-            enumerate_structure_fast(
-                raw,
-                structure,
-                n_inactive,
-                n_active_beta,
-                active,
-                alpha,
-                beta,
-                flips,
-                choices,
-                [&](std::uint64_t a, std::uint64_t b, int sign) {
-                    const auto alpha_id = alpha_ids.lookup_fast(a);
-                    const auto beta_id = beta_ids.lookup_fast(b);
-                    const std::size_t pair_id = pair_ids.at(pair_key(alpha_id, beta_id));
-                    result.terms[counts[pair_id]++] = {static_cast<Eigen::Index>(structure),
-                                                       static_cast<double>(sign)};
-                });
-        } else {
-            enumerate_structure(
-                raw,
-                structure,
-                n_inactive,
-                n_active_beta,
-                active,
-                alpha,
-                beta,
-                variable_pairs,
-                choices,
-                [&](const std::vector<int>& a, const std::vector<int>& b) {
-                    const int alpha_sign = encode_spin_string(a, false, alpha_mask, alpha_words);
-                    const int beta_sign = encode_spin_string(b, false, beta_mask, beta_words);
-                    const auto alpha_id = alpha_ids.lookup_general(alpha_words);
-                    const auto beta_id = beta_ids.lookup_general(beta_words);
-                    const std::size_t pair_id = pair_ids.at(pair_key(alpha_id, beta_id));
-                    result.terms[counts[pair_id]++] = {static_cast<Eigen::Index>(structure),
-                                                       static_cast<double>(alpha_sign * beta_sign)};
-                });
+    {
+        profiling::ScopedPhase phase(profiling::Phase::ExpansionEmit, true);
+        for (std::size_t structure = 0; structure < raw.n_structures; ++structure) {
+            if (packed_pairs) {
+                enumerate_structure_fast(
+                    raw,
+                    structure,
+                    n_inactive,
+                    n_active_beta,
+                    active,
+                    alpha,
+                    beta,
+                    flips,
+                    choices,
+                    [&](std::uint64_t a, std::uint64_t b, int sign) {
+                        const std::size_t pair_id = packed_ids.at(a | (b << packed_width));
+                        terms[counts[pair_id]++] = {static_cast<Eigen::Index>(structure),
+                                                    static_cast<double>(sign)};
+                    });
+            } else if (fast_mask) {
+                enumerate_structure_fast(
+                    raw,
+                    structure,
+                    n_inactive,
+                    n_active_beta,
+                    active,
+                    alpha,
+                    beta,
+                    flips,
+                    choices,
+                    [&](std::uint64_t a, std::uint64_t b, int sign) {
+                        const auto alpha_id = alpha_ids.lookup_fast(a);
+                        const auto beta_id = beta_ids.lookup_fast(b);
+                        const std::size_t pair_id = pair_ids.at(pair_key(alpha_id, beta_id));
+                        terms[counts[pair_id]++] = {static_cast<Eigen::Index>(structure),
+                                                    static_cast<double>(sign)};
+                    });
+            } else {
+                enumerate_structure(
+                    raw,
+                    structure,
+                    n_inactive,
+                    n_active_beta,
+                    active,
+                    alpha,
+                    beta,
+                    variable_pairs,
+                    choices,
+                    [&](const std::vector<int>& a, const std::vector<int>& b) {
+                        const int alpha_sign =
+                            encode_spin_string(a, false, alpha_mask, alpha_words);
+                        const int beta_sign = encode_spin_string(b, false, beta_mask, beta_words);
+                        const auto alpha_id = alpha_ids.lookup_general(alpha_words);
+                        const auto beta_id = beta_ids.lookup_general(beta_words);
+                        const std::size_t pair_id = pair_ids.at(pair_key(alpha_id, beta_id));
+                        terms[counts[pair_id]++] = {static_cast<Eigen::Index>(structure),
+                                                    static_cast<double>(alpha_sign * beta_sign)};
+                    });
+            }
         }
+    }
+
+    std::vector<mcscf::StringIndex> ordered_alpha, ordered_beta;
+    ordered_alpha.reserve(pair_order.size());
+    ordered_beta.reserve(pair_order.size());
+    for (const auto pair : pair_order) {
+        ordered_alpha.push_back(alpha_rank[result.pair_alpha[pair]]);
+        ordered_beta.push_back(beta_rank[result.pair_beta[pair]]);
+    }
+    // The lookup maps and write cursors are dead before the reverse incidence
+    // is allocated. Do not keep both preparation phases resident together.
+    decltype(packed_ids){}.swap(packed_ids);
+    decltype(pair_ids){}.swap(pair_ids);
+    std::vector<std::size_t>{}.swap(counts);
+    std::vector<std::size_t>{}.swap(pair_order);
+    result.pair_alpha = std::move(ordered_alpha);
+    result.pair_beta = std::move(ordered_beta);
+    result.alpha_strings = std::move(alpha_sorted);
+    result.beta_strings = std::move(beta_sorted);
+    {
+        profiling::ScopedPhase phase(profiling::Phase::ExpansionIndex, true);
+        result.incidence_data =
+            StructureIncidenceData::make(std::move(offsets), std::move(terms), result.n_structures);
     }
 
     // Freeze the native ordering once. Later orbital points reuse this rank

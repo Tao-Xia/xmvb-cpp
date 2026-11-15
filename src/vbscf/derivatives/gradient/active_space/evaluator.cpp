@@ -33,6 +33,9 @@
 #include "vbscf/structures/assembly/action.hpp"
 #include "vbscf/structures/assembly/states.hpp"
 #include "vbscf/structures/orthogonal_ci/metric.hpp"
+#include "mcscf/ci/orbital_frame.hpp"
+#include "mcscf/ci/micro_response.hpp"
+#include "mcscf/ci/occupation_diagonal.hpp"
 #include "vbscf/structures/overlap/representation.hpp"
 #include "vbscf/structures/overlap/metric.hpp"
 #include "vbscf/structures/overlap/spin_metric.hpp"
@@ -144,22 +147,27 @@ void retain_structure_action(const VbScfInput& input, ActiveSpaceGradientForward
 }
 
 /** @brief Plan solver storage before admitting reusable numerical factors. */
-linalg::DavidsonOptions structure_solve_options(Eigen::Index n_structures,
-                                                int n_roots,
-                                                StructureSolveAccuracy accuracy,
-                                                bool identity_overlap,
-                                                double exploratory_stationarity = 0.0) {
+linalg::DavidsonOptions structure_solve_options(
+    Eigen::Index n_structures,
+    int n_roots,
+    StructureSolveAccuracy accuracy,
+    bool identity_overlap,
+    linalg::DavidsonStoppingCriterion stopping = linalg::DavidsonStoppingCriterion::BackwardError) {
     accuracy.validate();
     memory::prepare_ci(0);
     // Leave headroom for the action and its reclaimable numerical tiles.
-    return linalg::make_davidson_options(n_structures,
-                                         n_roots,
-                                         accuracy.energy_tolerance,
-                                         accuracy.gradient_tolerance,
-                                         std::max(accuracy.stationarity_tolerance(),
-                                                  exploratory_stationarity),
-                                         workspace::available() / 2,
-                                         identity_overlap);
+    auto options = linalg::make_davidson_options(n_structures,
+                                                 n_roots,
+                                                 accuracy.energy_tolerance,
+                                                 accuracy.gradient_tolerance,
+                                                 accuracy.stationarity_tolerance(),
+                                                 workspace::available() / 2,
+                                                 identity_overlap);
+    options.stopping = stopping;
+    if (stopping == linalg::DavidsonStoppingCriterion::EnergyAndResidual) {
+        accuracy.configure_isometric_stopping(options);
+    }
+    return options;
 }
 
 xmvb::linalg::DavidsonResult solve_selected_structure_roots(
@@ -172,11 +180,14 @@ xmvb::linalg::DavidsonResult solve_selected_structure_roots(
     const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors,
     const xmvb::linalg::GeneralizedEigensolver& generalized_eigensolver,
     std::function<double(const Eigen::VectorXd&, double)> physical_residual_norm = {},
-    std::function<Eigen::VectorXd(const Eigen::VectorXd&, double)> residual_preconditioner = {},
+    linalg::DavidsonPreconditioner residual_preconditioner = {},
     bool identity_overlap = false,
-    double exploratory_stationarity = 0.0) {
-    auto options = structure_solve_options(
-        n_structures, n_roots, structure_solve_accuracy, identity_overlap, exploratory_stationarity);
+    linalg::DavidsonStoppingCriterion stopping = linalg::DavidsonStoppingCriterion::BackwardError) {
+    auto options = structure_solve_options(n_structures,
+                                           n_roots,
+                                           structure_solve_accuracy,
+                                           identity_overlap,
+                                           stopping);
     workspace::Reservation solver;
     const auto bytes = linalg::davidson_workspace_bytes(n_structures, options);
     if (!solver.try_resize(bytes))
@@ -190,10 +201,11 @@ xmvb::linalg::DavidsonResult solve_selected_structure_roots(
     options.residual_preconditioner = std::move(residual_preconditioner);
     if (mcscf::diagnostics::ciah_event_trace_enabled()) {
         options.observe_work = [](double vectors, double projected, double action) {
-            mcscf::diagnostics::ciah_trace(
-                "ciah_ci_davidson_cost",
-                "vectors_control=%.9f,projected_eigen=%.9f,action=%.9f",
-                vectors, projected, action);
+            mcscf::diagnostics::ciah_trace("ciah_ci_davidson_cost",
+                                           "vectors_control=%.9f,projected_eigen=%.9f,action=%.9f",
+                                           vectors,
+                                           projected,
+                                           action);
         };
         options.observe_iteration = [start =
                                          std::chrono::steady_clock::now()](int iteration,
@@ -245,7 +257,7 @@ void retain_davidson_result(xmvb::linalg::DavidsonResult davidson,
     context->hamiltonian_eigenvectors = std::move(davidson.hamiltonian_eigenvectors);
 }
 
-/** @brief Same-dimensional FULL solve; orbital maps occur only at its boundary. */
+/** FULL Davidson in orthonormal structural coordinates. */
 linalg::DavidsonResult
 solve_complete_structure_roots(const StructureAction& action,
                                const StructureMetricInverse& coordinates,
@@ -257,22 +269,37 @@ solve_complete_structure_roots(const StructureAction& action,
     const Eigen::Index n = action.n_structures();
     const bool recycled = initial.rows() == n && initial.cols() >= n_roots && initial.allFinite();
     const auto options = structure_solve_options(n, n_roots, accuracy, true);
-    const Eigen::MatrixXd seeds = recycled
-                                      ? Eigen::MatrixXd(initial.leftCols(n_roots))
-                                      : linalg::make_davidson_initial_vectors(
-                                            diagonal.hamiltonian,
-                                            diagonal.overlap,
-                                            std::min(options.max_subspace_dimension, 2 * n_roots));
-    const Eigen::MatrixXd guess = coordinates.to_ci_coordinates(seeds);
+    const auto frame_start = std::chrono::steady_clock::now();
+    const mcscf::CiOrbitalFrame frame(action.orthogonal_view().sigma,
+                                      action.orthogonal_integrals());
+    const auto frame_ready = std::chrono::steady_clock::now();
     const auto diagonal_start = std::chrono::steady_clock::now();
-    const Eigen::VectorXd occupation_diagonal = coordinates.ci_occupation_diagonal();
+    const Eigen::VectorXd occupation_diagonal = coordinates.ci_occupation_diagonal(&frame);
+    const auto diagonal_ready = std::chrono::steady_clock::now();
+    // Default seeds belong to the same orthonormal coordinates as the action
+    // and its diagonal. Retain deterministic random columns so a diagonal seed
+    // cannot exclude a disconnected symmetry sector. Recycled physical states
+    // still require the exact boundary map.
+    const Eigen::MatrixXd guess =
+        recycled ? coordinates.to_ci_coordinates(
+                       initial.leftCols(std::min<Eigen::Index>(initial.cols(),
+                                                                options.max_subspace_dimension)),
+                       &frame)
+                 : linalg::make_davidson_initial_vectors(
+                       occupation_diagonal, std::min(options.max_subspace_dimension, 2 * n_roots));
+    mcscf::diagnostics::ciah_trace(
+        "ciah_ci_frame",
+        "setup=%.9f,input=%.9f",
+        std::chrono::duration<double>(frame_ready - frame_start).count(),
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - diagonal_ready).count());
     mcscf::diagnostics::ciah_trace(
         "ciah_ci_occupation_diagonal",
         "seconds=%.17g",
-        std::chrono::duration<double>(std::chrono::steady_clock::now() - diagonal_start).count());
+        std::chrono::duration<double>(diagonal_ready - diagonal_start).count());
     auto result = solve_selected_structure_roots(
-        [&coordinates](const Eigen::Ref<const Eigen::MatrixXd>& x) {
-            return linalg::GeneralizedEigenActionResult{coordinates.apply_ci_hamiltonian(x), {}};
+        [&coordinates, &frame](const Eigen::Ref<const Eigen::MatrixXd>& x) {
+            return linalg::GeneralizedEigenActionResult{coordinates.apply_ci_hamiltonian(x, &frame),
+                                                        {}};
         },
         diagonal.hamiltonian,
         diagonal.overlap,
@@ -282,20 +309,24 @@ solve_complete_structure_roots(const StructureAction& action,
         guess,
         solver,
         {},
-        [&occupation_diagonal](const Eigen::VectorXd& r, double energy) {
+        [&occupation_diagonal](const Eigen::Ref<const Eigen::VectorXd>& r, double energy,
+                               Eigen::Ref<Eigen::VectorXd> out) {
             profiling::ScopedPhase phase(profiling::Phase::CiPreconditioner);
-            const auto denominator = occupation_diagonal.array() - energy;
-            return Eigen::VectorXd(
-                (r.array() / (denominator.abs() < 1.0e-8).select(1.0e-8, denominator)).matrix());
+            mcscf::apply_occupation_preconditioner(occupation_diagonal, r, energy, out);
         },
         true,
-        accuracy.exploratory_stationarity);
+        linalg::DavidsonStoppingCriterion::EnergyAndResidual);
     const Eigen::Map<const Eigen::MatrixXd> x(
         result.eigenpairs.eigenvector_matrix.data(), n, n_roots);
-    const Eigen::MatrixXd coefficients = coordinates.from_ci_coordinates(x);
+    const auto output_start = std::chrono::steady_clock::now();
+    const Eigen::MatrixXd coefficients = coordinates.from_ci_coordinates(x, &frame);
     result.hamiltonian_eigenvectors =
-        coordinates.ci_covector_to_structure(result.hamiltonian_eigenvectors);
-    result.overlap_eigenvectors = coordinates.ci_covector_to_structure(x);
+        coordinates.ci_covector_to_structure(result.hamiltonian_eigenvectors, &frame);
+    result.overlap_eigenvectors = coordinates.ci_covector_to_structure(x, &frame);
+    mcscf::diagnostics::ciah_trace(
+        "ciah_ci_frame_output",
+        "seconds=%.9f",
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - output_start).count());
     result.eigenpairs.eigenvector_matrix.assign(coefficients.data(),
                                                 coefficients.data() + coefficients.size());
     return result;
@@ -341,8 +372,9 @@ solve_factored_structure_roots(const StructureAction& action,
         guess,
         solver,
         {},
-        [](const Eigen::VectorXd& r, double) { return r; },
-        true);
+        [](const Eigen::Ref<const Eigen::VectorXd>& r, double, Eigen::Ref<Eigen::VectorXd> out) { out = r; },
+        true,
+        linalg::DavidsonStoppingCriterion::EnergyAndResidual);
     const Eigen::Map<const Eigen::MatrixXd> y(
         result.eigenpairs.eigenvector_matrix.data(), n, n_roots);
     const Eigen::MatrixXd coefficients = metric.upper.triangularView<Eigen::Upper>().solve(y);
@@ -561,13 +593,13 @@ void solve_structure_problem(
             const auto& alpha = context->same_spin_pair_cache.alpha_reuse_table.unique_determinants;
             const auto& beta = context->same_spin_pair_cache.beta_reuse_table.unique_determinants;
             const auto inverse_start = std::chrono::steady_clock::now();
-            const auto planned =
-                structure_solve_options(n_structures, n_roots, structure_solve_accuracy, true);
+            const auto planned = structure_solve_options(
+                structure_action.n_structures(), n_roots, structure_solve_accuracy, true);
             context->structure_metric_inverse = StructureMetricInverse::try_build(
                 structure_action,
                 alpha,
                 beta,
-                linalg::davidson_workspace_bytes(n_structures, planned),
+                linalg::davidson_workspace_bytes(structure_action.n_structures(), planned),
                 accepted_point ? accepted_point->structure_metric_inverse.get() : nullptr);
             if (context->structure_metric_inverse) {
                 mcscf::diagnostics::ciah_trace(
@@ -599,7 +631,7 @@ void solve_structure_problem(
                                              prepared,
                                              input.orbital_preparation_input);
             context->selected_metric = metric;
-            std::function<Eigen::VectorXd(const Eigen::VectorXd&, double)> preconditioner;
+            linalg::DavidsonPreconditioner preconditioner;
             if (!metric && structure_action.storage().orthogonal_direct_ci) {
                 // W^T W is occupation-block diagonal for any VB selection, not only
                 // FULL. Remove spin recoupling from the preconditioner even when the
@@ -611,8 +643,10 @@ void solve_structure_problem(
                     context->same_spin_pair_cache.beta_reuse_table.unique_determinants;
                 if (auto spin = SpinMetric::try_build(structure_action, alpha, beta, budget)) {
                     context->spin_metric = spin;
-                    preconditioner = [spin, &structure_action](const Eigen::VectorXd& r,
-                                                               double energy) {
+                    preconditioner = [spin,
+                                      &structure_action](const Eigen::Ref<const Eigen::VectorXd>& r,
+                                                         double energy,
+                                                         Eigen::Ref<Eigen::VectorXd> out) {
                         const auto& diagonal = structure_action.preconditioner_diagonal();
                         // Match every H-E M diagonal while retaining the selected spin
                         // geometry. Positivity concerns this inverse model, not H-E M.
@@ -625,7 +659,7 @@ void solve_structure_problem(
                             (diagonal.hamiltonian - energy * diagonal.overlap)
                                 .cwiseAbs()
                                 .cwiseMax(floor);
-                        return Eigen::VectorXd(spin->solve_diagonal_model(r, positive).col(0));
+                        out = spin->solve_diagonal_model(r, positive).col(0);
                     };
                     mcscf::diagnostics::ciah_trace(
                         "ciah_ci_preconditioner",
@@ -1051,33 +1085,6 @@ void accumulate_active_space_gradient(const VbScfInput& input,
 
 } // namespace
 
-double refine_complete_ci_energy(const AcceptedPointContext& point,
-                                 double nuclear_repulsion_energy) {
-    const auto start = std::chrono::steady_clock::now();
-    profiling::ScopedPhase phase(profiling::Phase::StructureSolve, true);
-    auto accuracy = point.structure_solve_accuracy;
-    accuracy.exploratory_stationarity = 0.0;
-    const auto result = solve_complete_structure_roots(
-        point.structure_action.value(),
-        *point.structure_metric_inverse,
-        required_root_count(point.selected_state_indices),
-        accuracy,
-        point.root_eigenvectors,
-        linalg::GeneralizedEigensolver{});
-    const auto& energies = result.eigenpairs.eigenvalues;
-    mcscf::diagnostics::ciah_trace(
-        "ciah_ci_solved",
-        "seconds=%.17g,energy=%.17g,iterations=%d,actions=%d",
-        std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count(),
-        energies[point.selected_state_indices.front()],
-        result.iterations,
-        result.block_actions);
-    return point.prepared_active_space.one_electron_reference_energy +
-           selected_state_average_energy(energies, point.selected_state_indices,
-                                         point.normalized_state_weights) +
-           nuclear_repulsion_energy;
-}
-
 struct ActiveSpaceForwardEvaluation::State {
     ActiveSpaceGradientForwardContext forward_context;
     std::vector<int> selected_state_indices;
@@ -1240,7 +1247,9 @@ ActiveSpaceFixedStructureGradient ActiveSpaceGradientEvaluator::evaluate_fixed_s
     const SelectedMetric* metric,
     bool retain_context,
     const AcceptedPointContext* accepted_point,
-    const PreparedActiveOrbitalView* prepared_orbitals) const {
+    const PreparedActiveOrbitalView* prepared_orbitals,
+    bool coefficient_gradient,
+    FixedStructureUpdate update) const {
     const auto total_start_time = std::chrono::steady_clock::now();
     validate_state_selection(
         selected_state_indices, state_average_weights, input.structure_data.n_structures);
@@ -1292,9 +1301,78 @@ ActiveSpaceFixedStructureGradient ActiveSpaceGradientEvaluator::evaluate_fixed_s
         std::chrono::duration<double>(std::chrono::steady_clock::now() - structure_start_time)
             .count();
 
+    std::optional<FixedStructureStates> updated_states;
+    if (update == FixedStructureUpdate::Krylov) {
+        if (!input.complete_active_space || n_states != 1 || selected_state_indices.front() != 0 ||
+            !accepted_point || !accepted_point->structure_metric_inverse || coefficient_gradient ||
+            retain_context)
+            throw std::invalid_argument("CI microresponse requires a FULL ground-state keyframe");
+        const auto start = std::chrono::steady_clock::now();
+        const auto& alpha = context.same_spin_pair_cache.alpha_reuse_table.unique_determinants;
+        const auto& beta = context.same_spin_pair_cache.beta_reuse_table.unique_determinants;
+        auto coordinates =
+            StructureMetricInverse::try_build(*context.structure_action,
+                                              alpha,
+                                              beta,
+                                              0,
+                                              accepted_point->structure_metric_inverse.get());
+        if (!coordinates)
+            throw std::runtime_error("CI microresponse cannot construct physical coordinates");
+        linalg::DavidsonOptions options;
+        options.identity_overlap = true;
+        accepted_point->structure_solve_accuracy.configure_isometric_stopping(options);
+        const Eigen::VectorXd seed = coordinates->to_ci_coordinates(structure_coefficients).col(0);
+        const Eigen::VectorXd diagonal = coordinates->ci_occupation_diagonal();
+        const bool trace = mcscf::diagnostics::ciah_event_trace_enabled();
+        using Clock = std::chrono::steady_clock;
+        const auto stamp = [&] { return trace ? Clock::now() : Clock::time_point{}; };
+        Clock::duration action_time{};
+        const auto micro_start = stamp();
+        auto response = mcscf::ci_micro_response(
+            seed,
+            [&](const Eigen::Ref<const Eigen::VectorXd>& x) {
+                const auto action_start = stamp();
+                auto image = coordinates->apply_ci_hamiltonian(x);
+                action_time += stamp() - action_start;
+                return image;
+            },
+            options.stationarity_tolerance,
+            [&](const Eigen::Ref<const Eigen::VectorXd>& r, double energy,
+                Eigen::Ref<Eigen::VectorXd> out) {
+                mcscf::apply_occupation_preconditioner(diagonal, r, energy, out);
+            });
+        if (trace)
+            mcscf::diagnostics::ciah_trace(
+                "ciah_keyframe_ci_cost", "action=%.9f,vectors=%.9f",
+                std::chrono::duration<double>(action_time).count(),
+                std::chrono::duration<double>(stamp() - micro_start - action_time).count());
+        const double norm = response.coefficients.norm();
+        const double energy = response.coefficients.dot(response.hamiltonian) / (norm * norm);
+        response.coefficients /= norm;
+        updated_states.emplace();
+        updated_states->coefficients = coordinates->from_ci_coordinates(response.coefficients);
+        updated_states->energies = {energy};
+        mcscf::diagnostics::ciah_trace(
+            "ciah_keyframe_ci",
+            "actions=%d,residual=%.17g,energy=%.17g,seconds=%.17g",
+            response.actions,
+            response.residual_norm,
+            response.energy,
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
+        // The retained H*x buffer is no longer needed after its Rayleigh quotient.
+        // Consume it as the physical residual, without another structure-sized vector.
+        response.hamiltonian /= norm;
+        response.hamiltonian.noalias() -= energy * response.coefficients;
+        updated_states->integral_adjoint =
+            coordinates->ci_state_adjoint(response.coefficients, response.hamiltonian);
+    }
     const auto action_start_time = std::chrono::steady_clock::now();
-    auto states = evaluate_fixed_states(
-        *context.structure_action, structure_coefficients, normalized_weights, metric);
+    auto states = updated_states ? std::move(*updated_states)
+                                 : evaluate_fixed_states(*context.structure_action,
+                                                         structure_coefficients,
+                                                         normalized_weights,
+                                                         metric,
+                                                         coefficient_gradient || retain_context);
     context.selected_state_eigenvectors = std::move(states.coefficients);
     context.selected_state_energies = std::move(states.energies);
     double electronic_energy = 0.0;

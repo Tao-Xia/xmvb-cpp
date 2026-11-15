@@ -537,10 +537,10 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
                     for (std::int64_t a = 0; a < core::checked_index<std::int64_t>(rows.size());
                          ++a)
                         position[rows[a]] = a;
-                const int component =
-                    forcing_only ? (family == 3 && !cached ? 1 : 0)
-                                 : (cached ? ((family == 2 || family == 3) ? 1 : 0)
-                                           : (family == 3 ? 2 : family));
+                const int component = forcing_only
+                                          ? (family == 3 && !cached ? 1 : 0)
+                                          : (cached ? ((family == 2 || family == 3) ? 1 : 0)
+                                                    : (family == 3 ? 2 : family));
                 const auto copy_column = [&](int col, const detail::ColumnTile& tile) {
                     const std::int64_t b = betas[col] % extent;
                     const std::int64_t first = tile.pattern->offsets[b],
@@ -637,10 +637,10 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
                                        : input.get(b / extent);
                 const std::int64_t offset = tile.pattern->offsets[b % extent],
                                    last = tile.pattern->offsets[b % extent + 1];
-                const int component =
-                    forcing_only ? (family == 3 && !cached ? 1 : 0)
-                                 : (cached ? ((family == 2 || family == 3) ? 1 : 0)
-                                           : (family == 3 ? 2 : family));
+                const int component = forcing_only
+                                          ? (family == 3 && !cached ? 1 : 0)
+                                          : (cached ? ((family == 2 || family == 3) ? 1 : 0)
+                                                    : (family == 3 ? 2 : family));
                 return {tile.values.col(component).data() + offset,
                         tile.pattern->full ? nullptr : tile.pattern->rows.data() + offset,
                         last - offset};
@@ -673,8 +673,8 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
                 dy(betas, rows, direction, mode);
             }
         };
-        const auto right = interleaved_reader(
-            y, sigma_width, tangent && !forcing_only && !cached ? 1 : 0);
+        const auto right =
+            interleaved_reader(y, sigma_width, tangent && !forcing_only && !cached ? 1 : 0);
         // C^T is linear: first sum emitted panels in bounded source-group tiles,
         // then visit the structure incidence once per completed/evicted tile.
         // Neither the full touched support nor per-thread structure arrays are
@@ -719,7 +719,8 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
                         const auto g = begin + local;
                         for (auto t = topology_->offsets[g]; t < topology_->offsets[g + 1]; ++t) {
                             const auto& term = topology_->terms[t];
-                            projection_targets[target][term.structure] += term.coefficient * value;
+                            projection_targets[target][term.structure_index] +=
+                                term.coefficient * value;
                         }
                     }
             },
@@ -1116,9 +1117,11 @@ StructureResponseSweep StructureAction::product_jet(const StructureAdjointState&
                     if (joint)
                         sigma_work.requests.push_back(
                             {q_reader, writer(0, 1, q_slot), nullptr, {}, right});
-                    sigma_work.requests.push_back(
-                        {{}, {}, delta_sigma, writer(0, 1, 0),
-                         joint ? mcscf::DirectCiTileReader{} : right});
+                    sigma_work.requests.push_back({{},
+                                                   {},
+                                                   delta_sigma,
+                                                   writer(0, 1, 0),
+                                                   joint ? mcscf::DirectCiTileReader{} : right});
                 } else if (joint) {
                     sigma_work.requests.push_back({interleaved_reader(q_reader, w, w - 1),
                                                    writer(w - 1, 1, q_slot),

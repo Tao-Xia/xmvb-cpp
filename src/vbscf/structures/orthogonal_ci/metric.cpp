@@ -1,6 +1,8 @@
 #include "vbscf/structures/orthogonal_ci/metric.hpp"
 
 #include "mcscf/ci/string_table.hpp"
+#include "mcscf/ci/orbital_frame.hpp"
+#include "mcscf/ci/sigma.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -49,11 +51,11 @@ StructureMetricInverse::try_build(const StructureAction& action,
         if (!spin)
             return {};
         mcscf::diagnostics::ciah_trace("ciah_ci_spin_layout",
-                                     "blocks=%zu,factors=%zu,contiguous=%zu,factor_bytes=%zu",
-                                     spin->block_count(),
-                                     spin->factor_count(),
-                                     spin->contiguous_block_count(),
-                                     spin->factor_bytes());
+                                       "blocks=%zu,factors=%zu,contiguous=%zu,factor_bytes=%zu",
+                                       spin->block_count(),
+                                       spin->factor_count(),
+                                       spin->contiguous_block_count(),
+                                       spin->factor_bytes());
     }
     return std::unique_ptr<StructureMetricInverse>(
         new StructureMetricInverse(action, std::move(spin), true, column, scratch));
@@ -128,49 +130,50 @@ StructureMetricInverse::apply_carrier_inverse(const Eigen::Ref<const Eigen::Matr
     return result;
 }
 
-Eigen::MatrixXd StructureMetricInverse::to_ci_coordinates(
-    const Eigen::Ref<const Eigen::MatrixXd>& coefficients) const {
+Eigen::MatrixXd
+StructureMetricInverse::to_ci_coordinates(const Eigen::Ref<const Eigen::MatrixXd>& coefficients,
+                                          const mcscf::CiOrbitalFrame* frame) const {
     Eigen::MatrixXd result(coefficients.rows(), coefficients.cols());
     for (Eigen::Index first = 0; first < coefficients.cols(); first += chunk_width_) {
         const Eigen::Index count =
             std::min<Eigen::Index>(chunk_width_, coefficients.cols() - first);
-        const auto carrier =
-            action_->orthogonalize_structure_block(coefficients.middleCols(first, count));
+        auto carrier = to_ci_products(coefficients.middleCols(first, count), frame);
         result.middleCols(first, count) =
             spin_->solve(action_->contract_spin_product_block(carrier), SpinMetric::Part::Lower);
     }
     return result;
 }
 
-Eigen::MatrixXd StructureMetricInverse::from_ci_coordinates(
-    const Eigen::Ref<const Eigen::MatrixXd>& coordinates) const {
+Eigen::MatrixXd
+StructureMetricInverse::from_ci_coordinates(const Eigen::Ref<const Eigen::MatrixXd>& coordinates,
+                                            const mcscf::CiOrbitalFrame* frame) const {
     Eigen::MatrixXd result(coordinates.rows(), coordinates.cols());
     for (Eigen::Index first = 0; first < coordinates.cols(); first += chunk_width_) {
         const Eigen::Index count = std::min<Eigen::Index>(chunk_width_, coordinates.cols() - first);
         auto carrier = action_->expand_structure_block(
             spin_->solve(coordinates.middleCols(first, count), SpinMetric::Part::Upper));
-        action_->inverse_orbital_transform(&carrier);
-        result.middleCols(first, count) =
-            spin_->solve(action_->contract_spin_product_block(carrier));
+        result.middleCols(first, count) = from_ci_products(std::move(carrier), frame);
     }
     return result;
 }
 
-Eigen::MatrixXd StructureMetricInverse::ci_covector_to_structure(
-    const Eigen::Ref<const Eigen::MatrixXd>& covector) const {
+Eigen::MatrixXd
+StructureMetricInverse::ci_covector_to_structure(const Eigen::Ref<const Eigen::MatrixXd>& covector,
+                                                 const mcscf::CiOrbitalFrame* frame) const {
     Eigen::MatrixXd result(covector.rows(), covector.cols());
     for (Eigen::Index first = 0; first < covector.cols(); first += chunk_width_) {
         const Eigen::Index count = std::min<Eigen::Index>(chunk_width_, covector.cols() - first);
         auto carrier = action_->expand_structure_block(
             spin_->solve(covector.middleCols(first, count), SpinMetric::Part::Upper));
-        action_->adjoint_orbital_transform(&carrier);
-        result.middleCols(first, count) = action_->contract_spin_product_block(carrier);
+        result.middleCols(first, count) =
+            ci_product_covector_to_structure(std::move(carrier), frame);
     }
     return result;
 }
 
-Eigen::MatrixXd StructureMetricInverse::apply_ci_hamiltonian(
-    const Eigen::Ref<const Eigen::MatrixXd>& coordinates) const {
+Eigen::MatrixXd
+StructureMetricInverse::apply_ci_hamiltonian(const Eigen::Ref<const Eigen::MatrixXd>& coordinates,
+                                             const mcscf::CiOrbitalFrame* frame) const {
     if (coordinates.cols() == 0)
         return Eigen::MatrixXd(coordinates.rows(), 0);
     // Each lane holds both an input and an output carrier. The metric owns
@@ -215,7 +218,8 @@ Eigen::MatrixXd StructureMetricInverse::apply_ci_hamiltonian(
             const auto coefficients =
                 spin_->solve(coordinates.middleCols(first, count), SpinMetric::Part::Upper);
             upper_time += stamp() - start;
-            image = action_->apply_recoupled_hamiltonian(coefficients);
+            image = action_->apply_recoupled_hamiltonian(coefficients,
+                                                         frame ? &frame->action() : nullptr);
         }
         const auto start = stamp();
         spin_->solve_in_place(image, SpinMetric::Part::Lower);
@@ -227,14 +231,55 @@ Eigen::MatrixXd StructureMetricInverse::apply_ci_hamiltonian(
     }
     if (trace)
         mcscf::diagnostics::ciah_trace("ciah_ci_spin_solve_cost",
-                                     "upper=%.9f,lower=%.9f",
-                                     std::chrono::duration<double>(upper_time).count(),
-                                     std::chrono::duration<double>(lower_time).count());
+                                       "upper=%.9f,lower=%.9f",
+                                       std::chrono::duration<double>(upper_time).count(),
+                                       std::chrono::duration<double>(lower_time).count());
     return result;
 }
 
-Eigen::VectorXd StructureMetricInverse::ci_occupation_diagonal() const {
-    return spin_->occupation_diagonal(action_->orthogonal_integrals());
+Eigen::VectorXd
+StructureMetricInverse::ci_occupation_diagonal(const mcscf::CiOrbitalFrame* frame) const {
+    return spin_->occupation_diagonal(frame ? frame->integrals() : action_->orthogonal_integrals());
+}
+
+StructureActiveIntegralAdjoint
+StructureMetricInverse::ci_state_adjoint(const Eigen::Ref<const Eigen::VectorXd>& coordinates,
+                                         const Eigen::Ref<const Eigen::VectorXd>& residual) const {
+    if (coordinates.size() != action_->n_structures() || residual.size() != coordinates.size())
+        throw std::invalid_argument("invalid physical CI state/residual dimensions");
+    workspace::Temporary storage(core::checked_multiply(
+        4 * sizeof(double), core::checked_index<std::size_t>(coordinates.size())));
+    Eigen::MatrixXd lanes(coordinates.size(), 2);
+    lanes.col(0) = coordinates;
+    lanes.col(1) = residual;
+    spin_->solve_in_place(lanes, SpinMetric::Part::Upper);
+    return action_->recoupled_state_adjoint(lanes);
+}
+
+Eigen::MatrixXd
+StructureMetricInverse::to_ci_products(const Eigen::Ref<const Eigen::MatrixXd>& coefficients,
+                                       const mcscf::CiOrbitalFrame* frame) const {
+    auto carrier = action_->orthogonalize_structure_block(coefficients);
+    if (frame)
+        frame->transform(carrier, true);
+    return carrier;
+}
+
+Eigen::MatrixXd StructureMetricInverse::from_ci_products(Eigen::MatrixXd carrier,
+                                                         const mcscf::CiOrbitalFrame* frame) const {
+    if (frame)
+        frame->transform(carrier, false);
+    action_->inverse_orbital_transform(&carrier);
+    return spin_->solve(action_->contract_spin_product_block(carrier));
+}
+
+Eigen::MatrixXd
+StructureMetricInverse::ci_product_covector_to_structure(Eigen::MatrixXd carrier,
+                                                         const mcscf::CiOrbitalFrame* frame) const {
+    if (frame)
+        frame->transform(carrier, false);
+    action_->adjoint_orbital_transform(&carrier);
+    return action_->contract_spin_product_block(carrier);
 }
 
 Eigen::MatrixXd
@@ -262,28 +307,31 @@ Eigen::MatrixXd StructureMetricInverse::transport_coefficients(
         throw std::invalid_argument("invalid complete-sector transport coefficients");
     Eigen::MatrixXd result(coefficients.rows(), coefficients.cols());
     for (Eigen::Index first = 0; first < coefficients.cols(); first += chunk_width_) {
-        const Eigen::Index count = std::min<Eigen::Index>(chunk_width_, coefficients.cols() - first);
-        Eigen::MatrixXd carrier = action_->expand_structure_block(coefficients.middleCols(first, count));
+        const Eigen::Index count =
+            std::min<Eigen::Index>(chunk_width_, coefficients.cols() - first);
+        Eigen::MatrixXd carrier =
+            action_->expand_structure_block(coefficients.middleCols(first, count));
         alpha.apply_left(&carrier);
         for (Eigen::Index block = 0; block < count; ++block)
             beta.apply_right_block(carrier.middleCols(block * beta.dimension(), beta.dimension()));
-        result.middleCols(first, count) = spin_->solve(action_->contract_spin_product_block(carrier));
+        result.middleCols(first, count) =
+            spin_->solve(action_->contract_spin_product_block(carrier));
     }
     return result;
 }
 
-std::pair<Eigen::MatrixXd, Eigen::VectorXd> StructureMetricInverse::transport_pullback(
-    const Eigen::Ref<const Eigen::VectorXd>& coefficients,
-    const Eigen::Ref<const Eigen::VectorXd>& covector,
-    const ExteriorOrbitalTransform& alpha,
-    const ExteriorOrbitalTransform& beta) const {
+std::pair<Eigen::MatrixXd, Eigen::VectorXd>
+StructureMetricInverse::transport_pullback(const Eigen::Ref<const Eigen::VectorXd>& coefficients,
+                                           const Eigen::Ref<const Eigen::VectorXd>& covector,
+                                           const ExteriorOrbitalTransform& alpha,
+                                           const ExteriorOrbitalTransform& beta) const {
     if (!supports_transport_pullback() || coefficients.size() != action_->n_structures_ ||
         covector.size() != coefficients.size())
         throw std::invalid_argument("invalid complete-sector transport pullback");
     // Lift with W G^-1, the adjoint of the closed-sector coefficient projection.
     Eigen::MatrixXd left = action_->expand_structure_block(spin_->solve(covector));
-    Eigen::MatrixXd generator = action_->carrier_generator_adjoint(
-        left, action_->expand_structure_block(coefficients));
+    Eigen::MatrixXd generator =
+        action_->carrier_generator_adjoint(left, action_->expand_structure_block(coefficients));
     alpha.apply_adjoint_left(&left);
     beta.apply_adjoint_right(&left);
     Eigen::VectorXd base = action_->contract_spin_product_block(left).col(0);

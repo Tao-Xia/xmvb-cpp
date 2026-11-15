@@ -67,7 +67,7 @@ DeterminantReport::DeterminantReport(const vb::StructureExpansion& expansion, in
     const auto incidence = expansion_.incidence();
     if (alpha.size() != beta.size() || incidence.size() != alpha.size())
         throw std::invalid_argument("final determinant topology has inconsistent dimensions");
-    for (const auto& term : expansion_.terms)
+    for (const auto& term : expansion_.incidence_data->terms)
         if (term.structure_index < 0 ||
             static_cast<std::size_t>(term.structure_index) >= expansion_.n_structures)
             throw std::out_of_range("determinant expansion refers to an invalid structure index");
@@ -75,15 +75,34 @@ DeterminantReport::DeterminantReport(const vb::StructureExpansion& expansion, in
     const auto& strings = expansion_.alpha_strings;
     display_order_.resize(alpha.size());
     std::iota(display_order_.begin(), display_order_.end(), std::size_t{0});
-    std::stable_sort(display_order_.begin(), display_order_.end(), [&](auto left, auto right) {
-        const auto a = incidence[left], b = incidence[right];
-        const auto first_a = a.empty() ? std::numeric_limits<std::size_t>::max()
-                                       : static_cast<std::size_t>(a.front().structure_index);
-        const auto first_b = b.empty() ? std::numeric_limits<std::size_t>::max()
-                                       : static_cast<std::size_t>(b.front().structure_index);
-        if (first_a != first_b)
-            return first_a < first_b;
-        return alpha.less(right, left);
+    std::vector<std::size_t> spin_order(strings.size()), spin_rank(strings.size());
+    std::iota(spin_order.begin(), spin_order.end(), std::size_t{0});
+    std::stable_sort(
+        spin_order.begin(), spin_order.end(), [&](auto a, auto b) { return strings.less(b, a); });
+    std::size_t rank = 0;
+    for (std::size_t i = 0; i < spin_order.size(); ++i) {
+        if (i && strings.less(spin_order[i], spin_order[i - 1]))
+            ++rank;
+        spin_rank[spin_order[i]] = rank;
+    }
+    // Restore display order in linear pair passes rather than sorting all
+    // product rows after their canonicalization for numerical contractions.
+    std::vector<std::size_t> scratch(display_order_.size());
+    auto stable_pass = [&](std::size_t keys, auto key) {
+        std::vector<std::size_t> next(core::checked_add(keys, std::size_t{1}), 0);
+        for (const auto pair : display_order_)
+            ++next[key(pair) + 1];
+        for (std::size_t i = 1; i < next.size(); ++i)
+            next[i] += next[i - 1];
+        for (const auto pair : display_order_)
+            scratch[next[key(pair)]++] = pair;
+        display_order_.swap(scratch);
+    };
+    stable_pass(spin_rank.size(), [&](auto pair) { return spin_rank[alpha.string_id(pair)]; });
+    stable_pass(core::checked_add(expansion_.n_structures, std::size_t{1}), [&](auto pair) {
+        const auto row = incidence[pair];
+        return row.empty() ? expansion_.n_structures
+                           : static_cast<std::size_t>(row.front().structure_index);
     });
     // Retain text only where the pair list reuses the unique-spin table.
     // Unreferenced labels are never decoded; one-off rows use one scratch string.

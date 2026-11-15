@@ -125,7 +125,7 @@ inline void audit_internal_precision(const vb::OrbitalPreparationInput& input,
             long double value = 0;
             for (std::size_t j = view.offsets[group]; j < view.offsets[group + 1]; ++j)
                 value += static_cast<long double>(view.terms[j].coefficient) *
-                         c(view.terms[j].structure, 0);
+                         c(view.terms[j].structure_index, 0);
             raw(view.products[group] / cols, view.products[group] % cols) = value;
         }
         return ExtendedMatrix(ca * raw * cb.transpose());
@@ -152,7 +152,7 @@ inline void audit_internal_precision(const vb::OrbitalPreparationInput& input,
     for (std::size_t group = 0; group < view.products.size(); ++group) {
         const auto row = view.products[group] / cols + rows * (view.products[group] % cols);
         for (auto term = view.offsets[group]; term < view.offsets[group + 1]; ++term)
-            bare(row, view.terms[term].structure) += view.terms[term].coefficient;
+            bare(row, view.terms[term].structure_index) += view.terms[term].coefficient;
     }
     std::ofstream file("internal_reference.bin", std::ios::binary);
     const std::array<std::uint64_t, 6> header = {0x5642494e54455231ULL,

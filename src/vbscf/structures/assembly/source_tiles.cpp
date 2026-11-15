@@ -22,7 +22,7 @@ StructureAction::expand_support(const Eigen::Ref<const Eigen::VectorXd>& vectors
     for (std::size_t group = 0; group < topology_->products.size(); ++group)
         for (std::size_t t = topology_->offsets[group]; t < topology_->offsets[group + 1]; ++t)
             coefficients[group] +=
-                topology_->terms[t].coefficient * vectors[topology_->terms[t].structure];
+                topology_->terms[t].coefficient * vectors[topology_->terms[t].structure_index];
     return coefficients;
 }
 

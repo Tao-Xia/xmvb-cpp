@@ -169,11 +169,7 @@ class OperatorFirstAction;
 class StructureAction {
   public:
     /** @brief One entry of the selected-structure to touched-product map. */
-    struct StructureTerm {
-        std::size_t group = 0;
-        Eigen::Index structure = 0;
-        double coefficient = 0.0;
-    };
+    using StructureTerm = StructureExpansionTerm;
 
     /** @brief Borrowed exact orthogonal action data, independent of an executor.
    * All views remain valid for the lifetime of this action. Products use
@@ -339,10 +335,9 @@ class StructureAction {
         const Eigen::Ref<const Eigen::MatrixXd>& state_multipliers) const;
 
     /** @brief Computes Hq, Mq and the response adjoint in one direct-CI sweep. */
-    StructureResponseSweep
-    apply_response(const StructureAdjointState& state,
-                   const Eigen::Ref<const Eigen::MatrixXd>& coefficients,
-                   bool fixed_active_overlap = false) const;
+    StructureResponseSweep apply_response(const StructureAdjointState& state,
+                                          const Eigen::Ref<const Eigen::MatrixXd>& coefficients,
+                                          bool fixed_active_overlap = false) const;
 
     /** @brief Adds the horizontal-gauge multiplier and pulls back active tensors. */
     StructureActiveIntegralAdjoint
@@ -566,15 +561,16 @@ class StructureAction {
                                               const Eigen::MatrixXd* output_generator,
                                               bool project_output = true,
                                               double residual_energy = 0.0) const;
-    std::shared_ptr<const OrthogonalActiveIntegrals> prepare_integral_direction(
-        const std::vector<double>& overlap_direction,
-        const std::vector<double>& one_electron_direction,
-        const std::vector<double>& packed_two_electron_direction,
-        const Eigen::MatrixXd* ri_factor_direction,
-        bool fixed_active_overlap = false) const;
+    std::shared_ptr<const OrthogonalActiveIntegrals>
+    prepare_integral_direction(const std::vector<double>& overlap_direction,
+                               const std::vector<double>& one_electron_direction,
+                               const std::vector<double>& packed_two_electron_direction,
+                               const Eigen::MatrixXd* ri_factor_direction,
+                               bool fixed_active_overlap = false) const;
     /** @brief Exact scalar images from accepted adjoints, without exterior projection. */
-    SelectedIntegralScalars single_state_integral_scalars(
-        const StructureAdjointState& state, const OrthogonalActiveIntegrals& direction) const;
+    SelectedIntegralScalars
+    single_state_integral_scalars(const StructureAdjointState& state,
+                                  const OrthogonalActiveIntegrals& direction) const;
     StructureActionResult scalar_integral_action(const StructureAdjointState& state,
                                                  const OrthogonalActiveIntegrals& direction) const;
     /** @brief Direction H/M images without accepted or directional product arrays. */
@@ -619,14 +615,19 @@ class StructureAction {
                                              const Eigen::Ref<const Eigen::MatrixXd>& coefficients,
                                              bool collect_images) const;
     friend class StructureMetricInverse;
+    /** Physical state/residual lanes after L^-T, with no orbital transform. */
+    StructureActiveIntegralAdjoint
+    recoupled_state_adjoint(const Eigen::Ref<const Eigen::MatrixXd>& lanes) const;
     friend class SpinMetric;
     /** @brief Apply W^T H W, folding exchange in the structure projection. */
-    Eigen::MatrixXd apply_recoupled_hamiltonian(
-        const Eigen::Ref<const Eigen::MatrixXd>& vectors) const;
-    Eigen::MatrixXd expand_structure_block(
-        const Eigen::Ref<const Eigen::MatrixXd>& vectors, int exchange_parity) const;
-    Eigen::MatrixXd contract_spin_product_block(
-        const Eigen::Ref<const Eigen::MatrixXd>& spin_images, int exchange_parity) const;
+    Eigen::MatrixXd
+    apply_recoupled_hamiltonian(const Eigen::Ref<const Eigen::MatrixXd>& vectors,
+                                const mcscf::DirectCiSigmaAction* frame_action = nullptr) const;
+    Eigen::MatrixXd expand_structure_block(const Eigen::Ref<const Eigen::MatrixXd>& vectors,
+                                           int exchange_parity) const;
+    Eigen::MatrixXd
+    contract_spin_product_block(const Eigen::Ref<const Eigen::MatrixXd>& spin_images,
+                                int exchange_parity) const;
     void adjoint_orbital_transform(Eigen::MatrixXd* carrier) const;
     /** @brief Shared in-place carrier denominator, with the existing signed floor. */
     void divide_carrier_diagonal(Eigen::Ref<Eigen::MatrixXd> carrier,
@@ -644,10 +645,19 @@ class StructureAction {
     /** Orbital-independent incidence and its reverse index, shared across one optimization. */
     struct Topology {
         std::vector<mcscf::ProductIndex> products;
-        std::vector<std::size_t> offsets;
-        std::vector<StructureTerm> terms;
-        std::vector<std::size_t> structure_offsets;
-        std::vector<std::size_t> structure_terms;
+        std::shared_ptr<const StructureIncidenceData> incidence;
+        std::span<const std::size_t> offsets;
+        std::span<const StructureTerm> terms;
+        std::span<const std::size_t> structure_offsets;
+        std::span<const std::size_t> structure_terms;
+
+        void bind(std::shared_ptr<const StructureIncidenceData> data) {
+            incidence = std::move(data);
+            offsets = incidence->offsets;
+            terms = incidence->terms;
+            structure_offsets = incidence->structure_offsets;
+            structure_terms = incidence->structure_terms;
+        }
     };
     std::shared_ptr<const Topology>
     build_topology(StructureIncidence incidence, const SameSpinPairCacheContext& spin_cache) const;

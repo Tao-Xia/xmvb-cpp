@@ -76,9 +76,10 @@ Eigen::MatrixXd StructureAction::selected_overlap_factor(const ExteriorOrbitalTr
                             for (auto t = topology_->offsets[g]; t < topology_->offsets[g + 1];
                                  ++t) {
                                 const auto& term = topology_->terms[t];
-                                if (term.structure >= first && term.structure - first < width)
+                                if (term.structure_index >= first &&
+                                    term.structure_index - first < width)
                                     raw.row(ai)
-                                        .segment((term.structure - first) * bc, bc)
+                                        .segment((term.structure_index - first) * bc, bc)
                                         .noalias() += term.coefficient * rows->col(bi).transpose();
                             }
                         }

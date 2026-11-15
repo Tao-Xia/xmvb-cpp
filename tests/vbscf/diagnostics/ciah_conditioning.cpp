@@ -75,9 +75,11 @@ int main(int argc, char** argv) {
                 }
             for (std::size_t p = 0; p < x.pair_alpha.size(); ++p) {
                 topology << x.pair_alpha[p] << ' ' << x.pair_beta[p] << ' '
-                         << x.offsets[p + 1] - x.offsets[p];
-                for (auto j = x.offsets[p]; j < x.offsets[p + 1]; ++j)
-                    topology << ' ' << x.terms[j].structure_index << ' ' << x.terms[j].coefficient;
+                         << x.incidence_data->offsets[p + 1] - x.incidence_data->offsets[p];
+                for (auto j = x.incidence_data->offsets[p]; j < x.incidence_data->offsets[p + 1];
+                     ++j)
+                    topology << ' ' << x.incidence_data->terms[j].structure_index << ' '
+                             << x.incidence_data->terms[j].coefficient;
                 topology << '\n';
             }
             if (!ao || !topology)

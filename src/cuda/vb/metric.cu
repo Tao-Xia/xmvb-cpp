@@ -181,6 +181,25 @@ void SelectedMetric::solve(linalg::ConstMatrixView rhs, linalg::MatrixView image
     factor_->solve(rhs, image);
 }
 
+void SelectedMetric::to_ci_coordinates(linalg::ConstMatrixView rhs,
+                                       linalg::MatrixView image) const {
+    factor_->transform(rhs, image, true, false);
+}
+
+void SelectedMetric::from_ci_coordinates(linalg::ConstMatrixView rhs,
+                                         linalg::MatrixView image) const {
+    factor_->transform(rhs, image, true, true);
+}
+
+void SelectedMetric::to_ci_covector(linalg::ConstMatrixView rhs, linalg::MatrixView image) const {
+    factor_->transform(rhs, image, false, true);
+}
+
+void SelectedMetric::ci_covector_to_structure(linalg::ConstMatrixView rhs,
+                                              linalg::MatrixView image) const {
+    factor_->transform(rhs, image, false, false);
+}
+
 void SpinMetric::initialize_layout(Context& context,
                                    const std::vector<std::vector<Eigen::Index>>& blocks,
                                    std::size_t factor_byte_limit) {
@@ -276,9 +295,10 @@ SpinMetric::SpinMetric(Context& context,
         throw std::invalid_argument("CUDA spin incidence topology is invalid");
     std::vector<std::int64_t> host_offsets(static_cast<std::size_t>(dimension_) + 1, 0);
     for (const auto& term : view.terms) {
-        if (term.structure < 0 || term.structure >= dimension_ || !std::isfinite(term.coefficient))
+        if (term.structure_index < 0 || term.structure_index >= dimension_ ||
+            !std::isfinite(term.coefficient))
             throw std::invalid_argument("CUDA spin incidence term is invalid");
-        ++host_offsets[static_cast<std::size_t>(term.structure) + 1];
+        ++host_offsets[static_cast<std::size_t>(term.structure_index) + 1];
     }
     for (std::int64_t i = 0; i < dimension_; ++i)
         host_offsets[i + 1] += host_offsets[i];
@@ -293,7 +313,7 @@ SpinMetric::SpinMetric(Context& context,
             const auto& term = view.terms[term_index];
             if (term.group != product)
                 throw std::invalid_argument("CUDA spin incidence group index is invalid");
-            const auto position = positions[term.structure]++;
+            const auto position = positions[term.structure_index]++;
             host_products[position] = static_cast<std::int64_t>(product);
             host_weights[position] = term.coefficient;
         }

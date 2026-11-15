@@ -141,12 +141,14 @@ CasciResult solve_casci(const mcscf::DirectCiSigmaAction& sigma,
     }
     if (admitted != n_initial)
         throw std::runtime_error("CASCI spin-projected guesses are rank deficient");
-    budget.residual_preconditioner = [&](const Eigen::VectorXd& r, double energy) {
+    budget.residual_preconditioner = [&](const Eigen::Ref<const Eigen::VectorXd>& r,
+                                         double energy,
+                                         Eigen::Ref<Eigen::VectorXd> out) {
         Eigen::VectorXd denominator = (hdiag.array() - energy).abs();
         const double floor = std::sqrt(std::numeric_limits<double>::epsilon()) *
                              std::max({1.0, hdiag.cwiseAbs().maxCoeff(), std::abs(energy)});
         denominator = denominator.cwiseMax(floor);
-        return project(r.cwiseQuotient(denominator));
+        out = project(r.cwiseQuotient(denominator));
     };
     const linalg::GeneralizedEigenAction action = [&](const Eigen::Ref<const Eigen::MatrixXd>& x) {
         const Eigen::Map<const Eigen::MatrixXd> carrier(x.data(), na, nb * x.cols());

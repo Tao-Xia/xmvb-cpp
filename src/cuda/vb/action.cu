@@ -284,7 +284,7 @@ struct StructureAction::Impl {
         indices.reserve(view.terms.size());
         values.reserve(view.terms.size());
         for (const auto& term : view.terms) {
-            indices.push_back(term.structure);
+            indices.push_back(term.structure_index);
             values.push_back(term.coefficient);
         }
         context.copy_to_device(
