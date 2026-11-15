@@ -169,7 +169,7 @@ ScfResult solve_scf(Context& context,
                                                 ci_solver.identity_overlap());
         if (ci.identity_overlap)
             vb::StructureSolveAccuracy{options.energy_tolerance, options.gradient_tolerance}
-                .configure_isometric_stopping(ci);
+                .configure_physical_stopping(ci);
         return ci;
     };
     ScfResult result;

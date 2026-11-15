@@ -421,7 +421,14 @@ class StructureAction {
                                   const ExteriorTransformDirection* delta_left_beta = nullptr,
                                   const ExteriorTransformDirection* delta_right_alpha = nullptr,
                                   const ExteriorTransformDirection* delta_right_beta = nullptr,
-                                  std::size_t workspace_bytes = workspace::available()) const;
+                                  std::size_t workspace_bytes = workspace::available(),
+                                  const OverlapRows* beta_columns = nullptr) const;
+
+    /** Generate coefficient-independent T_beta^T T_beta columns once per chart.
+     * Admission leaves the normal panel workspace available; a nonresident
+     * column set uses the same streamed contraction without changing accuracy.
+     */
+    OverlapBetaColumns prepare_overlap_beta(const ExteriorOrbitalTransform& beta) const;
 
     /** @brief Streaming QR of physical selected-structure images, without normal equations. */
     Eigen::MatrixXd selected_overlap_factor(const ExteriorOrbitalTransform& alpha,

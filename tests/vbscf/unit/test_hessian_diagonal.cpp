@@ -595,17 +595,23 @@ int main() {
                                 d2[eri_index(p, q, r, s, na)];
                     }
             }
-        auto hao = full;
-        hao.orbital_preparation_input.orbital_type = xmvb::vb::kOrbitalTypeHao;
-        if (xmvb::vb::build_analytic_orbital_diagonal(hao, framed, &exchange)
+        // Eligibility depends on available physical tensors, not CAS closure
+        // or the support of the physical orbital coefficients.
+        for (bool complete : {false, true})
+            for (int type : {xmvb::vb::kOrbitalTypeOeo, xmvb::vb::kOrbitalTypeHao}) {
+                auto constrained = full;
+                constrained.complete_active_space = complete;
+                constrained.orbital_preparation_input.orbital_type = type;
+                constrained.orbital_preparation_input.orbital_basis_counts.assign(nc + na, 2);
+                const auto candidate = xmvb::vb::build_analytic_orbital_diagonal(
+                    constrained, framed, &exchange);
+                if (!candidate.auxiliary_rotation.size() ||
+                    (candidate.rotation_diagonal - auxiliary.rotation_diagonal).norm() > 2e-12)
+                    throw std::runtime_error("constrained auxiliary tensor model changed");
+            }
+        if (xmvb::vb::build_analytic_orbital_diagonal(full, framed, &exchange, false)
                 .auxiliary_rotation.size())
-            throw std::runtime_error("auxiliary FULL-OEO frame incorrectly enabled for HAO");
-        auto selected = full;
-        selected.complete_active_space = false;
-        if (xmvb::vb::build_analytic_orbital_diagonal(selected, framed, &exchange)
-                .auxiliary_rotation.size())
-            throw std::runtime_error(
-                "auxiliary FULL-OEO frame incorrectly enabled for selected space");
+            throw std::runtime_error("original-frame diagnostic was not honored");
         const auto& c = auxiliary.mo_coefficients;
         const auto intermediate =
             make_intermediates(c.transpose() * h * c, rotate_eri(g, c), nc, na);

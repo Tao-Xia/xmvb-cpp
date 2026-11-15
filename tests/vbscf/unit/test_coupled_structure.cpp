@@ -26,6 +26,8 @@
 #include "vbscf/optimization/objective/function.hpp"
 #include "vbscf/optimization/trust_region/retraction.hpp"
 #include "vbscf/orbitals/charts/chart.hpp"
+#include "vbscf/core/contracts/orbital_type.hpp"
+#include "vbscf/optimization/preconditioners/hessian_diagonal.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
 #include "vbscf/structures/assembly/action.hpp"
 #include "vbscf/structures/orthogonal_ci/metric.hpp"
@@ -867,9 +869,16 @@ void check_joint_coupling_action() {
 }
 
 /** Production CIAH HVP against analytic keyframe-gradient differences, not FD-vs-FD. */
-void check_affine_keyframe_hvp(int n_states, bool selected, bool stationary) {
+void check_affine_keyframe_hvp(int n_states, bool selected, bool stationary, bool hao = false) {
     using namespace xmvb::vb;
     auto input = coupling_input();
+    input.orbital_preparation_input.orbital_type = hao ? kOrbitalTypeHao : kOrbitalTypeOeo;
+    if (hao) {
+        auto& o = input.orbital_preparation_input;
+        o.orbital_basis_counts = {2, 2};
+        o.orbital_basis_index_table = {1, 2, 0, 2, 3, 0};
+        o.orbital_value_table = {1.0, 0.13, 0.0, 0.94, 0.12, 0.0};
+    }
     if (selected) {
         // Three of four products: the selected subspace is not orbital-transform closed.
         auto terms = input.structure_data.incidence_data->terms;
@@ -903,7 +912,7 @@ void check_affine_keyframe_hvp(int n_states, bool selected, bool stationary) {
     require(stationary ? residual < 1e-10 : residual > 1e-2,
             "finite-residual HVP fixture did not attain the requested CI residual");
     const auto& prepared = fixed.gradient.orbital_preparation_result;
-    const OrbitalChart chart(orbitals,
+    OrbitalChart chart(orbitals,
                              layout,
                              prepared.auxiliary_orbital_matrix.leftCols(orbitals.n_orbitals),
                              prepared.physical_orbital_frame.normalized_orbital_matrix,
@@ -950,6 +959,36 @@ void check_affine_keyframe_hvp(int n_states, bool selected, bool stationary) {
                   << " error=" << error << '\n';
         require(error < 2e-11, "scalar normalization differs from the full projected orbital HVP");
     }
+#ifndef XMVB_TEST_COFACTOR_REFERENCE
+    // Compare the actual same-point coupled action before/after changing only
+    // its preconditioner. The subsequent energy/gradient FD uses the new chart.
+    const auto* exchange = hessian.accepted_exchange_integrals();
+    require(exchange != nullptr, "auxiliary same-point test lacks accepted exchange");
+    const auto original_diagonal = build_analytic_orbital_diagonal(input, *context, exchange, false);
+    const auto auxiliary_diagonal = build_analytic_orbital_diagonal(input, *context, exchange);
+    require(auxiliary_diagonal.auxiliary_rotation.size() != 0,
+            "selected/HAO same-point test did not enable auxiliary frame");
+    chart.set_curvature(orbitals, nullptr, &original_diagonal, OrbitalChart::CurvatureUse::AugmentedHessian);
+    Eigen::VectorXd direction(no + ns);
+    direction << p, q;
+    const Eigen::VectorXd old_action = action(direction);
+    const Eigen::VectorXd packed_gradient = layout.gather_from_full(fixed.gradient.sparse_orbital_energy_gradient);
+    const Eigen::VectorXd old_gradient = chart.project_reduced_gradient(packed_gradient);
+    const Eigen::VectorXd old_direction = chart.apply_inverse_augmented_hessian_diagonal(old_gradient, -0.7);
+    const double old_cap = chart.maximum_rotation_component(p);
+    chart.set_curvature(orbitals, nullptr, &auxiliary_diagonal, OrbitalChart::CurvatureUse::AugmentedHessian);
+    const double hvp_error = (action(direction) - old_action).norm();
+    const double gradient_error = (chart.project_reduced_gradient(packed_gradient) - old_gradient).norm();
+    const Eigen::VectorXd new_direction = chart.apply_inverse_augmented_hessian_diagonal(old_gradient, -0.7);
+    require(hvp_error < 2e-11 && gradient_error < 2e-13 &&
+                std::abs(chart.maximum_rotation_component(p) - old_cap) < 2e-12,
+            "auxiliary frame changed physical HVP, gradient or step cap");
+    require(new_direction.allFinite(), "nonfinite auxiliary preconditioned direction");
+    std::cout << "auxiliary_same_point hao=" << hao << " states=" << n_states
+              << " selected=" << selected << " stationary=" << stationary
+              << " gradient_error=" << gradient_error << " hvp_error=" << hvp_error
+              << " direction_change=" << (new_direction - old_direction).norm() << '\n';
+#endif
     double worst = 0.0, old_error = 0.0, coarse_error = 0.0;
     for (int mode : {0, 1, 2}) {
         Eigen::VectorXd direction(no + ns);
@@ -1032,6 +1071,9 @@ int main() {
             for (bool selected : {false, true})
                 for (bool stationary : {false, true})
                     check_affine_keyframe_hvp(n_states, selected, stationary);
+        for (int n_states : {1, 2})
+            for (bool stationary : {false, true})
+                check_affine_keyframe_hvp(n_states, true, stationary, true);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

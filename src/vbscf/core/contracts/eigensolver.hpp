@@ -16,9 +16,8 @@ enum class StructureEigensolver {
 /**
  * @brief Accuracy requested from the structure-space eigensolver.
  *
- * Exact isometric CI adapters use consecutive energy change and the physical
- * residual norm. Streamed nonorthogonal adapters retain the backward-error and
- * algebraic stationarity budgets. A residual tolerance alone does not certify
+ * CI adapters with an exact metric or a physical residual bound use consecutive
+ * energy change and the physical residual norm. A residual tolerance alone does not certify
  * orbital-gradient accuracy: small gaps can amplify orbital coupling.
  */
 struct StructureSolveAccuracy {
@@ -46,13 +45,11 @@ struct StructureSolveAccuracy {
     }
 
     /** Use the same CI energy/residual policy on CPU and GPU when the
-     * adapter supplies exact isometric coordinates of the selected space.
+     * adapter supplies isometric coordinates or a physical dual-norm callback.
      * A spin-only or diagonal preconditioner does not establish this property.
      */
-    void configure_isometric_stopping(linalg::DavidsonOptions& options) const {
+    void configure_physical_stopping(linalg::DavidsonOptions& options) const {
         validate();
-        if (!options.identity_overlap)
-            throw std::invalid_argument("physical CI stopping requires isometric coordinates");
         options.stopping = linalg::DavidsonStoppingCriterion::EnergyAndResidual;
         options.energy_tolerance = std::min(energy_tolerance, 1.0e-8);
         options.stationarity_tolerance = std::sqrt(options.energy_tolerance);

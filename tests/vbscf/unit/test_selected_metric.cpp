@@ -13,6 +13,7 @@
 #include <Eigen/LU>
 
 #include "linalg/metric_solve.hpp"
+#include "linalg/metric_residual.hpp"
 #include "vbscf/determinants/pairs/same_spin_cache.hpp"
 #include "integrals/active/two_electron.hpp"
 #include "vbscf/structures/assembly/action.hpp"
@@ -332,6 +333,23 @@ void check_selected_spin_metric() {
         action, fixture.alpha, fixture.beta, fixture.upper.rows());
     const auto metric = representation.prepare_metric(fixture.upper);
     const Eigen::MatrixXd physical = metric.selected_matrix();
+    const auto bounds = xmvb::linalg::exterior_metric_bounds(fixture.upper, 1, 1);
+    require(bounds.has_value(), "selected residual fixture has no orbital bounds");
+    const double exact_norm = std::sqrt(rhs.dot(physical.llt().solve(rhs)));
+    for (double ratio : {.1, .99, 1.01, 10.0}) {
+        const auto interval = xmvb::linalg::metric_residual_bounds(
+            rhs,
+            ratio * exact_norm,
+            bounds->lower,
+            bounds->upper,
+            [&](const Eigen::VectorXd& x) {
+                return Eigen::VectorXd(action.apply_overlap(x).col(0));
+            },
+            [&](const Eigen::VectorXd& x) { return Eigen::VectorXd(spin.solve(x).col(0)); });
+        require(interval.lower <= exact_norm + 1e-12 && interval.upper >= exact_norm - 1e-12 &&
+                    ((interval.upper <= ratio * exact_norm) == (ratio > 1)),
+                "streamed selected residual bound disagrees with dense physical norm");
+    }
     xmvb::linalg::MetricSolveStats stats;
     const auto solution = xmvb::linalg::solve_metric(
         rhs,

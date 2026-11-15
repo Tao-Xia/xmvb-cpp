@@ -204,6 +204,42 @@ void check_case(const std::vector<std::vector<int>>& alpha,
             "cross-Gram scalar differs from explicit occupied minors");
 
     const Eigen::MatrixXd metric_reference = reference_cross(right, right, w, alpha, beta);
+    if (full_ambient) {
+        const ExteriorOrbitalTransform a(alpha, right), b(beta, right);
+        const auto columns = action.prepare_overlap_beta(b);
+        require(columns.values.size() != 0, "small fixed-chart beta columns were not retained");
+        const auto cached = [&](const Eigen::MatrixXd& rhs, const OverlapRows& panels) {
+            return action.cross_overlap(rhs,
+                                        a,
+                                        b,
+                                        a,
+                                        b,
+                                        nullptr,
+                                        nullptr,
+                                        nullptr,
+                                        nullptr,
+                                        xmvb::workspace::available(),
+                                        &panels);
+        };
+        require(relative_error(cached(block, columns.values), metric_reference * block) < 2e-12,
+                "reused beta columns changed selected multi-RHS metric");
+        require(relative_error(cached(x, columns.values), metric_reference * x) < 2e-12,
+                "reused beta columns changed selected single-RHS metric");
+        const OverlapRows prefix = columns.values.leftCols(1);
+        const auto mixed = action.cross_overlap(x,
+                                                a,
+                                                b,
+                                                a,
+                                                b,
+                                                nullptr,
+                                                nullptr,
+                                                nullptr,
+                                                nullptr,
+                                                4 * sizeof(double) * (alpha.size() + beta.size()),
+                                                &prefix);
+        require(relative_error(mixed, metric_reference * x) < 2e-12,
+                "partial beta residency changed streamed metric");
+    }
     const auto prepared = overlap.prepare_metric(right);
     require(!full_ambient || static_cast<bool>(prepared.selected_metric()),
             "complete spin carrier lost its physical metric factor with a different H backend");
@@ -523,6 +559,17 @@ void check_exchange_transport() {
         const auto action = make_action(spin, spin, selected);
         require(action.orthogonal_view().exchange_parity == parity,
                 "transport test did not select the intended spin-exchange parity");
+        const auto metric = reference_cross(current, current, selected, spin, spin);
+        const auto columns = action.prepare_overlap_beta(ca);
+        Eigen::MatrixXd rhs(3, 2);
+        rhs << lambda, base;
+        const auto triangle = action.cross_overlap(
+            rhs, ca, ca, ca, ca, nullptr, nullptr, nullptr, nullptr, 1024, &columns.values);
+        const auto general =
+            action.cross_overlap(rhs, ca, cb, ca, cb, nullptr, nullptr, nullptr, nullptr, 1024);
+        require(relative_error(triangle, metric * rhs) < 3e-12 &&
+                    relative_error(triangle, general) < 3e-12,
+                "exchange-reduced metric differs from explicit selected Gram");
         const auto shared = action.cross_overlap_transport_gradient(
             lambda, base, reference, transported, ca, ca, oa, oa, direction);
         const auto separate = action.cross_overlap_transport_gradient(

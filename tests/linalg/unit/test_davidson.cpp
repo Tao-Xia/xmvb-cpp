@@ -1,4 +1,7 @@
 #include "linalg/eigensolver.hpp"
+#include "linalg/metric_residual.hpp"
+#include <Eigen/Cholesky>
+#include <Eigen/Eigenvalues>
 
 #include <algorithm>
 #include <chrono>
@@ -616,6 +619,87 @@ bool run_energy_residual_case() {
     return passed;
 }
 
+/** Selected residual includes directions outside the Ritz space; no CAS closure. */
+bool run_selected_metric_residual_case() {
+    bool passed = true;
+    Eigen::MatrixXd orbital = Eigen::MatrixXd::Identity(2, 2);
+    orbital(1, 1) = 1e-8;
+    const auto orbital_bounds = xmvb::linalg::exterior_metric_bounds(orbital, 1, 1);
+    passed = passed && orbital_bounds && orbital_bounds->lower > 0 &&
+             orbital_bounds->lower <= 1e-32 && orbital_bounds->upper >= 1;
+    orbital(1, 1) = 0;
+    passed = passed && !xmvb::linalg::exterior_metric_bounds(orbital, 1, 1);
+    Eigen::MatrixXd f(5, 3);
+    f << 1, .2, .1, 0, 1, .3, .1, 0, .7, .4, -.2, .1, 0, .3, .8;
+    Eigen::MatrixXd m = f.transpose() * f;
+    Eigen::VectorXd r(3);
+    r << .1, -.3, .7;
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> spectrum(m);
+    const double exact = std::sqrt(r.dot(m.llt().solve(r)));
+    for (double ratio : {0.1, 0.99, 1.01, 10.0}) {
+        const auto b = xmvb::linalg::metric_residual_bounds(
+            r,
+            ratio * exact,
+            spectrum.eigenvalues()[0] * .99,
+            spectrum.eigenvalues()[2] * 1.01,
+            [&](const Eigen::VectorXd& x) { return Eigen::VectorXd(m * x); },
+            [](const Eigen::VectorXd& x) { return x; });
+        passed = passed && b.lower <= exact + 1e-12 && b.upper >= exact - 1e-12 &&
+                 ((b.upper <= ratio * exact) == (ratio > 1));
+        if (ratio == .1 || ratio == 10)
+            passed = passed && b.actions == 0;
+    }
+    // The same selected physical problem in a nonorthogonal, unequally scaled
+    // structure basis. G is a reference Gram, not the physical overlap M.
+    Eigen::MatrixXd w = Eigen::MatrixXd::Identity(3, 3);
+    w(0, 0) = .01;
+    w(0, 1) = .3;
+    w(1, 1) = 2;
+    w(1, 2) = .2;
+    const Eigen::MatrixXd gram = w.transpose() * w;
+    const Eigen::MatrixXd mw = w.transpose() * m * w;
+    const Eigen::VectorXd rw = w.transpose() * r;
+    const Eigen::LLT<Eigen::MatrixXd> gram_factor(gram);
+    for (double ratio : {.99, 1.01}) {
+        const auto b = xmvb::linalg::metric_residual_bounds(
+            rw,
+            ratio * exact,
+            spectrum.eigenvalues()[0] * .99,
+            spectrum.eigenvalues()[2] * 1.01,
+            [&](const Eigen::VectorXd& x) { return Eigen::VectorXd(mw * x); },
+            [&](const Eigen::VectorXd& x) { return Eigen::VectorXd(gram_factor.solve(x)); });
+        passed = passed && b.lower <= exact + 1e-12 && b.upper >= exact - 1e-12 &&
+                 ((b.upper <= ratio * exact) == (ratio > 1));
+    }
+    const auto solver = xmvb::linalg::GeneralizedEigensolver{};
+    Eigen::VectorXd diagonal(5);
+    diagonal << -2, -.7, .1, .8, 2;
+    const Eigen::MatrixXd h = f.transpose() * diagonal.asDiagonal() * f;
+    const Eigen::GeneralizedSelfAdjointEigenSolver<Eigen::MatrixXd> oracle(h, m);
+    for (double scale : {1e-3, 1.0, 1e3}) {
+        auto options = xmvb::linalg::make_davidson_options(3, 1, 1e-8, 1e-8, 1e-4);
+        options.stopping = xmvb::linalg::DavidsonStoppingCriterion::EnergyAndResidual;
+        const Eigen::MatrixXd sm = scale * scale * m, sh = scale * scale * h;
+        const Eigen::LLT<Eigen::MatrixXd> factor(sm);
+        int residual_checks = 0;
+        options.metric_residual_bound = [&](const Eigen::VectorXd& residual, double) {
+            ++residual_checks;
+            return std::sqrt(std::max(0.0, residual.dot(factor.solve(residual))));
+        };
+        const auto result = solver.solve_davidson(
+            [&](const Eigen::Ref<const Eigen::MatrixXd>& x) {
+                return xmvb::linalg::GeneralizedEigenActionResult{sh * x, sm * x};
+            },
+            sh.diagonal(),
+            sm.diagonal(),
+            options);
+        passed = passed && residual_checks > 0 &&
+                 std::abs(result.eigenpairs.eigenvalues[0] - oracle.eigenvalues()[0]) < 1e-8;
+    }
+    std::cout << "selected physical residual bounds" << (passed ? " PASS\n" : " FAIL\n");
+    return passed;
+}
+
 } // namespace
 
 int main() {
@@ -646,6 +730,7 @@ int main() {
     passed = run_projected_correction_scale_case() && passed;
     passed = run_outer_accuracy_case() && passed;
     passed = run_physical_residual_case() && passed;
+    passed = run_selected_metric_residual_case() && passed;
     passed = run_bounded_multiroot_restart_case() && passed;
     passed = run_bounded_multiroot_restart_case(true) && passed;
     std::cout << (passed ? "ALL PASSED\n" : "SOME FAILED\n");

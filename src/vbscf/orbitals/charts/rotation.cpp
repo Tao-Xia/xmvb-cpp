@@ -244,9 +244,11 @@ OrbitalChart::frame_rotation_components(const Eigen::Ref<const Eigen::VectorXd>&
         rotations[0] = (q.bottomRightCorner(na + nv, na + nv) * rotations[0] *
                         q.topLeftCorner(nc, nc).transpose())
                            .eval();
-        rotations[1] =
-            (q.bottomRightCorner(nv, nv) * rotations[1] * q.block(nc, nc, na, na).transpose())
-                .eval();
+        // Selected spaces retain internal-active rows as physical directions.
+        const Eigen::Index active_rows = rotations[1].rows();
+        rotations[1] = (q.bottomRightCorner(active_rows, active_rows) * rotations[1] *
+                        q.block(nc, nc, na, na).transpose())
+                           .eval();
     }
     return components;
 }

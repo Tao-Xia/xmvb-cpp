@@ -906,6 +906,27 @@ void OrbitalChart::set_curvature(const OrbitalPreparationInput& input,
     }
     if (rotation_frame)
         build_rotation_inverse(input, *hessian_diagonal);
+    else if (hessian_diagonal && hessian_diagonal->auxiliary_rotation.size()) {
+        // Local signed blocks are already factored in the constrained chart.
+        // Their remaining component maps serve only the physical step cap:
+        // restore its original frame once, not on every AH microstep.
+        const auto& q = hessian_diagonal->auxiliary_rotation;
+        const int n_active = input.n_active_orbitals;
+        const int n_external = input.n_basis_functions - n_inactive;
+        for (auto& block : block_bases_)
+            for (auto& orbital : block.orbitals) {
+                if (orbital.local_reduced_size == 0)
+                    continue;
+                orbital.ah_rotation_components =
+                    (q.bottomRightCorner(n_external, n_external) * orbital.ah_rotation_components)
+                        .eval();
+                const bool core = orbital.orbital_index < n_inactive;
+                const int start = core ? 0 : n_inactive;
+                const int width = core ? n_inactive : n_active;
+                orbital.ah_source_weights =
+                    (q.block(start, start, width, width) * orbital.ah_source_weights).eval();
+            }
+    }
 }
 
 OrbitalChart::StructuralDiagnostics OrbitalChart::structural_diagnostics() const noexcept {

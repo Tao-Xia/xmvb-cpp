@@ -247,16 +247,9 @@ build_analytic_orbital_diagonal(const VbScfInput& input,
     Eigen::MatrixXd auxiliary_rotation, active_to_exchange;
     // This is a preconditioner frame only. No physical orbital or CI vector is
     // changed. A selected expansion need not be closed under active rotations.
-    bool full_support =
-        orbital_input.orbital_basis_counts.size() >= static_cast<std::size_t>(n_occ);
-    for (int i = 0; full_support && i < n_occ; ++i) {
-        full_support = orbital_input.orbital_basis_counts[i] == n_bf;
-        for (int mu = 0; full_support && mu < n_bf; ++mu)
-            full_support = orbital_input.orbital_basis_index_table[i * n_bf + mu] == mu + 1;
-    }
-    if (auxiliary_frame && input.complete_active_space &&
-        orbital_input.orbital_type == kOrbitalTypeOeo && full_support &&
-        two_electron_pretransformed && exchange && exchange->size()) {
+    // Supports and active-internal constraints enter the chart pullback, not
+    // this passive tensor transformation of the fixed physical state.
+    if (auxiliary_frame && two_electron_pretransformed && exchange && exchange->size()) {
         // F = h + J_core - K_core/2 + J_active - K_active/2.
         // The accepted core potential already includes the doubly occupied density.
         // Borrow the Coulomb and exchange images: no additional AO-integral sweep.

@@ -31,6 +31,13 @@ struct OverlapTransportGradient {
     Eigen::VectorXd image;
 };
 
+/** Fixed-chart single-spin columns. No structure Gram or product wavefunction. */
+using OverlapRows = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+struct OverlapBetaColumns {
+    workspace::Reservation memory;
+    OverlapRows values;
+};
+
 /** Cross Gram action F(R_left)^T F(R_right), with F(R) = wedge(R) W.
  *
  * W is the immutable selected-structure expansion retained by `action`. The
@@ -79,6 +86,7 @@ class RepresentationOverlap {
         std::shared_ptr<const ExteriorOrbitalTransform> beta_transform_;
         Eigen::MatrixXd kernel_;
         std::shared_ptr<const SelectedMetric> selected_metric_;
+        OverlapBetaColumns beta_columns_;
     };
 
     PreparedMetric prepare_metric(const Eigen::Ref<const Eigen::MatrixXd>& upper) const;

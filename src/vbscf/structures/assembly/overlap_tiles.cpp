@@ -17,7 +17,8 @@ namespace {
 /** @brief A bounded single-spin factor and, when requested, its tangent. */
 struct Factor {
     Eigen::MatrixXd value, tangent;
-    Factor(int rows, int columns, bool directional) : value(Eigen::MatrixXd::Zero(rows, columns)) {
+    Factor(Eigen::Index rows, Eigen::Index columns, bool directional)
+        : value(Eigen::MatrixXd::Zero(rows, columns)) {
         if (directional)
             tangent = value;
     }
@@ -40,11 +41,15 @@ void transform(const ExteriorOrbitalTransform& map,
     }
 }
 
-int panel_width(std::size_t bytes, int na, int nb, int columns, int copies) {
-    const std::size_t row_bytes = copies * sizeof(double) * (static_cast<std::size_t>(na) + nb);
+int panel_width(
+    std::size_t bytes, Eigen::Index na, Eigen::Index nb, std::size_t columns, int copies) {
+    const auto row_bytes =
+        core::checked_multiply(copies * sizeof(double),
+                               core::checked_add(core::checked_index<std::size_t>(na),
+                                                 core::checked_index<std::size_t>(nb)));
     if (bytes < row_bytes)
         throw std::length_error("cross overlap budget cannot hold one factor column");
-    return static_cast<int>(std::max<std::size_t>(
+    return core::checked_index<int>(std::max<std::size_t>(
         1,
         std::min<std::size_t>(
             columns,
@@ -61,6 +66,47 @@ bool StructureAction::shared_overlap_sources() const noexcept {
            });
 }
 
+OverlapBetaColumns
+StructureAction::prepare_overlap_beta(const ExteriorOrbitalTransform& beta) const {
+    if (beta.dimension() != n_unique_beta_)
+        throw std::invalid_argument("invalid prepared overlap beta dimension");
+    OverlapBetaColumns result;
+    if (sources_->columns.empty())
+        return result;
+    const auto available = workspace::available();
+    const int extent =
+        panel_width(available, n_unique_alpha_, n_unique_beta_, sources_->columns.size(), 4);
+    // Bound retained single-spin data by the existing factor-panel scratch,
+    // not by a fixed byte limit or a complete spin-product allocation. Leave
+    // that scratch available for the CI-dependent alpha factors as well.
+    const auto scratch = core::checked_multiply(
+        4 * sizeof(double),
+        core::checked_multiply(static_cast<std::size_t>(extent),
+                               static_cast<std::size_t>(n_unique_alpha_) + n_unique_beta_));
+    if (available <= scratch)
+        return result;
+    const auto column_bytes =
+        core::checked_multiply(sizeof(double), static_cast<std::size_t>(n_unique_beta_));
+    auto columns =
+        std::min(sources_->columns.size(), std::min(scratch, available - scratch) / column_bytes);
+    if (columns < sources_->columns.size())
+        columns -= columns % extent;
+    if (!columns || !result.memory.try_resize(core::checked_multiply(columns, column_bytes)))
+        return result;
+    result.values.resize(n_unique_beta_, columns);
+    const workspace::Temporary temporary(scratch);
+    for (std::size_t begin = 0; begin < columns; begin += extent) {
+        const auto count = std::min<std::size_t>(extent, columns - begin);
+        Eigen::MatrixXd panel = Eigen::MatrixXd::Zero(n_unique_beta_, count);
+        for (std::size_t j = 0; j < count; ++j)
+            panel(sources_->columns[begin + j], j) = 1.0;
+        beta.apply_left(&panel);
+        beta.apply_adjoint_left(&panel);
+        result.values.middleCols(begin, count) = panel;
+    }
+    return result;
+}
+
 Eigen::MatrixXd StructureAction::cross_overlap(const Eigen::Ref<const Eigen::MatrixXd>& vectors,
                                                const ExteriorOrbitalTransform& la,
                                                const ExteriorOrbitalTransform& lb,
@@ -70,7 +116,8 @@ Eigen::MatrixXd StructureAction::cross_overlap(const Eigen::Ref<const Eigen::Mat
                                                const ExteriorTransformDirection* dlb,
                                                const ExteriorTransformDirection* dra,
                                                const ExteriorTransformDirection* drb,
-                                               std::size_t workspace_bytes) const {
+                                               std::size_t workspace_bytes,
+                                               const OverlapRows* beta_columns) const {
     const bool directional = dla || dlb || dra || drb;
     if (vectors.rows() != n_structures_ || vectors.cols() <= 0 ||
         la.dimension() != n_unique_alpha_ || ra.dimension() != n_unique_alpha_ ||
@@ -78,6 +125,15 @@ Eigen::MatrixXd StructureAction::cross_overlap(const Eigen::Ref<const Eigen::Mat
         (directional && !(dla && dlb && dra && drb)))
         throw std::invalid_argument("invalid selected cross overlap");
     const auto& sources = *sources_;
+    // Every selected expansion column has the certified exchange parity. With
+    // common spatial maps, K X K^T has that same parity; W^T needs only its
+    // upper triangle, with off-diagonal multiplicity two. No CAS closure is
+    // required. Independently varying spin maps keep the general contraction.
+    const bool exchange =
+        beta_columns && !directional && spin_exchange_parity_ && &la == &lb && &ra == &rb;
+    if (beta_columns && (directional || beta_columns->rows() != n_unique_beta_ ||
+                         beta_columns->cols() > static_cast<Eigen::Index>(sources.columns.size())))
+        throw std::invalid_argument("invalid prepared overlap beta columns");
     // Column-singleton support (including covalent structures) has one alpha string
     // per touched beta. Its scalar coefficient commutes with both exterior
     // maps. Generate each common basis image once, not once per CI RHS.
@@ -168,10 +224,13 @@ Eigen::MatrixXd StructureAction::cross_overlap(const Eigen::Ref<const Eigen::Mat
              begin < core::checked_index<std::int64_t>(sources.columns.size());
              begin += extent) {
             const std::int64_t count = std::min<int>(extent, sources.columns.size() - begin);
-            Factor a(n_unique_alpha_, count, directional), b(n_unique_beta_, count, directional);
+            const bool resident = beta_columns && begin + count <= beta_columns->cols();
+            Factor a(n_unique_alpha_, count, directional),
+                b(n_unique_beta_, resident ? 0 : count, directional);
             for (int j = 0; j < count; ++j) {
                 const std::int64_t beta = sources.columns[begin + j];
-                b.value(beta, j) = 1.0;
+                if (!resident)
+                    b.value(beta, j) = 1.0;
                 for (const auto group : sources.beta_groups[beta])
                     a.value(topology_->products[group] / n_unique_beta_, j) = coefficients[group];
             }
@@ -179,15 +238,35 @@ Eigen::MatrixXd StructureAction::cross_overlap(const Eigen::Ref<const Eigen::Mat
             // Associativity removes the transformed alpha-by-beta product entirely.
             transform(ra, dra, a);
             transform(la, dla, a, true);
-            transform(rb, drb, b);
-            transform(lb, dlb, b, true);
+            if (!resident) {
+                transform(rb, drb, b);
+                transform(lb, dlb, b, true);
+            }
+            const auto accumulate = [&](const auto& alpha_values, const auto& beta_values) {
 #pragma omp parallel for schedule(static) if (topology_->products.size() > 32)
-            for (std::size_t group = 0; group < topology_->products.size(); ++group) {
-                const std::int64_t alpha = topology_->products[group] / n_unique_beta_;
-                const std::int64_t beta = topology_->products[group] % n_unique_beta_;
-                products[group] += directional ? a.tangent.row(alpha).dot(b.value.row(beta)) +
-                                                     a.value.row(alpha).dot(b.tangent.row(beta))
-                                               : a.value.row(alpha).dot(b.value.row(beta));
+                for (std::size_t group = 0; group < topology_->products.size(); ++group) {
+                    const std::int64_t alpha = topology_->products[group] / n_unique_beta_;
+                    const std::int64_t beta = topology_->products[group] % n_unique_beta_;
+                    if (exchange && (alpha > beta || (alpha == beta && spin_exchange_parity_ < 0)))
+                        continue;
+                    products[group] += resident ? alpha_values.row(alpha).dot(
+                                                      beta_columns->row(beta).segment(begin, count))
+                                       : directional
+                                           ? a.tangent.row(alpha).dot(beta_values.row(beta)) +
+                                                 alpha_values.row(alpha).dot(b.tangent.row(beta))
+                                           : alpha_values.row(alpha).dot(beta_values.row(beta));
+                }
+            };
+            if (beta_columns) {
+                // Repeated fixed-chart solves consume contiguous row dots.
+                // Pack each alpha row once, not once per connected product.
+                // The factor-panel bound includes these transient copies.
+                const OverlapRows alpha_rows = a.value, beta_rows = b.value;
+                a.value.resize(0, 0);
+                b.value.resize(0, 0);
+                accumulate(alpha_rows, beta_rows);
+            } else {
+                accumulate(a.value, b.value);
             }
         }
 #pragma omp parallel for schedule(static) if (n_structures_ > 32)
@@ -196,7 +275,12 @@ Eigen::MatrixXd StructureAction::cross_overlap(const Eigen::Ref<const Eigen::Mat
                  offset < topology_->structure_offsets[structure + 1];
                  ++offset) {
                 const auto& term = topology_->terms[topology_->structure_terms[offset]];
-                result(structure, column) += term.coefficient * products[term.group];
+                const auto product = topology_->products[term.group];
+                const auto alpha = product / n_unique_beta_, beta = product % n_unique_beta_;
+                if (exchange && (alpha > beta || (alpha == beta && spin_exchange_parity_ < 0)))
+                    continue;
+                result(structure, column) += (exchange && alpha < beta ? 2.0 : 1.0) *
+                                             term.coefficient * products[term.group];
             }
     }
     return result;

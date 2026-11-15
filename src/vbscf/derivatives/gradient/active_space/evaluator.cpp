@@ -25,6 +25,7 @@
 #include "core/pair_index.hpp"
 #include "core/memory.hpp"
 #include "core/timing.hpp"
+#include "linalg/metric_residual.hpp"
 #include "vbscf/derivatives/hessian/context/accepted_point.hpp"
 #include "vbscf/derivatives/gradient/active_space/helpers.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin/backward.hpp"
@@ -33,6 +34,7 @@
 #include "vbscf/structures/assembly/action.hpp"
 #include "vbscf/structures/assembly/states.hpp"
 #include "vbscf/structures/orthogonal_ci/metric.hpp"
+#include "vbscf/structures/orthogonal_ci/exterior_transform.hpp"
 #include "mcscf/ci/orbital_frame.hpp"
 #include "mcscf/ci/micro_response.hpp"
 #include "mcscf/ci/occupation_diagonal.hpp"
@@ -165,7 +167,7 @@ linalg::DavidsonOptions structure_solve_options(
                                                  identity_overlap);
     options.stopping = stopping;
     if (stopping == linalg::DavidsonStoppingCriterion::EnergyAndResidual) {
-        accuracy.configure_isometric_stopping(options);
+        accuracy.configure_physical_stopping(options);
     }
     return options;
 }
@@ -182,7 +184,8 @@ xmvb::linalg::DavidsonResult solve_selected_structure_roots(
     std::function<double(const Eigen::VectorXd&, double)> physical_residual_norm = {},
     linalg::DavidsonPreconditioner residual_preconditioner = {},
     bool identity_overlap = false,
-    linalg::DavidsonStoppingCriterion stopping = linalg::DavidsonStoppingCriterion::BackwardError) {
+    linalg::DavidsonStoppingCriterion stopping = linalg::DavidsonStoppingCriterion::BackwardError,
+    std::function<double(const Eigen::VectorXd&, double)> metric_residual_bound = {}) {
     auto options = structure_solve_options(n_structures,
                                            n_roots,
                                            structure_solve_accuracy,
@@ -198,6 +201,7 @@ xmvb::linalg::DavidsonResult solve_selected_structure_roots(
                                    options.max_subspace_dimension,
                                    bytes);
     options.physical_residual_norm = std::move(physical_residual_norm);
+    options.metric_residual_bound = std::move(metric_residual_bound);
     options.residual_preconditioner = std::move(residual_preconditioner);
     if (mcscf::diagnostics::ciah_event_trace_enabled()) {
         options.observe_work = [](double vectors, double projected, double action) {
@@ -632,6 +636,7 @@ void solve_structure_problem(
                                              input.orbital_preparation_input);
             context->selected_metric = metric;
             linalg::DavidsonPreconditioner preconditioner;
+            std::function<double(const Eigen::VectorXd&, double)> residual_bound;
             if (!metric && structure_action.storage().orthogonal_direct_ci) {
                 // W^T W is occupation-block diagonal for any VB selection, not only
                 // FULL. Remove spin recoupling from the preconditioner even when the
@@ -643,6 +648,45 @@ void solve_structure_problem(
                     context->same_spin_pair_cache.beta_reuse_table.unique_determinants;
                 if (auto spin = SpinMetric::try_build(structure_action, alpha, beta, budget)) {
                     context->spin_metric = spin;
+                    const auto view = structure_action.orthogonal_view();
+                    const auto bounds =
+                        linalg::exterior_metric_bounds(view.alpha.orbital_transform(),
+                                                       alpha.electron_count(),
+                                                       beta.electron_count());
+                    if (bounds) {
+                        residual_bound = [spin, &structure_action, bounds = *bounds](
+                                             const Eigen::VectorXd& r, double target) {
+                            const auto start = std::chrono::steady_clock::now();
+                            const workspace::Temporary scratch(8 * sizeof(double) *
+                                                               static_cast<std::size_t>(r.size()));
+                            const auto bound = linalg::metric_residual_bounds(
+                                r,
+                                target,
+                                bounds.lower,
+                                bounds.upper,
+                                [&](const Eigen::VectorXd& p) {
+                                    return Eigen::VectorXd(
+                                        structure_action.apply_overlap(p).col(0));
+                                },
+                                [&](const Eigen::VectorXd& p) {
+                                    return Eigen::VectorXd(spin->solve(p).col(0));
+                                });
+                            mcscf::diagnostics::ciah_trace(
+                                "ciah_ci_metric_residual",
+                                "lower=%.17g,upper=%.17g,target=%.17g,actions=%td,seconds=%.9f",
+                                bound.lower,
+                                bound.upper,
+                                target,
+                                static_cast<std::ptrdiff_t>(bound.actions),
+                                std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                                              start)
+                                    .count());
+                            return bound.upper;
+                        };
+                    } else {
+                        mcscf::diagnostics::ciah_trace("ciah_ci_metric_residual",
+                                                       "unresolved_orbital_bound=1");
+                    }
                     preconditioner = [spin,
                                       &structure_action](const Eigen::Ref<const Eigen::VectorXd>& r,
                                                          double energy,
@@ -670,25 +714,29 @@ void solve_structure_problem(
                 }
             }
             preconditioner_phase.stop();
-            retain_davidson_result(metric
-                                       ? solve_factored_structure_roots(structure_action,
-                                                                        *metric,
-                                                                        n_roots,
-                                                                        structure_solve_accuracy,
-                                                                        initial_eigenvectors,
-                                                                        generalized_eigensolver)
-                                       : solve_selected_structure_roots(
-                                             action,
-                                             structure_action.preconditioner_diagonal().hamiltonian,
-                                             structure_action.preconditioner_diagonal().overlap,
-                                             n_structures,
-                                             n_roots,
-                                             structure_solve_accuracy,
-                                             initial_eigenvectors,
-                                             generalized_eigensolver,
-                                             std::move(physical_residual),
-                                             std::move(preconditioner)),
-                                   context);
+            retain_davidson_result(
+                metric ? solve_factored_structure_roots(structure_action,
+                                                        *metric,
+                                                        n_roots,
+                                                        structure_solve_accuracy,
+                                                        initial_eigenvectors,
+                                                        generalized_eigensolver)
+                       : solve_selected_structure_roots(
+                             action,
+                             structure_action.preconditioner_diagonal().hamiltonian,
+                             structure_action.preconditioner_diagonal().overlap,
+                             n_structures,
+                             n_roots,
+                             structure_solve_accuracy,
+                             initial_eigenvectors,
+                             generalized_eigensolver,
+                             std::move(physical_residual),
+                             std::move(preconditioner),
+                             false,
+                             residual_bound ? linalg::DavidsonStoppingCriterion::EnergyAndResidual
+                                            : linalg::DavidsonStoppingCriterion::BackwardError,
+                             residual_bound),
+                context);
         }
     }
     context->eigensolver_wall_time_seconds =
@@ -1320,7 +1368,7 @@ ActiveSpaceFixedStructureGradient ActiveSpaceGradientEvaluator::evaluate_fixed_s
             throw std::runtime_error("CI microresponse cannot construct physical coordinates");
         linalg::DavidsonOptions options;
         options.identity_overlap = true;
-        accepted_point->structure_solve_accuracy.configure_isometric_stopping(options);
+        accepted_point->structure_solve_accuracy.configure_physical_stopping(options);
         const Eigen::VectorXd seed = coordinates->to_ci_coordinates(structure_coefficients).col(0);
         const Eigen::VectorXd diagonal = coordinates->ci_occupation_diagonal();
         const bool trace = mcscf::diagnostics::ciah_event_trace_enabled();

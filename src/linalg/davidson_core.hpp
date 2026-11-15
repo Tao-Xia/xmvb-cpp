@@ -81,8 +81,8 @@ inline void validate_davidson_options(Eigen::Index dimension, const DavidsonOpti
         throw std::invalid_argument("Davidson stationarity tolerance must be positive");
     }
     if (options.stopping == DavidsonStoppingCriterion::EnergyAndResidual &&
-        !options.identity_overlap)
-        throw std::invalid_argument("energy/residual stopping requires identity overlap");
+        !options.identity_overlap && !options.metric_residual_bound)
+        throw std::invalid_argument("energy/residual stopping requires a physical residual norm");
 }
 
 inline void
@@ -328,7 +328,8 @@ Result solve_davidson(Backend& backend,
         throw std::invalid_argument("invalid Davidson initial vector block");
     }
     if constexpr (!Backend::supports_host_callbacks) {
-        if (options.physical_residual_norm || options.residual_preconditioner) {
+        if (options.physical_residual_norm || options.metric_residual_bound ||
+            options.residual_preconditioner) {
             throw std::invalid_argument("CUDA Davidson does not support host residual callbacks");
         }
     }
@@ -452,14 +453,35 @@ Result solve_davidson(Backend& backend,
                 std::min(options.residual_tolerance, spectral_energy_residual_tolerance);
             bool root_converged;
             if (options.stopping == DavidsonStoppingCriterion::EnergyAndResidual) {
+                double physical = stationarity_residual;
+                if constexpr (Backend::supports_host_callbacks) {
+                    if (options.metric_residual_bound &&
+                        (ritz_energy_stable || iteration == 1 || active_dimension == dimension)) {
+                        const double norm = std::sqrt(
+                            backend.dot(backend.cview(roots).column(root), s_roots.column(root)));
+                        if (!(norm > 0) || !std::isfinite(norm))
+                            throw std::runtime_error("invalid Davidson physical root norm");
+                        const double target = iteration == 1 && active_dimension != dimension
+                                                  ? options.energy_tolerance
+                                                  : options.stationarity_tolerance;
+                        const auto certification_start = stamp();
+                        physical = options.metric_residual_bound(
+                                       backend.download(backend.cview(residual)), target * norm) /
+                                   norm;
+                        certification_time += stamp() - certification_start;
+                        if (!(physical >= 0) || !std::isfinite(physical))
+                            throw std::runtime_error("invalid physical residual bound");
+                        result.stationarity_residual_norms[root] = physical;
+                    }
+                }
                 // A preconverged initial vector has no previous Ritz energy.
                 // Its absolute residual bounds the distance to the spectrum;
                 // do not force a spurious expansion of an exact eigenvector.
                 // A complete Ritz basis likewise has no further direction;
                 // as in Davidson's exhausted-space exit, check its residual.
                 const bool initial_energy_resolved =
-                    iteration == 1 && stationarity_residual <= options.energy_tolerance;
-                root_converged = stationarity_residual <= options.stationarity_tolerance &&
+                    iteration == 1 && physical <= options.energy_tolerance;
+                root_converged = physical <= options.stationarity_tolerance &&
                                  (ritz_energy_stable || initial_energy_resolved ||
                                   active_dimension == dimension);
             } else {

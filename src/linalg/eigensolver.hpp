@@ -74,6 +74,12 @@ struct DavidsonOptions {
    * constructing or inverting a dense overlap matrix.
    */
     std::function<double(const Eigen::VectorXd&, double)> physical_residual_norm = {};
+    /** Physical dual-norm upper bound of an already formed residual covector.
+     * The second argument is the requested (unnormalized) norm. The callback
+     * may stop refining once either side of a valid interval decides the test.
+     * Does not recompute Hc or Mc; usable with a nonidentity overlap.
+     */
+    std::function<double(const Eigen::VectorXd&, double)> metric_residual_bound = {};
     /** @brief Optional inverse action on an algebraic residual covector.
    * Given `(H - E S)c` and the Ritz energy E, fill the positive inverse
    * image in the borrowed output coordinates. The solver negates that image to form
@@ -93,7 +99,7 @@ struct DavidsonOptions {
    * unchanged. The caller must establish an isometric coordinate model.
    */
     bool identity_overlap = false;
-    /** EnergyAndResidual requires isometric coordinates (identity overlap). */
+    /** EnergyAndResidual requires identity overlap or metric_residual_bound. */
     DavidsonStoppingCriterion stopping = DavidsonStoppingCriterion::BackwardError;
     /** @brief Optional solve totals for large-vector/control work, Ritz solve and H/M action. */
     std::function<void(double, double, double)> observe_work = {};

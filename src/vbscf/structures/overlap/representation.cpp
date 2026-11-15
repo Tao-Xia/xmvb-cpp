@@ -304,6 +304,12 @@ RepresentationOverlap::PreparedMetric::PreparedMetric(
             alpha_transform_.reset();
             beta_transform_.reset();
         }
+        // Small singleton-source selections already build a shared exact Gram
+        // inverse in CiTransport. Their certifying action needs no Krylov-scale
+        // beta reuse; preserve that inexpensive fused source execution.
+        if (!selected_metric_ &&
+            !(action.shared_overlap_sources() && fits_selected(action.n_structures())))
+            beta_columns_ = action.prepare_overlap_beta(*beta_transform_);
     } else {
         kernel_ = upper.transpose() * upper;
     }
@@ -318,8 +324,17 @@ Eigen::MatrixXd RepresentationOverlap::PreparedMetric::operator()(
     if (!alpha_transform_)
         return apply_pair_kernel(*action_, alpha_, beta_, kernel_, coeff);
 
-    return action_->cross_overlap(
-        coeff, *alpha_transform_, *beta_transform_, *alpha_transform_, *beta_transform_);
+    return action_->cross_overlap(coeff,
+                                  *alpha_transform_,
+                                  *beta_transform_,
+                                  *alpha_transform_,
+                                  *beta_transform_,
+                                  nullptr,
+                                  nullptr,
+                                  nullptr,
+                                  nullptr,
+                                  workspace::available(),
+                                  beta_columns_.values.size() ? &beta_columns_.values : nullptr);
 }
 
 const Eigen::MatrixXd& RepresentationOverlap::PreparedMetric::selected_matrix() const noexcept {

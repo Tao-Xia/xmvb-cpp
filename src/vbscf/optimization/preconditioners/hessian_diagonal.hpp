@@ -23,7 +23,7 @@ struct AnalyticOrbitalDiagonal {
  *
  * HAO and OEO use the same accepted AO-metric orthogonal frame. Sparse
  * supports enter only when this model is pulled into the orbital chart.
- * FULL/full-AO models use a block-semicanonical auxiliary frame when accepted
+ * Models use a block-semicanonical auxiliary frame when accepted
  * exchange images are available. Only preconditioning changes; the physical
  * orbitals, Hessian action and original component step cap remain unchanged.
  * Disabling auxiliary_frame provides the original-frame diagnostic reference.
