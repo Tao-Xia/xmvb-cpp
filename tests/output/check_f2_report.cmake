@@ -14,6 +14,9 @@ if (NOT xmvb_status EQUAL 0)
 endif()
 
 set(required_report_patterns
+  "SCF_CONVERGED program_wall_seconds=[0-9]+[.][0-9]+"
+  "Program entry to SCF convergence[ ]+:[ ]+[0-9]+[.][0-9]+ s"
+  "Post-SCF wall time[ ]+:[ ]+[0-9]+[.][0-9]+ s"
   "Developed by: Tao Xia"
   "Software development assistance: OpenAI Codex"
   "Version: ${XMVB_VERSION}"

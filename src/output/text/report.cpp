@@ -184,13 +184,21 @@ std::function<void(const xmvb::vb::VbScfAcceptedIterationSnapshot&)> iteration_l
     };
 }
 
+void print_scf_convergence_marker(std::ostream& output, double program_wall_seconds) {
+    std::ostringstream marker;
+    marker << "SCF_CONVERGED program_wall_seconds=" << std::fixed << std::setprecision(9)
+           << program_wall_seconds << '\n';
+    output << marker.str() << std::flush;
+}
+
 void print_summary(const vb::VbScfOptimizerOptions& options,
                    const vb::VbScfInputLoadResult& load_result,
                    const vb::VbScfOptimizerResult& result,
                    const std::optional<std::filesystem::path>& trace_sample_directory,
                    const std::optional<std::filesystem::path>& molden_output_path,
                    const std::chrono::system_clock::time_point& command_start_time,
-                   const std::chrono::steady_clock::time_point& command_start_steady_time) {
+                   const std::chrono::steady_clock::time_point& program_entry,
+                   const std::optional<std::chrono::steady_clock::time_point>& scf_converged_at) {
     const auto& input = result.optimized_input;
     const bool command_converged = result.converged;
     const double initial_electronic_energy =
@@ -210,9 +218,9 @@ void print_summary(const vb::VbScfOptimizerOptions& options,
     const auto final_report = print_final_state_sections(std::cout, load_result, result);
     const double average_structure_overlap = final_report.mean_structure_overlap;
     const auto command_finish_time = std::chrono::system_clock::now();
+    const auto report_finish = std::chrono::steady_clock::now();
     const double total_job_wall_time_seconds =
-        std::chrono::duration<double>(std::chrono::steady_clock::now() - command_start_steady_time)
-            .count();
+        std::chrono::duration<double>(report_finish - program_entry).count();
 
     std::cout << "\n\n                 ===============================================\n"
               << "                       XMVB-CPP RUN DIAGNOSTICS\n"
@@ -373,6 +381,16 @@ void print_summary(const vb::VbScfOptimizerOptions& options,
                     format_seconds(load_result.structure_expansion_seconds));
     print_log_field("Input preparation wall time", format_seconds(load_result.total_seconds));
     print_log_field("SCF iteration wall time", format_seconds(optimizer_wall_time_seconds));
+    if (scf_converged_at) {
+        print_log_field(
+            "Program entry to SCF convergence",
+            format_seconds(
+                std::chrono::duration<double>(*scf_converged_at - program_entry).count()));
+        print_log_field(
+            "Post-SCF wall time",
+            format_seconds(
+                std::chrono::duration<double>(report_finish - *scf_converged_at).count()));
+    }
     print_log_field("Structure analysis wall time",
                     format_seconds(final_report.structure_analysis_seconds));
     print_log_field("Structure normalization wall time",

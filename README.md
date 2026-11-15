@@ -87,6 +87,20 @@ in CMake. Run builds and numerical validation through Slurm on compute nodes.
 OMP_NUM_THREADS=1 build/src/xmvb-cpp.exe <input.xmi>
 ```
 
+CPU VBSCF emits `SCF_CONVERGED program_wall_seconds=<seconds>` on stdout,
+followed by an immediate flush, as soon as its optimizer confirms convergence.
+The clock starts at `main()` entry, before argument parsing. The final report
+also lists `Program entry to SCF convergence` and `Post-SCF wall time`; the latter
+includes final diagnostics, orbital export and structure analysis/output through
+the report, before the timing footer. These two fields partition the internal
+`End-to-end wall time`. The existing `SCF iteration wall time` is a nested optimizer
+timer, not the startup-to-convergence metric. Unconverged runs emit no convergence
+marker or successful-convergence timing fields. A marker certifies SCF convergence,
+not successful completion of subsequent output; also check the process exit code.
+To include launcher/container startup and dynamic-library loading, start an external
+clock before the run command and stop it when this marker arrives. Ordinary file
+or pipe output is sufficient; no PTY or line-buffering override is needed.
+
 Input files use the `.xmi` format. See `testdata/vbscf/` for the versioned
 regression decks and `testdata/vbscf/F2.xmi` for the compact HAO smoke case.
 Within `$CTRL`, `ISCF=7` selects TNHVP,

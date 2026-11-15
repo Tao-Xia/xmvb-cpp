@@ -186,6 +186,8 @@ BackendRunResult run_ciah_backend(VbScfObjective* objective,
                                        projected.reduced_gradient,
                                        options.gradient_tolerance)) {
             result->converged = true;
+            if (options.convergence_callback)
+                options.convergence_callback();
             result->termination_reason = "ciah_projected_gradient_tolerance";
             break;
         }
@@ -251,6 +253,8 @@ BackendRunResult run_ciah_backend(VbScfObjective* objective,
                                         next_projected.reduced_gradient,
                                         options.gradient_tolerance))) {
             result->converged = true;
+            if (options.convergence_callback)
+                options.convergence_callback();
             result->termination_reason = "ciah_projected_gradient_tolerance";
         }
         chart = std::move(next_geometry);

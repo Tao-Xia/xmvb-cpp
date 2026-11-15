@@ -7,6 +7,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <iostream>
 #include <memory>
 #include <numeric>
 #include <optional>
@@ -31,7 +32,7 @@ namespace xmvb::cli {
 
 namespace fs = std::filesystem;
 
-int run(Options command_line) {
+int run(Options command_line, std::chrono::steady_clock::time_point program_entry) {
     parallel::configure_runtime_threads();
     memory::configure(command_line.ci_workspace_bytes);
     const std::string& input_path = command_line.input_path;
@@ -58,7 +59,12 @@ int run(Options command_line) {
     const bool user_specified_max_iterations = command_line.max_iterations_explicit;
 
     const auto command_start_time = std::chrono::system_clock::now();
-    const auto command_start_steady_time = std::chrono::steady_clock::now();
+    std::optional<std::chrono::steady_clock::time_point> scf_converged_at;
+    options.convergence_callback = [&] {
+        scf_converged_at = std::chrono::steady_clock::now();
+        xmvb::output::print_scf_convergence_marker(
+            std::cout, std::chrono::duration<double>(*scf_converged_at - program_entry).count());
+    };
     auto load_result = xmvb::vb::load_vbscf_input_with_timings(input_path, load_options);
     load_result.input.ao_integral_input.exact_exchange_memory_budget_bytes =
         command_line.exact_exchange_memory_budget_bytes;
@@ -165,7 +171,8 @@ int run(Options command_line) {
                                 trace_sample_directory,
                                 molden_output_path,
                                 command_start_time,
-                                command_start_steady_time);
+                                program_entry,
+                                scf_converged_at);
 
     return command_converged ? 0 : 2;
 }

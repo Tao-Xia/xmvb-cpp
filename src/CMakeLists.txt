@@ -561,6 +561,10 @@ if (BUILD_TESTING)
   target_link_libraries(test_output_determinants PRIVATE xmvb_output)
   add_test(NAME output_determinants COMMAND test_output_determinants)
 
+  add_executable(test_output_timing ${CMAKE_SOURCE_DIR}/tests/output/test_timing.cpp)
+  target_link_libraries(test_output_timing PRIVATE xmvb_output)
+  add_test(NAME output_timing COMMAND test_output_timing)
+
   add_executable(
     test_cli_options
     cli/options.cpp
