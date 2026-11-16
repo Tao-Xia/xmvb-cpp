@@ -1,5 +1,7 @@
 #pragma once
 
+#include <utility>
+
 #include "vbscf/derivatives/hessian/exact/operator.hpp"
 #include "vbscf/derivatives/hessian/coupled/structure.hpp"
 
@@ -24,8 +26,14 @@ class AffineCoupling {
   public:
     AffineCoupling(const AcceptedPointContext& context,
                    const ExactHvpOperator& hessian,
-                   const StructureTangentOperator& structure);
+                   const StructureTangentOperator& structure,
+                   bool fixed_active_overlap = false);
 
+    std::pair<Eigen::VectorXd, Eigen::VectorXd> fixed_overlap_orbital_images(
+        const Eigen::VectorXd& orbital, bool forcing_only) const;
+    Eigen::VectorXd fixed_overlap_forcing(const Eigen::VectorXd& orbital) const {
+        return fixed_overlap_orbital_images(orbital, true).second;
+    }
     AffineCouplingAction apply(const Eigen::VectorXd& orbital, const Eigen::VectorXd& ci) const;
 
   private:
@@ -34,6 +42,7 @@ class AffineCoupling {
     Eigen::MatrixXd residual_;
     Eigen::MatrixXd metric_inverse_;
     Eigen::VectorXd scales_;
+    bool fixed_active_overlap_;
 };
 
 } // namespace xmvb::vb

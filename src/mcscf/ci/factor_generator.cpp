@@ -1,5 +1,6 @@
 #include <cstdint>
 #include "mcscf/ci/factors_internal.hpp"
+#include "mcscf/ci/workspace.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -80,6 +81,8 @@ Eigen::MatrixXd generator_adjoint(const DirectCiSigmaAction& sigma,
     Eigen::MatrixXd result = Eigen::MatrixXd::Zero(n, n);
     if (!left.count || !right.count)
         return result;
+    const CiWorkspace operation(workspace_bytes, false);
+    workspace_bytes = operation.bytes();
     // Only an identity bilinear permits exchanging sources followed by a
     // transpose. H on the left cannot be moved through an oriented generator.
     const auto moment_work = [&](const SpinFactorSource& a, const SpinFactorSource& b) {

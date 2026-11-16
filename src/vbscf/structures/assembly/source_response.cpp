@@ -4,6 +4,7 @@
 #include <cmath>
 #include <stdexcept>
 
+#include "core/workspace.hpp"
 #include "mcscf/ci/factors.hpp"
 #include "vbscf/structures/assembly/sources.hpp"
 
@@ -75,7 +76,7 @@ StructureAction::source_response(const StructureAdjointState& state,
             continue;
         const Eigen::VectorXd accepted = expand_support(state.structure_coefficients.col(i));
         const auto factors = [&](const Eigen::VectorXd& values, bool physical) {
-            return sources_->orthogonal_source(spin_products_, values, alpha, beta, physical);
+            return sources_->orthogonal_source(topology_->products, values, alpha, beta, physical);
         };
         const auto y = factors(accepted, false);
         const auto q = factors(response, false), physical_q = factors(response, true);
@@ -89,7 +90,7 @@ StructureAction::source_response(const StructureAdjointState& state,
                 beta,
                 sigma,
                 false,
-                mcscf::kFactorWorkspaceBytes);
+                workspace::available());
             result.images.hamiltonian.col(i) = image.hamiltonian.col(0);
             result.images.overlap.col(i) = image.overlap.col(0);
             continue;

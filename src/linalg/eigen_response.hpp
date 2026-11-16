@@ -184,11 +184,14 @@ struct EqualWeightEigenCoupling {
  * @f$HC-SCE@f$ and may be zero for an exact accepted eigensystem.
  * If horizontal_forcing is false, only the normalization gauge is prepared;
  * forcing and horizontal_forcing in the result remain empty.
+ * `selected_metric` is the selected-state Gram. A factored overlap owner can
+ * supply (R C)^T (R C) without contracting cancelling C^T (M C) entries.
  */
 EqualWeightEigenCoupling prepare_equal_weight_generalized_eigen_coupling(
     const Eigen::Ref<const Eigen::VectorXd>& selected_eigenvalues,
     const Eigen::Ref<const Eigen::MatrixXd>& selected_eigenvectors,
     const Eigen::Ref<const Eigen::MatrixXd>& overlap_selected,
+    const Eigen::Ref<const Eigen::MatrixXd>& selected_metric,
     const Eigen::Ref<const Eigen::MatrixXd>& selected_residuals,
     const Eigen::Ref<const Eigen::MatrixXd>& delta_hamiltonian_selected,
     const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_selected,

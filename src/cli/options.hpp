@@ -16,7 +16,7 @@ struct Options {
     std::string tnhvp_trace_path;
     std::string ciah_trace_path;
     std::string final_orbitals_path;
-    std::size_t exact_exchange_memory_budget_bytes = 64 * 1024 * 1024;
+    std::optional<std::size_t> exact_exchange_memory_budget_bytes;
     std::optional<std::size_t> ci_workspace_bytes;
     bool optimizer_backend_explicit = false;
     bool structure_eigensolver_explicit = false;

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(xmvb_standalone VERSION 0.1.0 LANGUAGES C CXX Fortran)
+project(xmvb_standalone VERSION 0.1.4 LANGUAGES C CXX Fortran)
 
 include(CTest)
 option(XMVB_ENABLE_TNVB "Build the independent SU(2) Block2 TNVB backend" OFF)

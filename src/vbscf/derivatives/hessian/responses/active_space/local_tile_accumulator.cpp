@@ -20,7 +20,8 @@ void add_vector(const std::vector<double>& source, std::vector<double>* target) 
 LocalActiveSpaceTileAccumulator::LocalActiveSpaceTileAccumulator(
     const VbScfInput& input,
     const AcceptedPointContext& accepted_point,
-    const ActiveSpaceIntegralDirectionView& direction)
+    const ActiveSpaceIntegralDirectionView& direction,
+    std::size_t workspace_bytes)
     : same_spin_(accepted_point.same_spin_pair_cache,
                  accepted_point.selected_state_matrices,
                  accepted_point.selected_state_energies,
@@ -28,14 +29,16 @@ LocalActiveSpaceTileAccumulator::LocalActiveSpaceTileAccumulator(
                  accepted_point.prepared_active_space.orbital_result.active_orbital_overlap_matrix,
                  accepted_point.prepared_active_space.active_space_one_electron_result.h1e_act,
                  accepted_point.prepared_active_space.active_space_two_electron_result,
-                 direction),
+                 direction,
+                 workspace_bytes / 2),
       opposite_spin_(
           accepted_point.same_spin_pair_cache,
           accepted_point.selected_state_matrices,
           input.orbital_preparation_input.n_active_orbitals,
           accepted_point.prepared_active_space.orbital_result.active_orbital_overlap_matrix,
           accepted_point.prepared_active_space.active_space_one_electron_result.h1e_act,
-          accepted_point.prepared_active_space.active_space_two_electron_result) {
+          accepted_point.prepared_active_space.active_space_two_electron_result,
+          workspace_bytes - workspace_bytes / 2) {
     if (!accepted_point.use_pair_graph_opposite_spin_adjoint) {
         throw std::runtime_error("local pair-tile adjoint requires selected-state pair graphs");
     }

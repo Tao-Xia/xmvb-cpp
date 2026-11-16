@@ -82,6 +82,20 @@ struct TnhvpIterationRecord {
     bool chart_changed = false;
 };
 
+enum class CiahResponseModel { OrbitalOnly, Adaptive, Coupled };
+
+inline const char* ciah_response_model_name(CiahResponseModel model) noexcept {
+    switch (model) {
+        case CiahResponseModel::OrbitalOnly:
+            return "orbital-only";
+        case CiahResponseModel::Adaptive:
+            return "adaptive CI";
+        case CiahResponseModel::Coupled:
+            return "coupled CI";
+    }
+    return "unknown";
+}
+
 /**
  * @brief Solver diagnostics for one accepted CIAH outer iteration.
  *
@@ -90,6 +104,7 @@ struct TnhvpIterationRecord {
  * model scalars describe the trial that produced the accepted step.
  */
 struct CiahIterationRecord {
+    CiahResponseModel response_model = CiahResponseModel::OrbitalOnly;
     int accepted_iteration_index = 0;
     /** Exact-gradient keyframes accepted inside this nonlinear macro step. */
     int keyframes = 0;
@@ -327,8 +342,6 @@ struct VbScfOptimizerResult {
 
     /** Lightweight per-accepted-step diagnostics for the CIAH backend. */
     std::vector<CiahIterationRecord> ciah_iteration_trace;
-    /** Final near-stationary probe with no accepted update; excluded from outer steps. */
-    int ciah_terminal_probe_hvp_actions = 0;
 
     /**
    * @brief Explicitly requested accepted-iterate trace.

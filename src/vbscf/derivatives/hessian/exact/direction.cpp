@@ -123,7 +123,9 @@ ActiveSpaceIntegralDirectionView ExactHvpOperator::State::build_active_integral_
     const Eigen::Ref<const Eigen::MatrixXd>& delta_h1e_times_active,
     const Eigen::VectorXd* precomputed_delta_packed_two_electron,
     ActiveSpaceIntegralDirectionWorkspace* workspace,
-    bool packed_two_electron_required) const {
+    bool packed_two_electron_required,
+    bool fixed_active_overlap,
+    const Eigen::MatrixXd* projected_effective_h1e) const {
     const auto& accepted_two_electron =
         accepted_point_context_->prepared_active_space.active_space_two_electron_result;
     const ActiveSpaceIntegralDirectionContext integral_context{
@@ -139,7 +141,9 @@ ActiveSpaceIntegralDirectionView ExactHvpOperator::State::build_active_integral_
             direction.integral_tangent,
             delta_h1e_times_active,
             precomputed_delta_packed_two_electron,
-            packed_two_electron_required},
+            packed_two_electron_required,
+            fixed_active_overlap,
+            projected_effective_h1e},
         workspace);
 }
 

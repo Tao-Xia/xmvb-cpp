@@ -3,8 +3,10 @@
 #include <memory>
 #include <optional>
 #include <Eigen/Core>
+#include <Eigen/Cholesky>
 
 #include "vbscf/orbitals/charts/chart.hpp"
+#include "vbscf/orbitals/preparation/cholesky.hpp"
 #include "vbscf/orbitals/preparation/overlap_pullback.hpp"
 #include "vbscf/structures/overlap/representation.hpp"
 
@@ -19,10 +21,11 @@ struct SelectedMetric;
 struct CiTransportPoint {
     OrbitalPreparationInput input;
     OrbitalPreparationResult prepared;
-    Eigen::MatrixXd upper;
-    Eigen::MatrixXd origin_direction;
+    ActiveFrame frame;
+    Eigen::MatrixXd origin_direction; // Empty for an invariant origin overlap.
     Eigen::MatrixXd base_coefficients;
     Eigen::MatrixXd coefficients;
+    std::shared_ptr<const ExteriorOrbitalTransform> relative_alpha, relative_beta;
     /** Exact Gram at this trial chart, shared with its keyframe when resident. */
     std::shared_ptr<const SelectedMetric> selected_metric;
 };
@@ -43,7 +46,8 @@ class CiTransport {
                 const OrbitalChart& chart,
                 const AcceptedPointContext& origin,
                 const StructureAction& action,
-                const StructureTangentOperator& structure);
+                const StructureTangentOperator& structure,
+                bool fixed_origin_overlap = false);
 
     CiTransportPoint retract(const Eigen::VectorXd& orbital_step,
                              const Eigen::VectorXd& structure_step) const;
@@ -64,7 +68,7 @@ class CiTransport {
     const StructureAction& action_;
     const StructureTangentOperator& structure_;
     RepresentationOverlap overlap_;
-    OrbitalOverlapPullback origin_pullback_;
+    std::optional<OrbitalOverlapPullback> origin_pullback_;
     Eigen::MatrixXd upper_;
     Eigen::MatrixXd zero_;
     Eigen::MatrixXd c0_;
@@ -76,6 +80,9 @@ class CiTransport {
     mutable Eigen::MatrixXd metric_upper_;
     mutable std::optional<RepresentationOverlap::PreparedMetric> prepared_metric_;
     mutable std::shared_ptr<const SelectedMetric> selected_metric_;
+    /** Trial-local Gram model used only as an inverse; the tile action certifies it. */
+    mutable workspace::Reservation preconditioner_memory_;
+    mutable std::optional<Eigen::LLT<Eigen::MatrixXd>> preconditioner_;
 };
 
 } // namespace xmvb::vb

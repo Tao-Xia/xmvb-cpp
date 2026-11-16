@@ -238,8 +238,9 @@ void check_exact_pairs(const xmvb::vb::StructureExpansion& expansion,
                 expansion.beta().size() == expected.size() &&
                 expansion.incidence().size() == expected.size(),
             "small expansion has the wrong pair count");
-    require(expansion.offsets.size() == expected.size() + 1 && expansion.offsets.front() == 0 &&
-                expansion.offsets.back() == expansion.terms.size(),
+    require(expansion.incidence_data->offsets.size() == expected.size() + 1 &&
+                expansion.incidence_data->offsets.front() == 0 &&
+                expansion.incidence_data->offsets.back() == expansion.incidence_data->terms.size(),
             "small expansion has invalid CSR offsets");
     require(
         std::set<std::vector<int>>(expansion.alpha_strings.begin(), expansion.alpha_strings.end())
@@ -247,7 +248,13 @@ void check_exact_pairs(const xmvb::vb::StructureExpansion& expansion,
             std::set<std::vector<int>>(expansion.beta_strings.begin(), expansion.beta_strings.end())
                     .size() == expansion.beta_strings.size(),
         "small expansion repeats a spin string");
-    for (std::size_t pair = 0; pair < expected.size(); ++pair) {
+    for (const auto& reference_pair : expected) {
+        std::size_t pair = 0;
+        while (pair < expansion.alpha().size() &&
+               (expansion.alpha()[pair] != reference_pair.alpha ||
+                expansion.beta()[pair] != reference_pair.beta))
+            ++pair;
+        require(pair < expansion.alpha().size(), "missing expected spin pair");
         const auto check_words = [&](const auto& rows, const std::vector<int>& occupied) {
             const auto words = rows.words(pair);
             std::vector<std::uint64_t> reference(words.size(), 0);
@@ -256,17 +263,17 @@ void check_exact_pairs(const xmvb::vb::StructureExpansion& expansion,
             require(std::equal(words.begin(), words.end(), reference.begin()),
                     "generation changed a native occupation word");
         };
-        check_words(expansion.alpha(), expected[pair].alpha);
-        check_words(expansion.beta(), expected[pair].beta);
-        require(expansion.alpha()[pair] == expected[pair].alpha &&
-                    expansion.beta()[pair] == expected[pair].beta,
+        check_words(expansion.alpha(), reference_pair.alpha);
+        check_words(expansion.beta(), reference_pair.beta);
+        require(expansion.alpha()[pair] == reference_pair.alpha &&
+                    expansion.beta()[pair] == reference_pair.beta,
                 "small expansion changed pair ordering");
         const auto row = expansion.incidence()[pair];
-        require(row.size() == expected[pair].terms.size(),
+        require(row.size() == reference_pair.terms.size(),
                 "small expansion changed incidence row length");
         for (std::size_t term = 0; term < row.size(); ++term) {
-            require(row[term].structure_index == expected[pair].terms[term].first &&
-                        row[term].coefficient == expected[pair].terms[term].second,
+            require(row[term].structure_index == reference_pair.terms[term].first &&
+                        row[term].coefficient == reference_pair.terms[term].second,
                     "small expansion changed an exact incidence sign");
         }
     }
@@ -299,9 +306,43 @@ void check_small_exact_signs() {
     const auto alpha_index = crossing.alpha_strings.basis(4);
     require(alpha_index.shares_storage(crossing.alpha_strings.basis(4)),
             "generated spin-string index was rebuilt by a second consumer");
-    const auto shared_pair = crossing.incidence()[0];
-    require(shared_pair[0].coefficient + shared_pair[1].coefficient == 0.0,
-            "crossing structures do not cancel on their shared pair");
+    bool cancellation = false;
+    for (const auto row : crossing.incidence())
+        cancellation |= row.size() == 2 && row[0].coefficient + row[1].coefficient == 0.0;
+    require(cancellation, "crossing structures do not cancel on their shared pair");
+}
+
+void check_shared_incidence() {
+    using namespace xmvb::vb;
+    // Keep a view after the input is destroyed: action ownership must not rely
+    // on the caller keeping its original StructureExpansion alive.
+    const auto incidence = [] {
+        const StructureExpander expander;
+        auto expansion = expander.expand(raw_structures(4, 1, {{1, 2, 3, 4}, {1, 4, 3, 2}}));
+        auto copy = expansion;
+        require(copy.incidence_data == expansion.incidence_data,
+                "copying input duplicated incidence storage");
+        return copy.incidence();
+    }();
+    const auto& data = *incidence.owner();
+    std::vector<int> visits(data.terms.size(), 0);
+    for (std::size_t s = 0; s + 1 < data.structure_offsets.size(); ++s)
+        for (auto k = data.structure_offsets[s]; k < data.structure_offsets[s + 1]; ++k) {
+            const auto t = data.structure_terms[k];
+            require(data.terms[t].structure_index == static_cast<Eigen::Index>(s),
+                    "reverse incidence has wrong structure");
+            require(t >= data.offsets[data.terms[t].group] &&
+                        t < data.offsets[data.terms[t].group + 1],
+                    "wrong incidence row");
+            ++visits[t];
+        }
+    require(std::all_of(visits.begin(), visits.end(), [](int n) { return n == 1; }),
+            "reverse incidence loses or repeats a term");
+    const auto merged =
+        StructureIncidenceData::make({0, 3, 4}, {{0, 1.0}, {0, -1.0}, {1, 0.5}, {0, 2.0}}, 2);
+    require(merged->terms.size() == 2 && merged->terms[0].structure_index == 1 &&
+                merged->terms[1].coefficient == 2.0 && merged->terms[1].group == 1,
+            "incidence coalescing changed signed coefficients");
 }
 
 void check_shared_bit_topology() {
@@ -329,6 +370,7 @@ void check_shared_bit_topology() {
 } // namespace
 
 int main() {
+    check_shared_incidence();
     check_shared_bit_topology();
     check_small_exact_signs();
     check_case({"FeCl2 CAS(10,8) quintet", 8, 10, 5, 0, 420, 448});

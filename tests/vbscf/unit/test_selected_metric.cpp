@@ -13,6 +13,7 @@
 #include <Eigen/LU>
 
 #include "linalg/metric_solve.hpp"
+#include "linalg/metric_residual.hpp"
 #include "vbscf/determinants/pairs/same_spin_cache.hpp"
 #include "integrals/active/two_electron.hpp"
 #include "vbscf/structures/assembly/action.hpp"
@@ -306,9 +307,15 @@ void check_selected_spin_metric() {
                 !xmvb::vb::SpinMetric::fits(action, fixture.alpha, fixture.beta, bytes - 1),
             "selected spin metric factor budget is not exact");
     const xmvb::vb::SpinMetric spin(action, fixture.alpha, fixture.beta, bytes);
+    const auto admitted = xmvb::vb::SpinMetric::try_build(action, fixture.alpha, fixture.beta, bytes);
+    require(admitted &&
+                !xmvb::vb::SpinMetric::try_build(action, fixture.alpha, fixture.beta, bytes - 1),
+            "single-pass spin factor admission changed its exact byte boundary");
     require(spin.block_count() == 2 && spin.max_block_size() == 2 && spin.factor_bytes() == bytes,
             "selected spin metric did not preserve occupation blocks");
     const Eigen::VectorXd rhs = Eigen::Vector3d(0.31, -0.47, 0.28);
+    require((gram * admitted->solve(rhs).col(0) - rhs).norm() < 1e-12,
+            "single-pass spin factor admission changed the selected-space inverse");
     require((gram * spin.solve(rhs).col(0) - rhs).norm() < 1e-12 &&
                 (spin.diagonal() - gram.diagonal()).norm() < 1e-12,
             "selected spin Gram solve disagrees with independent dense oracle");
@@ -326,6 +333,23 @@ void check_selected_spin_metric() {
         action, fixture.alpha, fixture.beta, fixture.upper.rows());
     const auto metric = representation.prepare_metric(fixture.upper);
     const Eigen::MatrixXd physical = metric.selected_matrix();
+    const auto bounds = xmvb::linalg::exterior_metric_bounds(fixture.upper, 1, 1);
+    require(bounds.has_value(), "selected residual fixture has no orbital bounds");
+    const double exact_norm = std::sqrt(rhs.dot(physical.llt().solve(rhs)));
+    for (double ratio : {.1, .99, 1.01, 10.0}) {
+        const auto interval = xmvb::linalg::metric_residual_bounds(
+            rhs,
+            ratio * exact_norm,
+            bounds->lower,
+            bounds->upper,
+            [&](const Eigen::VectorXd& x) {
+                return Eigen::VectorXd(action.apply_overlap(x).col(0));
+            },
+            [&](const Eigen::VectorXd& x) { return Eigen::VectorXd(spin.solve(x).col(0)); });
+        require(interval.lower <= exact_norm + 1e-12 && interval.upper >= exact_norm - 1e-12 &&
+                    ((interval.upper <= ratio * exact_norm) == (ratio > 1)),
+                "streamed selected residual bound disagrees with dense physical norm");
+    }
     xmvb::linalg::MetricSolveStats stats;
     const auto solution = xmvb::linalg::solve_metric(
         rhs,
@@ -460,10 +484,83 @@ void doublet_case() {
 
 } // namespace
 
+/** Resource admission follows dimensions and bytes, without a 512-structure boundary. */
+void check_metric_resources() {
+    using xmvb::vb::RepresentationOverlap;
+    constexpr Eigen::Index dimension = 600;
+    constexpr std::size_t bytes = 6 * sizeof(double) * dimension * dimension;
+    require(RepresentationOverlap::PreparedMetric::fits_selected(dimension, bytes) &&
+                !RepresentationOverlap::PreparedMetric::fits_selected(dimension, bytes - 1),
+            "selected factor admission does not follow actual resource requirements");
+    const auto before = xmvb::workspace::retained();
+    {
+        const xmvb::vb::SelectedMetric metric(Eigen::Matrix3d::Identity());
+        require(xmvb::workspace::retained() == before + 2 * 9 * sizeof(double),
+                "selected metric and factor are missing from shared residency");
+    }
+    require(xmvb::workspace::retained() == before, "selected metric residency leaked");
+}
+
+void check_shared_spin_factors() {
+    Eigen::MatrixXd selected = Eigen::MatrixXd::Zero(16, 8);
+    const auto set_block = [&](int p, int q, int i, int j, double phase) {
+        selected(4 * p + q, i) = selected(4 * q + p, i) = 1.0;
+        selected(4 * p + q, j) = 2.0 * phase;
+        selected(4 * q + p, j) = -phase;
+    };
+    set_block(0, 1, 0, 1, 1.0);
+    set_block(0, 2, 2, 3, 1.0);
+    set_block(0, 3, 4, 6, 1.0);
+    set_block(1, 2, 5, 7, -1.0);
+    Fixture fixture(4, 1, 1, selected);
+    const auto action = fixture.action();
+    using SpinMetric = xmvb::vb::SpinMetric;
+    const SpinMetric spin(action, fixture.alpha, fixture.beta, 16 * sizeof(double));
+    require(spin.block_count() == 4 && spin.factor_count() == 2 &&
+                spin.contiguous_block_count() == 2 && spin.factor_bytes() == 8 * sizeof(double),
+            "spin factor sharing ignored phases or missed equal Gram blocks");
+    const Eigen::MatrixXd gram = selected.transpose() * selected;
+    const Eigen::MatrixXd lower = gram.llt().matrixL();
+    const Eigen::MatrixXd rhs = Eigen::MatrixXd::Identity(8, 3) + Eigen::MatrixXd::Constant(8, 3, .3);
+    require((lower * spin.solve(rhs, SpinMetric::Part::Lower) - rhs).norm() < 1e-12 &&
+                (lower.transpose() * spin.solve(rhs, SpinMetric::Part::Upper) - rhs).norm() <
+                    1e-12 &&
+                (gram * spin.solve(rhs) - rhs).norm() < 1e-12,
+            "shared spin panels disagree with the dense lower, upper or Gram solve");
+}
+
+/** A resolved physical image must not be checked through squared conditioning. */
+void check_state_gram() {
+    Eigen::Matrix2d upper;
+    upper << 1.0, 1.0, 0.0, 1e-8;
+    Eigen::Matrix2d coefficients;
+    coefficients << 1.0, -1e8, 0.0, 1e8;
+    const auto metric = xmvb::vb::SelectedMetric::from_upper(upper);
+    const Eigen::Matrix2d gram = metric.gram(coefficients);
+    const Eigen::Matrix2d normal = coefficients.transpose() * metric.overlap * coefficients;
+    require((gram - Eigen::Matrix2d::Identity()).norm() < 1e-14,
+            "physical factor lost orthonormal selected-state images");
+    require((normal - gram).norm() > .5,
+            "state Gram fixture does not expose normal-equation cancellation");
+    xmvb::vb::AcceptedPointContext point;
+    point.selected_metric = std::make_shared<xmvb::vb::SelectedMetric>(
+        xmvb::vb::SelectedMetric::from_upper(upper));
+    point.selected_state_eigenvectors = coefficients;
+    const auto* cached = &point.state_gram();
+    require((point.state_gram() - gram).norm() < 1e-14 && &point.state_gram() == cached,
+            "accepted consumers did not share the factored selected-state Gram");
+    coefficients.col(1) *= 2.0;
+    require(std::abs(metric.gram(coefficients)(1, 1) - 4.0) < 1e-14,
+            "physical Gram concealed a genuinely unnormalized state");
+}
+
 int main() {
+    check_state_gram();
+    check_metric_resources();
     check_physical_qr_factor();
     check_parallel_qr_factor();
     check_selected_spin_metric();
+    check_shared_spin_factors();
     check_retained_ill_conditioned_metric();
     singlet_case();
     doublet_case();

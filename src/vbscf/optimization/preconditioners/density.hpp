@@ -3,6 +3,7 @@
 #include <vector>
 #include <Eigen/Core>
 #include "integrals/response/density_diagonal.hpp"
+#include "integrals/response/types.hpp"
 
 namespace xmvb::vb {
 struct VbScfInput;
@@ -15,5 +16,7 @@ DensityDiagonals contract_diagonal_densities(const VbScfInput& input,
                                              int n_core,
                                              const Eigen::MatrixXd& dm1,
                                              const std::vector<double>& dm2,
-                                             const std::vector<double>& active_coulomb);
+                                             const std::vector<double>& active_coulomb,
+                                             const integrals::ExactCtxPairMatrix* exchange,
+                                             const Eigen::MatrixXd* active_to_exchange);
 } // namespace xmvb::vb

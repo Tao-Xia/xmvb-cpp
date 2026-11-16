@@ -10,6 +10,7 @@
 #include "core/pair_index.hpp"
 #include "integrals/ao/exact.hpp"
 #include "mcscf/optimization/preconditioners/orbital_diagonal.hpp"
+#include "mcscf/ci/workspace.hpp"
 #include "parallel/openmp.hpp"
 
 namespace xmvb::casscf {
@@ -41,6 +42,7 @@ Eigen::VectorXd orbital_hessian_diagonal(const FixedCiPoint& point,
         ao.ao_core_hamiltonian_matrix.cols() != n ||
         point.integrals().active.one_electron.rows() != nactive)
         throw std::invalid_argument("analytic CAS orbital diagonal dimension mismatch");
+    const mcscf::CiWorkspace operation(workspace::available(), false);
     mcscf::AnalyticDiagonalIntermediates x;
     x.n_core = ncore;
     x.n_active = nactive;
@@ -49,16 +51,25 @@ Eigen::VectorXd orbital_hessian_diagonal(const FixedCiPoint& point,
 
     const int active_pairs = nactive * (nactive + 1) / 2;
     const int channels = ncore + active_pairs;
-    constexpr std::size_t source_budget = 64ULL * 1024 * 1024;
     const std::size_t source_elements = static_cast<std::size_t>(n) * n;
-    const int nthreads = std::min<int>(effective_openmp_thread_count(), n);
+    const std::size_t fixed_elements = 2 * source_elements +
+                                       2 * static_cast<std::size_t>(n) * ncore +
+                                       2 * static_cast<std::size_t>(n) * nactive * nactive;
+    if (fixed_elements > operation.bytes() / sizeof(double))
+        throw std::length_error("analytic diagonal fixed matrices exceed workspace budget");
+    const std::size_t source_budget = operation.bytes() - fixed_elements * sizeof(double);
+    const std::size_t capacity = source_budget / sizeof(double);
+    const std::size_t base_elements = source_elements + 2 * static_cast<std::size_t>(n);
+    const std::size_t thread_elements = 6 * static_cast<std::size_t>(n);
+    if (capacity < base_elements + thread_elements)
+        throw std::length_error("analytic diagonal AO source exceeds workspace budget");
+    const int nthreads = std::min<std::size_t>(std::min<int>(effective_openmp_thread_count(), n),
+                                               (capacity - base_elements) / thread_elements);
     const std::size_t elements_per_channel = source_elements +
                                              6 * static_cast<std::size_t>(n) * nthreads +
                                              2 * static_cast<std::size_t>(n);
-    if (elements_per_channel > source_budget / sizeof(double))
-        throw std::length_error("analytic diagonal AO source exceeds workspace budget");
-    const int batch_width = std::max<std::size_t>(
-        1, std::min<std::size_t>(channels, source_budget / sizeof(double) / elements_per_channel));
+    const int batch_width =
+        std::max<std::size_t>(1, std::min<std::size_t>(channels, capacity / elements_per_channel));
     x.j_pc.resize(n, ncore);
     x.k_pc.resize(n, ncore);
     x.j_active.resize(static_cast<std::size_t>(n) * nactive * nactive);

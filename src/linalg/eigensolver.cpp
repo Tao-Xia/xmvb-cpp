@@ -1,10 +1,14 @@
 #include "core/index.hpp"
 #include "linalg/eigensolver.hpp"
 
+#include "core/workspace.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <numeric>
+#include <ranges>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -13,6 +17,7 @@
 #include <lapacke.h>
 
 #include "linalg/davidson_core.hpp"
+#include "parallel/openmp.hpp"
 
 namespace xmvb::linalg {
 namespace {
@@ -43,12 +48,41 @@ void check_generalized_eigensolver_info(lapack_int info) {
     }
 }
 
+int vector_workers(std::int64_t rows) {
+    const int workers = effective_openmp_thread_count();
+    const auto cache = Eigen::l1CacheSize();
+    // Small CI vectors stay in one cache. Large vectors share row slabs;
+    // the threshold follows the current team's cache capacity, not a molecule.
+    const auto cache_values =
+        static_cast<std::int64_t>(cache) / static_cast<std::int64_t>(sizeof(double));
+    return cache > 0 && rows > workers * cache_values ? workers : 1;
+}
+
+template <class Function> void for_vector_rows(std::int64_t rows, const Function& action) {
+    const int workers = vector_workers(rows);
+    if (workers == 1) {
+        action(0, rows);
+        return;
+    }
+#pragma omp parallel num_threads(workers)
+    {
+        std::int64_t rank = 0, team = 1;
+#ifdef _OPENMP
+        rank = omp_get_thread_num();
+        team = omp_get_num_threads();
+#endif
+        const auto first = (rows / team) * rank + std::min(rows % team, rank);
+        const auto next = rank + 1;
+        const auto last = (rows / team) * next + std::min(rows % team, next);
+        action(first, last - first);
+    }
+}
+
 struct CpuBackend {
     using Matrix = Eigen::MatrixXd;
     static constexpr bool supports_host_callbacks = true;
     const GeneralizedEigenAction& action;
     bool identity_overlap;
-
     Matrix make(std::int64_t rows, std::int64_t cols) const {
         return Matrix(rows, cols);
     }
@@ -63,45 +97,68 @@ struct CpuBackend {
     }
     Matrix download(ConstMatrixView source) const {
         Matrix result(source.rows, source.cols);
-        for (std::int64_t column = 0; column < source.cols; ++column) {
-            std::copy_n(source.column(column).data, source.rows, result.col(column).data());
-        }
+        copy(view(result), source);
         return result;
-    }
-    void upload_into(MatrixView destination, const Eigen::Ref<const Eigen::VectorXd>& host) const {
-        if (destination.cols != 1 || destination.rows != host.size()) {
-            throw std::invalid_argument("CPU Davidson upload dimensions");
-        }
-        std::copy_n(host.data(), host.size(), destination.data);
     }
     void copy(MatrixView destination, ConstMatrixView source) const {
         if (destination.rows != source.rows || destination.cols != source.cols) {
             throw std::invalid_argument("CPU Davidson copy dimensions");
         }
-        for (std::int64_t column = 0; column < source.cols; ++column) {
-            std::copy_n(source.column(column).data, source.rows, destination.column(column).data);
-        }
+        for_vector_rows(source.rows, [&](auto first, auto count) {
+            for (std::int64_t column = 0; column < source.cols; ++column)
+                std::copy_n(source.column(column).data + first,
+                            count,
+                            destination.column(column).data + first);
+        });
     }
     void axpy(MatrixView destination, double factor, ConstMatrixView source) const {
-        for (std::int64_t column = 0; column < source.cols; ++column) {
-            const auto src = source.column(column);
-            const auto dst = destination.column(column);
-            Eigen::Map<Eigen::VectorXd>(dst.data, dst.rows).noalias() +=
-                factor * Eigen::Map<const Eigen::VectorXd>(src.data, src.rows);
-        }
+        for_vector_rows(source.rows, [&](auto first, auto count) {
+            for (std::int64_t column = 0; column < source.cols; ++column)
+                Eigen::Map<Eigen::VectorXd>(destination.column(column).data + first, count)
+                    .noalias() += factor * Eigen::Map<const Eigen::VectorXd>(
+                                               source.column(column).data + first, count);
+        });
     }
     void scal(MatrixView destination, double factor) const {
-        for (std::int64_t column = 0; column < destination.cols; ++column) {
-            const auto dst = destination.column(column);
-            Eigen::Map<Eigen::VectorXd>(dst.data, dst.rows) *= factor;
-        }
+        for_vector_rows(destination.rows, [&](auto first, auto count) {
+            for (std::int64_t column = 0; column < destination.cols; ++column)
+                Eigen::Map<Eigen::VectorXd>(destination.column(column).data + first, count) *=
+                    factor;
+        });
     }
     double dot(ConstMatrixView left, ConstMatrixView right) const {
-        return Eigen::Map<const Eigen::VectorXd>(left.data, left.rows)
-            .dot(Eigen::Map<const Eigen::VectorXd>(right.data, right.rows));
+        const int workers = vector_workers(left.rows);
+        if (workers == 1)
+            return Eigen::Map<const Eigen::VectorXd>(left.data, left.rows)
+                .dot(Eigen::Map<const Eigen::VectorXd>(right.data, right.rows));
+        std::vector<double> partials(workers, 0.0);
+        for_vector_rows(left.rows, [&](auto first, auto count) {
+            std::size_t worker = 0;
+#ifdef _OPENMP
+            worker = omp_get_thread_num();
+#endif
+            partials[worker] =
+                Eigen::Map<const Eigen::VectorXd>(left.data + first, count)
+                    .dot(Eigen::Map<const Eigen::VectorXd>(right.data + first, count));
+        });
+        return std::accumulate(partials.begin(), partials.end(), 0.0);
     }
     double norm(ConstMatrixView vector) const {
-        return Eigen::Map<const Eigen::VectorXd>(vector.data, vector.rows).norm();
+        const int workers = vector_workers(vector.rows);
+        if (workers == 1)
+            return Eigen::Map<const Eigen::VectorXd>(vector.data, vector.rows).norm();
+        std::vector<double> partials(workers, 0.0);
+        for_vector_rows(vector.rows, [&](auto first, auto count) {
+            std::size_t worker = 0;
+#ifdef _OPENMP
+            worker = omp_get_thread_num();
+#endif
+            partials[worker] = Eigen::Map<const Eigen::VectorXd>(vector.data + first, count).norm();
+        });
+        double result = 0;
+        for (const auto norm : partials)
+            result = std::hypot(result, norm);
+        return result;
     }
     void combine(MatrixView destination,
                  ConstMatrixView basis,
@@ -111,7 +168,10 @@ struct CpuBackend {
             destination.data, destination.rows, destination.cols, Stride(destination.ld));
         Eigen::Map<const Eigen::MatrixXd, 0, Stride> input(
             basis.data, basis.rows, basis.cols, Stride(basis.ld));
-        output.noalias() = input * coefficients;
+        for_vector_rows(destination.rows, [&](auto first, auto count) {
+            output.middleRows(first, count).noalias() =
+                input.middleRows(first, count) * coefficients;
+        });
     }
     Matrix project(ConstMatrixView basis, ConstMatrixView images) const {
         using Stride = Eigen::OuterStride<>;
@@ -119,7 +179,23 @@ struct CpuBackend {
             basis.data, basis.rows, basis.cols, Stride(basis.ld));
         Eigen::Map<const Eigen::MatrixXd, 0, Stride> input_images(
             images.data, images.rows, images.cols, Stride(images.ld));
-        return input_basis.transpose() * input_images;
+        const int workers = vector_workers(basis.rows);
+        if (workers == 1)
+            return input_basis.transpose() * input_images;
+        // Only the small Gram matrices are thread-local; the CI basis is borrowed.
+        std::vector<Matrix> partials(workers, Matrix::Zero(basis.cols, images.cols));
+        for_vector_rows(basis.rows, [&](auto first, auto count) {
+            std::size_t worker = 0;
+#ifdef _OPENMP
+            worker = omp_get_thread_num();
+#endif
+            partials[worker].noalias() = input_basis.middleRows(first, count).transpose() *
+                                         input_images.middleRows(first, count);
+        });
+        Matrix result = std::move(partials.front());
+        for (int worker = 1; worker < workers; ++worker)
+            result += partials[worker];
+        return result;
     }
     void subtract_projection(MatrixView destination,
                              ConstMatrixView basis,
@@ -129,8 +205,23 @@ struct CpuBackend {
             destination.data, destination.rows, destination.cols, Stride(destination.ld));
         Eigen::Map<const Eigen::MatrixXd, 0, Stride> input(
             basis.data, basis.rows, basis.cols, Stride(basis.ld));
-        output.noalias() -= input * coefficients;
+        for_vector_rows(destination.rows, [&](auto first, auto count) {
+            output.middleRows(first, count).noalias() -=
+                input.middleRows(first, count) * coefficients;
+        });
     }
+    void precondition(MatrixView correction,
+                      ConstMatrixView residual,
+                      double energy,
+                      const DavidsonPreconditioner& inverse) const {
+        const Eigen::Map<const Eigen::VectorXd> r(residual.data, residual.rows);
+        Eigen::Map<Eigen::VectorXd> p(correction.data, correction.rows);
+        inverse(r, energy, p);
+        if (!p.allFinite())
+            throw std::runtime_error("Davidson residual preconditioner returned an invalid vector");
+        scal(correction, -1.0);
+    }
+
     void precondition(MatrixView correction,
                       ConstMatrixView residual,
                       const Eigen::Ref<const Eigen::VectorXd>& diagonal_h,
@@ -151,7 +242,10 @@ struct CpuBackend {
         if (!action) {
             throw std::invalid_argument("generalized eigenvalue action is empty");
         }
-        Matrix input = download(vectors);
+        // The action borrows its input for this call, just as the basis view does.
+        // Keep its column stride instead of copying a full CI block first.
+        const Eigen::Map<const Matrix, 0, Eigen::OuterStride<>> input(
+            vectors.data, vectors.rows, vectors.cols, Eigen::OuterStride<>(vectors.ld));
         GeneralizedEigenActionResult images = action(input);
         if (images.hamiltonian.rows() != h.rows || images.hamiltonian.cols() != h.cols ||
             !images.hamiltonian.allFinite() ||
@@ -169,29 +263,23 @@ struct CpuBackend {
 
 } // namespace
 
-Eigen::MatrixXd
-make_davidson_initial_vectors(const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
-                              const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
-                              int n_vectors) {
-    const Eigen::Index dimension = hamiltonian_diagonal.size();
-    std::vector<int> diagonal_order(dimension);
-    for (int index = 0; index < dimension; ++index)
-        diagonal_order[index] = index;
-    std::partial_sort(diagonal_order.begin(),
-                      diagonal_order.begin() + n_vectors / 2,
-                      diagonal_order.end(),
-                      [&](int left, int right) {
-                          return hamiltonian_diagonal[left] / overlap_diagonal[left] <
-                                 hamiltonian_diagonal[right] / overlap_diagonal[right];
-                      });
-    Eigen::MatrixXd vectors = Eigen::MatrixXd::Zero(dimension, n_vectors);
+namespace {
+
+template <class Diagonal>
+Eigen::MatrixXd initial_vectors(Eigen::Index dimension, int n_vectors, const Diagonal& diagonal) {
     const int n_diagonal_vectors = n_vectors / 2;
+    std::vector<Eigen::Index> diagonal_order(n_diagonal_vectors);
+    std::ranges::partial_sort_copy(
+        std::views::iota(Eigen::Index{0}, dimension),
+        diagonal_order,
+        [&](Eigen::Index left, Eigen::Index right) { return diagonal(left) < diagonal(right); });
+    Eigen::MatrixXd vectors = Eigen::MatrixXd::Zero(dimension, n_vectors);
     for (int vector = 0; vector < n_diagonal_vectors; ++vector) {
         vectors(diagonal_order[vector], vector) = 1.0;
     }
     std::uint64_t state = 0x9e3779b97f4a7c15ULL;
     for (int vector = n_diagonal_vectors; vector < n_vectors; ++vector) {
-        for (int row = 0; row < dimension; ++row) {
+        for (Eigen::Index row = 0; row < dimension; ++row) {
             state ^= state << 13;
             state ^= state >> 7;
             state ^= state << 17;
@@ -201,11 +289,42 @@ make_davidson_initial_vectors(const Eigen::Ref<const Eigen::VectorXd>& hamiltoni
     return vectors;
 }
 
+} // namespace
+
+Eigen::MatrixXd
+make_davidson_initial_vectors(const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
+                              const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
+                              int n_vectors) {
+    return initial_vectors(hamiltonian_diagonal.size(), n_vectors, [&](Eigen::Index row) {
+        return hamiltonian_diagonal[row] / overlap_diagonal[row];
+    });
+}
+
+Eigen::MatrixXd make_davidson_initial_vectors(const Eigen::Ref<const Eigen::VectorXd>& diagonal,
+                                              int n_vectors) {
+    return initial_vectors(
+        diagonal.size(), n_vectors, [&](Eigen::Index row) { return diagonal[row]; });
+}
+
+std::size_t davidson_workspace_bytes(Eigen::Index dimension, const DavidsonOptions& options) {
+    const auto n = core::checked_index<std::size_t>(dimension);
+    const auto m = core::checked_index<std::size_t>(options.max_subspace_dimension);
+    const auto roots = core::checked_index<std::size_t>(options.n_roots);
+    const std::size_t images = options.identity_overlap ? 2 : 3;
+    // Live basis and restart copies, plus seeds, Ritz images and corrections.
+    const auto vectors = core::checked_multiply(images, 2 * m + 6 * roots + 4);
+    const auto projected = core::checked_multiply(12, core::checked_multiply(m, m));
+    return core::checked_multiply(sizeof(double),
+                                  core::checked_add(core::checked_multiply(n, vectors), projected));
+}
+
 DavidsonOptions make_davidson_options(Eigen::Index dimension,
                                       int n_roots,
                                       double energy_tolerance,
                                       double relative_residual_tolerance,
-                                      double stationarity_tolerance) {
+                                      double stationarity_tolerance,
+                                      std::optional<std::size_t> workspace_bytes,
+                                      bool identity_overlap) {
     if (dimension <= 0 || n_roots <= 0 || n_roots > dimension) {
         throw std::invalid_argument("invalid Davidson eigenproblem dimensions");
     }
@@ -214,23 +333,32 @@ DavidsonOptions make_davidson_options(Eigen::Index dimension,
         !std::isfinite(stationarity_tolerance) || stationarity_tolerance <= 0.0) {
         throw std::invalid_argument("Davidson accuracy tolerances must be positive");
     }
-    constexpr long double kBasisBudgetDoubles =
-        static_cast<long double>(512ULL * 1024ULL * 1024ULL) / sizeof(double);
-    const long double n = static_cast<long double>(dimension);
-    const long double capacity = 2.0L * kBasisBudgetDoubles /
-                                 (std::sqrt(9.0L * n * n + 4.0L * kBasisBudgetDoubles) + 3.0L * n);
-    const int max_subspace = core::checked_index<int>(
-        std::min<Eigen::Index>(dimension, static_cast<int>(std::floor(capacity))));
-    if (max_subspace < std::min<Eigen::Index>(dimension, 2LL * n_roots)) {
-        throw std::runtime_error("Davidson selected-root block exceeds the basis workspace budget");
+    const auto bytes = workspace_bytes ? *workspace_bytes : workspace::available();
+    const int minimum = core::checked_index<int>(std::min<Eigen::Index>(dimension, 2LL * n_roots));
+    // Cap projected work by a restart dimension, independently of memory.
+    // Keep at least four blocks of room beyond the retained Ritz subspace.
+    const int preferred = core::checked_index<int>(std::min<Eigen::Index>(
+        {dimension, std::max(32LL, 8LL * n_roots), std::numeric_limits<int>::max()}));
+    DavidsonOptions options{n_roots,
+                            core::checked_index<Eigen::Index>(core::checked_multiply(
+                                2, core::checked_index<std::size_t>(dimension))),
+                            minimum,
+                            energy_tolerance,
+                            relative_residual_tolerance,
+                            stationarity_tolerance};
+    options.identity_overlap = identity_overlap;
+    if (davidson_workspace_bytes(dimension, options) > bytes)
+        throw std::length_error("Davidson workspace cannot hold the selected-root expansion");
+    int lo = minimum, hi = preferred;
+    while (lo < hi) {
+        options.max_subspace_dimension = lo + (hi - lo) / 2 + 1;
+        if (davidson_workspace_bytes(dimension, options) <= bytes)
+            lo = options.max_subspace_dimension;
+        else
+            hi = options.max_subspace_dimension - 1;
     }
-    return DavidsonOptions{n_roots,
-                           core::checked_index<Eigen::Index>(core::checked_multiply(
-                               2, core::checked_index<std::size_t>(dimension))),
-                           max_subspace,
-                           energy_tolerance,
-                           relative_residual_tolerance,
-                           stationarity_tolerance};
+    options.max_subspace_dimension = lo;
+    return options;
 }
 
 GeneralizedEigenResult

@@ -75,6 +75,9 @@ struct VbScfOptimizerOptions {
     /** @brief Observes each completed CIAH step without retaining heavy snapshots. */
     std::function<void(const CiahIterationRecord&)> ciah_iteration_callback;
 
+    /** @brief Called once when convergence is established, before final diagnostics/output. */
+    std::function<void()> convergence_callback;
+
     /**
    * @brief Whether to retain accepted-iterate trace snapshots in memory.
    */

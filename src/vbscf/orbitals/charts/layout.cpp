@@ -207,6 +207,16 @@ SparseParameterLayout::gather_from_full(const std::vector<double>& full_vector) 
     return packed_vector;
 }
 
+Eigen::VectorXd SparseParameterLayout::scatter_to_full(
+    const Eigen::VectorXd& packed_vector) const {
+    if (packed_vector.size() != size())
+        throw std::invalid_argument("packed direction size does not match parameter view");
+    Eigen::VectorXd full = Eigen::VectorXd::Zero(total_slot_count_);
+    for (Eigen::Index i = 0; i < packed_vector.size(); ++i)
+        full[differentiable_parameter_indices_[i]] = packed_vector[i];
+    return full;
+}
+
 void SparseParameterLayout::unpack(const Eigen::VectorXd& packed_parameters,
                                    OrbitalPreparationInput* orbital_preparation_input) const {
     if (orbital_preparation_input == nullptr) {

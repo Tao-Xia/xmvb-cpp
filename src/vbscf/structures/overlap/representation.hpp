@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/index.hpp"
+#include "core/workspace.hpp"
 
 #include "mcscf/ci/string_table.hpp"
 
@@ -28,6 +29,13 @@ struct UpperPair {
 struct OverlapTransportGradient {
     UpperPair charts;
     Eigen::VectorXd image;
+};
+
+/** Fixed-chart single-spin columns. No structure Gram or product wavefunction. */
+using OverlapRows = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+struct OverlapBetaColumns {
+    workspace::Reservation memory;
+    OverlapRows values;
 };
 
 /** Cross Gram action F(R_left)^T F(R_right), with F(R) = wedge(R) W.
@@ -59,8 +67,9 @@ class RepresentationOverlap {
         const std::shared_ptr<const SelectedMetric>& selected_metric() const noexcept {
             return selected_metric_;
         }
-        /** @brief Whether the selected matrix fits its existing workspace quarter. */
-        static bool fits_selected(Eigen::Index dimension) noexcept;
+        /** @brief Space for the retained metric, factor and minimum QR scratch. */
+        static bool fits_selected(Eigen::Index dimension,
+                                  std::size_t bytes = workspace::available()) noexcept;
 
       private:
         friend class RepresentationOverlap;
@@ -77,6 +86,7 @@ class RepresentationOverlap {
         std::shared_ptr<const ExteriorOrbitalTransform> beta_transform_;
         Eigen::MatrixXd kernel_;
         std::shared_ptr<const SelectedMetric> selected_metric_;
+        OverlapBetaColumns beta_columns_;
     };
 
     PreparedMetric prepare_metric(const Eigen::Ref<const Eigen::MatrixXd>& upper) const;
@@ -111,7 +121,9 @@ class RepresentationOverlap {
                                 const Eigen::Ref<const Eigen::VectorXd>& right_coeff,
                                 OverlapSide side = OverlapSide::Both) const;
 
-    /** @brief Pull back the finite selected-space transport in one tile sweep. */
+    /** @brief Pull back the finite selected-space transport in one tile sweep.
+     * An empty origin direction denotes an invariant origin chart, including its pullback.
+     */
     OverlapTransportGradient
     transport_gradient(const Eigen::Ref<const Eigen::MatrixXd>& current,
                        const Eigen::Ref<const Eigen::MatrixXd>& origin,

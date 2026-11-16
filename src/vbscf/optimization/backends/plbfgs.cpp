@@ -54,6 +54,8 @@ BackendRunResult run_plbfgs_backend(VbScfObjective* objective,
                                        current_projection.reduced_gradient,
                                        options.gradient_tolerance)) {
             result->converged = true;
+            if (options.convergence_callback)
+                options.convergence_callback();
             result->termination_reason = "plbfgs_initial_tolerance";
             run_result.final_gradient_l2_norm = current_projection.reduced_gradient.norm();
             break;
@@ -198,6 +200,8 @@ BackendRunResult run_plbfgs_backend(VbScfObjective* objective,
                                        next_projection.reduced_gradient,
                                        options.gradient_tolerance)) {
             result->converged = true;
+            if (options.convergence_callback)
+                options.convergence_callback();
             result->termination_reason = "plbfgs_projected_gradient_tolerance";
             run_result.final_gradient_l2_norm = next_projection.reduced_gradient.norm();
             break;

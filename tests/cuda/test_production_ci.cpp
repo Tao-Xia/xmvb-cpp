@@ -1730,6 +1730,27 @@ void check_cholesky(int rhs_count) {
          reference,
          2.0e-11,
          "CUDA Cholesky in-place solve differs from CPU");
+
+    const Matrix lower = spd.llt().matrixL();
+    for (bool transpose : {false, true}) {
+        for (bool inverse : {false, true}) {
+            const Matrix triangular = transpose ? Matrix(lower.transpose()) : lower;
+            Matrix expected = triangular * rhs;
+            if (inverse) {
+                if (transpose)
+                    expected = triangular.triangularView<Eigen::Upper>().solve(rhs);
+                else
+                    expected = triangular.triangularView<Eigen::Lower>().solve(rhs);
+            }
+            xmvb::cuda::copy_to_device(context, d_rhs.view(), padded_rhs);
+            factor.transform(rhs_view, out_view, transpose, inverse);
+            near(download(context, d_out).topRows(n), expected, 2e-11,
+                 "CUDA CI factor transform differs from CPU");
+            factor.transform(rhs_view, in_place, transpose, inverse);
+            near(download(context, d_rhs).topRows(n), expected, 2e-11,
+                 "CUDA in-place CI factor transform differs from CPU");
+        }
+    }
 }
 
 void check_full_metric(int rhs_count) {

@@ -36,6 +36,16 @@ int main() {
             "optimizer API must default to P-LBFGS");
     const auto defaults = parse({"xmvb-cpp.exe", "unused.xmi"});
     require(defaults.has_value(), "default CLI options must parse");
+    require(!defaults->exact_exchange_memory_budget_bytes,
+            "exact exchange workspace must default to automatic resources");
+    const auto exchange_off =
+        parse({"xmvb-cpp.exe", "unused.xmi", "--exact-exchange-memory-mib", "0"});
+    const auto exchange_upper =
+        parse({"xmvb-cpp.exe", "unused.xmi", "--exact-exchange-memory-mib", "4096"});
+    require(exchange_off && exchange_off->exact_exchange_memory_budget_bytes == 0 &&
+                exchange_upper &&
+                exchange_upper->exact_exchange_memory_budget_bytes == 4096ULL * 1024 * 1024,
+            "explicit exchange disable or upper bound was lost");
     require(!defaults->ci_workspace_bytes, "CPU workspace must default to automatic resources");
     const auto workspace = parse({"xmvb-cpp.exe", "unused.xmi", "--ci-workspace-mib", "8192"});
     require(workspace && workspace->ci_workspace_bytes == 8192ULL * 1024 * 1024,

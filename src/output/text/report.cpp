@@ -2,23 +2,19 @@
 #include "output/text/sections.hpp"
 #include "vbscf/core/contracts/orbital_type.hpp"
 #include "core/workspace.hpp"
+#include "parallel/runtime.hpp"
 
+#include <algorithm>
 #include <array>
-#include <cerrno>
 #include <chrono>
 #include <ctime>
-#include <cstdlib>
 #include <iomanip>
 #include <iostream>
-#include <limits>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 
-#ifdef _OPENMP
-#include <omp.h>
-#endif
 
 namespace xmvb::output {
 
@@ -89,28 +85,6 @@ std::string format_timestamp(const std::chrono::system_clock::time_point& time_p
     return buffer.data();
 }
 
-int openmp_max_thread_count() {
-    int n_threads = 1;
-#ifdef _OPENMP
-    n_threads = omp_get_max_threads();
-#endif
-    return n_threads;
-}
-
-int allocated_cpu_thread_count() {
-    const char* slurm_value = std::getenv("SLURM_CPUS_PER_TASK");
-    if (slurm_value != nullptr && slurm_value[0] != '\0') {
-        char* end = nullptr;
-        errno = 0;
-        const long parsed = std::strtol(slurm_value, &end, 10);
-        if (errno == 0 && end != slurm_value && (end == nullptr || end[0] == '\0') && parsed > 0 &&
-            parsed <= static_cast<long>(std::numeric_limits<int>::max())) {
-            return static_cast<int>(parsed);
-        }
-    }
-    return openmp_max_thread_count();
-}
-
 std::string physical_chart_name(const xmvb::vb::OrbitalPreparationInput& orbital_input) {
     for (const int basis_count : orbital_input.orbital_basis_counts) {
         if (basis_count > 0 && basis_count < orbital_input.n_basis_functions) {
@@ -155,9 +129,12 @@ void print_header(const std::string& input_path,
                   const xmvb::vb::VbScfOptimizerOptions& options,
                   const xmvb::vb::VbScfInputLoadResult& load_result,
                   const std::chrono::system_clock::time_point& start_time) {
-    print_program_preamble(std::cout, input_path, start_time, allocated_cpu_thread_count());
+    const auto threads = parallel::runtime_threads();
+    print_program_preamble(std::cout, input_path, start_time, threads.openmp_threads);
     print_input_sections(
         std::cout, input_path, load_result, optimizer_report_name(options), options.max_iterations);
+    print_log_field("OpenMP threads", std::to_string(threads.openmp_threads));
+    print_log_field("BLAS threads", std::to_string(threads.blas_threads));
     if (options.backend == xmvb::vb::VbScfOptimizerBackend::Ciah) {
         print_log_field("Orbital preconditioner",
                         orbital_preconditioner_name(options.orbital_preconditioner));
@@ -207,13 +184,21 @@ std::function<void(const xmvb::vb::VbScfAcceptedIterationSnapshot&)> iteration_l
     };
 }
 
+void print_scf_convergence_marker(std::ostream& output, double program_wall_seconds) {
+    std::ostringstream marker;
+    marker << "SCF_CONVERGED program_wall_seconds=" << std::fixed << std::setprecision(9)
+           << program_wall_seconds << '\n';
+    output << marker.str() << std::flush;
+}
+
 void print_summary(const vb::VbScfOptimizerOptions& options,
                    const vb::VbScfInputLoadResult& load_result,
                    const vb::VbScfOptimizerResult& result,
                    const std::optional<std::filesystem::path>& trace_sample_directory,
                    const std::optional<std::filesystem::path>& molden_output_path,
                    const std::chrono::system_clock::time_point& command_start_time,
-                   const std::chrono::steady_clock::time_point& command_start_steady_time) {
+                   const std::chrono::steady_clock::time_point& program_entry,
+                   const std::optional<std::chrono::steady_clock::time_point>& scf_converged_at) {
     const auto& input = result.optimized_input;
     const bool command_converged = result.converged;
     const double initial_electronic_energy =
@@ -227,30 +212,33 @@ void print_summary(const vb::VbScfOptimizerOptions& options,
                                                       load_result.nuclear_repulsion_energy -
                                                       result.final_one_electron_reference_energy;
     const double optimizer_wall_time_seconds = result.total_wall_time_seconds;
-    const int effective_thread_count = allocated_cpu_thread_count();
+    const int effective_thread_count = parallel::runtime_threads().openmp_threads;
 
-    print_scf_status(std::cout,
-                     command_converged,
-                     result.n_iterations,
-                     result.final_total_energy,
-                     result.energy_only);
-    const double average_structure_overlap =
-        print_final_state_sections(std::cout, load_result, result);
+    print_scf_status(std::cout, command_converged, result.n_iterations,
+                     result.final_total_energy, result.energy_only);
+    const auto final_report = print_final_state_sections(std::cout, load_result, result);
+    const double average_structure_overlap = final_report.mean_structure_overlap;
     const auto command_finish_time = std::chrono::system_clock::now();
+    const auto report_finish = std::chrono::steady_clock::now();
     const double total_job_wall_time_seconds =
-        std::chrono::duration<double>(std::chrono::steady_clock::now() - command_start_steady_time)
-            .count();
+        std::chrono::duration<double>(report_finish - program_entry).count();
 
     std::cout << "\n\n                 ===============================================\n"
               << "                       XMVB-CPP RUN DIAGNOSTICS\n"
               << "                 ===============================================\n";
     if (options.backend == vb::VbScfOptimizerBackend::Ciah) {
-        int actions = result.ciah_terminal_probe_hvp_actions;
+        int actions = 0;
         for (const auto& step : result.ciah_iteration_trace)
             actions += step.orbital_hvp_actions;
         print_log_field("CIAH total orbital HVP actions", std::to_string(actions));
-        print_log_field("Terminal curvature HVP actions",
-                        std::to_string(result.ciah_terminal_probe_hvp_actions));
+        if (!result.ciah_iteration_trace.empty()) {
+            const auto model = result.ciah_iteration_trace.front().response_model;
+            const bool same = std::all_of(result.ciah_iteration_trace.begin(),
+                result.ciah_iteration_trace.end(),
+                [model](const auto& step) { return step.response_model == model; });
+            print_log_field("CIAH response model", same ? vb::ciah_response_model_name(model)
+                                                        : "varied by accepted point");
+        }
     }
     print_log_field("Termination reason", result.termination_reason);
     print_log_field("Start time", format_timestamp(command_start_time));
@@ -412,6 +400,26 @@ void print_summary(const vb::VbScfOptimizerOptions& options,
                     format_seconds(load_result.structure_expansion_seconds));
     print_log_field("Input preparation wall time", format_seconds(load_result.total_seconds));
     print_log_field("SCF iteration wall time", format_seconds(optimizer_wall_time_seconds));
+    if (scf_converged_at) {
+        print_log_field(
+            "Program entry to SCF convergence",
+            format_seconds(
+                std::chrono::duration<double>(*scf_converged_at - program_entry).count()));
+        print_log_field(
+            "Post-SCF wall time",
+            format_seconds(
+                std::chrono::duration<double>(report_finish - *scf_converged_at).count()));
+    }
+    print_log_field("Structure analysis wall time",
+                    format_seconds(final_report.structure_analysis_seconds));
+    print_log_field("Structure normalization wall time",
+                    format_seconds(final_report.structure_normalization_seconds));
+    print_log_field("Structure table output wall time",
+                    format_seconds(final_report.structure_output_seconds));
+    print_log_field("Determinant table output wall time",
+                    format_seconds(final_report.determinant_output_seconds));
+    print_log_field("Other final reports wall time",
+                    format_seconds(final_report.other_report_seconds));
     print_log_field("End-to-end wall time", format_seconds(total_job_wall_time_seconds));
     if (const auto bytes = workspace::peak_temporary_bytes()) {
         print_log_field(

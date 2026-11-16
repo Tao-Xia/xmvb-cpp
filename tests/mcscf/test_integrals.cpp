@@ -1,7 +1,12 @@
 #include <cstdint>
 #include <cmath>
 #include <iostream>
+#include <limits>
+#include <memory>
 #include <stdexcept>
+#if defined(__linux__) && INTPTR_MAX == INT64_MAX
+#include <sys/mman.h>
+#endif
 #include <Eigen/Core>
 #include "core/pair_index.hpp"
 #include "integrals/ao/graph.hpp"
@@ -10,6 +15,7 @@
 #include "integrals/active/ri.hpp"
 #include "integrals/active/two_electron.hpp"
 #include "integrals/response/adjoint.hpp"
+#include "integrals/response/ao_pair_operator.hpp"
 #include "integrals/response/directional.hpp"
 #include "integrals/response/ri.hpp"
 
@@ -20,6 +26,37 @@ void require(bool condition, const char* message) {
     if (!condition)
         throw std::runtime_error(message);
 }
+
+#if defined(__linux__) && INTPTR_MAX == INT64_MAX
+void check_csr_edge_offsets() {
+    using xmvb::integrals::PairAddress;
+    constexpr PairAddress limit = std::numeric_limits<int>::max();
+    constexpr PairAddress edges = 9;
+    constexpr PairAddress last_start = limit + 17;
+    constexpr std::size_t count = last_start + edges;
+    constexpr std::size_t column_bytes = count * sizeof(PairAddress);
+    constexpr std::size_t bytes = column_bytes + count * sizeof(double);
+    // Touch only the pages holding the test edges. Their addresses are global CSR offsets.
+    void* mapping = mmap(nullptr, bytes, PROT_READ | PROT_WRITE,
+                         MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+    require(mapping != MAP_FAILED, "could not map sparse CSR boundary fixture");
+    const auto unmap = [](void* data) { munmap(data, bytes); };
+    const std::unique_ptr<void, decltype(unmap)> storage(mapping, unmap);
+    auto* columns = static_cast<PairAddress*>(storage.get());
+    auto* values = reinterpret_cast<double*>(static_cast<char*>(storage.get()) + column_bytes);
+    const double source[] = {1.0, 2.0, 3.0, 5.0};
+    for (const PairAddress start : {PairAddress{0}, limit - 3, last_start}) {
+        for (PairAddress i = 0; i < edges; ++i) {
+            columns[start + i] = i % 2;
+            values[start + i] = static_cast<double>(i + 1);
+        }
+        const PairAddress offsets[] = {start, start + edges};
+        double target[2];
+        xmvb::integrals::detail::contract_rows(offsets, columns, values, source, target, 2, 0, 1);
+        require(target[0] == 85.0 && target[1] == 150.0, "AO-pair CSR edge offset narrowed");
+    }
+}
+#endif
 
 /** @brief Integer ordering/symmetries and unchanged public error handling. */
 void check_pair_indices() {
@@ -59,6 +96,9 @@ void check_pair_indices() {
 int main() {
     try {
         check_pair_indices();
+#if defined(__linux__) && INTPTR_MAX == INT64_MAX
+        check_csr_edge_offsets();
+#endif
         using namespace xmvb::integrals;
         constexpr int n_bf = 3, active = 2, pairs = 6;
         RiAoFactorization ri;

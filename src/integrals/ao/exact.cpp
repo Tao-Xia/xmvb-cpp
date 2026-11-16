@@ -25,15 +25,49 @@ std::size_t matrix_size(const AoIntegralInput& ao) {
     const AoPairGraph& graph = ao.pair_graph;
     const bool valid_row_graph = graph.has_row_graph() && graph.row_offsets.size() == n_pairs + 1 &&
                                  graph.columns.size() == graph.values.size() &&
-                                 graph.integral_rows.size() == graph.integral_edges.size();
+                                 graph.integral_offsets.size() == n_pairs + 1 &&
+                                 graph.integral_offsets.front() == 0 && graph.integral_rows.empty();
     const bool valid_compact_stream =
         graph.has_compact_integral_stream() && graph.valid_unique_storage();
-    if ((!valid_row_graph && !valid_compact_stream) || graph.pair_first.size() != n_pairs ||
+    if ((!valid_row_graph && !valid_compact_stream &&
+         (!graph.tiles || graph.tiles->size() != n_pairs)) || graph.pair_first.size() != n_pairs ||
         graph.pair_second.size() != n_pairs) {
         throw std::invalid_argument("invalid AO-H1E integral input");
     }
     const std::size_t n = n_bf;
     return n * n;
+}
+
+std::size_t response_work_items(const AoPairGraph& graph) noexcept {
+    return graph.tiles ? graph.tiles->unique_blocks() : graph.integral_count();
+}
+
+/** Reuse the left-pair stencil across all values in a stored row segment. */
+template<class Consumer>
+#if defined(__GNUC__) && !defined(__clang__)
+__attribute__((always_inline))
+#endif
+inline void visit_unique_rows(const AoPairGraph& graph,
+                              std::size_t begin,
+                              std::size_t end,
+                              Consumer consume) {
+    if (graph.tiles) {
+        for (std::size_t block = begin; block < end; ++block)
+            graph.tiles->visit_unique_block(block, consume);
+        return;
+    }
+    AoPairGraph::Cursor cursor(graph, begin);
+    while (begin < end) {
+        const auto left = cursor.value().left_pair;
+        consume(left, [&](auto add) {
+            do {
+                const auto eri = cursor.value();
+                add(eri.right_pair, eri.value);
+                ++begin;
+                cursor.advance();
+            } while (begin < end && cursor.value().left_pair == left);
+        });
+    }
 }
 
 /**
@@ -53,14 +87,13 @@ void contract_integrals(const AoIntegralInput& ao,
                         double* forward,
                         double* transpose) {
     const AoPairGraph& graph = ao.pair_graph;
-    const int n_bf = ao.n_basis_functions;
-    while (begin < end) {
-        const int left = graph.integral(begin).left_pair;
+    const Eigen::Index n_bf = ao.n_basis_functions;
+    visit_unique_rows(graph, begin, end, [&](std::size_t left, auto visit) {
         const int i = graph.pair_first[left];
         const int j = graph.pair_second[left];
-        const int i_column = i * n_bf;
-        const int j_column = j * n_bf;
-        const int ij = j_column + i;
+        const Eigen::Index i_column = i * n_bf;
+        const Eigen::Index j_column = j * n_bf;
+        const Eigen::Index ij = j_column + i;
         const double left_scale = i == j ? 0.5 : 1.0;
         double source_ij = 0.0, adjoint_ij = 0.0;
         if constexpr (Forward)
@@ -68,23 +101,21 @@ void contract_integrals(const AoIntegralInput& ao,
         if constexpr (Transpose)
             adjoint_ij = adjoint[ij];
         double forward_coulomb = 0.0, transpose_coulomb = 0.0;
-        do {
-            const auto eri = graph.integral(begin);
-            const int right = eri.right_pair;
+        visit([&](std::size_t right, double integral) {
             const int k = graph.pair_first[right];
             const int l = graph.pair_second[right];
-            double value = eri.value * left_scale;
+            double value = integral * left_scale;
             if (k == l)
                 value *= 0.5;
             if (left == right)
                 value *= 0.5;
-            const int k_column = k * n_bf;
-            const int l_column = l * n_bf;
-            const int kl = l_column + k;
-            const int ik = k_column + i, jl = l_column + j;
-            const int il = l_column + i, jk = k_column + j;
-            const int lj = j_column + l, ki = i_column + k;
-            const int kj = j_column + k, li = i_column + l;
+            const Eigen::Index k_column = k * n_bf;
+            const Eigen::Index l_column = l * n_bf;
+            const Eigen::Index kl = l_column + k;
+            const Eigen::Index ik = k_column + i, jl = l_column + j;
+            const Eigen::Index il = l_column + i, jk = k_column + j;
+            const Eigen::Index lj = j_column + l, ki = i_column + k;
+            const Eigen::Index kj = j_column + k, li = i_column + l;
             const double coulomb = 4.0 * value;
             if constexpr (Forward) {
                 forward_coulomb += coulomb * source[kl];
@@ -102,15 +133,14 @@ void contract_integrals(const AoIntegralInput& ao,
                 transpose[kj] -= value * adjoint[il];
                 transpose[li] -= value * adjoint[jk];
             }
-            ++begin;
-        } while (begin < end && graph.integral(begin).left_pair == left);
+        });
         // Exchange terms can also touch ij. Keeping the Coulomb sum separate is
         // algebraically exact even for coincident indices; only sum order changes.
         if constexpr (Forward)
             forward[ij] += forward_coulomb;
         if constexpr (Transpose)
             transpose[ij] += transpose_coulomb;
-    }
+    });
 }
 
 /** @brief Thread-ordered reduction; output elements are owned by distinct workers. */
@@ -131,38 +161,34 @@ void contract_symmetric_integrals(const AoIntegralInput& ao,
     using ConstChannels = Eigen::Map<const Eigen::Array2d>;
     using Channels = Eigen::Map<Eigen::Array2d>;
     const auto& graph = ao.pair_graph;
-    const int n_bf = ao.n_basis_functions;
-    while (begin < end) {
-        const int left = graph.integral(begin).left_pair;
+    const Eigen::Index n_bf = ao.n_basis_functions;
+    visit_unique_rows(graph, begin, end, [&](std::size_t left, auto visit) {
         const int i = graph.pair_first[left], j = graph.pair_second[left];
-        const int ij = j * n_bf + i;
+        const Eigen::Index ij = j * n_bf + i;
         const double scale = i == j ? 0.5 : 1.0;
         const Eigen::Array2d source_ij = ConstChannels(source + 2 * ij);
         Eigen::Array2d coulomb = Eigen::Array2d::Zero();
-        do {
-            const auto eri = graph.integral(begin);
-            const int right = eri.right_pair;
+        visit([&](std::size_t right, double integral) {
             const int k = graph.pair_first[right], l = graph.pair_second[right];
-            double value = eri.value * scale;
+            double value = integral * scale;
             if (k == l)
                 value *= 0.5;
             if (left == right)
                 value *= 0.5;
-            const int kl = l * n_bf + k;
-            const int ik = k * n_bf + i, jl = l * n_bf + j;
-            const int il = l * n_bf + i, jk = k * n_bf + j;
-            const int lj = j * n_bf + l, ki = i * n_bf + k;
-            const int kj = j * n_bf + k, li = i * n_bf + l;
+            const Eigen::Index kl = l * n_bf + k;
+            const Eigen::Index ik = k * n_bf + i, jl = l * n_bf + j;
+            const Eigen::Index il = l * n_bf + i, jk = k * n_bf + j;
+            const Eigen::Index lj = j * n_bf + l, ki = i * n_bf + k;
+            const Eigen::Index kj = j * n_bf + k, li = i * n_bf + l;
             coulomb += (4.0 * value) * ConstChannels(source + 2 * kl);
             Channels(target + 2 * kl) += (4.0 * value) * source_ij;
             Channels(target + 2 * ik) -= value * ConstChannels(source + 2 * lj);
             Channels(target + 2 * jl) -= value * ConstChannels(source + 2 * ki);
             Channels(target + 2 * il) -= value * ConstChannels(source + 2 * kj);
             Channels(target + 2 * jk) -= value * ConstChannels(source + 2 * li);
-            ++begin;
-        } while (begin < end && graph.integral(begin).left_pair == left);
+        });
         Channels(target + 2 * ij) += coulomb;
-    }
+    });
 }
 
 /** @brief Common-left-pair stencil, vectorized over interleaved batch channels. */
@@ -174,7 +200,7 @@ void contract_symmetric_block(
     const AoIntegralInput& ao, std::size_t begin, std::size_t end,
     const double* source, double* target, Eigen::Index width, double* coulomb) {
     const auto& graph = ao.pair_graph;
-    const int n_bf = ao.n_basis_functions;
+    const Eigen::Index n_bf = ao.n_basis_functions;
     const auto output = [&](int row, int column) -> Eigen::Index {
         if constexpr (Packed) {
             const Eigen::Index hi = std::max(row, column), lo = std::min(row, column);
@@ -182,17 +208,14 @@ void contract_symmetric_block(
         } else
             return (column * n_bf + row) * width;
     };
-    while (begin < end) {
-        const int left = graph.integral(begin).left_pair;
+    visit_unique_rows(graph, begin, end, [&](std::size_t left, auto visit) {
         const int i = graph.pair_first[left], j = graph.pair_second[left];
         const Eigen::Index ij = (j * n_bf + i) * width;
         const double scale = i == j ? 0.5 : 1.0;
         std::fill_n(coulomb, width, 0.0);
-        do {
-            const auto eri = graph.integral(begin);
-            const int right = eri.right_pair;
+        visit([&](std::size_t right, double integral) {
             const int k = graph.pair_first[right], l = graph.pair_second[right];
-            double value = eri.value * scale;
+            double value = integral * scale;
             if (k == l)
                 value *= 0.5;
             if (left == right)
@@ -211,12 +234,11 @@ void contract_symmetric_block(
                 target[til + channel] -= value * source[kj + channel];
                 target[tjk + channel] -= value * source[li + channel];
             }
-            ++begin;
-        } while (begin < end && graph.integral(begin).left_pair == left);
+        });
 #pragma omp simd
         for (Eigen::Index channel = 0; channel < width; ++channel)
             target[output(i, j) + channel] += coulomb[channel];
-    }
+    });
 }
 
 } // namespace
@@ -234,9 +256,9 @@ void apply_symmetric_ao_h1e_fused(const double* source,
         throw std::invalid_argument("symmetric AO-H1E buffers must not be null");
     const std::size_t size = matrix_size(ao);
     const int n_bf = ao.n_basis_functions;
-    const std::size_t n_integrals = ao.pair_graph.integral_count();
-    n_threads = xmvb::bounded_openmp_thread_count(n_threads, n_integrals);
-    const auto chunk = xmvb::openmp_chunk_size(n_integrals, n_threads);
+    const std::size_t work_items = response_work_items(ao.pair_graph);
+    n_threads = xmvb::bounded_openmp_thread_count(n_threads, work_items);
+    const auto chunk = xmvb::openmp_chunk_size(work_items, n_threads);
     workspace->sources.resize(size, 2);
     workspace->partial.resize(n_threads);
     forward->resize(size);
@@ -259,10 +281,10 @@ void apply_symmetric_ao_h1e_fused(const double* source,
         local.setZero(size, 2);
         work.start(thread);
 #pragma omp for schedule(dynamic, 1) nowait
-        for (std::size_t begin = 0; begin < n_integrals; begin += chunk)
+        for (std::size_t begin = 0; begin < work_items; begin += chunk)
             contract_symmetric_integrals(ao,
                                          begin,
-                                         std::min(begin + chunk, n_integrals),
+                                         std::min(begin + chunk, work_items),
                                          workspace->sources.data(),
                                          local.data());
         work.stop(thread);
@@ -295,9 +317,9 @@ std::vector<double> apply_ao_h1e(const double* source, const AoIntegralInput& ao
         throw std::invalid_argument("AO-H1E source must not be null");
     }
     const std::size_t size = matrix_size(ao);
-    const std::size_t n_integrals = ao.pair_graph.integral_count();
-    n_threads = xmvb::bounded_openmp_thread_count(n_threads, n_integrals);
-    const auto chunk = xmvb::openmp_chunk_size(n_integrals, n_threads);
+    const std::size_t work_items = response_work_items(ao.pair_graph);
+    n_threads = xmvb::bounded_openmp_thread_count(n_threads, work_items);
+    const auto chunk = xmvb::openmp_chunk_size(work_items, n_threads);
     std::vector<std::vector<double>> partial(n_threads);
     std::vector<double> result(size);
     ::xmvb::parallel::WorkerLoopTimes work(n_threads);
@@ -313,10 +335,10 @@ std::vector<double> apply_ao_h1e(const double* source, const AoIntegralInput& ao
         local.assign(size, 0.0);
         work.start(thread);
 #pragma omp for schedule(dynamic, 1) nowait
-        for (std::size_t begin = 0; begin < n_integrals; begin += chunk) {
+        for (std::size_t begin = 0; begin < work_items; begin += chunk) {
             contract_integrals<true, false>(ao,
                                             begin,
-                                            std::min(begin + chunk, n_integrals),
+                                            std::min(begin + chunk, work_items),
                                             source,
                                             nullptr,
                                             local.data(),
@@ -339,9 +361,9 @@ apply_ao_h1e_transpose(const double* adjoint, const AoIntegralInput& ao, int n_t
         throw std::invalid_argument("AO-H1E adjoint must not be null");
     }
     const std::size_t size = matrix_size(ao);
-    const std::size_t n_integrals = ao.pair_graph.integral_count();
-    n_threads = xmvb::bounded_openmp_thread_count(n_threads, n_integrals);
-    const auto chunk = xmvb::openmp_chunk_size(n_integrals, n_threads);
+    const std::size_t work_items = response_work_items(ao.pair_graph);
+    n_threads = xmvb::bounded_openmp_thread_count(n_threads, work_items);
+    const auto chunk = xmvb::openmp_chunk_size(work_items, n_threads);
     std::vector<std::vector<double>> partial(n_threads);
     std::vector<double> result(size);
     ::xmvb::parallel::WorkerLoopTimes work(n_threads);
@@ -357,10 +379,10 @@ apply_ao_h1e_transpose(const double* adjoint, const AoIntegralInput& ao, int n_t
         local.assign(size, 0.0);
         work.start(thread);
 #pragma omp for schedule(dynamic, 1) nowait
-        for (std::size_t begin = 0; begin < n_integrals; begin += chunk) {
+        for (std::size_t begin = 0; begin < work_items; begin += chunk) {
             contract_integrals<false, true>(ao,
                                             begin,
-                                            std::min(begin + chunk, n_integrals),
+                                            std::min(begin + chunk, work_items),
                                             nullptr,
                                             adjoint,
                                             nullptr,
@@ -390,9 +412,9 @@ void apply_symmetric_channels(const AoIntegralInput& ao,
     response->resize(size, width);
     if (width == 0)
         return;
-    const std::size_t n_integrals = ao.pair_graph.integral_count();
-    n_threads = bounded_openmp_thread_count(n_threads, n_integrals);
-    const auto chunk = openmp_chunk_size(n_integrals, n_threads);
+    const std::size_t work_items = response_work_items(ao.pair_graph);
+    n_threads = bounded_openmp_thread_count(n_threads, work_items);
+    const auto chunk = openmp_chunk_size(work_items, n_threads);
     workspace->partial.resize(n_threads);
     workspace->coulomb.resize(n_threads);
     const int n_bf = ao.n_basis_functions;
@@ -411,11 +433,11 @@ void apply_symmetric_channels(const AoIntegralInput& ao,
         coulomb.resize(width);
         work.start(thread);
 #pragma omp for schedule(dynamic, 1) nowait
-        for (std::size_t begin = 0; begin < n_integrals; begin += chunk) {
+        for (std::size_t begin = 0; begin < work_items; begin += chunk) {
             if constexpr (Packed) {
                 contract_symmetric_block<true>(ao,
                                                begin,
-                                               std::min(begin + chunk, n_integrals),
+                                               std::min(begin + chunk, work_items),
                                                workspace->sources.data(),
                                                local.data(),
                                                width,
@@ -424,7 +446,7 @@ void apply_symmetric_channels(const AoIntegralInput& ao,
                 if (width == 1)
                     contract_integrals<true, false>(ao,
                                                     begin,
-                                                    std::min(begin + chunk, n_integrals),
+                                                    std::min(begin + chunk, work_items),
                                                     workspace->sources.data(),
                                                     nullptr,
                                                     local.data(),
@@ -432,7 +454,7 @@ void apply_symmetric_channels(const AoIntegralInput& ao,
                 else
                     contract_symmetric_block<false>(ao,
                                                     begin,
-                                                    std::min(begin + chunk, n_integrals),
+                                                    std::min(begin + chunk, work_items),
                                                     workspace->sources.data(),
                                                     local.data(),
                                                     width,
@@ -502,9 +524,9 @@ void apply_symmetric_ao_h1e_fused_batch(const Eigen::Ref<const Eigen::MatrixXd>&
         adjoints.rows() != static_cast<Eigen::Index>(size) || sources.cols() != adjoints.cols()) {
         throw std::invalid_argument("AO-H1E batch input shape mismatch");
     }
-    const std::size_t n_integrals = ao.pair_graph.integral_count();
-    n_threads = xmvb::bounded_openmp_thread_count(n_threads, n_integrals);
-    const auto chunk = xmvb::openmp_chunk_size(n_integrals, n_threads);
+    const std::size_t work_items = response_work_items(ao.pair_graph);
+    n_threads = xmvb::bounded_openmp_thread_count(n_threads, work_items);
+    const auto chunk = xmvb::openmp_chunk_size(work_items, n_threads);
     const Eigen::Index n_directions = sources.cols();
     forward->resize(size, n_directions);
     transpose->resize(size, n_directions);
@@ -536,10 +558,10 @@ void apply_symmetric_ao_h1e_fused_batch(const Eigen::Ref<const Eigen::MatrixXd>&
         coulomb.resize(width);
         work.start(thread);
 #pragma omp for schedule(dynamic, 1) nowait
-        for (std::size_t begin = 0; begin < n_integrals; begin += chunk)
+        for (std::size_t begin = 0; begin < work_items; begin += chunk)
             contract_symmetric_block<false>(ao,
                                             begin,
-                                            std::min(begin + chunk, n_integrals),
+                                            std::min(begin + chunk, work_items),
                                             workspace->sources.data(),
                                             local.data(),
                                             width,

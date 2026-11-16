@@ -49,7 +49,7 @@ class Point {
 #pragma omp parallel for schedule(static)
         for (std::size_t p = 0; p < view.products.size(); ++p)
             for (std::size_t t = view.offsets[p]; t < view.offsets[p + 1]; ++t)
-                values(p, 0) += view.terms[t].coefficient * c[view.terms[t].structure];
+                values(p, 0) += view.terms[t].coefficient * c[view.terms[t].structure_index];
         panel_bytes = sizeof(double) * (left.size() + right.size() + 3 * values.size());
     }
 

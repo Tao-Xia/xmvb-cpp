@@ -32,6 +32,11 @@ Eigen::MatrixXd
 project_exact_active_density_response(const ExactPackedActiveTwoElectronAdjointCache& cache,
                                       const Eigen::Ref<const Eigen::MatrixXd>& weighted_direction);
 
+/** Project the symmetric AO density response C^T (2J-K)(D) C from accepted images. */
+Eigen::MatrixXd project_exact_active_h1e_response(
+    const Eigen::Ref<const Eigen::MatrixXd>& density,
+    const ExactPackedActiveTwoElectronAdjointCache& cache);
+
 /**
  * @brief Pulls an active H1e adjoint back to the symmetric inactive density.
  *

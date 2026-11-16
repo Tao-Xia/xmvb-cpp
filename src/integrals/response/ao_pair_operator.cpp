@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <limits>
 #include <stdexcept>
 #include <vector>
 
@@ -12,10 +11,10 @@
 
 #include "parallel/openmp.hpp"
 #include "core/timing.hpp"
+#include "core/index.hpp"
 #include "parallel/workers.hpp"
 
 namespace xmvb::integrals::detail {
-namespace {
 
 /**
  * @brief Contracts disjoint CSR rows with shared inputs and no private image.
@@ -33,8 +32,8 @@ void contract_rows(const PairAddress* offsets, const PairAddress* columns, const
     for (std::size_t row = first_row; row < end_row; ++row) {
         double* output = target + row * width;
         std::fill_n(output, width, 0.0);
-        int edge = offsets[row];
-        const int end = offsets[row + 1];
+        PairAddress edge = offsets[row];
+        const PairAddress end = offsets[row + 1];
         // Consume eight consecutive edges before writing the output row again.
         // CSR metadata is still read once and additions retain their edge order.
         for (; end - edge >= 8; edge += 8) {
@@ -78,8 +77,6 @@ void contract_rows(const PairAddress* offsets, const PairAddress* columns, const
     }
 }
 
-} // namespace
-
 void apply_exact_ao_pair_kernel(const AoIntegralInput& ao,
                                 const Eigen::Ref<const ExactCtxPairMatrix>& coefficients,
                                 int n_bf,
@@ -100,7 +97,9 @@ void apply_exact_ao_pair_graph(const AoPairGraph& graph,
         throw std::invalid_argument("AO-pair result must not be null");
     }
 
-    const std::size_t n_bf_pairs = n_bf * (n_bf + 1) / 2;
+    if (n_bf <= 0)
+        throw std::invalid_argument("AO-pair basis dimension must be positive");
+    const auto n_bf_pairs = core::triangular_count(n_bf);
     if (coefficients.rows() != static_cast<Eigen::Index>(n_bf_pairs) ||
         coefficients.cols() != static_cast<Eigen::Index>(n_active_pairs)) {
         throw std::invalid_argument("AO-pair coefficient shape mismatch");
@@ -110,6 +109,11 @@ void apply_exact_ao_pair_graph(const AoPairGraph& graph,
                    static_cast<Eigen::Index>(n_active_pairs));
     if (n_active_pairs == 0)
         return;
+
+    if (graph.tiles) {
+        graph.tiles->apply(coefficients, *result);
+        return;
+    }
 
     int n_threads = 1;
 #ifdef _OPENMP
@@ -122,12 +126,7 @@ void apply_exact_ao_pair_graph(const AoPairGraph& graph,
         if (!graph.valid_unique_storage()) {
             throw std::invalid_argument("invalid compact AO integral stream");
         }
-        n_threads =
-            std::min(n_threads,
-                     std::max(1,
-                              static_cast<int>(std::min<std::size_t>(
-                                  graph.integral_count(),
-                                  static_cast<std::size_t>(std::numeric_limits<int>::max())))));
+        n_threads = bounded_openmp_thread_count(n_threads, graph.integral_count());
         std::vector<ExactCtxPairMatrix> partial_products(n_threads);
 #pragma omp parallel num_threads(n_threads)
         {
@@ -183,8 +182,8 @@ void apply_exact_ao_pair_graph(const AoPairGraph& graph,
         throw std::invalid_argument("invalid AO-pair graph");
     }
 
-    n_threads = std::min(n_threads, static_cast<int>(n_bf_pairs));
-    const int n_pieces = static_cast<int>(openmp_work_pieces(n_bf_pairs, n_threads));
+    n_threads = bounded_openmp_thread_count(n_threads, n_bf_pairs);
+    const int n_pieces = core::checked_index<int>(openmp_work_pieces(n_bf_pairs, n_threads));
     const auto row_boundaries = graph.balanced_row_boundaries(n_pieces);
 
     ::xmvb::parallel::WorkerLoopTimes work(n_threads);

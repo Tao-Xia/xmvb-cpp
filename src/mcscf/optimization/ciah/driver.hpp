@@ -69,4 +69,12 @@ CiahMicroResult run_ciah_microsteps(CiahWorkspace& workspace,
                                     double outer_gradient_tolerance,
                                     const CiahMicroCallbacks& callbacks);
 
+/** Continue from a true keyframe in an extended origin-chart model. */
+CiahMicroResult continue_ciah_microsteps(CiahWorkspace& workspace,
+                                         const Eigen::VectorXd& initial_gradient,
+                                         double energy,
+                                         double outer_gradient_tolerance,
+                                         const CiahMicroCallbacks& callbacks,
+                                         CiahMicroResult path);
+
 } // namespace xmvb::mcscf

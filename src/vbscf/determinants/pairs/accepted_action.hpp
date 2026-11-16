@@ -4,6 +4,7 @@
 
 #include <Eigen/Core>
 
+#include "core/workspace.hpp"
 #include "vbscf/determinants/pairs/accepted_tile.hpp"
 
 namespace xmvb::vb {
@@ -28,6 +29,6 @@ AcceptedSpinPairActionResult apply_accepted_spin_pair_action(
     const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron,
     const xmvb::integrals::ActiveSpaceTwoElectronResult& active_two_electron,
     const Eigen::Ref<const Eigen::MatrixXd>& vectors,
-    std::size_t workspace_bytes = 256ULL * 1024ULL * 1024ULL);
+    std::size_t workspace_bytes = workspace::available());
 
 } // namespace xmvb::vb

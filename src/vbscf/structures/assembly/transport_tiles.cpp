@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <stdexcept>
+#include <span>
 
 #include "parallel/openmp.hpp"
 #include "core/timing.hpp"
@@ -25,47 +26,23 @@ StructureAction::cross_overlap_transport_gradient(const Eigen::VectorXd& lambda,
                                                   std::size_t workspace_bytes) const {
     profiling::ScopedPhase phase(profiling::Phase::CiOverlapTransportGradient);
     const int n = ca.n_orbitals();
+    const bool varying_origin = direction.size() != 0;
     if (lambda.size() != n_structures_ || base.size() != n_structures_ ||
         reference.size() != n_structures_ || transported.size() != n_structures_ ||
         ca.dimension() != n_unique_alpha_ || oa.dimension() != n_unique_alpha_ ||
         cb.dimension() != n_unique_beta_ || ob.dimension() != n_unique_beta_ ||
-        direction.rows() != n || direction.cols() != n)
+        (varying_origin && (direction.rows() != n || direction.cols() != n)))
         throw std::invalid_argument("invalid finite transport gradient inputs");
     OverlapTransportGradient result{{Eigen::MatrixXd::Zero(n, n), Eigen::MatrixXd::Zero(n, n)},
                                     Eigen::VectorXd::Zero(n_structures_)};
-    const auto da = oa.direction(direction), db = ob.direction(direction);
-    if (direct_ci_ && use_product_overlap(ca, cb, workspace_bytes, 5)) {
-        // Broad support keeps the cheaper moment order, with five shared images
-        // at peak. No new full-carrier residency requirement is introduced.
-        auto left = expand_structure_block(lambda);
-        ca.apply_left(&left);
-        cb.apply_right(&left);
-        auto current = expand_structure_block(transported);
-        ca.apply_left(&current);
-        cb.apply_right(&current);
-        auto origin = expand_structure_block(reference);
-        Eigen::MatrixXd tangent = Eigen::MatrixXd::Zero(origin.rows(), origin.cols());
-        oa.apply_directional_left(da, &origin, &tangent);
-        ob.apply_directional_right(db, &origin, &tangent);
-        auto target = expand_structure_block(base);
-        oa.apply_left(&target);
-        ob.apply_right(&target);
-        target += tangent - current;
-        tangent.resize(0, 0);
-        result.charts.left = ca.moment_pullback(carrier_generator_adjoint(target, left) -
-                                                carrier_generator_adjoint(left, current));
-        result.charts.right = oa.moment_pullback(carrier_generator_adjoint(left, origin));
-        current.resize(0, 0);
-        origin.resize(0, 0);
-        target.resize(0, 0);
-        ob.apply_adjoint_right(&left);
-        oa.apply_adjoint_left(&left);
-        result.image = contract_spin_product_block(left).col(0);
-        return result;
+    ExteriorTransformDirection da, db;
+    if (varying_origin) {
+        da = oa.direction(direction);
+        if (&oa != &ob)
+            db = ob.direction(direction);
     }
-
     const auto& sources = *sources_;
-    // All consumers share one panel budget. Workers own rows, never panel copies.
+    // All consumers share one panel budget. Workers own columns, never panel copies.
     const std::size_t row_bytes =
         16 * sizeof(double) * (static_cast<std::size_t>(n_unique_alpha_) + n_unique_beta_);
     if (workspace_bytes < row_bytes)
@@ -76,80 +53,115 @@ StructureAction::cross_overlap_transport_gradient(const Eigen::VectorXd& lambda,
                               std::min<std::size_t>(workspace_bytes / row_bytes,
                                                     8 * effective_openmp_thread_count())));
     const Eigen::VectorXd weights = expand_support(lambda);
-    // Form F_current lambda contracted with an arbitrary factor U V^T.
-    // Its two seed panels serve both chart pullbacks and the transpose image.
-    const auto seeds = [&](Eigen::MatrixXd a, Eigen::MatrixXd b) {
-        ca.apply_adjoint_left(&a);
-        cb.apply_adjoint_left(&b);
-        Eigen::MatrixXd za = Eigen::MatrixXd::Zero(n_unique_alpha_, b.cols());
-        Eigen::MatrixXd zb = Eigen::MatrixXd::Zero(n_unique_beta_, a.cols());
-#pragma omp parallel for schedule(static) if (n_unique_alpha_ > 32)
-        for (std::int64_t ai = 0; ai < n_unique_alpha_; ++ai)
-            for (std::size_t g = sources.alpha_offsets[ai]; g < sources.alpha_offsets[ai + 1]; ++g)
-                za.row(ai).noalias() += weights[g] * b.row(spin_products_[g] % n_unique_beta_);
-#pragma omp parallel for schedule(static) if (n_unique_beta_ > 32)
-        for (std::int64_t bi = 0; bi < n_unique_beta_; ++bi)
-            for (const auto g : sources.beta_groups[bi])
-                zb.row(bi).noalias() += weights[g] * a.row(spin_products_[g] / n_unique_beta_);
-        ca.apply_left(&za);
-        cb.apply_left(&zb);
-        return UpperPair{std::move(za), std::move(zb)};
+    // All four structure vectors have the same certified spin-exchange parity.
+    // With shared maps, exchange interchanges the two moment contributions and
+    // the two parity signs cancel. The CI transpose image still uses one side.
+    const bool shared_moment = spin_exchange_parity_ != 0 && &ca == &cb && &oa == &ob;
+    const auto seed = [&](Eigen::MatrixXd panel, bool alpha) {
+        const auto& from = alpha ? cb : ca;
+        const auto& to = alpha ? ca : cb;
+        from.apply_adjoint_left(&panel);
+        Eigen::MatrixXd image = Eigen::MatrixXd::Zero(to.dimension(), panel.cols());
+        const int workers =
+            coarse_openmp_thread_count(cooperative_openmp_thread_count(), image.size());
+        cooperative_openmp_for(panel.cols(), workers, [&](std::ptrdiff_t col) {
+            const auto in = panel.col(col);
+            auto out = image.col(col);
+            if (alpha) {
+                for (Eigen::Index ai = 0; ai < n_unique_alpha_; ++ai)
+                    for (auto g = sources.alpha_offsets[ai]; g < sources.alpha_offsets[ai + 1]; ++g)
+                        out[ai] += weights[g] * in[topology_->products[g] % n_unique_beta_];
+            } else {
+                for (Eigen::Index bi = 0; bi < n_unique_beta_; ++bi)
+                    for (const auto g : sources.beta_groups[bi])
+                        out[bi] += weights[g] * in[topology_->products[g] / n_unique_beta_];
+            }
+        });
+        to.apply_left(&image);
+        return image;
     };
     for (std::int64_t begin = 0; begin < core::checked_index<std::int64_t>(sources.columns.size());
          begin += extent) {
         const std::int64_t count = std::min<int>(extent, sources.columns.size() - begin);
-        Eigen::MatrixXd u = Eigen::MatrixXd::Zero(n_unique_alpha_, count), du = u, ub = u, uc = u;
-        Eigen::MatrixXd v = Eigen::MatrixXd::Zero(n_unique_beta_, count), dv = v, vc = v;
+        Eigen::MatrixXd ub = Eigen::MatrixXd::Zero(n_unique_alpha_, count), uc = ub, u;
+        Eigen::MatrixXd v = Eigen::MatrixXd::Zero(n_unique_beta_, count), vc = v, dv;
+        if (varying_origin) {
+            u = ub;
+            dv = v;
+        }
         for (int j = 0; j < count; ++j) {
             const std::int64_t b = sources.columns[begin + j];
             v(b, j) = vc(b, j) = 1;
             for (const auto g : sources.beta_groups[b]) {
-                const std::int64_t a = spin_products_[g] / n_unique_beta_;
-                for (auto t = spin_term_offsets_[g]; t < spin_term_offsets_[g + 1]; ++t) {
-                    const auto& term = spin_terms_[t];
-                    u(a, j) += term.coefficient * reference[term.structure];
-                    ub(a, j) += term.coefficient * base[term.structure];
-                    uc(a, j) += term.coefficient * transported[term.structure];
+                const std::int64_t a = topology_->products[g] / n_unique_beta_;
+                for (auto t = topology_->offsets[g]; t < topology_->offsets[g + 1]; ++t) {
+                    const auto& term = topology_->terms[t];
+                    if (varying_origin)
+                        u(a, j) += term.coefficient * reference[term.structure_index];
+                    ub(a, j) += term.coefficient * base[term.structure_index];
+                    uc(a, j) += term.coefficient * transported[term.structure_index];
                 }
             }
         }
-        oa.apply_directional_left(da, &u, &du);
-        ob.apply_directional_left(db, &v, &dv);
-        oa.apply_left(&ub);
-        ub += du;
-        du.resize(0, 0);
+        if (varying_origin) {
+            // Propagate the base image as the initial tangent.
+            oa.apply_directional_left(da, &u, &ub);
+            ob.apply_directional_left(&oa == &ob ? da : db, &v, &dv);
+        } else {
+            oa.apply_left(&ub);
+            ob.apply_left(&v);
+        }
         ca.apply_left(&uc);
         cb.apply_left(&vc);
         {
             // Target = (U_base+dU_ref) V_ref^T + U_ref dV_ref^T.
-            // Z_a for the first term also supplies the reference pullback/image;
-            // Z_b for the second term supplies the reference beta pullback.
-            auto first = seeds(ub, v);
-            auto second = seeds(u, dv);
-            const auto metric = seeds(uc, vc);
-            // Linearity permits one link traversal per current-spin chart. Both
-            // metric sides remain: they are different oriented bilinear moments.
-            // All factor panels, including these six seeds, fit the existing 16
-            // (U_alpha+U_beta)-column budget; no product carrier is introduced.
-            const ExteriorGeneratorTerm alpha_terms[]{{ub, first.left},
-                                                      {u, second.left},
-                                                      {uc, metric.left, -1.0},
-                                                      {metric.left, uc, -1.0}};
-            const ExteriorGeneratorTerm beta_terms[]{{v, first.right},
-                                                     {dv, second.right},
-                                                     {vc, metric.right, -1.0},
-                                                     {metric.right, vc, -1.0}};
+            // Each side consumes all three factor pairs in a single pass.
+            const int factor_count = varying_origin ? 3 : 2;
+            Eigen::MatrixXd b(n_unique_beta_, factor_count * count);
+            b.leftCols(count) = v;
+            b.rightCols(count) = vc;
+            if (varying_origin)
+                b.middleCols(count, count) = dv;
+            auto left = seed(std::move(b), true);
+            auto first_left = left.leftCols(count);
+            const auto second_left = left.middleCols(count, count);
+            const auto metric_left = left.rightCols(count);
+            const ExteriorGeneratorTerm alpha_terms[]{{ub, first_left},
+                                                      {uc, metric_left, -1.0},
+                                                      {metric_left, uc, -1.0},
+                                                      {u, second_left}};
+            const double multiplicity = shared_moment ? 2.0 : 1.0;
             result.charts.left +=
-                ca.generator_pullback(alpha_terms) + cb.generator_pullback(beta_terms);
-            result.charts.right +=
-                oa.generator_pullback(first.left, u) + ob.generator_pullback(second.right, v);
-            oa.apply_adjoint_left(&first.left);
+                multiplicity *
+                ca.generator_pullback(std::span(alpha_terms).first(varying_origin ? 4 : 3));
+            if (varying_origin)
+                result.charts.right += multiplicity * oa.generator_pullback(first_left, u);
+            if (!shared_moment) {
+                Eigen::MatrixXd a(n_unique_alpha_, factor_count * count);
+                a.leftCols(count) = ub;
+                a.rightCols(count) = uc;
+                if (varying_origin)
+                    a.middleCols(count, count) = u;
+                const auto right = seed(std::move(a), false);
+                const auto first_right = right.leftCols(count);
+                const auto second_right = right.middleCols(count, count);
+                const auto metric_right = right.rightCols(count);
+                const ExteriorGeneratorTerm beta_terms[]{{v, first_right},
+                                                         {vc, metric_right, -1.0},
+                                                         {metric_right, vc, -1.0},
+                                                         {dv, second_right}};
+                result.charts.left +=
+                    cb.generator_pullback(std::span(beta_terms).first(varying_origin ? 4 : 3));
+                if (varying_origin)
+                    result.charts.right += ob.generator_pullback(second_right, v);
+            }
+            oa.apply_adjoint_left_block(first_left);
             for (int j = 0; j < count; ++j)
                 for (const auto g : sources.beta_groups[sources.columns[begin + j]]) {
-                    const double value = first.left(spin_products_[g] / n_unique_beta_, j);
-                    for (auto t = spin_term_offsets_[g]; t < spin_term_offsets_[g + 1]; ++t) {
-                        const auto& term = spin_terms_[t];
-                        result.image[term.structure] += term.coefficient * value;
+                    const double value = first_left(topology_->products[g] / n_unique_beta_, j);
+                    for (auto t = topology_->offsets[g]; t < topology_->offsets[g + 1]; ++t) {
+                        const auto& term = topology_->terms[t];
+                        result.image[term.structure_index] += term.coefficient * value;
                     }
                 }
         }

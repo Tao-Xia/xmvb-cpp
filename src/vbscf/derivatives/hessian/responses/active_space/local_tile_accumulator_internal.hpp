@@ -11,7 +11,8 @@ class LocalActiveSpaceTileAccumulator {
   public:
     LocalActiveSpaceTileAccumulator(const VbScfInput& input,
                                     const AcceptedPointContext& accepted_point,
-                                    const ActiveSpaceIntegralDirectionView& direction);
+                                    const ActiveSpaceIntegralDirectionView& direction,
+                                    std::size_t workspace_bytes = workspace::available());
 
     void consume(bool alpha_channel,
                  bool beta_channel,

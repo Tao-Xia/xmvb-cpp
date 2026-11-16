@@ -3,10 +3,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <algorithm>
+#include <optional>
 #include <span>
 #include <vector>
 
 #include <Eigen/Core>
+
+#include "integrals/ao/tiles.hpp"
 
 namespace xmvb::integrals {
 
@@ -27,20 +30,23 @@ struct AoIntegralChunk {
 /**
  * @brief Exact symmetric AO-pair operator with adaptive storage.
  *
- * Automatic construction uses symmetric CSR for repeated row actions, with
- * a unique stream when directed edges exceed 32-bit addressing. Consumers
- * may also request the unique stream to avoid an unused CSR intermediate.
+ * CPU libcint builds shared triangular blocks. Explicit CSR and unique
+ * streams remain available for other producers and device upload.
  */
 struct AoPairGraph {
     std::vector<PairAddress> row_offsets;
     std::vector<PairAddress> columns;
     std::vector<double> values;
-    /** Unique-integral CSR references ordered by storage position for locality. */
+    /** Unique primaries occupy each CSR row's prefix. Both offsets stay 64-bit.
+     * The primary edge for unique index k in row r is
+     * row_offsets[r] + k - integral_offsets[r]; no per-integral references.
+     */
+    std::vector<PairAddress> integral_offsets;
+    /** Left pairs exist only for a unique stream, never alongside CSR. */
     std::vector<PairAddress> integral_rows;
-    std::vector<PairAddress> integral_edges;
     /**
-   * Compact unique-integral payload used when a symmetric CSR graph would
-   * exceed its 32-bit edge-address space. Pair-exchange symmetry is retained:
+   * Compact unique-integral payload for consumers that do not need CSR rows.
+   * Pair-exchange symmetry is retained:
    * every `(row,column,value)` appears exactly once.
    */
     std::vector<PairAddress> integral_columns;
@@ -48,6 +54,7 @@ struct AoPairGraph {
     /** Alternative to flat unique arrays: one retained set of producer chunks. */
     std::vector<AoIntegralChunk> chunks;
     std::vector<std::size_t> chunk_offsets;
+    std::shared_ptr<const AoPairTiles> tiles;
     std::vector<int> pair_first;
     std::vector<int> pair_second;
 
@@ -61,16 +68,38 @@ struct AoPairGraph {
         return !row_offsets.empty();
     }
 
+    bool has_rows() const noexcept {
+        return tiles || has_row_graph();
+    }
+
+    std::size_t directed_count() const noexcept {
+        return tiles ? tiles->directed_count() : values.size();
+    }
+
+    /** Visit a directed pair row, including its implicit symmetric entries. */
+    template<class Consumer>
+    void visit_row(std::size_t row, Consumer consume) const {
+        if (tiles) {
+            tiles->visit_row(row, consume);
+        } else {
+            for (auto edge = row_offsets[row]; edge < row_offsets[row + 1]; ++edge)
+                consume(columns[edge], values[edge]);
+        }
+    }
+
     /** @brief Unique stream, including the valid zero-integral operator. */
     bool has_compact_integral_stream() const noexcept {
-        return row_offsets.empty() && !pair_first.empty();
+        return !has_rows() && !pair_first.empty();
     }
 
     /** @brief Number of unique permutational AO integrals. */
     std::size_t integral_count() const noexcept {
+        if (tiles)
+            return tiles->integral_count();
         if (!chunks.empty())
             return chunk_offsets.empty() ? 0 : chunk_offsets.back();
-        return integral_rows.size();
+        return has_row_graph() ? static_cast<std::size_t>(integral_offsets.back())
+                               : integral_rows.size();
     }
 
     bool valid_unique_storage() const noexcept {
@@ -90,6 +119,11 @@ struct AoPairGraph {
     }
 
     AoPairIntegral integral(std::size_t index) const noexcept {
+        if (tiles) {
+            const AoPairTiles::Cursor cursor(*tiles, index);
+            return {static_cast<PairAddress>(cursor.left()), static_cast<PairAddress>(cursor.right()),
+                    cursor.value()};
+        }
         if (!chunks.empty()) {
             const auto i = static_cast<std::size_t>(
                 std::upper_bound(chunk_offsets.begin(), chunk_offsets.end(), index) -
@@ -97,13 +131,61 @@ struct AoPairGraph {
             const auto k = index - chunk_offsets[i];
             return {chunks[i].rows[k], chunks[i].columns[k], chunks[i].values[k]};
         }
-        const auto row = integral_rows[index];
-        if (has_compact_integral_stream()) {
-            return {row, integral_columns[index], integral_values[index]};
+        if (has_row_graph()) {
+            const auto row =
+                static_cast<std::size_t>(std::upper_bound(integral_offsets.begin(),
+                                                          integral_offsets.end(),
+                                                          static_cast<PairAddress>(index)) -
+                                         integral_offsets.begin() - 1);
+            const auto edge =
+                row_offsets[row] + static_cast<PairAddress>(index) - integral_offsets[row];
+            return {static_cast<PairAddress>(row), columns[edge], values[edge]};
         }
-        const auto edge = integral_edges[index];
-        return {row, columns[edge], values[edge]};
+        return {integral_rows[index], integral_columns[index], integral_values[index]};
     }
+
+    /** @brief Sequential unique-stream view; one row lookup per worker range.
+     * Advancing crosses empty CSR rows without a binary search per integral.
+     * This view owns no integral or index storage.
+     */
+    class Cursor {
+      public:
+        Cursor(const AoPairGraph& graph, std::size_t begin) : graph_(graph), index_(begin) {
+            if (graph_.tiles)
+                tiles_.emplace(*graph_.tiles, begin);
+            else if (graph_.has_row_graph())
+                row_ = static_cast<std::size_t>(std::upper_bound(graph_.integral_offsets.begin(),
+                                                                 graph_.integral_offsets.end(),
+                                                                 static_cast<PairAddress>(begin)) -
+                                                graph_.integral_offsets.begin() - 1);
+        }
+        AoPairIntegral value() const noexcept {
+            if (tiles_)
+                return {static_cast<PairAddress>(tiles_->left()), static_cast<PairAddress>(tiles_->right()),
+                        tiles_->value()};
+            if (!graph_.has_row_graph())
+                return graph_.integral(index_);
+            const auto edge = graph_.row_offsets[row_] + static_cast<PairAddress>(index_) -
+                              graph_.integral_offsets[row_];
+            return {static_cast<PairAddress>(row_), graph_.columns[edge], graph_.values[edge]};
+        }
+        void advance() noexcept {
+            if (tiles_) {
+                tiles_->advance();
+                return;
+            }
+            ++index_;
+            if (graph_.has_row_graph())
+                while (row_ + 1 < graph_.integral_offsets.size() &&
+                       static_cast<std::size_t>(graph_.integral_offsets[row_ + 1]) <= index_)
+                    ++row_;
+        }
+
+      private:
+        const AoPairGraph& graph_;
+        std::size_t index_, row_ = 0;
+        std::optional<AoPairTiles::Cursor> tiles_;
+    };
 
     /** Visit contiguous unique chunks without allocating or concatenating them.
    * Requires has_compact_integral_stream(); CSR uses integral()/for_each_integral().
@@ -133,8 +215,9 @@ struct AoPairGraph {
             });
             return;
         }
-        for (std::size_t index = 0; index < integral_count(); ++index) {
-            const AoPairIntegral eri = integral(index);
+        Cursor cursor(*this, 0);
+        for (std::size_t index = 0; index < integral_count(); ++index, cursor.advance()) {
+            const AoPairIntegral eri = cursor.value();
             function(eri.value,
                      pair_first[eri.left_pair],
                      pair_second[eri.left_pair],
@@ -164,8 +247,10 @@ struct AoIntegralInput {
     /** @brief Canonical AO two-electron integral representation. */
     AoPairGraph pair_graph;
 
-    /** @brief Additional shared exchange image plus peak workspace budget; zero disables it. */
-    std::size_t exact_exchange_memory_budget_bytes = 64 * 1024 * 1024;
+    /** @brief Optional upper bound for the exchange image and its peak scratch.
+     * Unset uses the shared CPU workspace; an explicit zero disables the image.
+     */
+    std::optional<std::size_t> exact_exchange_memory_budget_bytes;
 };
 
 } // namespace xmvb::integrals

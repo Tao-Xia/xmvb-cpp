@@ -9,6 +9,7 @@
 #include "core/workspace.hpp"
 #include "linalg/qr.hpp"
 #include "mcscf/ci/product_index.hpp"
+#include "mcscf/ci/workspace.hpp"
 #include "parallel/openmp.hpp"
 #include "vbscf/structures/orthogonal_ci/exterior_transform.hpp"
 
@@ -17,6 +18,8 @@ namespace xmvb::vb {
 Eigen::MatrixXd StructureAction::selected_overlap_factor(const ExteriorOrbitalTransform& alpha,
                                                          const ExteriorOrbitalTransform& beta,
                                                          std::size_t workspace_bytes) const {
+    mcscf::CiWorkspace workspace(workspace_bytes, false);
+    workspace_bytes = workspace.bytes();
     const auto n = static_cast<std::size_t>(n_structures_);
     const auto na = static_cast<std::size_t>(n_unique_alpha_);
     const auto nb = static_cast<std::size_t>(n_unique_beta_);
@@ -65,17 +68,18 @@ Eigen::MatrixXd StructureAction::selected_overlap_factor(const ExteriorOrbitalTr
 #pragma omp parallel for schedule(static) if (na > 32) num_threads(workers)
                     for (std::size_t ai = 0; ai < na; ++ai) {
                         const auto start = mcscf::product_index(ai, 0, nb);
-                        auto group =
-                            std::lower_bound(spin_products_.begin(), spin_products_.end(), start);
-                        for (; group != spin_products_.end() && *group < start + nb; ++group) {
-                            const auto g = group - spin_products_.begin();
+                        auto group = std::lower_bound(
+                            topology_->products.begin(), topology_->products.end(), start);
+                        for (; group != topology_->products.end() && *group < start + nb; ++group) {
+                            const auto g = group - topology_->products.begin();
                             const auto bi = *group - start;
-                            for (auto t = spin_term_offsets_[g]; t < spin_term_offsets_[g + 1];
+                            for (auto t = topology_->offsets[g]; t < topology_->offsets[g + 1];
                                  ++t) {
-                                const auto& term = spin_terms_[t];
-                                if (term.structure >= first && term.structure - first < width)
+                                const auto& term = topology_->terms[t];
+                                if (term.structure_index >= first &&
+                                    term.structure_index - first < width)
                                     raw.row(ai)
-                                        .segment((term.structure - first) * bc, bc)
+                                        .segment((term.structure_index - first) * bc, bc)
                                         .noalias() += term.coefficient * rows->col(bi).transpose();
                             }
                         }

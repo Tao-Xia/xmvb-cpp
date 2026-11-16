@@ -33,6 +33,7 @@ void OrbitalChart::build_rotation_inverse(const OrbitalPreparationInput& input,
     const int n_core = (input.n_total_electrons - input.n_active_electrons) / 2;
     const int n_occ = n_core + input.n_active_orbitals;
     rotation_core_count_ = n_core;
+    rotation_step_frame_ = model.auxiliary_rotation;
     Eigen::MatrixXd internal_normals(input.n_active_orbitals, input.n_active_orbitals);
     rotation_diagonals_[0] =
         model.rotation_diagonal.block(n_core, 0, input.n_basis_functions - n_core, n_core);
@@ -212,11 +213,22 @@ Eigen::VectorXd OrbitalChart::apply_inverse_rotation_diagonal(const Eigen::Vecto
     return result;
 }
 
-double OrbitalChart::maximum_frame_component(const Eigen::VectorXd& step) const {
-    std::array<Eigen::MatrixXd, 2> rotations;
-    for (int group = 0; group < 2; ++group)
-        rotations[group] = Eigen::MatrixXd::Zero(rotation_diagonals_[group].rows(),
-                                                 rotation_diagonals_[group].cols());
+Eigen::Index OrbitalChart::rotation_component_count() const noexcept {
+    return has_rotation_inverse_ ? rotation_diagonals_[0].size() + rotation_diagonals_[1].size()
+                                 : 0;
+}
+
+Eigen::VectorXd
+OrbitalChart::frame_rotation_components(const Eigen::Ref<const Eigen::VectorXd>& step) const {
+    Eigen::VectorXd components = Eigen::VectorXd::Zero(rotation_component_count());
+    if (components.size() == 0)
+        return components;
+    std::array<Eigen::Map<Eigen::MatrixXd>, 2> rotations{
+        Eigen::Map<Eigen::MatrixXd>(
+            components.data(), rotation_diagonals_[0].rows(), rotation_diagonals_[0].cols()),
+        Eigen::Map<Eigen::MatrixXd>(components.data() + rotation_diagonals_[0].size(),
+                                    rotation_diagonals_[1].rows(),
+                                    rotation_diagonals_[1].cols())};
     for (const auto& block : block_bases_)
         for (const auto& orbital : block.orbitals) {
             const int group = orbital.orbital_index < rotation_core_count_ ? 0 : 1;
@@ -225,11 +237,25 @@ double OrbitalChart::maximum_frame_component(const Eigen::VectorXd& step) const 
                 step.segment(orbital.local_reduced_offset, orbital.local_reduced_size);
             rotations[group].noalias() += external * orbital.ah_source_weights.transpose();
         }
-    double maximum = 0.0;
-    for (const auto& rotation : rotations)
-        if (rotation.size())
-            maximum = std::max(maximum, rotation.cwiseAbs().maxCoeff());
-    return maximum;
+    if (rotation_step_frame_.size()) {
+        const auto& q = rotation_step_frame_;
+        const Eigen::Index nc = rotation_core_count_, na = rotations[1].cols(), no = nc + na;
+        const Eigen::Index nv = q.rows() - no;
+        rotations[0] = (q.bottomRightCorner(na + nv, na + nv) * rotations[0] *
+                        q.topLeftCorner(nc, nc).transpose())
+                           .eval();
+        // Selected spaces retain internal-active rows as physical directions.
+        const Eigen::Index active_rows = rotations[1].rows();
+        rotations[1] = (q.bottomRightCorner(active_rows, active_rows) * rotations[1] *
+                        q.block(nc, nc, na, na).transpose())
+                           .eval();
+    }
+    return components;
+}
+
+double OrbitalChart::maximum_frame_component(const Eigen::VectorXd& step) const {
+    const auto components = frame_rotation_components(step);
+    return components.size() ? components.cwiseAbs().maxCoeff() : 0.0;
 }
 
 } // namespace xmvb::vb

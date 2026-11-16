@@ -22,6 +22,8 @@ set(XMVB_VBSCF_STRUCTURE_SOURCES
   vbscf/structures/spinor/action.cpp
   vbscf/structures/analysis/spin.cpp
   vbscf/structures/assembly/action.cpp
+  vbscf/structures/assembly/projection.cpp
+  vbscf/structures/assembly/recoupled_adjoint.cpp
   vbscf/structures/assembly/states.cpp
   vbscf/structures/assembly/transport_tiles.cpp
   vbscf/structures/assembly/orthogonal_tiles.cpp

@@ -57,6 +57,10 @@ struct AcceptedPointContext {
     /** @brief Existing bounded selected Gram/factor retained from Davidson. */
     std::shared_ptr<const SelectedMetric> selected_metric;
 
+    /** @brief Selected-state Gram shared within this immutable accepted point. */
+    const Eigen::MatrixXd& state_gram() const;
+    mutable std::optional<Eigen::MatrixXd> state_gram_cache;
+
     /** @brief Selected spin Gram factors; no orbital closure is assumed. */
     std::shared_ptr<const SpinMetric> spin_metric;
 

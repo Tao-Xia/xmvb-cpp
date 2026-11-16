@@ -33,9 +33,11 @@ include(vbscf/sources.cmake)
 
 set(XMVB_INTEGRAL_SOURCES
   integrals/ao/graph.cpp
+  integrals/ao/tiles.cpp
   integrals/ao/libcint.cpp
   integrals/ao/exact.cpp
   integrals/ao/exact_rows.cpp
+  integrals/ao/core_diagonal.cpp
   integrals/ao/ri_operator.cpp
   integrals/ao/ri_transform.cpp
   integrals/jk/contraction.cpp
@@ -60,6 +62,8 @@ set(XMVB_INTEGRAL_SOURCES
   integrals/response/ao_pair_operator.cpp
   integrals/response/generated_rows.cpp)
 
+set(XMVB_PARALLEL_SOURCES parallel/runtime.cpp)
+
 set(XMVB_LINALG_SOURCES
   core/memory.cpp
   core/pair_index.cpp
@@ -70,7 +74,10 @@ set(XMVB_LINALG_SOURCES
   linalg/minres.cpp)
 
 set(XMVB_MCSCF_SOURCES
+  mcscf/ci/reference.cpp
+  mcscf/ci/orbital_frame.cpp
   mcscf/ci/sigma.cpp
+  mcscf/ci/sigma_panels.cpp
   mcscf/ci/sigma_tiles.cpp
   mcscf/ci/workspace.cpp
   mcscf/ci/sigma_plan.cpp
@@ -158,6 +165,7 @@ set(XMVB_OUTPUT_SOURCES
   output/text/report.cpp
   output/text/sections.cpp
   output/text/structure.cpp
+  output/text/determinants.cpp
   output/text/normalization.cpp
   output/trace/accepted_iteration.cpp
   output/trace/ciah.cpp
@@ -178,6 +186,7 @@ file(
   "${CMAKE_CURRENT_SOURCE_DIR}/libcint/*.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/output/*.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/linalg/*.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/parallel/*.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/integrals/*.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/mcscf/*.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/casscf/*.cpp")
@@ -190,6 +199,7 @@ set(_xmvb_declared_component_sources
   ${XMVB_INPUT_SOURCES}
   ${XMVB_OUTPUT_SOURCES}
   ${XMVB_LINALG_SOURCES}
+  ${XMVB_PARALLEL_SOURCES}
   ${XMVB_INTEGRAL_SOURCES}
   ${XMVB_MCSCF_SOURCES}
   ${XMVB_OPTIMIZATION_SOURCES}
@@ -270,6 +280,9 @@ xmvb_add_component(xmvb_integrals
   ${XMVB_INTEGRAL_SOURCES})
 target_link_libraries(xmvb_integrals PUBLIC xmvb_linalg ${CINT_LIB})
 
+xmvb_add_component(xmvb_parallel ${XMVB_PARALLEL_SOURCES})
+target_link_libraries(xmvb_parallel PUBLIC xmvb_openmp ${LAPACK_LIB})
+
 xmvb_add_component(xmvb_optimization ${XMVB_OPTIMIZATION_SOURCES})
 target_link_libraries(xmvb_optimization PUBLIC xmvb_linalg)
 
@@ -291,7 +304,7 @@ target_link_libraries(xmvb_casscf PUBLIC xmvb_mcscf)
 # The common CI and orthogonal model must never depend on VB representations.
 file(GLOB_RECURSE _xmvb_common_headers CONFIGURE_DEPENDS
   "${CMAKE_CURRENT_SOURCE_DIR}/linalg/*.hpp" "${CMAKE_CURRENT_SOURCE_DIR}/linalg/*.cpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/parallel/*.hpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/parallel/*.hpp" "${CMAKE_CURRENT_SOURCE_DIR}/parallel/*.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/scf/*.hpp" "${CMAKE_CURRENT_SOURCE_DIR}/scf/*.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/dft/*.hpp" "${CMAKE_CURRENT_SOURCE_DIR}/dft/*.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/integrals/*.hpp" "${CMAKE_CURRENT_SOURCE_DIR}/integrals/*.cpp"
@@ -371,6 +384,26 @@ if (XMVB_BUILD_DEV_TARGETS)
   if (BUILD_TESTING)
     add_test(NAME openmp COMMAND test_openmp)
   endif()
+  add_executable(test_runtime_threads ${CMAKE_SOURCE_DIR}/tests/parallel/test_runtime.cpp)
+  target_link_libraries(test_runtime_threads PRIVATE xmvb_parallel)
+  if (BUILD_TESTING)
+    foreach(mode slurm explicit affinity)
+      set(_runtime_env)
+      if (mode STREQUAL "slurm")
+        set(_runtime_env SLURM_CPUS_PER_TASK=2)
+      elseif(mode STREQUAL "explicit")
+        set(_runtime_env SLURM_CPUS_PER_TASK=2 OMP_NUM_THREADS=3 OPENBLAS_NUM_THREADS=2)
+      endif()
+      add_test(NAME runtime_threads_${mode} COMMAND ${CMAKE_COMMAND} -E env
+        --unset=OMP_NUM_THREADS --unset=OPENBLAS_NUM_THREADS --unset=GOTO_NUM_THREADS
+        --unset=SLURM_CPUS_PER_TASK --unset=OMP_MAX_ACTIVE_LEVELS --unset=OMP_DYNAMIC
+        ${_runtime_env} $<TARGET_FILE:test_runtime_threads> ${mode})
+    endforeach()
+    unset(_runtime_env)
+    add_test(NAME packaged_launcher COMMAND bash
+      ${CMAKE_SOURCE_DIR}/tests/packaging/check_launcher.sh
+      ${CMAKE_SOURCE_DIR}/packaging/apptainer/xmvb)
+  endif()
   add_executable(test_ci_factors ${CMAKE_SOURCE_DIR}/tests/mcscf/test_factors.cpp)
   target_link_libraries(test_ci_factors PRIVATE xmvb_mcscf)
   add_executable(test_casci ${CMAKE_SOURCE_DIR}/tests/mcscf/test_casci.cpp)
@@ -441,6 +474,7 @@ target_compile_definitions(
 target_link_libraries(
   xmvb_output
   PUBLIC
+    xmvb_parallel
     xmvb_input
     xmvb_libcint
     xmvb_vbscf)
@@ -464,6 +498,7 @@ add_executable(xmvb
   cli/dft.cpp
   cli/casscf.cpp)
 set_target_properties(xmvb PROPERTIES OUTPUT_NAME xmvb-cpp.exe)
+install(TARGETS xmvb RUNTIME DESTINATION bin COMPONENT xmvb-program)
 target_link_libraries(xmvb
   PRIVATE
     xmvb_input
@@ -539,6 +574,14 @@ if (BUILD_TESTING)
   add_executable(test_output_normalization ${CMAKE_SOURCE_DIR}/tests/output/test_normalization.cpp)
   target_link_libraries(test_output_normalization PRIVATE xmvb_output)
   add_test(NAME output_normalization COMMAND test_output_normalization)
+
+  add_executable(test_output_determinants ${CMAKE_SOURCE_DIR}/tests/output/test_determinants.cpp)
+  target_link_libraries(test_output_determinants PRIVATE xmvb_output)
+  add_test(NAME output_determinants COMMAND test_output_determinants)
+
+  add_executable(test_output_timing ${CMAKE_SOURCE_DIR}/tests/output/test_timing.cpp)
+  target_link_libraries(test_output_timing PRIVATE xmvb_output)
+  add_test(NAME output_timing COMMAND test_output_timing)
 
   add_executable(
     test_cli_options
@@ -621,6 +664,7 @@ if (BUILD_TESTING)
       ${CMAKE_COMMAND}
       -DXMVB_EXECUTABLE=$<TARGET_FILE:xmvb>
       -DXMVB_INPUT=${CMAKE_SOURCE_DIR}/testdata/vbscf/F2.xmi
+      -DXMVB_VERSION=${PROJECT_VERSION}
       -P ${CMAKE_SOURCE_DIR}/tests/output/check_f2_report.cmake)
   set_tests_properties(
     text_report_f2

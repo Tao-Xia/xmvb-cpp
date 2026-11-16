@@ -1165,11 +1165,11 @@ int main(int argc, char** argv) {
         const CofactorRepresentationStatistics cofactor_statistics =
             collect_cofactor_statistics(context.second_order_context->same_spin_pair_cache);
         const std::size_t pair_graph_storage_bytes =
-            pair_graph.row_offsets.capacity() * sizeof(int) +
-            pair_graph.columns.capacity() * sizeof(int) +
+            pair_graph.row_offsets.capacity() * sizeof(xmvb::integrals::PairAddress) +
+            pair_graph.columns.capacity() * sizeof(xmvb::integrals::PairAddress) +
             pair_graph.values.capacity() * sizeof(double) +
-            pair_graph.integral_rows.capacity() * sizeof(int) +
-            pair_graph.integral_edges.capacity() * sizeof(int) +
+            pair_graph.integral_rows.capacity() * sizeof(xmvb::integrals::PairAddress) +
+            pair_graph.integral_offsets.capacity() * sizeof(xmvb::integrals::PairAddress) +
             pair_graph.pair_first.capacity() * sizeof(int) +
             pair_graph.pair_second.capacity() * sizeof(int);
         const std::size_t packed_active_storage_bytes =

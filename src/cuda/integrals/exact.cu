@@ -184,7 +184,7 @@ __global__ void generated_csr(linalg::ConstMatrixView c,
         decode_pair(p, a, b);
         double sum = 0.0, delta = 0.0;
         for (std::int64_t edge = offsets[begin + row]; edge < offsets[begin + row + 1]; ++edge) {
-            const int source = columns[edge];
+            const auto source = columns[edge];
             const double integral = values[edge];
             if (!direction_only)
                 sum += integral * feature(c, first, second, source, a, b);
@@ -251,7 +251,7 @@ __global__ void generated_unique(linalg::ConstMatrixView c,
         const std::int64_t p = k % output.cols;
         int a, b;
         decode_pair(p, a, b);
-        const int right = static_cast<int>(columns[edge]);
+        const auto right = columns[edge];
         const double value = values[edge];
         if (left >= begin && left < begin + output.rows) {
             atomic_add_double(output.data + (left - begin) * output.ld + p,
@@ -378,7 +378,7 @@ __global__ void unique_half_rows(const Index* offsets,
             continue;
         if (edge >= offsets[left + 1])
             left = unique_row(offsets, rows, edge, left + 1);
-        const int right = static_cast<int>(columns[edge]);
+        const auto right = columns[edge];
         const double value = values[edge];
         add_half_orientation(left, right, value, first, second, c, start, count, half);
         if (left != right)
@@ -413,7 +413,8 @@ __global__ void exchange_rows(const Index* offsets,
     __syncthreads();
     const auto begin = offsets[row], end = offsets[row + 1];
     for (auto edge = begin + threadIdx.x; edge < end; edge += blockDim.x) {
-        const int v = static_cast<int>(columns[edge]), vi = first[v], vj = second[v];
+        const auto v = columns[edge];
+        const int vi = first[v], vj = second[v];
         const double value = weight * values[edge];
         if (value == 0.0)
             continue;
@@ -799,8 +800,8 @@ ExactAoPairOperator::ExactAoPairOperator(Context& context,
             }
         });
         directed_bytes =
-            directed * (sizeof(int) + sizeof(double)) + (n_pairs_ + 1) * sizeof(std::int64_t);
-        staging_bytes = 2 * sizeof(int) + sizeof(double);
+            directed * (sizeof(std::int64_t) + sizeof(double)) + (n_pairs_ + 1) * sizeof(std::int64_t);
+        staging_bytes = 2 * sizeof(std::int64_t) + sizeof(double);
     } else {
         if (graph.row_offsets.size() != static_cast<std::size_t>(n_pairs_ + 1) ||
             graph.row_offsets.front() != 0 || graph.row_offsets.back() < 0 ||
@@ -815,13 +816,13 @@ ExactAoPairOperator::ExactAoPairOperator(Context& context,
                 largest_row,
                 static_cast<std::size_t>(graph.row_offsets[row + 1] - graph.row_offsets[row]));
         }
-        for (int column : graph.columns)
+        for (const auto column : graph.columns)
             if (column < 0 || column >= n_pairs_)
                 throw std::invalid_argument("CUDA AO-pair CSR column out of range");
         n_integrals_ = graph.columns.size();
         directed_bytes = graph.columns.size() * (sizeof(std::int64_t) + sizeof(double)) +
                          graph.row_offsets.size() * sizeof(std::int64_t);
-        staging_bytes = largest_row * (sizeof(int) + sizeof(double)) + 2 * sizeof(int);
+        staging_bytes = largest_row * (sizeof(std::int64_t) + sizeof(double)) + 2 * sizeof(std::int64_t);
     }
     pair_first_ = Buffer<int>(context, n_pairs_);
     pair_second_ = Buffer<int>(context, n_pairs_);

@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <vector>
 #include <Eigen/Core>
+#include "core/workspace.hpp"
 #include "casscf/integrals/active.hpp"
 #include "linalg/eigensolver.hpp"
 
@@ -19,7 +20,7 @@ struct CasciOptions {
     double energy_tolerance = 1e-10;
     double residual_tolerance = 1e-10;
     double stationarity_tolerance = 1e-8;
-    std::size_t workspace_bytes = 256ULL * 1024 * 1024;
+    std::size_t workspace_bytes = workspace::available();
 };
 
 struct CasciResult {

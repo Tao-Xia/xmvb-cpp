@@ -8,6 +8,22 @@
 
 namespace xmvb::integrals {
 
+namespace detail {
+/** Form T[(mu nu), k, i] = sum_l (mu nu|kl) C[l,i] for a directed AO-pair panel.
+ * The coefficients and output channels are contiguous in i. The caller owns
+ * the bounded scratch and consumes both orientations from the same panel.
+ */
+void form_exact_pair_half_panel(const AoPairGraph& graph,
+                                std::size_t block,
+                                int begin,
+                                int count,
+                                int n_basis,
+                                int n_channels,
+                                const double* coefficients,
+                                double* half);
+} // namespace detail
+
+
 /** @brief Shared inputs and reused worker outputs for two symmetric channels. */
 struct AoH1eSymmetricWorkspace {
     using Channels = Eigen::Matrix<double, Eigen::Dynamic, 2, Eigen::RowMajor>;
@@ -33,9 +49,9 @@ struct AoDensityDiagonalWorkspace {
 };
 
 /** @brief Exact symmetric 2J-K with exclusive AO output-row ownership.
- * Uses raw directed CSR integrals. Source/output AO indices are flattened
+ * Uses raw directed AO-pair integrals. Source/output AO indices are flattened
  * column-major, with contiguous density channels. No worker AO image or
- * atomic scatter is allocated. Requires the CSR storage representation.
+ * atomic scatter is allocated. Requires directed AO-pair row access.
  */
 void apply_symmetric_ao_h1e_rows(const AoIntegralInput& ao,
                                  int n_threads,
@@ -63,6 +79,16 @@ void apply_ao_density_diagonals(const AoIntegralInput& ao,
                                 AoDensityDiagonalWorkspace* workspace,
                                 Eigen::MatrixXd* exchange_diagonal,
                                 Eigen::MatrixXd* coulomb_diagonal);
+
+/** @brief Project core (pp|ii) and (pi|pi) from a shared one-index transform.
+ * Return false if the bounded workspace cannot be reserved.
+ */
+bool apply_ao_core_diagonals(const AoIntegralInput& ao,
+                             const Eigen::Ref<const Eigen::MatrixXd>& frame,
+                             int n_core,
+                             int n_threads,
+                             Eigen::MatrixXd* exchange_diagonal,
+                             Eigen::MatrixXd* coulomb_diagonal);
 
 /**
  * @brief Applies one physical symmetric response per source in a shared sweep.

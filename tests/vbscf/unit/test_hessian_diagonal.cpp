@@ -8,11 +8,13 @@
 #include <Eigen/Core>
 
 #include "core/pair_index.hpp"
+#include "vbscf/core/contracts/orbital_type.hpp"
 #include "vbscf/optimization/preconditioners/hessian_diagonal.hpp"
 #include "vbscf/derivatives/hessian/context/accepted_point.hpp"
 #include "integrals/ao/graph.hpp"
 #include "integrals/ao/ri.hpp"
 #include "integrals/ao/exact.hpp"
+#include "integrals/ao/tile_builder.hpp"
 
 namespace {
 
@@ -137,6 +139,80 @@ xmvb::mcscf::AnalyticDiagonalIntermediates make_intermediates(
         }
     }
     return x;
+}
+
+/** @brief Compare both shared half-transform images with explicit AO sums. */
+void check_core_half_transform() {
+    double max_error = 0.0;
+    for (int n : {7, 8}) {
+        constexpr int core = 3;
+        const auto g = make_symmetric_eri(n);
+        std::vector<xmvb::integrals::PairAddress> left, right;
+        std::vector<double> values;
+        for (int p = 0, pq = 0; p < n; ++p)
+            for (int q = 0; q <= p; ++q, ++pq)
+                for (int r = 0, rs = 0; r < n; ++r)
+                    for (int s = 0; s <= r; ++s, ++rs)
+                        if (rs <= pq && (pq + rs) % 5) {
+                            left.push_back(pq);
+                            right.push_back(rs);
+                            values.push_back(eri(g, p, q, r, s, n));
+                        }
+        xmvb::integrals::AoIntegralInput ao;
+        ao.n_basis_functions = n;
+        ao.pair_graph = xmvb::integrals::build_ao_pair_graph(left, right, values, n);
+        Eigen::MatrixXd frame(n, n + 1);
+        for (int p = 0; p < frame.cols(); ++p)
+            for (int mu = 0; mu < n; ++mu)
+                frame(mu, p) = std::sin(0.23 * (p + 1) * (mu + 1)) / std::sqrt(n);
+        const auto screened = [&](int p, int q, int r, int s) {
+            using xmvb::core::PairIndex;
+            const auto a = PairIndex::packed_pair_index(p, q);
+            const auto b = PairIndex::packed_pair_index(r, s);
+            return (a + b) % 5 ? eri(g, p, q, r, s, n) : 0.0;
+        };
+        Eigen::MatrixXd expected_k = Eigen::MatrixXd::Zero(frame.cols(), core);
+        Eigen::MatrixXd expected_j = expected_k;
+        for (int p = 0; p < frame.cols(); ++p)
+            for (int i = 0; i < core; ++i)
+                for (int mu = 0; mu < n; ++mu)
+                    for (int nu = 0; nu < n; ++nu)
+                        for (int r = 0; r < n; ++r)
+                            for (int s = 0; s < n; ++s) {
+                                const double w =
+                                    frame(mu, p) * frame(nu, p) * frame(r, i) * frame(s, i);
+                                expected_k(p, i) += w * screened(mu, r, nu, s);
+                                expected_j(p, i) += w * screened(mu, nu, r, s);
+                            }
+        std::vector<std::size_t> shell_ends;
+        for (std::size_t i = 1; i <= static_cast<std::size_t>(n); ++i)
+            shell_ends.push_back(i * (i + 1) / 2);
+        xmvb::integrals::AoPairTiles::Builder tiles(shell_ends);
+        std::size_t entry = 0;
+        for (int shell = 0; shell < n; ++shell) {
+            xmvb::integrals::AoPairTiles::Builder::Shell row(tiles, shell);
+            for (; entry < left.size() && static_cast<std::size_t>(left[entry]) < shell_ends[shell];
+                 ++entry)
+                row.add(left[entry], right[entry], values[entry]);
+            row.finish();
+        }
+        for (bool tiled : {false, true}) {
+            if (tiled) {
+                ao.pair_graph.tiles = tiles.finish();
+            }
+            for (int workers : {1, 4}) {
+                Eigen::MatrixXd k, j;
+                if (!xmvb::integrals::apply_ao_core_diagonals(ao, frame, core, workers, &k, &j))
+                    throw std::runtime_error("core diagonal test failed workspace reservation");
+                max_error = std::max({max_error,
+                                      (k - expected_k).cwiseAbs().maxCoeff(),
+                                      (j - expected_j).cwiseAbs().maxCoeff()});
+            }
+        }
+    }
+    if (max_error > 5.0e-12)
+        throw std::runtime_error("core half transform changed the projected J/K diagonals");
+    std::cout << "Core half-transform projected J/K max error = " << max_error << '\n';
 }
 
 /** @brief Exercise fewer density channels, including dependent source columns. */
@@ -363,6 +439,7 @@ void check_contracted_density_span() {
 } // namespace
 
 int main() {
+    check_core_half_transform();
     check_contracted_density_span();
     constexpr int n = 5;
     constexpr int nc = 1;
@@ -456,6 +533,94 @@ int main() {
     if (contraction_error > 2.0e-12) {
         std::cerr << "density-contracted diagonal error = " << contraction_error << '\n';
         return 1;
+    }
+    // Build the accepted exchange image independently in the AO pair basis.
+    // The diagonal must agree entrywise with the complete AO-density path.
+    xmvb::integrals::ExactCtxPairMatrix exchange(n * (n + 1) / 2, na * na);
+    Eigen::Index pair = 0;
+    for (int mu = 0; mu < n; ++mu)
+        for (int nu = 0; nu <= mu; ++nu, ++pair)
+            for (int a = 0; a < na; ++a)
+                for (int b = 0; b < na; ++b) {
+                    double value = 0;
+                    for (int i = 0; i < n; ++i)
+                        for (int j = 0; j < n; ++j)
+                            value += mo(i, nc + a) * mo(j, nc + b) * eri(g, mu, i, nu, j, n);
+                    exchange(pair, a * na + b) = value;
+                }
+    const auto reused = xmvb::vb::build_analytic_orbital_diagonal(input, accepted, &exchange);
+    const double reuse_error =
+        (reused.rotation_diagonal - built.rotation_diagonal).cwiseAbs().maxCoeff();
+    if (reuse_error > 2.0e-12) {
+        std::cerr << "cached exchange diagonal error = " << reuse_error << '\n';
+        return 1;
+    }
+    // Auxiliary preconditioning rotates only its model. Independently rotate
+    // the AO Hamiltonian and the complete density tensor for an entrywise oracle.
+    {
+        auto full = input;
+        full.complete_active_space = true;
+        auto& o = full.orbital_preparation_input;
+        o.orbital_type = xmvb::vb::kOrbitalTypeOeo;
+        o.n_active_orbitals = na;
+        o.n_orbitals = nc + na;
+        o.orbital_basis_counts.assign(nc + na, n);
+        for (int i = 0; i < nc + na; ++i)
+            for (int mu = 0; mu < n; ++mu)
+                o.orbital_basis_index_table.push_back(mu + 1);
+        xmvb::vb::AcceptedPointContext framed;
+        framed.n_active_orbitals = accepted.n_active_orbitals;
+        framed.prepared_active_space = accepted.prepared_active_space;
+        framed.active_one_electron_gradient = accepted.active_one_electron_gradient;
+        framed.packed_active_two_electron_gradient = accepted.packed_active_two_electron_gradient;
+        auto& tensor = framed.prepared_active_space.active_space_two_electron_result;
+        tensor.orbital_transform = Eigen::MatrixXd::Identity(na, na);
+        tensor.dense_active_coefficients = mo.middleCols(nc, na);
+        const auto auxiliary = xmvb::vb::build_analytic_orbital_diagonal(full, framed, &exchange);
+        if (!auxiliary.auxiliary_rotation.size())
+            throw std::runtime_error("auxiliary diagonal was not exercised");
+        const Eigen::MatrixXd u = auxiliary.auxiliary_rotation.block(nc, nc, na, na);
+        const Eigen::MatrixXd d1 = u.transpose() * dm1 * u;
+        const auto d2 = rotate_eri(dm2, u);
+        std::vector<double> d2_packed(packed.size());
+        for (int p = 0; p < na; ++p)
+            for (int q = 0; q <= p; ++q) {
+                const auto pq = xmvb::core::PairIndex::packed_pair_index(p, q);
+                for (int r = 0; r < na; ++r)
+                    for (int s = 0; s <= r; ++s) {
+                        const auto rs = xmvb::core::PairIndex::packed_pair_index(r, s);
+                        if (rs <= pq)
+                            d2_packed[xmvb::core::PairIndex::packed_pair_of_pairs_index(pq, rs)] =
+                                0.5 * (p == q ? 1 : 2) * (r == s ? 1 : 2) * (pq == rs ? 1 : 2) *
+                                d2[eri_index(p, q, r, s, na)];
+                    }
+            }
+        // Eligibility depends on available physical tensors, not CAS closure
+        // or the support of the physical orbital coefficients.
+        for (bool complete : {false, true})
+            for (int type : {xmvb::vb::kOrbitalTypeOeo, xmvb::vb::kOrbitalTypeHao}) {
+                auto constrained = full;
+                constrained.complete_active_space = complete;
+                constrained.orbital_preparation_input.orbital_type = type;
+                constrained.orbital_preparation_input.orbital_basis_counts.assign(nc + na, 2);
+                const auto candidate = xmvb::vb::build_analytic_orbital_diagonal(
+                    constrained, framed, &exchange);
+                if (!candidate.auxiliary_rotation.size() ||
+                    (candidate.rotation_diagonal - auxiliary.rotation_diagonal).norm() > 2e-12)
+                    throw std::runtime_error("constrained auxiliary tensor model changed");
+            }
+        if (xmvb::vb::build_analytic_orbital_diagonal(full, framed, &exchange, false)
+                .auxiliary_rotation.size())
+            throw std::runtime_error("original-frame diagnostic was not honored");
+        const auto& c = auxiliary.mo_coefficients;
+        const auto intermediate =
+            make_intermediates(c.transpose() * h * c, rotate_eri(g, c), nc, na);
+        const auto expected =
+            xmvb::mcscf::build_analytic_rotation_hessian_diagonal(intermediate, d1, d2_packed);
+        const double error = (expected - auxiliary.rotation_diagonal).cwiseAbs().maxCoeff();
+        std::cout << "Auxiliary-frame diagonal error: " << error << '\n';
+        if (error > 2e-12)
+            throw std::runtime_error("auxiliary-frame diagonal differs from independent AO oracle");
     }
     // Independent factorized-ERI reference for signed rank-two RI sources.
     auto ri = std::make_shared<xmvb::integrals::RiAoFactorization>();

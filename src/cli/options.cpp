@@ -118,7 +118,8 @@ void print_usage() {
            " [--verbose true|false]"
            " [--gradient-tolerance <value>]"
            " [--energy-tolerance <value>]"
-           " [--exact-exchange-memory-mib <nonnegative integer>]"
+           " [--exact-exchange-memory-mib <nonnegative integer; default automatic, 0 disables "
+           "image>]"
            " [--ci-workspace-mib <positive integer, shared CI/RI/DFT upper bound, default "
            "automatic>]"
            "\n"
@@ -167,7 +168,7 @@ std::optional<Options> parse_options(int argc, char** argv) {
     bool user_specified_optimizer_backend = false;
     bool user_specified_structure_eigensolver = false;
     bool user_specified_max_iterations = false;
-    std::size_t exchange_budget = 64 * 1024 * 1024;
+    std::optional<std::size_t> exchange_budget;
     std::optional<std::size_t> ci_budget;
     for (int argument_index = 2; argument_index < argc; argument_index += 2) {
         const std::string argument_name = argv[argument_index];

@@ -902,8 +902,9 @@ void check_keyframe_energy_model() {
             "CIAH failed to distinguish true descent from an energy-sign mismatch");
     const Eigen::Vector2d gkf(0.4, -0.1);
     model.refresh(-10.08, gkf);
-    require(model.displacement().norm() == 0.0,
-            "CIAH keyframe did not reset its interval displacement");
+    require(model.displacement().norm() == 0.0 && model.segment_steps() == 0,
+            "CIAH keyframe did not reset its interval displacement and count");
+    require_close(model.anchor_gradient(), gkf, 1e-15, "CIAH lost the exact anchor gradient");
     require(std::abs(model.energy() + 10.08) < 1e-13,
             "CIAH keyframe kept an obsolete energy anchor");
     const Eigen::Vector2d second(-0.03, 0.02);
@@ -917,7 +918,9 @@ void check_keyframe_energy_model() {
             "CIAH model includes displacement preceding the keyframe");
     require(model.anchor_energy() == -10.08 && model.descent_mismatch(-10.075),
             "CIAH compared a keyframe segment with the obsolete macro energy");
+    require(model.segment_steps() == 1, "CIAH lost the age of the retained keyframe");
     model.remove(second, h * second);
+    require(model.segment_steps() == 0, "CIAH counted a rejected step in the keyframe interval");
     require(std::abs(model.energy() + 10.08) < 1e-13,
             "CIAH rejected microstep was not removed from the energy model");
     require(!model.descent_mismatch(-10.07),
@@ -1340,6 +1343,62 @@ void check_gradient_independent_curvature() {
     require(!stable.find_negative_curvature(g), "positive Hessian generated negative curvature");
 }
 
+/** @brief Normal AH residual expansion exposes coupling-induced negative curvature.
+ * Both diagonal entries are positive. No independent probe or known negative
+ * seed is supplied; the off-diagonal coupling must enter through the residual.
+ */
+void check_coupled_curvature_macro() {
+    using namespace xmvb::mcscf;
+    using Ops = detail::HostCiahVectorOps;
+    Eigen::Matrix2d h;
+    h << 2.0, 3.0, 3.0, 2.0;
+    const Eigen::Matrix2d metric = Eigen::Vector2d(1.0, 3.0).asDiagonal();
+    const Eigen::Vector2d gradient(1e-4, 0.0);
+    int actions = 0;
+    const auto problem = dense_problem(h, metric, gradient, &actions);
+    CiahOptions options;
+    options.max_cycle = 2;
+    CiahWorkspace workspace(problem, options);
+    const auto maximum = [](const Eigen::VectorXd& x) { return x.cwiseAbs().maxCoeff(); };
+    workspace.set_step_limit(maximum, ciah_max_component);
+    const auto first = workspace.next(gradient);
+    require(first.step.dot(h * first.step) > 0.0 && actions == 1,
+            "coupled curvature fixture is not initially gradient restricted");
+    auto candidate = workspace.next(gradient);
+    require(actions == 2 && candidate.basis_size == 2 &&
+                candidate.step.dot(h * candidate.step) < 0.0 &&
+                gradient.dot(candidate.step) < 0.0 &&
+                maximum(candidate.step) <= ciah_max_component * (1.0 + 1e-12),
+            "normal AH expansion missed or incorrectly scaled the coupled unstable mode");
+    require_close(candidate.hessian_step, h * candidate.step, 1e-12,
+                  "bounded curvature step has an inconsistent physical image");
+    require_close(candidate.metric_step, metric * candidate.step, 1e-12,
+                  "bounded curvature step has an inconsistent metric image");
+    CiahMicroResult micro(0.0, gradient);
+    micro.displacement = candidate.step;
+    micro.hessian_displacement = candidate.hessian_step;
+    micro.last_step = candidate.step;
+    micro.energy_model.add(candidate.step, candidate.hessian_step);
+    micro.candidate = std::move(candidate);
+    struct Trial {
+        double energy;
+    };
+    CiahMacroCallbacks<Ops, Trial> callbacks;
+    callbacks.maximum_component = maximum;
+    callbacks.step_norm = [](const Eigen::VectorXd& x) { return x.norm(); };
+    callbacks.changes_parameters = [](const Eigen::VectorXd& x) { return !x.isZero(0.0); };
+    callbacks.evaluate = [&](const Eigen::VectorXd& p, double scale, double) {
+        const Eigen::VectorXd x = scale * p;
+        return Trial{gradient.dot(x) + .5 * x.dot(h * x) + .25 * x.array().pow(4).sum()};
+    };
+    callbacks.energy = [](const Trial& t) { return t.energy; };
+    callbacks.terminal = [](Trial&) { return false; };
+    const auto result = run_ciah_macro(workspace, micro, gradient, 0.0, 1e-7, 1e-12,
+                                      Ops{}, callbacks);
+    require(result.trial && result.trial->energy < 0.0 && actions == 2,
+            "ordinary curvature descent required an additional search or lost true-energy descent");
+}
+
 void check_curvature_microstep() {
     using namespace xmvb::mcscf;
     const Eigen::Matrix2d h = Eigen::Vector2d(-2.0, 1.0).asDiagonal();
@@ -1368,6 +1427,32 @@ void check_curvature_microstep() {
                   "curvature microstep lost its cached image");
 }
 
+void check_keyframe_uses_retained_metric() {
+    using namespace xmvb::mcscf;
+    const Eigen::MatrixXd h = Eigen::VectorXd::LinSpaced(32, 0.5, 2.0).asDiagonal();
+    const Eigen::MatrixXd metric = 2.0 * Eigen::MatrixXd::Identity(32, 32);
+    const Eigen::VectorXd gradient = Eigen::VectorXd::Constant(32, -1.0);
+    const auto problem = dense_problem(h, metric, gradient);
+    CiahWorkspace workspace(problem);
+    int metric_calls = 0;
+    CiahMicroCallbacks callbacks;
+    callbacks.coordinate_norm = [](const Eigen::VectorXd& v) { return v.norm(); };
+    callbacks.metric_action = [&](const Eigen::VectorXd& v) {
+        ++metric_calls;
+        return Eigen::VectorXd(metric * v);
+    };
+    callbacks.maximum_component = [](const Eigen::VectorXd& v) {
+        return v.cwiseAbs().maxCoeff();
+    };
+    callbacks.evaluate_keyframe = [&](const Eigen::VectorXd& p) {
+        const double energy = gradient.dot(p) + 0.5 * p.dot(h * p);
+        return CiahKeyframe{gradient + h * p, energy, energy};
+    };
+    const auto micro = run_ciah_microsteps(workspace, gradient, 0.0, 1e-7, callbacks);
+    require(micro.keyframe_evaluations > 0 && metric_calls == 0,
+            "CIAH keyframe scheduling rebuilt a retained metric image");
+}
+
 void check_invalid_model_checkpoint() {
     using namespace xmvb::mcscf;
     using Ops = detail::HostCiahVectorOps;
@@ -1390,7 +1475,7 @@ void check_invalid_model_checkpoint() {
     };
     CiahMacroCallbacks<Ops, Trial> callbacks;
     int evaluations = 0;
-    callbacks.evaluate = [&](const Eigen::VectorXd& p, double scale) {
+    callbacks.evaluate = [&](const Eigen::VectorXd& p, double scale, double) {
         ++evaluations;
         const Eigen::VectorXd x = scale * p;
         return Trial{g.dot(x) + 0.5 * x.dot(h * x), x};
@@ -1408,6 +1493,104 @@ void check_invalid_model_checkpoint() {
                   "invalid extrapolation displaced a better true keyframe");
     require_close(micro.hessian_displacement, h * checkpoint, 1e-14,
                   "checkpoint restored coordinates without their Hessian image");
+}
+
+void check_append_complement_coordinate() {
+    Eigen::Matrix3d h, metric;
+    h << 3.0, 0.4, -0.2, 0.4, 2.0, 0.1, -0.2, 0.1, 1.0;
+    metric << 2.0, 0.0, 0.0, 0.0, 1.5, 0.2, 0.0, 0.2, 1.0;
+    Eigen::Index active = 1;
+    int actions = 0;
+    const Eigen::Vector3d g(0.3, -0.2, 0.1);
+    CiahOptions options;
+    options.max_cycle = 1;
+    options.complement_capacity = 2;
+    options.apply_images = [&](const Eigen::VectorXd& v) {
+        ++actions;
+        Eigen::VectorXd hv = Eigen::Vector3d::Zero(), mv = hv;
+        hv.head(active) = h.topLeftCorner(active, active) * v.head(active);
+        mv.head(active) = metric.topLeftCorner(active, active) * v.head(active);
+        return std::make_pair(std::move(hv), std::move(mv));
+    };
+    auto problem = dense_problem(h, metric, g);
+    CiahWorkspace workspace(problem, Eigen::Vector3d::UnitX(), options);
+    Eigen::VectorXd rhs = Eigen::Vector3d::Zero();
+    rhs[0] = g[0];
+    require(workspace.next(rhs).basis_size == 1, "CIAH fixture did not start in one coordinate");
+    while (active < g.size()) {
+        const Eigen::Index index = active++;
+        Eigen::VectorXd h_column = Eigen::Vector3d::Zero(), m_column = h_column;
+        h_column.head(active) = h.col(index).head(active);
+        m_column.head(active) = metric.col(index).head(active);
+        workspace.append_complement_coordinate(index, h_column, m_column);
+        rhs[index] = g[index];
+        const auto candidate = workspace.next(rhs);
+        require(candidate.basis_size == active && candidate.new_hvp_actions == 0 &&
+                    actions == 1,
+                "CIAH coordinate growth replayed an existing action");
+        if (active == g.size())
+            check_images_and_residual(h, metric, g, candidate);
+    }
+}
+
+void check_continuation_after_coordinate_growth() {
+    using namespace xmvb::mcscf;
+    Eigen::Matrix2d h;
+    h << 2.0, 0.3, 0.3, 1.5;
+    const Eigen::Matrix2d metric = Eigen::Matrix2d::Identity();
+    const Eigen::Vector2d g(0.02, -0.012);
+    const Eigen::Vector2d initial_rhs(g[0], 0.0);
+    Eigen::Index active = 1;
+    int actions = 0;
+    CiahOptions options;
+    options.max_cycle = 2;
+    options.apply_images = [&](const Eigen::VectorXd& v) {
+        ++actions;
+        Eigen::VectorXd hv = Eigen::Vector2d::Zero();
+        hv.head(active) = h.topLeftCorner(active, active) * v.head(active);
+        return std::make_pair(std::move(hv), v);
+    };
+    auto problem = dense_problem(h, metric, g);
+    CiahWorkspace workspace(problem, Eigen::Vector2d::UnitX(), options);
+    CiahMicroResult path(0.0, initial_rhs);
+    path.candidate = workspace.next(initial_rhs);
+    path.displacement = Eigen::Vector2d(-0.004, 0.0);
+    path.hessian_displacement = Eigen::Vector2d(-0.008, 0.0);
+    path.last_step = path.displacement;
+    path.micro_steps = 1;
+    const auto energy = [&](const Eigen::VectorXd& x) {
+        return g.dot(x) + 0.5 * x.dot(h * x);
+    };
+    const double anchor = energy(path.displacement);
+    path.keyframes.save(anchor, path.displacement, path.hessian_displacement, path.last_step,
+                        path.candidate);
+    active = 2;
+    workspace.append_complement_coordinate(1, h.col(1), metric.col(1));
+    const auto extend = [&](const Eigen::VectorXd& x, Eigen::VectorXd& hx) {
+        hx[1] = h.row(1).dot(x);
+    };
+    extend(path.displacement, path.hessian_displacement);
+    path.keyframes.extend_image(extend);
+    path.predicted_gradient = g + path.hessian_displacement;
+    path.energy_model.refresh(anchor, path.predicted_gradient);
+    CiahMicroCallbacks callbacks;
+    callbacks.orbital_size = 1;
+    callbacks.coordinate_norm = [](const Eigen::VectorXd& v) { return v.norm(); };
+    callbacks.metric_action = [](const Eigen::VectorXd& v) { return v; };
+    callbacks.maximum_component = [](const Eigen::VectorXd& v) { return v.cwiseAbs().maxCoeff(); };
+    callbacks.evaluate_keyframe = [&](const Eigen::VectorXd& x) {
+        return CiahKeyframe{g + h * x, energy(x), energy(x)};
+    };
+    const auto continued =
+        continue_ciah_microsteps(workspace, g, 0.0, 1e-7, callbacks, std::move(path));
+    require(actions == 1 && continued.micro_steps == 2,
+            "CIAH continuation replayed a retained image or lost a microstep");
+    require(continued.energy_model.energy() < anchor && continued.displacement[1] != 0.0,
+            "CIAH continuation did not improve the existing candidate");
+    require_close(continued.hessian_displacement, h * continued.displacement, 2e-13,
+                  "CIAH continuation lost a row of the cumulative image");
+    require(std::abs(continued.energy_model.energy() - energy(continued.displacement)) < 2e-13,
+            "CIAH continuation lost the energy anchor");
 }
 
 void check_curvature_macro_candidate() {
@@ -1436,7 +1619,7 @@ void check_curvature_macro_candidate() {
             Eigen::VectorXd step;
         };
         CiahMacroCallbacks<Ops, Trial> callbacks;
-        callbacks.evaluate = [&](const Eigen::VectorXd& p, double scale) {
+        callbacks.evaluate = [&](const Eigen::VectorXd& p, double scale, double) {
             const Eigen::VectorXd x = scale * p;
             const double energy =
                 g.dot(x) + .5 * x.dot(h * x) + (reject ? 1e7 : .25) * std::pow(x[1], 4);
@@ -1465,7 +1648,11 @@ int main() {
         check_coarse_physical_scaling();
         check_coarse_shift_pole();
         check_curvature_microstep();
+        check_coupled_curvature_macro();
+        check_keyframe_uses_retained_metric();
         check_invalid_model_checkpoint();
+        check_append_complement_coordinate();
+        check_continuation_after_coordinate_growth();
         check_curvature_macro_candidate();
         check_gradient_independent_curvature();
         check_anisotropic_spd();

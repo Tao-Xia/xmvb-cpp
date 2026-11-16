@@ -19,7 +19,7 @@ struct CiahMacroObservation {
 /** Physical callbacks; the acceptance policy does not depend on vector storage. */
 template <class Ops, class Trial> struct CiahMacroCallbacks {
     using Vector = typename Ops::Vector;
-    std::function<Trial(const Vector&, double)> evaluate;
+    std::function<Trial(const Vector&, double, double)> evaluate;
     std::function<double(const Trial&)> energy;
     std::function<bool(Trial&)> terminal;
     std::function<double(const Vector&)> step_norm;
@@ -115,11 +115,11 @@ CiahMacroResult<Trial> run_ciah_macro(Workspace& workspace,
         return result;
     }
     while (true) {
-        auto trial = callbacks.evaluate(displacement, result.scale);
-        const double trial_energy = callbacks.energy(trial);
         const double model_linear =
             result.scale == 1.0 ? -final_reduction - 0.5 * quadratic : result.scale * linear;
         const double prediction = -model_linear - 0.5 * result.scale * result.scale * quadratic;
+        auto trial = callbacks.evaluate(displacement, result.scale, prediction);
+        const double trial_energy = callbacks.energy(trial);
         const double reduction = source_energy - trial_energy;
         bool keep = reduction > 0.0, terminal = false;
         if (!keep && std::abs(reduction) < energy_tolerance) {

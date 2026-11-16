@@ -8,14 +8,15 @@
 #include <utility>
 
 #include "mcscf/ci/factors.hpp"
+#include "mcscf/ci/workspace.hpp"
 #include "vbscf/structures/assembly/sources.hpp"
 #include "vbscf/structures/orthogonal_ci/integrals.hpp"
 
 namespace xmvb::vb {
 
-StructureActionResult
-StructureAction::scalar_integral_action(const StructureAdjointState& state,
-                                        const OrthogonalActiveIntegrals& delta) const {
+SelectedIntegralScalars
+StructureAction::single_state_integral_scalars(const StructureAdjointState& state,
+                                               const OrthogonalActiveIntegrals& delta) const {
     const auto& r = orthogonal_view().alpha.orbital_transform();
     const Eigen::MatrixXd generator = r.transpose()
                                           .triangularView<Eigen::Lower>()
@@ -26,6 +27,13 @@ StructureAction::scalar_integral_action(const StructureAdjointState& state,
                        (state.pair_kernel_gradient.array() * delta.pair_kernel.array()).sum() +
                        (state.generator_gradient.array() * generator.array()).sum()) /
                       state.weights[0];
+    return {dm, de};
+}
+
+StructureActionResult
+StructureAction::scalar_integral_action(const StructureAdjointState& state,
+                                        const OrthogonalActiveIntegrals& delta) const {
+    const auto [dm, de] = single_state_integral_scalars(state, delta);
     const double c = state.structure_coefficients(0, 0);
     return {Eigen::MatrixXd::Constant(1, 1, (de + state.energies[0] * dm) / c),
             Eigen::MatrixXd::Constant(1, 1, dm / c)};
@@ -93,9 +101,10 @@ StructureAction::source_integral_action(const StructureAdjointState& state,
                                           scalar ? nullptr : output_generator,
                                           !scalar,
                                           energy);
+        const mcscf::CiWorkspace operation(workspace::available(), false);
         mcscf::FactorActionWorkspace workspace(source,
                                                action.channel_kernel().rows(),
-                                               mcscf::kFactorWorkspaceBytes,
+                                               operation.bytes(),
                                                false,
                                                output_generator ? 2 : 0);
         return {
@@ -104,7 +113,7 @@ StructureAction::source_integral_action(const StructureAdjointState& state,
     };
     for (int i = 0; i < states; ++i) {
         const Eigen::VectorXd values = expand_support(state.structure_coefficients.col(i));
-        const auto y = sources_->orthogonal_source(spin_products_, values, alpha, beta);
+        const auto y = sources_->orthogonal_source(topology_->products, values, alpha, beta);
         const bool collect = direction && state.weights[i] != 0;
         auto integrals = project(y, delta_sigma, nullptr, collect ? &y : nullptr);
         Eigen::MatrixXd gradient = std::move(integrals.generator);
@@ -140,7 +149,7 @@ StructureAction::source_integral_action(const StructureAdjointState& state,
                                                        state.energies[i] * result.overlap.col(i);
             diagnostic.overlap.col(i) = right.images.overlap.col(0);
             const auto physical =
-                sources_->orthogonal_source(spin_products_, values, alpha, beta, true);
+                sources_->orthogonal_source(topology_->products, values, alpha, beta, true);
             const auto physical_dy = mcscf::generator_factors(sigma, physical, generator);
             const double electrons = alpha.n_electrons() + beta.n_electrons();
             const auto density = mcscf::factor_generator_adjoint(sigma, physical, y);
@@ -186,23 +195,23 @@ StructureActiveIntegralAdjoint StructureAction::source_adjoint_direction(
         if (weight == 0.0)
             continue;
         const Eigen::VectorXd values = expand_support(state.structure_coefficients.col(i));
-        const auto y = sources_->orthogonal_source(spin_products_, values, alpha, beta);
+        const auto y = sources_->orthogonal_source(topology_->products, values, alpha, beta);
         const auto physical =
-            sources_->orthogonal_source(spin_products_, values, alpha, beta, true);
+            sources_->orthogonal_source(topology_->products, values, alpha, beta, true);
         Eigen::VectorXd response_values;
         if (response.size() != 0)
             response_values = expand_support(response.col(i));
         const bool responding = response_values.size() && !response_values.isZero(0.0);
         const auto* q_values = responding ? &response_values : nullptr;
         if (moving || responding) {
-            const auto dy = sources_->tangent_source(spin_products_,
+            const auto dy = sources_->tangent_source(topology_->products,
                                                      values,
                                                      q_values,
                                                      alpha,
                                                      beta,
                                                      sigma,
                                                      moving ? &generator : nullptr);
-            const auto physical_dy = sources_->tangent_source(spin_products_,
+            const auto physical_dy = sources_->tangent_source(topology_->products,
                                                               values,
                                                               q_values,
                                                               alpha,
@@ -224,9 +233,9 @@ StructureActiveIntegralAdjoint StructureAction::source_adjoint_direction(
         }
         if (reuse && responding) {
             const auto q =
-                sources_->orthogonal_source(spin_products_, response_values, alpha, beta);
-            const auto physical_q =
-                sources_->orthogonal_source(spin_products_, response_values, alpha, beta, true);
+                sources_->orthogonal_source(topology_->products, response_values, alpha, beta);
+            const auto physical_q = sources_->orthogonal_source(
+                topology_->products, response_values, alpha, beta, true);
             gradient.noalias() +=
                 2 * weight *
                 mcscf::factor_residual_generator_adjoint(sigma, physical_q, y, state.energies[i]);

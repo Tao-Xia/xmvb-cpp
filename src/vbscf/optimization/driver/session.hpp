@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Eigen/Core>
+#include "integrals/response/types.hpp"
 
 #include "vbscf/optimization/driver/options.hpp"
 #include "vbscf/orbitals/charts/chart.hpp"
@@ -34,7 +35,8 @@ OrbitalChart build_orbital_geometry(const OrbitalPreparationInput& orbitals,
 void prepare_orbital_curvature(const VbScfObjective& objective,
                                OrbitalChart& chart,
                                OrbitalPreconditioner preconditioner,
-                               bool need_ah_mapping);
+                               bool need_ah_mapping,
+                               const integrals::ExactCtxPairMatrix* exchange = nullptr);
 
 OrbitalChart
 build_orbital_chart(const VbScfObjective& objective,

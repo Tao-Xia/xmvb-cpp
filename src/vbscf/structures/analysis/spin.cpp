@@ -46,9 +46,9 @@ struct DeterminantTerm {
 StructureSpinAnalysis analyze_structure_spin(const StructureExpansion& structures,
                                              int spin_multiplicity) {
     const auto alpha_rows = structures.alpha(), beta_rows = structures.beta();
+    const auto incidence = structures.incidence();
     if (spin_multiplicity <= 0 || structures.n_structures <= 0 || alpha_rows.empty() ||
-        alpha_rows.size() != beta_rows.size() ||
-        alpha_rows.size() != structures.incidence().size()) {
+        alpha_rows.size() != beta_rows.size() || alpha_rows.size() != incidence.size()) {
         throw std::invalid_argument("structure spin dimensions are inconsistent");
     }
 
@@ -60,12 +60,11 @@ StructureSpinAnalysis analyze_structure_spin(const StructureExpansion& structure
     }
 
     std::vector<std::vector<DeterminantTerm>> structure_terms(structures.n_structures);
-    for (std::size_t determinant = 0; determinant < static_cast<int>(alpha_rows.size());
-         ++determinant) {
+    for (std::size_t determinant = 0; determinant < alpha_rows.size(); ++determinant) {
         if (alpha_rows.electron_count(determinant) != n_alpha ||
             beta_rows.electron_count(determinant) != n_beta)
             throw std::invalid_argument("structure expansion mixes electron-number sectors");
-        for (const StructureExpansionTerm& term : structures.incidence()[determinant]) {
+        for (const StructureExpansionTerm& term : incidence[determinant]) {
             if (term.structure_index < 0 || term.structure_index >= structures.n_structures ||
                 !std::isfinite(term.coefficient)) {
                 throw std::invalid_argument("structure spin expansion term is invalid");

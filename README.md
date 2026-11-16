@@ -50,23 +50,16 @@ counts use `n_bf`; active orbital counts use `n_active`.
 | [libcint](https://github.com/sunqm/libcint) | Gaussian integral evaluation |
 | [libxc](https://www.tddft.org/programs/libxc/) | Exchange-correlation functionals |
 
-## Build
+## Binary distribution
 
-Use a C++23 compiler (tested with GCC14), CMake3.20 or newer, and an environment providing ninja, eigen, openblas (with LAPACKE headers), libxc, and libcint, then build with CMake:
+The Linux x86-64 CPU distribution consists of a reusable Apptainer runtime SIF and the
+versioned `xmvb-cpp-0.1.4-linux-x86_64-cpu.tar.gz` program archive. Both are published in
+[GHCR](https://github.com/users/Tao-Xia/packages/container/package/xmvb-cpp-release). Select them with `XMVB_RUNTIME_IMAGE` and
+`XMVB_PROGRAM_DIR`, then run `"$XMVB_PROGRAM_DIR/bin/xmvb" input.xmi`.
+The program archive includes basis files and a CIAH example.
 
-```bash
-cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build --parallel
-```
-
-This produces `build/src/xmvb-cpp.exe`.
-
-To enable optional diagnostic and test targets:
-
-```bash
-cmake -B build -G Ninja -DXMVB_BUILD_DEV_TARGETS=ON
-cmake --build build
-```
+See [BUILDING.md](BUILDING.md) for installation, source compilation, the CPU
+Release preset and the persistent release-build cache.
 
 ## C++ and CUDA code style
 
@@ -93,6 +86,20 @@ in CMake. Run builds and numerical validation through Slurm on compute nodes.
 ```bash
 OMP_NUM_THREADS=1 build/src/xmvb-cpp.exe <input.xmi>
 ```
+
+CPU VBSCF emits `SCF_CONVERGED program_wall_seconds=<seconds>` on stdout,
+followed by an immediate flush, as soon as its optimizer confirms convergence.
+The clock starts at `main()` entry, before argument parsing. The final report
+also lists `Program entry to SCF convergence` and `Post-SCF wall time`; the latter
+includes final diagnostics, orbital export and structure analysis/output through
+the report, before the timing footer. These two fields partition the internal
+`End-to-end wall time`. The existing `SCF iteration wall time` is a nested optimizer
+timer, not the startup-to-convergence metric. Unconverged runs emit no convergence
+marker or successful-convergence timing fields. A marker certifies SCF convergence,
+not successful completion of subsequent output; also check the process exit code.
+To include launcher/container startup and dynamic-library loading, start an external
+clock before the run command and stop it when this marker arrives. Ordinary file
+or pipe output is sufficient; no PTY or line-buffering override is needed.
 
 Input files use the `.xmi` format. See `testdata/vbscf/` for the versioned
 regression decks and `testdata/vbscf/F2.xmi` for the compact HAO smoke case.

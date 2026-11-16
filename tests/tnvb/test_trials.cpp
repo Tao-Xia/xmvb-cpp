@@ -27,7 +27,7 @@ int main(int argc,char** argv) {
     xmvb::vb::OrbitalGradientEvaluator pullback;
     auto backend=std::make_shared<xmvb::tnvb::ElectronicEvaluator>();
     xmvb::vb::VbScfObjective objective(std::move(loaded.input),layout,{0},{1.0},
-        loaded.nuclear_repulsion_energy,solver,{},&pullback,backend);
+        loaded.nuclear_repulsion_energy,solver,{},&pullback,false,backend);
     Eigen::VectorXd gradient;
     const double accepted_energy=objective(initial,gradient);
     require(objective.gradient_result().two_electron_frame.rows()==6 &&

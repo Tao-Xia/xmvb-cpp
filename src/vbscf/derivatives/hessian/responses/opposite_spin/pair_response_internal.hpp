@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/workspace.hpp"
+
 #include <cstdint>
 
 #include "mcscf/ci/string_table.hpp"
@@ -97,7 +99,8 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
     const ActiveSpaceIntegralDirectionView& direction,
     const SameSpinDirectionalPairTileView& same_spin_tile,
     const Eigen::MatrixXd* accepted_ri_active_pair_factors = nullptr,
-    const Eigen::MatrixXd* directional_ri_active_pair_factors = nullptr);
+    const Eigen::MatrixXd* directional_ri_active_pair_factors = nullptr,
+    std::size_t workspace_bytes = workspace::available());
 
 DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
     const xmvb::mcscf::StringTable& unique_determinants,
@@ -107,6 +110,7 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
     const ActiveSpaceIntegralDirectionView& direction,
     const SameSpinDirectionalPairTileView& same_spin_tile,
     const Eigen::MatrixXd* accepted_ri_active_pair_factors = nullptr,
-    const Eigen::MatrixXd* directional_ri_active_pair_factors = nullptr);
+    const Eigen::MatrixXd* directional_ri_active_pair_factors = nullptr,
+    std::size_t workspace_bytes = workspace::available());
 
 } // namespace xmvb::vb::detail

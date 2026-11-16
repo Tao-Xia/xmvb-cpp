@@ -23,6 +23,7 @@ struct MaterializedAoIntegralBuffers {
     std::vector<integrals::PairAddress> right_pair_indices;
     std::vector<double> two_electron_values;
     std::vector<integrals::AoIntegralChunk> chunks;
+    std::shared_ptr<const integrals::AoPairTiles> tiles;
 };
 
 xmvb::integrals::AoIntegralInput

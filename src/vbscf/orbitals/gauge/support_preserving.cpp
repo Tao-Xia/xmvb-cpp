@@ -376,7 +376,9 @@ bool apply_support_preserving_inactive_gauge(OrbitalPreparationInput* orbital_pr
     return apply_support_preserving_inactive_gauge(reference_layout, orbital_preparation_input);
 }
 
-bool balance_active_gauge(OrbitalPreparationInput* input) {
+bool balance_active_gauge(OrbitalPreparationInput* input, bool* active_inactive_orthogonal) {
+    if (active_inactive_orthogonal)
+        *active_inactive_orthogonal = false;
     if (input == nullptr) {
         throw std::invalid_argument("active gauge target must not be null");
     }
@@ -388,8 +390,11 @@ bool balance_active_gauge(OrbitalPreparationInput* input) {
     const int n_active = static_cast<int>(input->n_active_orbitals);
     const int n_inactive =
         static_cast<int>((input->n_total_electrons - input->n_active_electrons) / 2);
-    if (n_active == 0 || n_inactive == 0)
+    if (n_active == 0 || n_inactive == 0) {
+        if (active_inactive_orthogonal)
+            *active_inactive_orthogonal = n_active > 0 && input->orbital_type == kOrbitalTypeOeo;
         return false;
+    }
     const int n_bf = static_cast<int>(input->n_basis_functions);
     const Eigen::MatrixXd occupied =
         build_dense_sparse_orbital_columns(*input, n_inactive + n_active);
@@ -432,6 +437,8 @@ bool balance_active_gauge(OrbitalPreparationInput* input) {
                 input->orbital_value_table[flat] = value;
             }
         }
+        if (active_inactive_orthogonal)
+            *active_inactive_orthogonal = true;
         return changed;
     }
     bool changed = false;

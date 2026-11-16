@@ -21,13 +21,13 @@ Eigen::MatrixXd core_coulomb_diagonals(const Eigen::MatrixXd& factors,
     Eigen::MatrixXd result = Eigen::MatrixXd::Zero(n_mo, n_core);
     if (!n_core)
         return result;
-    const int n_pairs = factors.cols();
-    const int width = std::min<std::size_t>(n_pairs, allowance / (n_core + n_mo));
+    const Eigen::Index n_pairs = factors.cols();
+    const Eigen::Index width = std::min<std::size_t>(n_pairs, allowance / (n_core + n_mo));
     if (width <= 0)
         throw std::length_error("RI core diagonal pair tile exceeds workspace");
     const int workers = std::min(effective_openmp_thread_count(), n_mo);
-    for (int first = 0; first < n_pairs; first += width) {
-        const int count = std::min(width, n_pairs - first);
+    for (Eigen::Index first = 0; first < n_pairs; first += width) {
+        const Eigen::Index count = std::min(width, n_pairs - first);
         OrbitalPairMatrix products(count, n_core), map(count, n_mo);
 #pragma omp parallel num_threads(workers)
         {
@@ -35,11 +35,12 @@ Eigen::MatrixXd core_coulomb_diagonals(const Eigen::MatrixXd& factors,
 #ifdef _OPENMP
             worker = omp_get_thread_num();
 #endif
-            const int begin = worker * count / workers, end = (worker + 1) * count / workers;
+            const Eigen::Index begin = worker * count / workers;
+            const Eigen::Index end = (worker + 1) * count / workers;
             products.middleRows(begin, end - begin).noalias() =
                 factors.middleCols(first + begin, end - begin).transpose() * charges;
 #pragma omp for schedule(static)
-            for (int row = 0; row < count; ++row) {
+            for (Eigen::Index row = 0; row < count; ++row) {
                 const std::size_t pair = first + row;
                 std::size_t mu = (std::sqrt(8.0 * pair + 1) - 1) / 2;
                 while ((mu + 1) * (mu + 2) / 2 <= pair)
@@ -96,7 +97,8 @@ contract_ri_density_diagonals(const RiAoFactorization& ri,
         one_index.resize(static_cast<Eigen::Index>(count) * n_occ, n_bf);
         transform_ri_one_index(
             ri.metric_whitened_ao_pair_factors, orbitals.leftCols(n_occ), first, count, one_index);
-        const int rows = count * n_occ;
+        const Eigen::Index stride = count;
+        const Eigen::Index rows = stride * n_occ;
         Eigen::MatrixXd projected(rows, n_mo);
 #pragma omp parallel num_threads(workers)
         {
@@ -104,20 +106,21 @@ contract_ri_density_diagonals(const RiAoFactorization& ri,
 #ifdef _OPENMP
             worker = omp_get_thread_num();
 #endif
-            const int begin = worker * rows / workers, end = (worker + 1) * rows / workers;
+            const Eigen::Index begin = worker * rows / workers;
+            const Eigen::Index end = (worker + 1) * rows / workers;
             projected.middleRows(begin, end - begin).noalias() =
                 one_index.middleRows(begin, end - begin) * orbitals;
 #pragma omp barrier
 #pragma omp for schedule(static) nowait
             for (int c = 0; c < n_core; ++c)
-                charges.col(c).segment(first, count) = projected.col(c).segment(c * count, count);
+                charges.col(c).segment(first, count) = projected.col(c).segment(c * stride, count);
             Eigen::MatrixXd moment(n_active, n_active);
 #pragma omp for schedule(static)
             for (int p = 0; p < n_mo; ++p) {
                 for (int c = 0; c < n_core; ++c)
-                    result.core(p, c) -= projected.col(p).segment(c * count, count).squaredNorm();
+                    result.core(p, c) -= projected.col(p).segment(c * stride, count).squaredNorm();
                 const Eigen::Map<const Eigen::MatrixXd> active(
-                    projected.col(p).data() + n_core * count, count, n_active);
+                    projected.col(p).data() + n_core * stride, count, n_active);
                 moment.noalias() = active.transpose() * active;
                 const Eigen::Map<const Eigen::VectorXd> flat(moment.data(), moment.size());
                 result.active.row(p).noalias() -= flat.transpose() * active_weights;

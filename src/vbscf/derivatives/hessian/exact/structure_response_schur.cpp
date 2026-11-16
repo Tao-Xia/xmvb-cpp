@@ -178,8 +178,7 @@ StructureResponseSchurModel ExactHvpOperator::State::structure_response_schur_mo
             throw std::runtime_error(
                 "structure-response Schur basis action returned invalid images");
         }
-        const Eigen::MatrixXd metric =
-            response.selected_eigenvectors.transpose() * response.overlap_selected;
+        const Eigen::MatrixXd& metric = response.selected_metric;
         Eigen::FullPivLU<Eigen::MatrixXd> metric_solver(metric);
         if (!metric_solver.isInvertible()) {
             throw std::runtime_error("selected-state response metric is singular");

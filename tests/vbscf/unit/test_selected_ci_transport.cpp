@@ -340,7 +340,7 @@ void check_selected_transport(bool stationary) {
                                                     topology.alpha_reuse_table.unique_determinants,
                                                     topology.beta_reuse_table.unique_determinants,
                                                     3)
-                                  .prepare_metric(point.upper)
+                                  .prepare_metric(point.frame.upper)
                                   .selected_metric();
     require(trial_factor != nullptr && trial_factor != accepted->selected_metric &&
                 (trial_factor->overlap - accepted->selected_metric->overlap).norm() > 1e-5,

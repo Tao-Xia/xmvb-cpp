@@ -4,6 +4,8 @@
 
 #include <Eigen/Core>
 
+#include "core/workspace.hpp"
+
 namespace xmvb::integrals {
 
 struct AoIntegralInput;
@@ -32,12 +34,15 @@ struct ExactPackedActiveTwoElectronAdjointCache {
     const ExactCtxPairMatrix* accepted_pair_products = nullptr;
     const ExactCtxDenseMatrix* accepted_active_coefficients = nullptr;
     ExactCtxPairMatrix active_pair_gradient_matrix;
+    /** Optional accepted transforms share this allowance, leaving capacity for actions and CI. */
+    std::size_t optional_retained_budget_bytes = 0;
     /**
    * @brief Accepted one-orbital contraction, rows (AO, active), columns pairs.
    *
-   * Uses O(n_bf*n_active^3) shared storage, capped at 64 MiB. This is an
+   * Uses O(n_bf*n_active^3) shared storage, admitted by the CPU workspace. This is an
    * integral intermediate, independent of the active density, not a Hessian.
    */
+    workspace::Reservation orbital_pair_reservation;
     ExactCtxPairMatrix orbital_pair_products;
     /**
    * @brief Density-independent (AO active|AO active) integral image.
@@ -48,6 +53,7 @@ struct ExactPackedActiveTwoElectronAdjointCache {
    * input memory budget. The image is reused throughout the accepted point.
    * This is a partial integral transform, not an orbital Hessian.
    */
+    workspace::Reservation exchange_reservation;
     ExactCtxPairMatrix exchange_integrals;
 };
 

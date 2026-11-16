@@ -321,7 +321,8 @@ expand_with_sign_mode(const xmvb::vb::RawStructureData& raw_structure_data, Sign
     }
 
     std::map<std::vector<int>, int> alpha_ids, beta_ids;
-    result.offsets.push_back(0);
+    std::vector<std::size_t> offsets{0};
+    std::vector<xmvb::vb::StructureExpansionTerm> terms;
     for (std::size_t pair = 0; pair < alpha_rows.size(); ++pair) {
         const auto [alpha_iterator, alpha_inserted] =
             alpha_ids.emplace(alpha_rows[pair], static_cast<int>(result.alpha_strings.size()));
@@ -333,10 +334,11 @@ expand_with_sign_mode(const xmvb::vb::RawStructureData& raw_structure_data, Sign
             result.beta_strings.push_back(beta_rows[pair]);
         result.pair_alpha.push_back(alpha_iterator->second);
         result.pair_beta.push_back(beta_iterator->second);
-        result.terms.insert(
-            result.terms.end(), incidence_rows[pair].begin(), incidence_rows[pair].end());
-        result.offsets.push_back(result.terms.size());
+        terms.insert(terms.end(), incidence_rows[pair].begin(), incidence_rows[pair].end());
+        offsets.push_back(terms.size());
     }
+    result.incidence_data = xmvb::vb::StructureIncidenceData::make(
+        std::move(offsets), std::move(terms), result.n_structures);
 
     return result;
 }

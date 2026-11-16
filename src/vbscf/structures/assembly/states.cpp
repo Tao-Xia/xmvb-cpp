@@ -1,5 +1,6 @@
 #include "vbscf/structures/assembly/states.hpp"
 #include "vbscf/structures/overlap/metric.hpp"
+#include "mcscf/ci/sigma.hpp"
 
 #include <cmath>
 #include <limits>
@@ -12,7 +13,8 @@ namespace xmvb::vb {
 FixedStructureStates evaluate_fixed_states(const StructureAction& action,
                                            const Eigen::Ref<const Eigen::MatrixXd>& coefficients,
                                            const std::vector<double>& weights,
-                                           const SelectedMetric* metric) {
+                                           const SelectedMetric* metric,
+                                           bool coefficient_gradient) {
     const Eigen::Index count = coefficients.cols();
     if (count == 0 || coefficients.rows() != action.n_structures() ||
         static_cast<Eigen::Index>(weights.size()) != count)
@@ -21,6 +23,38 @@ FixedStructureStates evaluate_fixed_states(const StructureAction& action,
         if (!std::isfinite(weight) || weight <= 0 ||
             std::abs(weight - weights.front()) > 64 * std::numeric_limits<double>::epsilon())
             throw std::invalid_argument("fixed-state keyframes require equal positive weights");
+
+    if (!coefficient_gradient && count == 1 && action.supports_integral_direction()) {
+        const auto& sigma = action.orthogonal_view().sigma;
+        const int electrons =
+            sigma.alpha_connections().n_occupied() + sigma.beta_connections_view().n_occupied();
+        if (electrons > 0) {
+            // Both <Y|H|Y> and <Y|Y> are already encoded in the integral
+            // cotangents. Tr(D)=N<Y|Y> holds in any selected structure span.
+            // Keep the unshifted generator (including the finite CI residual),
+            // then apply the exact Rayleigh quotient rule to the small tensors.
+            auto adjoint = action.prepare_active_adjoint(coefficients, weights, {0.0});
+            const double weight = weights.front();
+            const double norm = adjoint.one_electron_gradient.trace() / (weight * electrons);
+            if (!(norm > 0.0) || !std::isfinite(norm))
+                throw std::runtime_error("fixed structure state has a nonpositive physical norm");
+            const auto& integrals = action.orthogonal_integrals();
+            const double energy =
+                ((adjoint.one_electron_gradient.array() * integrals.one_electron.array()).sum() +
+                 (adjoint.pair_kernel_gradient.array() * integrals.pair_kernel.array()).sum()) /
+                (weight * norm);
+            StructureResponseSweep sweep{{},
+                                         adjoint.one_electron_gradient / norm,
+                                         adjoint.pair_kernel_gradient / norm,
+                                         adjoint.generator_gradient / norm};
+            FixedStructureStates result;
+            result.integral_adjoint = action.finish_response(
+                adjoint, std::move(sweep), Eigen::MatrixXd::Constant(1, 1, -energy / norm));
+            result.coefficients = coefficients / std::sqrt(norm);
+            result.energies = {energy};
+            return result;
+        }
+    }
 
     // Normalization must precede the adjoint, but needs only M C, not sigma.
     // E = w Tr[G^-1 C^T H C], G = C^T M C. No closure of C's VB span is assumed.

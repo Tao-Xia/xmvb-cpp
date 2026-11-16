@@ -30,6 +30,16 @@ ExactHvpOperator::ExactHvpOperator(
 
 ExactHvpOperator::~ExactHvpOperator() = default;
 
+const integrals::ExactCtxPairMatrix* ExactHvpOperator::accepted_exchange_integrals() const noexcept {
+    return state_->accepted_exchange_integrals();
+}
+
+const integrals::ExactCtxPairMatrix*
+ExactHvpOperator::State::accepted_exchange_integrals() const noexcept {
+    const auto& image = accepted_exact_two_electron_cache_.exchange_integrals;
+    return image.size() ? &image : nullptr;
+}
+
 bool ExactHvpOperator::supports_analytic_core_model() const noexcept {
     return state_->supports_analytic_core_model();
 }
@@ -181,6 +191,21 @@ ExactHvpOperator::State::State(std::shared_ptr<const AcceptedPointContext> accep
                     *factors);
                 accepted_ri_inactive_one_index_factors_ = std::move(factors);
             }
+            if (cache.accepted_one_index_factors) {
+                auto projection = workspace::make_matrix<Eigen::MatrixXd>(
+                    cache.accepted_one_index_factors->rows(), n_inactive_doubly_occupied_orbitals);
+                if (projection) {
+                    projection->noalias() = *cache.accepted_one_index_factors *
+                                            accepted_orbital_preparation_cache_->inactive_auxiliary;
+                    accepted_ri_active_inactive_projection_ = std::move(projection);
+                }
+            }
+            accepted_ri_density_action_ = integrals::build_ri_active_density_action(
+                cache,
+                {accepted_ri_inactive_one_index_factors_.get(),
+                 accepted_ri_active_inactive_projection_.get()});
+            if (accepted_ri_density_action_)
+                accepted_ri_active_inactive_projection_.reset();
         }
         if (accepted_ri_two_electron_cache_ && profiling::phase_totals().enabled) {
             const auto& cache = *accepted_ri_two_electron_cache_;

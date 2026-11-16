@@ -49,7 +49,7 @@ inline void export_ciah_path(const vb::OrbitalPreparationInput& input,
     for (std::size_t product = 0; product < view.products.size(); ++product) {
         const auto row = view.products[product] / ub + ua * (view.products[product] % ub);
         for (auto term = view.offsets[product]; term < view.offsets[product + 1]; ++term)
-            w(row, view.terms[term].structure) += view.terms[term].coefficient;
+            w(row, view.terms[term].structure_index) += view.terms[term].coefficient;
     }
     write(basis, input.ao_overlap_matrix.data(), input.ao_overlap_matrix.size());
     write(basis, w.data(), w.size());

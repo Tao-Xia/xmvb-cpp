@@ -10,6 +10,7 @@
 
 #include <Eigen/Core>
 
+#include "core/workspace.hpp"
 #include "mcscf/ci/integrals.hpp"
 #include "mcscf/ci/links.hpp"
 #include "mcscf/ci/string_table.hpp"
@@ -18,7 +19,10 @@ namespace xmvb::mcscf {
 
 namespace detail {
 class SigmaSchedule;
-}
+struct SigmaSweepTimings;
+class AlphaChannelSources;
+class DiagonalChannelCache;
+} // namespace detail
 
 class ProductSupport;
 class DirectCiSigmaAction;
@@ -60,10 +64,16 @@ using DirectCiColumnRelease = std::function<void(std::span<const StringIndex>)>;
  * writers must consume a tile before the next request reuses its storage.
  */
 struct DirectCiTileRequest {
+    // Empty only for a forcing-only request: use the current accepted bra and
+    // apply the integral direction without a response scatter or adjoint.
     DirectCiTileReader response;
     DirectCiTileWriter image;
     const DirectCiSigmaAction* direction = nullptr;
     DirectCiTileWriter forcing{};
+    // When supplied, start a new group with this accepted bra. Later requests
+    // in the group borrow its scatter. A missing global and local bra denotes
+    // an identical bra until an explicit group starts.
+    DirectCiTileReader state{};
 };
 
 /** @brief Borrowed Eigen column payload, valid until the next column read.
@@ -102,6 +112,11 @@ struct DirectCiGeneratorAdjointRequest {
     Eigen::Ref<const Eigen::MatrixXd> right;
     double scale = 1.0;
     bool transpose = false;
+};
+
+/** @brief One borrowed factor pair in a single-spin generator moment. */
+struct SpinGeneratorTerm {
+    Eigen::Ref<const Eigen::MatrixXd> left, right;
 };
 
 /** @brief Generated right argument of a streamed generator contraction.
@@ -156,6 +171,9 @@ class DirectCiSigmaAction {
     Eigen::MatrixXd spin_generator_adjoint(bool beta,
                                            const Eigen::Ref<const Eigen::MatrixXd>& left,
                                            const Eigen::Ref<const Eigen::MatrixXd>& right) const;
+
+    Eigen::MatrixXd spin_generator_adjoint(bool beta,
+                                           std::span<const SpinGeneratorTerm> terms) const;
 
     /** @brief Symmetric K in H = (E_alpha+E_beta)^T K (E_alpha+E_beta).
    * Includes the absorbed one-electron Hamiltonian. Borrowed immutable data.
@@ -223,6 +241,11 @@ class DirectCiSigmaAction {
     Eigen::MatrixXd apply(const Eigen::Ref<const Eigen::MatrixXd>& coefficients,
                           int exchange_parity = 0) const;
 
+    /** @brief Raw triangular-channel image for a consumer that projects spin exchange itself. */
+    Eigen::MatrixXd
+    apply_before_exchange_projection(const Eigen::Ref<const Eigen::MatrixXd>& coefficients,
+                                     int exchange_parity) const;
+
     /** @brief Stream the exact Hamiltonian action through beta-column callbacks.
    *
    * Each callback receives sorted, distinct beta and alpha indices and a
@@ -255,7 +278,7 @@ class DirectCiSigmaAction {
                      const ProductSupport* support = nullptr,
                      int exchange_parity = 0,
                      const DirectCiColumnRelease& release = {},
-                     std::size_t workspace_bytes = 64ULL * 1024 * 1024,
+                     std::size_t workspace_bytes = workspace::available(),
                      bool source_projected_image = false) const;
 
     /** @brief Stream H*response and the integral adjoint of <response,H*state>.
@@ -267,15 +290,15 @@ class DirectCiSigmaAction {
    * an adjoint-only request. Support must contain both inputs; a nonzero
    * exchange parity certifies that both have that same parity.
    */
-    DirectCiIntegralAdjoint apply_tiled_with_adjoint(int block_width,
-                                                     const DirectCiTileReader& response,
-                                                     const DirectCiTileWriter& add_columns,
-                                                     const DirectCiTileReader& state = {},
-                                                     const ProductSupport* support = nullptr,
-                                                     int exchange_parity = 0,
-                                                     const DirectCiColumnRelease& release = {},
-                                                     std::size_t workspace_bytes = 64ULL * 1024 *
-                                                                                   1024) const;
+    DirectCiIntegralAdjoint
+    apply_tiled_with_adjoint(int block_width,
+                             const DirectCiTileReader& response,
+                             const DirectCiTileWriter& add_columns,
+                             const DirectCiTileReader& state = {},
+                             const ProductSupport* support = nullptr,
+                             int exchange_parity = 0,
+                             const DirectCiColumnRelease& release = {},
+                             std::size_t workspace_bytes = workspace::available()) const;
 
     /** @brief Fuse H*response + deltaH*state with the integral adjoint.
    * The required state reader supplies unweighted coefficients. Both readers
@@ -288,24 +311,22 @@ class DirectCiSigmaAction {
    * shared channel slabs and one input halo are live within the supplied tile
    * workspace; neither reader nor writer may retain a batch view.
    */
-    DirectCiIntegralAdjoint apply_tiled_direction(int block_width,
-                                                  const DirectCiTileReader& response,
-                                                  const DirectCiTileReader& state,
-                                                  const DirectCiSigmaAction& direction,
-                                                  const DirectCiTileWriter& add_columns,
-                                                  const DirectCiTileWriter& add_forcing = {},
-                                                  const ProductSupport* support = nullptr,
-                                                  int exchange_parity = 0,
-                                                  const DirectCiColumnRelease& release = {},
-                                                  std::size_t workspace_bytes = 64ULL * 1024 *
-                                                                                1024) const;
+    DirectCiIntegralAdjoint
+    apply_tiled_direction(int block_width,
+                          const DirectCiTileReader& response,
+                          const DirectCiTileReader& state,
+                          const DirectCiSigmaAction& direction,
+                          const DirectCiTileWriter& add_columns,
+                          const DirectCiTileWriter& add_forcing = {},
+                          const ProductSupport* support = nullptr,
+                          int exchange_parity = 0,
+                          const DirectCiColumnRelease& release = {},
+                          std::size_t workspace_bytes = workspace::available()) const;
 
-    /** @brief Independent responses sharing one accepted scatter per tile.
-   * Each returned integral adjoint is <request.response,H*state>, without
-   * combining directions. All inputs share width, exact support and parity.
-   * Requests reuse the same halo and at most three channel slabs under the
-   * supplied workspace bound. Carrier storage does not grow with the request
-   * count; the small orbital-space integral cotangents remain separate.
+    /** @brief Independent responses sharing tile topology and channel storage.
+   * Each integral adjoint contracts only its request's accepted bra. Requests
+   * may share the initial bra or replace it at the start of a state group.
+   * All inputs share width, exact support and parity.
    */
     std::vector<DirectCiIntegralAdjoint>
     apply_tiled_responses(int block_width,
@@ -314,7 +335,7 @@ class DirectCiSigmaAction {
                           const ProductSupport* support = nullptr,
                           int exchange_parity = 0,
                           const DirectCiColumnRelease& release = {},
-                          std::size_t workspace_bytes = 64ULL * 1024 * 1024) const;
+                          std::size_t workspace_bytes = workspace::available()) const;
 
     /** @brief Hamiltonian diagonal on the unique alpha/beta product carrier.
    * Uses occupation lists and the retained two-electron kernel, not sigma
@@ -440,22 +461,27 @@ class DirectCiSigmaAction {
     Eigen::MatrixXd build_hamiltonian_pair_kernel(const ActiveIntegrals& integrals,
                                                   int n_electrons) const;
     /** @brief Scatter into (block_width * alpha_count, orbital_pairs), strings contiguous. */
-    void scatter_one_body_intermediate(const Eigen::Ref<const Eigen::MatrixXd>& coefficients,
-                                       StringIndex alpha_begin,
-                                       std::int64_t alpha_count,
-                                       std::int64_t beta_target,
-                                       Eigen::Ref<Eigen::MatrixXd> intermediate) const;
+    void
+    scatter_one_body_intermediate(const Eigen::Ref<const Eigen::MatrixXd>& coefficients,
+                                  StringIndex alpha_begin,
+                                  std::int64_t alpha_count,
+                                  std::int64_t beta_target,
+                                  Eigen::Ref<Eigen::MatrixXd> intermediate,
+                                  int exchange_parity = 0,
+                                  const detail::AlphaChannelSources* alpha_sources = nullptr) const;
     const SpinConnections& beta_connections() const noexcept;
+    void apply_sigma_panels(const Eigen::Ref<const Eigen::MatrixXd>& coefficients,
+                            Eigen::MatrixXd* sigma,
+                            int parity,
+                            bool project_exchange) const;
 
-    /** @brief Shared channel sweep for sigma, integral adjoints, or both.
-   * Non-null sigma receives H * left. A sigma-only request neither constructs
-   * a kernel gradient nor scatters/copies the unused right-hand channels.
+    /** @brief Fused integral-adjoint sweep. Non-null sigma also receives H * left.
+   * Pure Hamiltonian actions consume cache-local panels instead.
    */
     DirectCiIntegralAdjoint contract_channels(const Eigen::Ref<const Eigen::MatrixXd>& left,
                                               const Eigen::Ref<const Eigen::MatrixXd>& right,
                                               Eigen::MatrixXd* sigma,
-                                              int exchange_parity,
-                                              bool collect_integrals) const;
+                                              int exchange_parity) const;
 
     /** @brief Generated channel graph shared by tiled sigma and its integral VJP. */
     std::vector<DirectCiIntegralAdjoint>
@@ -466,7 +492,7 @@ class DirectCiSigmaAction {
                    const ProductSupport* support,
                    int exchange_parity,
                    const DirectCiColumnRelease& release = {},
-                   std::size_t workspace_bytes = 64ULL * 1024 * 1024,
+                   std::size_t workspace_bytes = workspace::available(),
                    bool source_projected_image = false) const;
 
     /** @brief Cooperative sigma contraction inside the current OpenMP team.
@@ -481,7 +507,8 @@ class DirectCiSigmaAction {
                           int exchange_parity,
                           const Eigen::Ref<const Eigen::MatrixXd>& scattered,
                           Eigen::Ref<Eigen::MatrixXd> workspace,
-                          Eigen::Ref<Eigen::MatrixXd> sigma) const;
+                          Eigen::Ref<Eigen::MatrixXd> sigma,
+                          detail::SigmaSweepTimings* timings) const;
 
     int n_orbitals_ = 0;
     StringIndex n_alpha_ = 0;
@@ -491,6 +518,7 @@ class DirectCiSigmaAction {
     std::shared_ptr<const SpinConnections> alpha_;
     std::shared_ptr<const SpinConnections> distinct_beta_;
     std::shared_ptr<detail::SigmaSchedule> schedule_;
+    std::shared_ptr<detail::DiagonalChannelCache> diagonal_channels_;
 };
 
 } // namespace xmvb::mcscf

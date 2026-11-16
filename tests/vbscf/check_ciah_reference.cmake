@@ -5,6 +5,8 @@ endif()
 execute_process(
   COMMAND
     "${CMAKE_COMMAND}" -E env
+    --unset=XMVB_CIAH_SMALL_CI
+    --unset=XMVB_CIAH_SPLIT_BUDGET
     OMP_NUM_THREADS=4
     OPENBLAS_NUM_THREADS=1
     GOTO_NUM_THREADS=1
@@ -25,6 +27,9 @@ if (NOT run_status EQUAL 0)
 endif()
 if (NOT report MATCHES "Orbital coordinates[ ]+:[ ]+unwhitened quotient")
   message(FATAL_ERROR "CIAH must use the unwhitened quotient by default")
+endif()
+if (NOT report MATCHES "CIAH response model[ ]+:[ ]+adaptive CI")
+  message(FATAL_ERROR "eligible FULL-OEO CIAH must use adaptive CI without environment switches")
 endif()
 # The report counts every accepted exact-gradient keyframe.  The fifth point is
 # the independent energy confirmation after projected-gradient convergence;

@@ -30,7 +30,8 @@ OrbitalPreconditioner resolve_ciah_preconditioner(OrbitalPreconditioner requeste
 bool admit_structure_response(const VbScfObjective& objective,
                               const StructureTangentOperator& structure_hessian,
                               const StructureAction& structure_action,
-                              Eigen::Index orbital_dimension) {
+                              const OrbitalChart& chart,
+                              bool accepted_exchange) {
     if (structure_hessian.tangent_size() == 0)
         return false;
 
@@ -44,10 +45,23 @@ bool admit_structure_response(const VbScfObjective& objective,
     // Exact HVP applies the AO-pair operator to active-pair columns. Its work
     // scales with graph edges, not just the number of AO-pair rows.
     const long double ao_pair_actions =
-        graph.empty()           ? n_ao_pairs
-        : graph.has_row_graph() ? static_cast<long double>(graph.values.size())
-                                : 2.0L * static_cast<long double>(graph.integral_count());
-    const long double core_pair_work = ao_pair_actions * n_active_pairs;
+        graph.empty()      ? n_ao_pairs
+        : graph.has_rows() ? static_cast<long double>(graph.directed_count())
+                           : 2.0L * static_cast<long double>(graph.integral_count());
+    const bool fixed_overlap_image =
+        context.selected_state_indices.size() == 1 &&
+        objective.input().standard_two_electron_mode == StandardTwoElectronMode::Exact &&
+        objective.active_inactive_orthogonal() && chart.has_full_horizontal_active_lift() &&
+        accepted_exchange;
+    // Compare against the orbital action actually available at this point.
+    // Fixed-overlap A traverses the AO graph for one combined density, while
+    // its remaining response uses accepted half images (ao_one_electron.cpp,
+    // exchange.cpp). It does not regenerate an AO response for every active pair.
+    const long double legacy_work = ao_pair_actions * n_active_pairs;
+    const long double core_pair_work = fixed_overlap_image
+                                           ? ao_pair_actions + n_ao * n_ao * n_active * n_active +
+                                                 n_ao * n_active * n_active * n_active * n_active
+                                           : legacy_work;
     // The orthogonal direct-CI branch uses pair-channel GEMM on spin products,
     // not the U_alpha^2 U_beta + U_alpha U_beta^2 cofactor sandwiches.
     // These are mathematical dimensions, independent of whether any numerical
@@ -67,13 +81,24 @@ bool admit_structure_response(const VbScfObjective& objective,
     // contraction.  Otherwise use orbital-only CIAH and let the exact trial
     // energy and gradient globalize it.  Both tests compare mathematical work
     // dimensions; neither contains a molecule, active-space, or timing cutoff.
-    return structure_hessian.tangent_size() <= orbital_dimension || response_work <= core_pair_work;
+    const bool admit =
+        structure_hessian.tangent_size() <= chart.reduced_size() || response_work <= core_pair_work;
+    mcscf::diagnostics::ciah_trace(
+        "ciah_response_work",
+        "fixed_overlap_image=%d,orbital=%.9Lg,legacy_orbital=%.9Lg,ci=%.9Lg,admit=%d",
+        fixed_overlap_image,
+        core_pair_work,
+        legacy_work,
+        response_work,
+        admit);
+    return admit;
 }
 
 bool build_accepted_ciah_keyframe(VbScfObjective* objective,
                                   const SparseParameterLayout& parameter_view,
                                   const VbScfOptimizerOptions& options,
-                                  const OrbitalChart& chart,
+                                  OrbitalChart& chart,
+                                  OrbitalPreconditioner preconditioner,
                                   const Eigen::VectorXd& reduced_gradient,
                                   const Eigen::VectorXd& orbital_guess_packed,
                                   const Eigen::MatrixXd& structure_guess,
@@ -81,8 +106,7 @@ bool build_accepted_ciah_keyframe(VbScfObjective* objective,
                                   double* trust_radius,
                                   CiahIterationRecord* record,
                                   VbScfOptimizerResult* result,
-                                  CiahMacroStep* accepted,
-                                  bool seek_curvature) {
+                                  CiahMacroStep* accepted) {
     const OrbitalPreparationInput accepted_orbitals = objective->input().orbital_preparation_input;
     NonredundantRetractionMetric orbital_metric(chart, parameter_view, accepted_orbitals);
     record->source_gradient_norm = chart.coordinate_dual_norm(reduced_gradient);
@@ -94,10 +118,16 @@ bool build_accepted_ciah_keyframe(VbScfObjective* objective,
         result->termination_reason = "ciah_analytic_hessian_unavailable";
         return false;
     }
+    prepare_orbital_curvature(
+        *objective, chart, preconditioner, true, orbital_hessian.accepted_exchange_integrals());
     StructureTangentOperator structure_hessian(objective->second_order_context(),
                                                orbital_hessian.structure_action());
-    const bool use_structure_response = admit_structure_response(
-        *objective, structure_hessian, orbital_hessian.structure_action(), chart.reduced_size());
+    const bool use_structure_response =
+        admit_structure_response(*objective,
+                                 structure_hessian,
+                                 orbital_hessian.structure_action(),
+                                 chart,
+                                 orbital_hessian.accepted_exchange_integrals() != nullptr);
     mcscf::diagnostics::ciah_trace_context = {record->accepted_iteration_index, 0, "ciah"};
     return build_ciah_macro_step(objective,
                                  parameter_view,
@@ -115,8 +145,7 @@ bool build_accepted_ciah_keyframe(VbScfObjective* objective,
                                  trust_radius,
                                  record,
                                  result,
-                                 accepted,
-                                 seek_curvature);
+                                 accepted);
 }
 
 } // namespace
@@ -142,7 +171,6 @@ BackendRunResult run_ciah_backend(VbScfObjective* objective,
     double final_gradient_l2 = chart.coordinate_dual_norm(projected.reduced_gradient);
     Eigen::VectorXd orbital_guess_packed;
     Eigen::MatrixXd structure_guess;
-    bool seek_curvature = false;
 
     while (run_result.n_iterations < options.max_iterations) {
         if (chart.reduced_size() == 0) {
@@ -157,12 +185,12 @@ BackendRunResult run_ciah_backend(VbScfObjective* objective,
                                        chart,
                                        projected.reduced_gradient,
                                        options.gradient_tolerance)) {
-            seek_curvature = true;
+            result->converged = true;
+            if (options.convergence_callback)
+                options.convergence_callback();
+            result->termination_reason = "ciah_projected_gradient_tolerance";
+            break;
         }
-        // Independent probing is reserved for a point meeting the ordinary
-        // energy/gradient criteria; normal steps reuse their current AH span.
-        prepare_orbital_curvature(*objective, chart, preconditioner, true);
-
         CiahIterationRecord iteration_record;
         iteration_record.accepted_iteration_index = run_result.n_iterations + 1;
         iteration_record.initial_trust_radius = trust_radius;
@@ -171,6 +199,7 @@ BackendRunResult run_ciah_backend(VbScfObjective* objective,
                                           parameter_view,
                                           options,
                                           chart,
+                                          preconditioner,
                                           projected.reduced_gradient,
                                           orbital_guess_packed,
                                           structure_guess,
@@ -178,21 +207,16 @@ BackendRunResult run_ciah_backend(VbScfObjective* objective,
                                           &trust_radius,
                                           &iteration_record,
                                           result,
-                                          &accepted,
-                                          seek_curvature)) {
-            if (seek_curvature)
-                result->ciah_terminal_probe_hvp_actions += iteration_record.orbital_hvp_actions;
+                                          &accepted)) {
             break;
         }
 
-        seek_curvature = false;
         if (!accepted.trial.gradient_ready)
             objective->complete_trial(&accepted.trial);
-        accepted.parameters = parameter_view.pack(accepted.trial.orbital_preparation_input);
+        parameters = parameter_view.pack(accepted.trial.orbital_preparation_input);
         gradient = accepted.trial.gradient;
         energy = accepted.trial.energy;
         objective->commit(std::move(accepted.trial));
-        parameters = std::move(accepted.parameters);
         orbital_guess_packed = std::move(accepted.next_orbital_guess_packed);
         structure_guess = std::move(accepted.next_structure_guess);
         // CIAH may evaluate several fixed-structure keyframes before this final
@@ -218,7 +242,8 @@ BackendRunResult run_ciah_backend(VbScfObjective* objective,
             iteration_record.accepted_physical_gradient_norm =
                 next_metric.dual_norm(next_projected.reduced_gradient);
         }
-        const double energy_change = energy - previous_energy;
+        const double energy_change =
+            energy - previous_energy;
         previous_energy = energy;
         if (std::abs(energy_change) < options.energy_tolerance &&
             (terminal_checked ||
@@ -227,7 +252,10 @@ BackendRunResult run_ciah_backend(VbScfObjective* objective,
                                         next_geometry,
                                         next_projected.reduced_gradient,
                                         options.gradient_tolerance))) {
-            seek_curvature = true;
+            result->converged = true;
+            if (options.convergence_callback)
+                options.convergence_callback();
+            result->termination_reason = "ciah_projected_gradient_tolerance";
         }
         chart = std::move(next_geometry);
         projected = std::move(next_projected);

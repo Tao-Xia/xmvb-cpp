@@ -591,6 +591,9 @@ void check(const std::string& name, const OrbitalPreparationInput& input, int ex
         require(inverse_hessian.size() == 1, name + ": valid quotient secant was rejected");
         require((inverse_hessian.apply(secant_gradient_change) - secant_step).norm() < 1.0e-10,
                 name + ": quotient L-BFGS inverse violates its secant equation");
+        require((view.scatter_to_full(space.expand_step(d)).array() ==
+                 space.expand_retract_input_tangent(input, d).array()).all(),
+                name + ": packed and full retraction tangent differ");
         const auto trial = space.retract_step(input, d, 0.01);
         require((view.pack(trial) - x - 0.01 * u * d).norm() < 1e-12,
                 name + ": additive retraction");
@@ -654,6 +657,8 @@ void check_complete_oeo_active_subspace_gauge() {
 
     const OrbitalChart structure_subset_chart(
         input, view, orbitals, orbitals, nullptr, false, false);
+    require(!structure_subset_chart.has_full_horizontal_active_lift(),
+            "selected OEO space was treated as a full horizontal chart");
     require(structure_subset_chart.reduced_size() == 10,
             "OEO structure subset did not retain independent active rays");
     const auto subset_diagnostics = structure_subset_chart.structural_diagnostics();
@@ -662,6 +667,8 @@ void check_complete_oeo_active_subspace_gauge() {
             "OEO structure subset did not use S-tangent orbital rays");
 
     const OrbitalChart complete_cas_chart(input, view, orbitals, orbitals, nullptr, false, true);
+    require(complete_cas_chart.has_full_horizontal_active_lift(),
+            "full-AO complete CAS did not certify the horizontal active lift");
     require(complete_cas_chart.reduced_size() == 8,
             "complete-CAS OEO chart did not remove active--active gauge");
     const auto complete_diagnostics = complete_cas_chart.structural_diagnostics();
@@ -824,7 +831,7 @@ void check_curvature_spectral_regularization() {
 
 /** @brief Compare analytic pullback with the independent nested sum. */
 void check_analytic_block_pullback(const OrbitalPreparationInput& input,
-                                   bool complete_active_space) {
+                                   bool complete_active_space, bool auxiliary = false) {
     const SparseParameterLayout layout(input);
     const Eigen::MatrixXd orbitals = dense(input);
     const int n_bf = input.n_basis_functions;
@@ -850,6 +857,23 @@ void check_analytic_block_pullback(const OrbitalPreparationInput& input,
         model.inactive_inverse_transform(0, 1) = 0.23;
     if (n_active > 1)
         model.active_inverse_transform(0, 1) = -0.31;
+    const auto original_model = model;
+    if (auxiliary) {
+        Eigen::MatrixXd q = Eigen::MatrixXd::Identity(n_bf, n_bf);
+        const int boundaries[] = {0, n_core, n_core + n_active, n_bf};
+        for (int block = 0; block < 3; ++block)
+            for (int p = boundaries[block] + 1; p < boundaries[block + 1]; ++p) {
+                const int first = boundaries[block];
+                const Eigen::JacobiRotation<double> rotation(std::cos(0.27 * p), std::sin(0.27 * p));
+                q.applyOnTheRight(first, p, rotation);
+            }
+        model.mo_coefficients = (model.mo_coefficients * q).eval();
+        model.inactive_inverse_transform =
+            (model.inactive_inverse_transform * q.topLeftCorner(n_core, n_core)).eval();
+        model.active_inverse_transform =
+            (model.active_inverse_transform * q.block(n_core, n_core, n_active, n_active)).eval();
+        model.auxiliary_rotation = q;
+    }
     if (input.orbital_type == kOrbitalTypeOeo) {
         // Roundoff in an ill-conditioned orthogonalization breaks the exact
         // frame identity used by the inexpensive Gram inverse. Reproduce that
@@ -1106,10 +1130,26 @@ void check_analytic_block_pullback(const OrbitalPreparationInput& input,
             "factorized AH inverse differs from its dense pullback reference");
     require((chart.augmented_hessian_diagonal() - signed_reference.diagonal()).norm() < 1.0e-10,
             "fused analytic pullback changed signed diagonal");
-    const double expected_maximum =
+    double expected_maximum =
         full_frame ? (rotation_map * probe).cwiseAbs().maxCoeff() : maximum_rotation;
+    if (auxiliary) {
+        const OrbitalChart original(input, layout, orbitals, orbitals, nullptr, false,
+                                    complete_active_space, &original_model,
+                                    OrbitalChart::Coordinates::Whitened);
+        expected_maximum = original.maximum_rotation_component(probe);
+        require((chart.expand_step(probe) - original.expand_step(probe)).norm() < 1e-13 &&
+                    (chart.project_reduced_gradient(packed) -
+                     original.project_reduced_gradient(packed)).norm() < 1e-13,
+                "auxiliary model changed coordinates or physical gradient");
+    }
     require(std::abs(chart.maximum_rotation_component(probe) - expected_maximum) < 1.0e-10,
             "fused projection changed maximum rotation component");
+    std::cout << "analytic_model auxiliary=" << auxiliary
+              << " type=" << input.orbital_type << " complete=" << complete_active_space
+              << " reduced=" << size << " inverse_error="
+              << (chart.apply_inverse_augmented_hessian_diagonal(probe, shift) -
+                  shifted_reference.ldlt().solve(probe)).norm() << '\n';
+
 }
 
 void check_occupation_curvature() {
@@ -1763,6 +1803,11 @@ int main() {
             c, {{0, 1, 2, 3, 4, 5}, {0, 1, 2, 3, 4, 5}, {0, 1, 2, 3, 4, 5}, {0, 1, 2, 3, 4, 5}}, 1);
         three_active.orbital_type = kOrbitalTypeOeo;
         check_analytic_block_pullback(three_active, false);
+        check_analytic_block_pullback(oeo, false, true);
+        check_analytic_block_pullback(three_active, false, true);
+        check_analytic_block_pullback(oeo, true, true);
+        check_analytic_block_pullback(partial, false, true);
+        check_analytic_block_pullback(frozen, false, true);
         check_preconditioner_geometry(partial);
         check_preconditioner_geometry(full);
         check_preconditioner_geometry(oeo, true);

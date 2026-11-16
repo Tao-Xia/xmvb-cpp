@@ -41,10 +41,14 @@ enum class Phase {
     MetricBlock,
     AoPairAction,
     AoH1eFused,
+    AoCoreDiagonal,
+    ActiveCoulombDiagonal,
+    AnalyticHessianDiagonal,
     AoH1eTranspose,
     AoH1eForward,
     CiConnections,
     CiSigma,
+    CiRawColumns,
     CiGenerator,
     CiIntegralDirection,
     CiTransformLeft,
@@ -122,9 +126,14 @@ enum class Phase {
     ActiveFrameAdjoint,
     ActiveFrameAdjointDirection,
     ActivePreparation,
+    ExpansionCount,
+    ExpansionEmit,
+    ExpansionIndex,
     SpinTopology,
     CiOperatorSetup,
     CiPreconditioner,
+    CiSigmaAlpha,
+    CiSigmaBeta,
     Count
 };
 
@@ -175,10 +184,14 @@ class PhaseTotals {
                                          "metric_block",
                                          "ao_pair_action",
                                          "ao_h1e_fused",
+                                         "ao_core_diagonal",
+                                         "active_coulomb_diagonal",
+                                         "analytic_hessian_diagonal",
                                          "ao_h1e_transpose",
                                          "ao_h1e_forward",
                                          "ci_connections",
                                          "ci_sigma",
+                                         "ci_raw_columns",
                                          "ci_generator",
                                          "ci_integral_direction",
                                          "ci_transform_left",
@@ -256,9 +269,14 @@ class PhaseTotals {
                                          "active_frame_adjoint",
                                          "active_frame_adjoint_direction",
                                          "active_preparation",
+                                         "expansion_count",
+                                         "expansion_emit",
+                                         "expansion_index",
                                          "spin_topology",
                                          "ci_operator_setup",
-                                         "ci_preconditioner"};
+                                         "ci_preconditioner",
+                                         "ci_sigma_alpha",
+                                         "ci_sigma_beta"};
         static_assert(sizeof(names) / sizeof(names[0]) == static_cast<std::size_t>(Phase::Count));
         return names[static_cast<std::size_t>(phase)];
     }

@@ -74,8 +74,8 @@ void check_raw_consumers(int n,
     input.structure_data.beta_strings = {{1, 2}};
     input.structure_data.pair_alpha = {0};
     input.structure_data.pair_beta = {0};
-    input.structure_data.offsets = {0, 1};
-    input.structure_data.terms = {{0, 1.0}};
+    input.structure_data.incidence_data =
+        xmvb::vb::StructureIncidenceData::make({0, 1}, {{0, 1.0}}, 1);
     input.orbital_preparation_input.n_active_orbitals = n;
     xmvb::vb::PreparedActiveSpaceContext prepared;
     const Eigen::MatrixXd overlap = framed.orbital_transform.transpose() * framed.orbital_transform;

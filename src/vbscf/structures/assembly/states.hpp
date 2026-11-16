@@ -27,10 +27,12 @@ struct FixedStructureStates {
  * Direct CI shares sigma images with integral adjoints; incomplete one-spin
  * carriers retain their occupied-pair H/M representation.
  * A supplied exact selected Gram must belong to action's orbital chart.
+ * Orbital-only single-state consumers omit unused H/M images and CI derivatives.
  */
 FixedStructureStates evaluate_fixed_states(const StructureAction& action,
                                            const Eigen::Ref<const Eigen::MatrixXd>& coefficients,
                                            const std::vector<double>& weights,
-                                           const SelectedMetric* metric = nullptr);
+                                           const SelectedMetric* metric = nullptr,
+                                           bool coefficient_gradient = true);
 
 } // namespace xmvb::vb

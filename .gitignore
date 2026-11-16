@@ -12,6 +12,7 @@ compile_commands.json
 
 # Python cache
 __pycache__/
+/dist/
 *.py[cod]
 
 # Large data / generated artifacts

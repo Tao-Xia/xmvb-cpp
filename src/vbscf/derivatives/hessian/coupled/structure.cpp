@@ -102,7 +102,9 @@ StructureTangentOperator::StructureTangentOperator(
         throw std::runtime_error(
             "coupled structure operator received invalid selected overlap images");
     }
-    const Eigen::MatrixXd selected_metric = selected_.transpose() * selected_images.overlap;
+    // The retained physical factor is the same metric used by CI. Forming its
+    // state images first avoids cancellation between large raw CI coefficients.
+    const Eigen::MatrixXd& selected_metric = accepted_point_->state_gram();
     const double metric_error =
         (selected_metric - Eigen::MatrixXd::Identity(n_states_, n_states_)).norm();
     const double metric_tolerance =

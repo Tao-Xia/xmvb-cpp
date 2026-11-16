@@ -27,6 +27,7 @@ void stream_spin_table(const xmvb::mcscf::StringTable& unique_determinants,
                        const Eigen::MatrixXd* directional_ri_active_pair_factors,
                        bool include_opposite_spin,
                        int tile_extent,
+                       std::size_t workspace_bytes,
                        const DirectionalPairTileConsumer& consume) {
     const std::int64_t n_unique = core::checked_index<Eigen::Index>(unique_determinants.size());
     if (n_unique <= 0 || accepted_pair_provider.size() != n_unique) {
@@ -79,7 +80,8 @@ void stream_spin_table(const xmvb::mcscf::StringTable& unique_determinants,
                                                               direction,
                                                               same_spin.view(),
                                                               accepted_ri_active_pair_factors,
-                                                              directional_ri_active_pair_factors));
+                                                              directional_ri_active_pair_factors,
+                                                              workspace_bytes));
             }
             const std::optional<DirectionalOppositeSpinPairTileView> opposite_spin_view =
                 opposite_spin ? std::optional<DirectionalOppositeSpinPairTileView>(
@@ -209,6 +211,7 @@ void stream_directional_pair_tiles(
                       streamed_directional_ri_factors,
                       include_opposite_spin,
                       tile_extents.alpha,
+                      workspace_bytes,
                       consume);
     if (shared) {
         return;
@@ -226,6 +229,7 @@ void stream_directional_pair_tiles(
                       streamed_directional_ri_factors,
                       include_opposite_spin,
                       tile_extents.beta,
+                      workspace_bytes,
                       consume);
 }
 

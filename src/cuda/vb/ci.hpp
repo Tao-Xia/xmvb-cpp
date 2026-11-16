@@ -16,8 +16,9 @@ struct StructureCiPoint {
 };
 
 /** @brief Production structure-space CI model with device-only H/M and inverse.
- * FULL uses same-dimensional isometric coordinates. A nonclosed selection
- * retains its exact H/M and the existing selected/spin metric preconditioner.
+ * FULL and selections with an existing exact Gram factor use same-dimensional
+ * isometric coordinates. Streamed selections retain their exact H/M action
+ * and spin-metric preconditioner; a spin-only Gram is not a physical isometry.
  * Borrows the action and occupation factors for the lifetime of this model.
  */
 class StructureCi {
@@ -80,7 +81,7 @@ class StructureCi {
                             linalg::MatrixView energy,
                             linalg::MatrixView norm) const;
     bool identity_overlap() const noexcept {
-        return full_ != nullptr;
+        return full_ != nullptr || selected_mode_;
     }
     const char* preconditioner_name() const noexcept;
 

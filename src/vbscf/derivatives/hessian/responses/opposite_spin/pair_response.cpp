@@ -172,7 +172,8 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile_impl(
     const ActiveSpaceIntegralDirectionView& direction,
     const SameSpinDirectionalPairTileView& same_spin_tile,
     const Eigen::MatrixXd* accepted_ri_active_pair_factors,
-    const Eigen::MatrixXd* directional_ri_active_pair_factors) {
+    const Eigen::MatrixXd* directional_ri_active_pair_factors,
+    std::size_t workspace_bytes) {
     const std::size_t expected_size =
         static_cast<std::size_t>(n_unique_determinants) * n_unique_determinants;
     const bool full_cache_valid =
@@ -251,20 +252,19 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile_impl(
         const Eigen::Index n_auxiliary = accepted_ri_active_pair_factors->rows();
         const Eigen::Index workspace_values_per_column = 2 * n_auxiliary + 3 * n_packed_pairs;
         const Eigen::Index workspace_value_cap =
-            static_cast<Eigen::Index>(kPairTileWorkspaceBytes / sizeof(double));
+            static_cast<Eigen::Index>(workspace_bytes / sizeof(double));
         const Eigen::Index accepted_tile_values = static_cast<Eigen::Index>(
             accepted_tile_byte_bound(unique_determinants, n_active_orbitals, work_items) /
             sizeof(double));
         const Eigen::Index resident_tile_values =
             accepted_tile_values + 3 * static_cast<Eigen::Index>(n_packed_pairs) * work_items;
-        const Eigen::Index available_workspace_values = std::max<Eigen::Index>(
-            1,
-            workspace_value_cap -
-                std::min<std::int64_t>(workspace_value_cap - 1, resident_tile_values));
-        const int column_block = std::max<int>(
-            1,
-            std::min<Eigen::Index>(work_items,
-                                   available_workspace_values / workspace_values_per_column));
+        if (resident_tile_values > workspace_value_cap ||
+            workspace_values_per_column > workspace_value_cap - resident_tile_values)
+            throw std::length_error(
+                "directional opposite-spin RI workspace cannot hold one column");
+        const Eigen::Index available_workspace_values = workspace_value_cap - resident_tile_values;
+        const int column_block = static_cast<int>(std::min<Eigen::Index>(
+            work_items, available_workspace_values / workspace_values_per_column));
         for (int begin = 0; begin < work_items; begin += column_block) {
             const int end = std::min<std::int64_t>(work_items, begin + column_block);
             const int width = end - begin;
@@ -340,21 +340,19 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile_impl(
     }
 
     const Eigen::Index workspace_value_cap =
-        static_cast<Eigen::Index>(kPairTileWorkspaceBytes / sizeof(double));
+        static_cast<Eigen::Index>(workspace_bytes / sizeof(double));
     const Eigen::Index accepted_tile_values = static_cast<Eigen::Index>(
         accepted_tile_byte_bound(unique_determinants, n_active_orbitals, work_items) /
         sizeof(double));
     const Eigen::Index resident_tile_values =
         accepted_tile_values + 4 * static_cast<Eigen::Index>(n_packed_pairs) * work_items;
-    const Eigen::Index available_workspace_values =
-        std::max<Eigen::Index>(1,
-                               workspace_value_cap - std::min<std::int64_t>(workspace_value_cap - 1,
-                                                                            resident_tile_values));
-    const int row_block = std::max<int>(
-        1,
-        std::min<Eigen::Index>(n_packed_pairs,
-                               available_workspace_values /
-                                   std::max<Eigen::Index>(1, 2 * n_packed_pairs + work_items)));
+    const Eigen::Index row_values = std::max<Eigen::Index>(1, 2 * n_packed_pairs + work_items);
+    if (resident_tile_values > workspace_value_cap ||
+        row_values > workspace_value_cap - resident_tile_values)
+        throw std::length_error("directional opposite-spin workspace cannot hold one kernel row");
+    const Eigen::Index available_workspace_values = workspace_value_cap - resident_tile_values;
+    const int row_block = static_cast<int>(
+        std::min<Eigen::Index>(n_packed_pairs, available_workspace_values / row_values));
     Eigen::MatrixXd accepted_rows;
     Eigen::MatrixXd directional_rows;
     for (Eigen::Index row_begin = 0; row_begin < n_packed_pairs; row_begin += row_block) {
@@ -385,7 +383,8 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
     const ActiveSpaceIntegralDirectionView& direction,
     const SameSpinDirectionalPairTileView& same_spin_tile,
     const Eigen::MatrixXd* accepted_ri_active_pair_factors,
-    const Eigen::MatrixXd* directional_ri_active_pair_factors) {
+    const Eigen::MatrixXd* directional_ri_active_pair_factors,
+    std::size_t workspace_bytes) {
     return build_directional_opposite_spin_pair_tile_impl(unique_determinants,
                                                           &ordered_pair_cache,
                                                           nullptr,
@@ -395,7 +394,8 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
                                                           direction,
                                                           same_spin_tile,
                                                           accepted_ri_active_pair_factors,
-                                                          directional_ri_active_pair_factors);
+                                                          directional_ri_active_pair_factors,
+                                                          workspace_bytes);
 }
 
 DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
@@ -406,7 +406,8 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
     const ActiveSpaceIntegralDirectionView& direction,
     const SameSpinDirectionalPairTileView& same_spin_tile,
     const Eigen::MatrixXd* accepted_ri_active_pair_factors,
-    const Eigen::MatrixXd* directional_ri_active_pair_factors) {
+    const Eigen::MatrixXd* directional_ri_active_pair_factors,
+    std::size_t workspace_bytes) {
     return build_directional_opposite_spin_pair_tile_impl(
         unique_determinants,
         nullptr,
@@ -417,7 +418,8 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
         direction,
         same_spin_tile,
         accepted_ri_active_pair_factors,
-        directional_ri_active_pair_factors);
+        directional_ri_active_pair_factors,
+        workspace_bytes);
 }
 
 } // namespace xmvb::vb::detail

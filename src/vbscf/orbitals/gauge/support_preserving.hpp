@@ -49,8 +49,11 @@ bool apply_support_preserving_inactive_gauge(OrbitalPreparationInput* orbital_pr
  * and normalizes each projected ray; it does not mix different active orbitals
  * or require closure of the selected structure space under active rotations.
  *
+ * @param active_inactive_orthogonal Records whether the OEO balance establishes
+ * active--inactive AO orthogonality.
  * @return Whether an active representative changed beyond backward error.
  */
-bool balance_active_gauge(OrbitalPreparationInput* orbital_preparation_input);
+bool balance_active_gauge(OrbitalPreparationInput* orbital_preparation_input,
+                          bool* active_inactive_orthogonal = nullptr);
 
 } // namespace xmvb::vb

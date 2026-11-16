@@ -328,7 +328,7 @@ void check_large_work_count_thread_bound() {
 void check_exact_parallel_actions(int n_bf = 2) {
     xmvb::integrals::AoIntegralInput ao;
     ao.n_basis_functions = n_bf;
-    std::vector<int> left, right;
+    std::vector<xmvb::integrals::PairAddress> left, right;
     std::vector<double> values;
     const int n_pairs = n_bf * (n_bf + 1) / 2;
     for (int a = 0; a < n_pairs; ++a) {
@@ -464,7 +464,7 @@ void check_exact_parallel_actions(int n_bf = 2) {
     ao.pair_graph.row_offsets.clear();
     ao.pair_graph.columns.clear();
     ao.pair_graph.values.clear();
-    ao.pair_graph.integral_edges.clear();
+    ao.pair_graph.integral_offsets.clear();
     ao.pair_graph.integral_rows = left;
     ao.pair_graph.integral_columns = right;
     ao.pair_graph.integral_values = values;
@@ -484,6 +484,7 @@ void check_exact_parallel_actions(int n_bf = 2) {
     ao.pair_graph.integral_columns.clear();
     ao.pair_graph.integral_values.clear();
     ao.pair_graph.row_offsets.assign(n_pairs + 1, 0);
+    ao.pair_graph.integral_offsets.assign(n_pairs + 1, 0);
     std::vector<double> forward, transpose;
     xmvb::integrals::apply_symmetric_ao_h1e_fused(sources.col(0).data(),
                                                   adjoints.col(0).data(),

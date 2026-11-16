@@ -14,52 +14,6 @@
 #include "parallel/openmp.hpp"
 
 namespace xmvb::integrals {
-namespace {
-
-void order_ao_integrals_by_storage(AoPairGraph* graph) {
-    if (graph == nullptr)
-        throw std::invalid_argument("null AO-pair graph");
-    if (!graph->has_row_graph())
-        return;
-    if (graph->integral_rows.size() != graph->integral_edges.size())
-        throw std::invalid_argument("inconsistent unique AO integral references");
-    if (graph->integral_edges.empty())
-        return;
-    // Primary edges are injective. Mark them in the existing column buffer,
-    // then scan rows in storage order: exactly the former sorted-reference
-    // order, with O(N_edges + N_pairs) work and no second integral-sized buffer.
-    // A negative column temporarily encodes -1-column; all columns are restored
-    // before publishing the graph. Original pair orientation is preserved.
-    std::vector<PairAddress> primary_offsets(graph->row_offsets.size(), 0);
-    for (const auto row : graph->integral_rows)
-        ++primary_offsets[static_cast<std::size_t>(row) + 1];
-    for (std::size_t row = 1; row < primary_offsets.size(); ++row)
-        primary_offsets[row] += primary_offsets[row - 1];
-    const int n_threads = xmvb::effective_openmp_thread_count();
-#pragma omp parallel for num_threads(n_threads) schedule(static)
-    for (std::ptrdiff_t index = 0;
-         index < static_cast<std::ptrdiff_t>(graph->integral_edges.size());
-         ++index) {
-        const auto edge = graph->integral_edges[index];
-        graph->columns[edge] = -1 - graph->columns[edge];
-    }
-#pragma omp parallel for num_threads(n_threads) schedule(static)
-    for (std::ptrdiff_t row = 0; row < static_cast<std::ptrdiff_t>(graph->row_offsets.size()) - 1;
-         ++row) {
-        PairAddress output = primary_offsets[row];
-        for (PairAddress edge = graph->row_offsets[row]; edge < graph->row_offsets[row + 1];
-             ++edge) {
-            if (graph->columns[edge] >= 0)
-                continue;
-            graph->columns[edge] = -1 - graph->columns[edge];
-            graph->integral_edges[output] = edge;
-            graph->integral_rows[output++] = static_cast<PairAddress>(row);
-        }
-    }
-}
-
-} // namespace
-
 std::vector<std::size_t> AoPairGraph::balanced_row_boundaries(int n_partitions) const {
     if (n_partitions <= 0 || row_offsets.empty() || row_offsets.front() != 0 ||
         row_offsets.back() < 0 || static_cast<std::size_t>(row_offsets.back()) != columns.size() ||
@@ -137,6 +91,7 @@ AoPairGraph build_ao_pair_graph(std::vector<PairAddress> left_pairs,
     // avoiding atomics in the hot integral loops.
     std::vector<std::vector<PairAddress>> thread_row_offsets(
         thread_count, std::vector<PairAddress>(n_ao_pairs, 0));
+    auto thread_primary_offsets = thread_row_offsets;
     std::atomic<std::ptrdiff_t> invalid_integral_index(-1);
 
     // Match the OpenMP team to the allocated thread-local histograms, including
@@ -148,6 +103,7 @@ AoPairGraph build_ao_pair_graph(std::vector<PairAddress> left_pairs,
         thread_index = omp_get_thread_num();
 #endif
         auto& local_row_offsets = thread_row_offsets[thread_index];
+        auto& local_primary_offsets = thread_primary_offsets[thread_index];
 
 #pragma omp for schedule(static)
         for (std::ptrdiff_t integral_offset = 0;
@@ -166,6 +122,7 @@ AoPairGraph build_ao_pair_graph(std::vector<PairAddress> left_pairs,
                 continue;
             }
             ++local_row_offsets[left_pair_index];
+            ++local_primary_offsets[left_pair_index];
             if (right_pair_index != left_pair_index) {
                 ++local_row_offsets[right_pair_index];
             }
@@ -177,12 +134,16 @@ AoPairGraph build_ao_pair_graph(std::vector<PairAddress> left_pairs,
     }
 
     std::vector<PairAddress> row_counts(n_ao_pairs, 0);
+    graph.integral_offsets.assign(n_ao_pairs + 1, 0);
     std::size_t n_graph_edges = 0;
     for (std::size_t row_index = 0; row_index < n_ao_pairs; ++row_index) {
         PairAddress total_count = 0;
         for (int thread_index = 0; thread_index < n_threads; ++thread_index) {
             total_count += thread_row_offsets[thread_index][row_index];
+            graph.integral_offsets[row_index + 1] +=
+                thread_primary_offsets[thread_index][row_index];
         }
+        graph.integral_offsets[row_index + 1] += graph.integral_offsets[row_index];
         row_counts[row_index] = total_count;
         n_graph_edges =
             core::checked_add(n_graph_edges, core::checked_index<std::size_t>(total_count));
@@ -193,116 +154,124 @@ AoPairGraph build_ao_pair_graph(std::vector<PairAddress> left_pairs,
     for (std::size_t row_index = 0; row_index < n_ao_pairs; ++row_index) {
         graph.row_offsets[row_index + 1] = graph.row_offsets[row_index] + row_counts[row_index];
     }
-    // Convert the thread-local counts in place into disjoint write cursors.
-    // Keeping a second thread-by-row table doubles the graph-construction
-    // workspace and can dominate the raw integral payload for large AO bases.
-    for (std::size_t row_index = 0; row_index < n_ao_pairs; ++row_index) {
-        PairAddress next_offset = graph.row_offsets[row_index];
-        for (int thread_index = 0; thread_index < n_threads; ++thread_index) {
-            const PairAddress row_count = thread_row_offsets[thread_index][row_index];
-            thread_row_offsets[thread_index][row_index] = next_offset;
-            next_offset += row_count;
-        }
+    // First group records into balanced contiguous row domains. This coarse
+    // permutation touches only a worker-sized set of destination streams.
+    // Each domain then sorts its rows independently, with no record copies.
+    const auto parts = std::min<std::size_t>(n_threads, n_ao_pairs);
+    std::vector<std::size_t> rows(parts + 1, 0);
+    rows.back() = n_ao_pairs;
+    for (std::size_t part = 1; part < parts; ++part) {
+        const auto target = (n_integrals / parts) * part + std::min(n_integrals % parts, part);
+        rows[part] = static_cast<std::size_t>(std::lower_bound(graph.integral_offsets.begin(),
+                                                               graph.integral_offsets.end(),
+                                                               static_cast<PairAddress>(target)) -
+                                              graph.integral_offsets.begin());
     }
-
-    graph.columns.resize(graph.row_offsets.back());
-#pragma omp parallel num_threads(n_threads)
-    {
-        int thread_index = 0;
-#ifdef _OPENMP
-        thread_index = omp_get_thread_num();
-#endif
-        auto& local_next_offsets = thread_row_offsets[thread_index];
-
-#pragma omp for schedule(static)
-        for (std::ptrdiff_t integral_offset = 0;
-             integral_offset < static_cast<std::ptrdiff_t>(n_integrals);
-             ++integral_offset) {
-            const std::size_t integral_index = integral_offset;
-            const auto left_pair_index = left_pairs[integral_index];
-            const auto right_pair_index = right_pairs[integral_index];
-            const PairAddress left_offset = local_next_offsets[left_pair_index]++;
-            graph.columns[left_offset] = right_pair_index;
-            // Reuse the right-pair input buffer as the unique-integral-to-CSR-edge
-            // map.  It becomes the graph's persistent integral-edge table below.
-            right_pairs[integral_index] = left_offset;
-
-            if (right_pair_index != left_pair_index) {
-                const PairAddress right_offset = local_next_offsets[right_pair_index]++;
-                graph.columns[right_offset] = left_pair_index;
+    const auto exchange = [&](PairAddress source, PairAddress target) {
+        std::swap(left_pairs[source], left_pairs[target]);
+        std::swap(right_pairs[source], right_pairs[target]);
+        std::swap(values[source], values[target]);
+    };
+    if (parts > 1) {
+        std::vector<std::size_t> owner(n_ao_pairs);
+        std::vector<PairAddress> next(parts);
+        for (std::size_t part = 0; part < parts; ++part) {
+            std::fill(owner.begin() + rows[part], owner.begin() + rows[part + 1], part);
+            next[part] = graph.integral_offsets[rows[part]];
+        }
+        for (std::size_t part = 0; part < parts; ++part)
+            while (next[part] < graph.integral_offsets[rows[part + 1]]) {
+                const auto source = next[part];
+                const auto target_part = owner[left_pairs[source]];
+                if (target_part == part)
+                    ++next[part];
+                else
+                    exchange(source, next[target_part]++);
+            }
+    }
+    // All global record addresses remain 64-bit. Parallel domains own disjoint
+    // row cursors and records, including when OpenMP reduces its team size.
+    std::vector<PairAddress> next(graph.integral_offsets.begin(), graph.integral_offsets.end() - 1);
+#pragma omp parallel for num_threads(n_threads) schedule(dynamic, 1)
+    for (std::ptrdiff_t part = 0; part < static_cast<std::ptrdiff_t>(parts); ++part) {
+        for (auto row = rows[part]; row < rows[part + 1]; ++row) {
+            while (next[row] < graph.integral_offsets[row + 1]) {
+                const auto source = next[row];
+                const auto target_row = left_pairs[source];
+                if (target_row == static_cast<PairAddress>(row))
+                    ++next[row];
+                else
+                    exchange(source, next[target_row]++);
             }
         }
     }
-
-    // Expand the raw unique-integral value vector into the directed CSR value
-    // buffer in place.  The primary-edge map is injective, so each relocation is
-    // a chain or cycle and needs only one carried scalar.  Libcint reserves the
-    // final directed capacity before handing this buffer to the graph builder;
-    // no second O(N_ERI) value allocation is then required at peak memory.
-    values.resize(graph.columns.size());
-    std::vector<unsigned char> relocated(n_integrals, 0u);
-    for (std::size_t start = 0; start < n_integrals; ++start) {
-        if (relocated[start] != 0u) {
+    std::vector<PairAddress>().swap(left_pairs);
+    std::vector<std::vector<PairAddress>>().swap(thread_primary_offsets);
+    // Directed row prefixes lie at or to the right of their unique intervals.
+    // Move from the last row backward, so no unread source is overwritten.
+    graph.columns = std::move(right_pairs);
+    graph.columns.resize(n_graph_edges);
+    values.resize(n_graph_edges);
+    for (std::size_t row = n_ao_pairs; row-- > 0;) {
+        const auto begin = graph.integral_offsets[row];
+        const auto count = graph.integral_offsets[row + 1] - begin;
+        const auto target = graph.row_offsets[row];
+        if (begin == target)
             continue;
-        }
-        std::size_t source = start;
-        double carried = values[source];
-        while (true) {
-            const std::size_t target = static_cast<std::size_t>(right_pairs[source]);
-            std::swap(carried, values[target]);
-            relocated[source] = 1u;
-            if (target >= n_integrals || relocated[target] != 0u) {
-                break;
-            }
-            source = target;
-        }
+        std::move_backward(graph.columns.begin() + begin,
+                           graph.columns.begin() + begin + count,
+                           graph.columns.begin() + target + count);
+        std::move_backward(values.begin() + begin,
+                           values.begin() + begin + count,
+                           values.begin() + target + count);
     }
-
-    // Recover the same disjoint row cursors and replay the input ordering to
-    // duplicate off-diagonal values into their transposed CSR edges.  The first
-    // edge is already the primary location populated by the in-place move.
-    for (std::size_t row_index = 0; row_index < n_ao_pairs; ++row_index) {
-        PairAddress next_offset = graph.row_offsets[row_index];
-        for (int thread_index = 0; thread_index < n_threads; ++thread_index) {
-            const PairAddress segment_end = thread_row_offsets[thread_index][row_index];
-            thread_row_offsets[thread_index][row_index] = next_offset;
-            next_offset = segment_end;
-        }
-    }
+    graph.values = std::move(values);
+    for (auto& counts : thread_row_offsets)
+        std::fill(counts.begin(), counts.end(), 0);
+    // Recount and fill mirrors in one fixed team. This preserves deterministic
+    // row ownership even if OpenMP dynamically reduces the requested team size.
 #pragma omp parallel num_threads(n_threads)
     {
-        int thread_index = 0;
+        int thread = 0, team = 1;
 #ifdef _OPENMP
-        thread_index = omp_get_thread_num();
+        thread = omp_get_thread_num();
+        team = omp_get_num_threads();
 #endif
-        auto& local_next_offsets = thread_row_offsets[thread_index];
+        const auto boundary = [&](int t) {
+            return (n_integrals / team) * t + std::min<std::size_t>(n_integrals % team, t);
+        };
+        auto cursor = AoPairGraph::Cursor(graph, boundary(thread));
+        auto& offsets = thread_row_offsets[thread];
+        for (auto k = boundary(thread); k < boundary(thread + 1); ++k, cursor.advance()) {
+            const auto eri = cursor.value();
+            if (eri.left_pair != eri.right_pair)
+                ++offsets[eri.right_pair];
+        }
+#pragma omp barrier
 #pragma omp for schedule(static)
-        for (std::ptrdiff_t integral_offset = 0;
-             integral_offset < static_cast<std::ptrdiff_t>(n_integrals);
-             ++integral_offset) {
-            const std::size_t integral_index = integral_offset;
-            const auto left_pair_index = left_pairs[integral_index];
-            const PairAddress primary_offset = right_pairs[integral_index];
-            const auto right_pair_index = graph.columns[primary_offset];
-            const PairAddress replayed_primary = local_next_offsets[left_pair_index]++;
-            if (replayed_primary != primary_offset) {
-                invalid_integral_index.store(static_cast<std::ptrdiff_t>(integral_index));
-                continue;
+        for (std::ptrdiff_t row = 0; row < static_cast<std::ptrdiff_t>(n_ao_pairs); ++row) {
+            PairAddress next = graph.row_offsets[row] + graph.integral_offsets[row + 1] -
+                               graph.integral_offsets[row];
+            for (int t = 0; t < team; ++t) {
+                const auto count = thread_row_offsets[t][row];
+                thread_row_offsets[t][row] = next;
+                next += count;
             }
-            if (right_pair_index != left_pair_index) {
-                const PairAddress transposed_offset = local_next_offsets[right_pair_index]++;
-                values[transposed_offset] = values[primary_offset];
+            if (next != graph.row_offsets[row + 1])
+                invalid_integral_index.store(row);
+        }
+        auto reader = AoPairGraph::Cursor(graph, boundary(thread));
+        for (auto k = boundary(thread); k < boundary(thread + 1); ++k, reader.advance()) {
+            const auto eri = reader.value();
+            if (eri.left_pair != eri.right_pair) {
+                const auto edge = offsets[eri.right_pair]++;
+                graph.columns[edge] = eri.left_pair;
+                graph.values[edge] = eri.value;
             }
         }
     }
-    if (invalid_integral_index.load() >= 0) {
-        throw std::logic_error("AO-pair graph replay order is inconsistent");
-    }
-
-    graph.values = std::move(values);
-    graph.integral_rows = std::move(left_pairs);
-    graph.integral_edges = std::move(right_pairs);
-    order_ao_integrals_by_storage(&graph);
+    if (invalid_integral_index.load() >= 0)
+        throw std::logic_error("AO-pair mirror counts do not match CSR rows");
 
     return graph;
 }

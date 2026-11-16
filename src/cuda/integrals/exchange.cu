@@ -21,8 +21,8 @@ unsigned int grid(std::int64_t count) {
         std::min<std::int64_t>(65535, (count / 256 + (count % 256 != 0))));
 }
 
-__device__ int pair(int i, int j) {
-    const int high = max(i, j), low = min(i, j);
+__device__ std::int64_t pair(int i, int j) {
+    const std::int64_t high = max(i, j), low = min(i, j);
     return high * (high + 1) / 2 + low;
 }
 
@@ -38,13 +38,16 @@ __global__ void exchange_half(View c,
                               int mu,
                               double* half) {
     const int nu = blockIdx.y, n = static_cast<int>(c.cols), nbf = static_cast<int>(c.rows);
-    const int p = pair(mu, nu), begin = offsets[p], end = offsets[p + 1];
-    const auto work = static_cast<std::int64_t>(end - begin) * n;
+    const auto p = pair(mu, nu);
+    const std::int64_t begin = offsets[p], end = offsets[p + 1];
+    const auto work = (end - begin) * n;
     for (std::int64_t k = blockIdx.x * static_cast<std::int64_t>(blockDim.x) + threadIdx.x;
          k < work;
          k += gridDim.x * static_cast<std::int64_t>(blockDim.x)) {
-        const int edge = begin + static_cast<int>(k / n), b = static_cast<int>(k % n);
-        const int q = columns[edge], i = first[q], j = second[q];
+        const std::int64_t edge = begin + k / n;
+        const int b = static_cast<int>(k % n);
+        const auto q = columns[edge];
+        const int i = first[q], j = second[q];
         const double value = values[edge];
         atomicAdd(half + (static_cast<std::int64_t>(nu) * nbf + i) * n + b,
                   value * c.data[j + c.ld * b]);
@@ -64,7 +67,7 @@ __global__ void store_exchange(View transformed, int mu, int n, PairPanel exchan
         const int a = diagonal ? static_cast<int>(k % n) : static_cast<int>(k / n % n);
         const int b = diagonal ? a : static_cast<int>(k % n);
         const auto channel = diagonal ? a : a * n + b;
-        exchange.data[static_cast<std::int64_t>(pair(mu, nu)) * exchange.ld + channel] =
+        exchange.data[pair(mu, nu) * exchange.ld + channel] =
             transformed.data[nu * n + b + transformed.ld * a];
     }
 }
@@ -105,7 +108,7 @@ __global__ void store_coulomb(View p, PairPanel output, int mu, int n, int first
          index < work;
          index += gridDim.x * static_cast<std::int64_t>(blockDim.x)) {
         const int nu = static_cast<int>(index / n), a = static_cast<int>(index % n);
-        output.data[static_cast<std::int64_t>(pair(mu, nu)) * output.ld + a] =
+        output.data[pair(mu, nu) * output.ld + a] =
             p.data[first_column + a + p.ld * (nu * n + a)];
     }
 }
@@ -116,7 +119,7 @@ __global__ void density_image(ConstPairPanel exchange, View weights, Out out, do
          k < static_cast<std::int64_t>(nbf) * nbf;
          k += gridDim.x * static_cast<std::int64_t>(blockDim.x)) {
         const int mu = static_cast<int>(k % nbf), nu = static_cast<int>(k / nbf);
-        const auto* e = exchange.data + static_cast<std::int64_t>(pair(mu, nu)) * exchange.ld;
+        const auto* e = exchange.data + pair(mu, nu) * exchange.ld;
         double sum = 0.0;
         for (int a = 0; a < n; ++a)
             for (int b = 0; b < n; ++b)
@@ -158,7 +161,7 @@ exchange_rows(ConstPairPanel exchange, int begin, int rows, int nbf, int n, doub
         const int mu = begin + static_cast<int>(k / width),
                   nu = static_cast<int>(k / (n * n) % nbf);
         const int a = static_cast<int>(k / n % n), b = static_cast<int>(k % n);
-        const auto p = static_cast<std::int64_t>(pair(mu, nu));
+        const auto p = pair(mu, nu);
         panel[k] = exchange.data[p * exchange.ld + (mu >= nu ? a * n + b : b * n + a)];
     }
 }

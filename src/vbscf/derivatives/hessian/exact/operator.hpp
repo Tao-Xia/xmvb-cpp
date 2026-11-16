@@ -6,6 +6,7 @@
 #include <optional>
 
 #include <Eigen/Core>
+#include "integrals/response/types.hpp"
 #include "vbscf/structures/assembly/connection.hpp"
 
 namespace xmvb::vb {
@@ -195,6 +196,10 @@ class ExactHvpOperator {
    * semantic foundation for fused block contractions; it never materializes
    * the reduced Hessian.
    */
+    /** Same reduced image, consuming an already lifted sparse AO direction. */
+    Eigen::VectorXd apply_packed(const Eigen::VectorXd& packed_direction,
+                                 HvpComponents components) const;
+
     Eigen::MatrixXd apply_reduced_batch(const Eigen::Ref<const Eigen::MatrixXd>& reduced_directions,
                                         HvpComponents components = {}) const;
 
@@ -206,7 +211,8 @@ class ExactHvpOperator {
    */
     OrbitalCouplingAction
     apply_orbital_coupling(const Eigen::VectorXd& reduced_direction,
-                           StructureResponseRequest* ci_response = nullptr) const;
+                           StructureResponseRequest* ci_response = nullptr,
+                           bool forcing_only = false) const;
 
     /**
    * @brief Applies the complete orbital operator without horizontal response.
@@ -243,6 +249,7 @@ class ExactHvpOperator {
     Eigen::VectorXd
     apply_structure_coupling_adjoint(const StructureActiveIntegralAdjoint& adjoint) const;
 
+    const integrals::ExactCtxPairMatrix* accepted_exchange_integrals() const noexcept;
     bool supports_analytic_core_model() const noexcept;
 
     /** @brief Revision invalidating previously sampled relaxed HVP images. */

@@ -12,6 +12,7 @@
 #include "vbscf/orbitals/charts/canonicalization.hpp"
 #include "vbscf/derivatives/hessian/context/accepted_point.hpp"
 #include "vbscf/optimization/driver/checks.hpp"
+#include "vbscf/optimization/coupled/ci_transport.hpp"
 
 namespace xmvb::vb {
 namespace {
@@ -45,12 +46,14 @@ VbScfObjective::VbScfObjective(VbScfInput input,
                                StructureEigensolver structure_eigensolver,
                                StructureSolveAccuracy structure_solve_accuracy,
                                const OrbitalGradientEvaluator* orbital_gradient_evaluator,
+                               bool active_inactive_orthogonal,
                                std::shared_ptr<const ElectronicStateBackend> electronic_backend)
     : input_(std::move(input)), layout_(std::move(layout)), state_indices_(selected_state_indices),
       state_weights_(state_average_weights), nuclear_repulsion_(nuclear_repulsion_energy),
       structure_eigensolver_(structure_eigensolver),
       structure_solve_accuracy_(structure_solve_accuracy),
       gradient_evaluator_(orbital_gradient_evaluator),
+      active_inactive_orthogonal_(active_inactive_orthogonal),
       electronic_backend_(std::move(electronic_backend)) {}
 
 double VbScfObjective::operator()(const Eigen::VectorXd& parameter_vector,
@@ -104,9 +107,14 @@ VbScfObjective::TrialEvaluation VbScfObjective::evaluate_trial_energy_with_initi
     OrbitalPreparationInput trial_orbitals = input_.orbital_preparation_input;
     layout_.unpack(parameter_vector, &trial_orbitals);
     bool chart_changed = false;
+    bool active_inactive_orthogonal = false;
     if (canonicalize_sparse_gauge) {
         chart_changed = apply_support_preserving_inactive_gauge(&trial_orbitals);
-        chart_changed = balance_active_gauge(&trial_orbitals) || chart_changed;
+        chart_changed =
+            balance_active_gauge(&trial_orbitals, &active_inactive_orthogonal) || chart_changed;
+    } else if (active_inactive_orthogonal_) {
+        active_inactive_orthogonal = trial_orbitals.orbital_value_table ==
+                                     input_.orbital_preparation_input.orbital_value_table;
     }
     ScopedTrialOrbitals trial_scope(&input_, std::move(trial_orbitals));
 
@@ -141,10 +149,12 @@ VbScfObjective::TrialEvaluation VbScfObjective::evaluate_trial_energy_with_initi
                                                   nuclear_repulsion_,
                                                   structure_eigensolver_,
                                                   structure_solve_accuracy_,
-                                                  initial_eigenvectors));
+                                                  initial_eigenvectors,
+                                                  second_order_context().get()));
         evaluation.energy = evaluation.forward_evaluation->total_energy();
     }
     evaluation.chart_changed = chart_changed;
+    evaluation.active_inactive_orthogonal = active_inactive_orthogonal;
     evaluation.wall_time_seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - iteration_start_time)
             .count();
@@ -155,13 +165,47 @@ VbScfObjective::TrialEvaluation VbScfObjective::evaluate_trial_energy_with_initi
 VbScfCoupledKeyframeEvaluation VbScfObjective::evaluate_coupled_keyframe(
     const Eigen::VectorXd& parameter_vector,
     const Eigen::Ref<const Eigen::MatrixXd>& structure_coefficients,
-    const SelectedMetric* metric) const {
-    const auto start = std::chrono::steady_clock::now();
+    const SelectedMetric* metric,
+    bool coefficient_gradient,
+    FixedStructureUpdate update) const {
     OrbitalPreparationInput trial_orbitals = input_.orbital_preparation_input;
     layout_.unpack(parameter_vector, &trial_orbitals);
+    return evaluate_coupled_keyframe_at(std::move(trial_orbitals),
+                                        structure_coefficients,
+                                        metric,
+                                        nullptr,
+                                        coefficient_gradient,
+                                        update);
+}
+
+VbScfCoupledKeyframeEvaluation
+VbScfObjective::evaluate_coupled_keyframe(const CiTransportPoint& point) const {
+    const PreparedActiveOrbitalView geometry{point.prepared, point.frame};
+    return evaluate_coupled_keyframe_at(
+        point.input, point.coefficients, point.selected_metric.get(), &geometry, true);
+}
+
+VbScfCoupledKeyframeEvaluation VbScfObjective::evaluate_coupled_keyframe_at(
+    OrbitalPreparationInput trial_orbitals,
+    const Eigen::Ref<const Eigen::MatrixXd>& structure_coefficients,
+    const SelectedMetric* metric,
+    const PreparedActiveOrbitalView* prepared_orbitals,
+    bool coefficient_gradient,
+    FixedStructureUpdate update) const {
+    const auto start = std::chrono::steady_clock::now();
     ScopedTrialOrbitals trial_scope(&input_, std::move(trial_orbitals));
-    OrbitalFixedStructureGradient fixed = gradient_evaluator_->evaluate_fixed_structure(
-        input_, state_indices_, state_weights_, nuclear_repulsion_, structure_coefficients, metric);
+    OrbitalFixedStructureGradient fixed =
+        gradient_evaluator_->evaluate_fixed_structure(input_,
+                                                      state_indices_,
+                                                      state_weights_,
+                                                      nuclear_repulsion_,
+                                                      structure_coefficients,
+                                                      metric,
+                                                      false,
+                                                      second_order_context().get(),
+                                                      prepared_orbitals,
+                                                      coefficient_gradient,
+                                                      update);
     VbScfCoupledKeyframeEvaluation result;
     result.orbital_gradient =
         layout_.gather_from_full(fixed.gradient.sparse_orbital_energy_gradient);
@@ -204,6 +248,20 @@ VbScfObjective::TrialEvaluation VbScfObjective::evaluate_trial_energy_with_struc
         initial_eigenvectors.col(root) =
             selected_structure_coefficients.col(static_cast<Eigen::Index>(state));
     }
+    if (input_.complete_active_space && structure_eigensolver_ == StructureEigensolver::Davidson &&
+        previous_ci_roots_.rows() == initial_eigenvectors.rows() &&
+        previous_ci_roots_.cols() == initial_eigenvectors.cols()) {
+        // span(C_k, C_{k-1}) also contains their secant, without assuming a
+        // response denominator, a step ratio, or closure of a truncated space.
+        const Eigen::Index roots = initial_eigenvectors.cols();
+        initial_eigenvectors.conservativeResize(Eigen::NoChange, 2 * roots);
+        initial_eigenvectors.rightCols(roots) = previous_ci_roots_;
+        mcscf::diagnostics::ciah_trace("ciah_ci_seed", "roots=%td,columns=%td",
+                                       static_cast<std::ptrdiff_t>(roots),
+                                       static_cast<std::ptrdiff_t>(initial_eigenvectors.cols()));
+    }
+    const workspace::Temporary seed_storage(
+        static_cast<std::size_t>(initial_eigenvectors.size()) * sizeof(double));
     return evaluate_trial_energy_with_initial_eigenvectors(
         parameter_vector, true, initial_eigenvectors);
 }
@@ -246,7 +304,14 @@ void VbScfObjective::commit(TrialEvaluation evaluation) {
     if (!evaluation.valid || !evaluation.gradient_ready) {
         throw std::invalid_argument("cannot commit a trial evaluation without an exact gradient");
     }
+    if (input_.complete_active_space && structure_eigensolver_ == StructureEigensolver::Davidson &&
+        gradient_result_.second_order_context) {
+        previous_ci_roots_ = gradient_result_.second_order_context->root_eigenvectors;
+        previous_ci_storage_.resize(
+            static_cast<std::size_t>(previous_ci_roots_.size()) * sizeof(double));
+    }
     input_.orbital_preparation_input = std::move(evaluation.orbital_preparation_input);
+    active_inactive_orthogonal_ = evaluation.active_inactive_orthogonal;
     gradient_result_ = std::move(evaluation.gradient_result);
     energy_history_.push_back(evaluation.energy);
     gradient_inf_norm_history_.push_back(evaluation.gradient_inf_norm);

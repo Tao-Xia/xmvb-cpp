@@ -375,15 +375,18 @@ void check_keyframe(bool complete_carrier) {
     data.alpha_strings = complete_carrier ? std::vector<std::vector<int>>{{0}, {1}}
                                           : std::vector<std::vector<int>>{{0}};
     data.beta_strings = {{0}, {1}};
-    data.offsets = {0};
+    std::vector<std::size_t> offsets{0};
+    std::vector<xmvb::vb::StructureExpansionTerm> terms;
     for (int a = 0; a < (complete_carrier ? 2 : 1); ++a) {
         for (int b = 0; b < 2; ++b) {
             data.pair_alpha.push_back(a);
             data.pair_beta.push_back(b);
-            data.terms.push_back({data.n_structures++, 1.0});
-            data.offsets.push_back(data.terms.size());
+            terms.push_back({xmvb::core::checked_index<Eigen::Index>(data.n_structures++), 1.0});
+            offsets.push_back(terms.size());
         }
     }
+    data.incidence_data = xmvb::vb::StructureIncidenceData::make(
+        std::move(offsets), std::move(terms), data.n_structures);
     Eigen::MatrixXd c(data.n_structures, 2);
     for (int i = 0; i < c.rows(); ++i) {
         c(i, 0) = 0.37 + 0.19 * i;

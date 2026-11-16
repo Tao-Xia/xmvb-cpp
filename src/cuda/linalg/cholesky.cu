@@ -128,4 +128,54 @@ void Cholesky::solve(linalg::ConstMatrixView rhs, linalg::MatrixView out) const 
     check_info(*context_, info_, "cusolverDnDpotrs", false);
 }
 
+void Cholesky::transform(linalg::ConstMatrixView rhs,
+                         linalg::MatrixView out,
+                         bool transpose,
+                         bool inverse) const {
+    if (!rhs.data || !out.data || rhs.rows != dimension_ || out.rows != dimension_ ||
+        rhs.cols <= 0 || out.cols != rhs.cols || rhs.ld < rhs.rows || out.ld < out.rows)
+        throw std::invalid_argument("CUDA Cholesky transform dimensions disagree");
+    if (rhs.cols > std::numeric_limits<int>::max() || rhs.ld > std::numeric_limits<int>::max() ||
+        out.ld > std::numeric_limits<int>::max())
+        throw std::overflow_error("CUDA Cholesky transform exceeds cuBLAS range");
+    const bool alias = rhs.data == out.data && rhs.ld == out.ld;
+    if (!alias && overlaps(rhs, out))
+        throw std::invalid_argument("CUDA Cholesky transform partially overlapping views");
+    const double one = 1.0;
+    const auto operation = transpose ? CUBLAS_OP_T : CUBLAS_OP_N;
+    if (inverse) {
+        if (!alias)
+            copy_columns(*context_, out, rhs);
+        check_cublas(cublasDtrsm(context_->blas(),
+                                 CUBLAS_SIDE_LEFT,
+                                 CUBLAS_FILL_MODE_LOWER,
+                                 operation,
+                                 CUBLAS_DIAG_NON_UNIT,
+                                 dimension_,
+                                 static_cast<int>(rhs.cols),
+                                 &one,
+                                 factor_.data(),
+                                 dimension_,
+                                 out.data,
+                                 static_cast<int>(out.ld)),
+                     "CI Cholesky triangular solve");
+    } else {
+        check_cublas(cublasDtrmm(context_->blas(),
+                                 CUBLAS_SIDE_LEFT,
+                                 CUBLAS_FILL_MODE_LOWER,
+                                 operation,
+                                 CUBLAS_DIAG_NON_UNIT,
+                                 dimension_,
+                                 static_cast<int>(rhs.cols),
+                                 &one,
+                                 factor_.data(),
+                                 dimension_,
+                                 rhs.data,
+                                 static_cast<int>(rhs.ld),
+                                 out.data,
+                                 static_cast<int>(out.ld)),
+                     "CI Cholesky triangular multiply");
+    }
+}
+
 } // namespace xmvb::cuda

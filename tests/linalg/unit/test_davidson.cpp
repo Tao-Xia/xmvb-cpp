@@ -1,4 +1,7 @@
 #include "linalg/eigensolver.hpp"
+#include "linalg/metric_residual.hpp"
+#include <Eigen/Cholesky>
+#include <Eigen/Eigenvalues>
 
 #include <algorithm>
 #include <chrono>
@@ -223,9 +226,10 @@ bool run_residual_preconditioner_case() {
     double last_energy = 0.0;
     double last_relative_residual = 0.0;
     double last_stationarity_residual = 0.0;
-    options.residual_preconditioner = [&](const Eigen::VectorXd& residual, double energy) {
+    options.residual_preconditioner = [&](const Eigen::Ref<const Eigen::VectorXd>& residual,
+                                          double energy,
+                                          Eigen::Ref<Eigen::VectorXd> inverse_image) {
         ++inverse_calls;
-        Eigen::VectorXd inverse_image(residual.size());
         for (Eigen::Index row = 0; row < residual.size(); ++row) {
             double denominator = problem.hamiltonian(row, row) - energy * problem.overlap(row, row);
             const double floor = std::sqrt(std::numeric_limits<double>::epsilon()) *
@@ -237,7 +241,6 @@ bool run_residual_preconditioner_case() {
             }
             inverse_image[row] = residual[row] / denominator;
         }
-        return inverse_image;
     };
     options.observe_iteration = [&](int iteration,
                                     int active_subspace,
@@ -315,10 +318,12 @@ bool run_projected_correction_scale_case() {
             seed(0, 0) = 1.0;
             auto options = xmvb::linalg::make_davidson_options(3, 1, 1e-7, 1e-3, 1e-7);
             options.identity_overlap = identity;
-            options.residual_preconditioner = [scale](const Eigen::VectorXd& r, double) {
+            options.residual_preconditioner = [scale](const Eigen::Ref<const Eigen::VectorXd>& r,
+                                                      double,
+                                                      Eigen::Ref<Eigen::VectorXd> out) {
                 Eigen::Matrix3d inverse = Eigen::Matrix3d::Zero();
                 inverse << 1e16, 1e8, 0, 1e8, 2, 0, 0, 0, 1;
-                return Eigen::VectorXd(scale * inverse * r);
+                out = scale * inverse * r;
             };
             const auto result = xmvb::linalg::GeneralizedEigensolver{}.solve_davidson(
                 action, h.diagonal(), ones, seed, options);
@@ -359,24 +364,21 @@ bool run_invalid_residual_preconditioner_cases() {
         }
         return false;
     };
-    const bool wrong_size = rejects([](const Eigen::VectorXd&, double) {
-        Eigen::VectorXd result = Eigen::VectorXd::Zero(dimension - 1);
-        return result;
-    });
-    const bool nonfinite = rejects([](const Eigen::VectorXd&, double) {
-        Eigen::VectorXd result = Eigen::VectorXd::Zero(dimension);
-        result[0] = std::numeric_limits<double>::quiet_NaN();
-        return result;
-    });
+    const bool nonfinite = rejects(
+        [](const Eigen::Ref<const Eigen::VectorXd>&, double, Eigen::Ref<Eigen::VectorXd> out) {
+            out.setZero();
+            out[0] = std::numeric_limits<double>::quiet_NaN();
+        });
     // A zero correction cannot extend the basis. Preserve its residual and
     // rank scalars in the exception rather than reporting only "dependent".
     bool diagnosed = true;
     for (bool nonzero : {false, true}) {
-        options.residual_preconditioner = [nonzero](const Eigen::VectorXd&, double) {
-            Eigen::VectorXd p = Eigen::VectorXd::Zero(dimension);
+        options.residual_preconditioner = [nonzero](const Eigen::Ref<const Eigen::VectorXd>&,
+                                                    double,
+                                                    Eigen::Ref<Eigen::VectorXd> p) {
+            p.setZero();
             if (nonzero)
                 p[0] = 1.0;
-            return p;
         };
         bool rejected = false;
         try {
@@ -400,7 +402,7 @@ bool run_invalid_residual_preconditioner_cases() {
         }
         diagnosed = diagnosed && rejected;
     }
-    const bool passed = wrong_size && nonfinite && diagnosed;
+    const bool passed = nonfinite && diagnosed;
     std::cout << "invalid callback inverse" << (passed ? " PASS\n" : " FAIL\n");
     return passed;
 }
@@ -510,11 +512,20 @@ bool run_bounded_multiroot_restart_case(bool identity_overlap = false) {
 bool run_default_option_cases() {
     const auto small = xmvb::linalg::make_davidson_options(3, 2, 1.0e-7, 1.0e-3, 1.0e-7);
     const auto large = xmvb::linalg::make_davidson_options(10000, 4, 1.0e-7, 1.0e-3, 1.0e-7);
+    constexpr Eigen::Index n = 2760615;
+    const auto constrained =
+        xmvb::linalg::make_davidson_options(n, 1, 1e-7, 1e-3, 1e-7, 2ULL << 30);
+    const auto roomy =
+        xmvb::linalg::make_davidson_options(n, 1, 1e-7, 1e-3, 1e-7, 4ULL << 30, true);
     const bool passed =
         small.n_roots == 2 && small.max_subspace_dimension == 3 && small.max_iterations >= 3 &&
         small.energy_tolerance == 1.0e-7 && small.residual_tolerance == 1.0e-3 &&
         small.stationarity_tolerance == 1.0e-7 && large.n_roots == 4 &&
-        large.max_subspace_dimension < 10000 && large.max_subspace_dimension >= 2 * large.n_roots;
+        large.max_subspace_dimension < 10000 && large.max_subspace_dimension >= 2 * large.n_roots &&
+        constrained.max_subspace_dimension < roomy.max_subspace_dimension &&
+        roomy.identity_overlap &&
+        xmvb::linalg::davidson_workspace_bytes(n, constrained) <= (2ULL << 30) &&
+        xmvb::linalg::davidson_workspace_bytes(n, roomy) <= (4ULL << 30);
     std::cout << "default Davidson budgets"
               << " small_subspace=" << small.max_subspace_dimension
               << " large_subspace=" << large.max_subspace_dimension
@@ -560,12 +571,142 @@ bool run_stationarity_case() {
     return passed;
 }
 
+/** Identity-metric CI stopping is independent of a constant Hamiltonian shift. */
+bool run_energy_residual_case() {
+    constexpr int dimension = 32;
+    const auto problem = make_tridiagonal_problem(dimension);
+    const xmvb::linalg::GeneralizedEigensolver solver;
+    bool passed = true;
+    for (double shift : {0.0, -2000.0}) {
+        Eigen::MatrixXd h = problem.hamiltonian;
+        h.diagonal().array() += shift;
+        auto options =
+            xmvb::linalg::make_davidson_options(dimension, 2, 1e-8, 1e-30, 1e-4, {}, true);
+        options.stopping = xmvb::linalg::DavidsonStoppingCriterion::EnergyAndResidual;
+        const auto result = solver.solve_davidson(
+            [&h](const Eigen::Ref<const Eigen::MatrixXd>& vectors) {
+                return xmvb::linalg::GeneralizedEigenActionResult{h * vectors, {}};
+            },
+            h.diagonal(),
+            Eigen::VectorXd::Ones(dimension),
+            options);
+        const Eigen::Map<const Eigen::MatrixXd> c(
+            result.eigenpairs.eigenvector_matrix.data(), dimension, 2);
+        for (int root = 0; root < 2; ++root) {
+            const double energy = result.eigenpairs.eigenvalues[root];
+            const double exact =
+                shift + 2 - 2 * std::cos((root + 1) * std::acos(-1.0) / (dimension + 1));
+            passed = passed && std::abs(energy - exact) < 1e-7 &&
+                     (h * c.col(root) - energy * c.col(root)).norm() < 1e-4;
+        }
+        // An exact recycled eigenvector must not require a new correction.
+        Eigen::MatrixXd exact_seed(dimension, 1);
+        for (int i = 0; i < dimension; ++i)
+            exact_seed(i, 0) = std::sin((i + 1) * std::acos(-1.0) / (dimension + 1));
+        options.n_roots = 1;
+        const auto exact_result = solver.solve_davidson(
+            [&h](const Eigen::Ref<const Eigen::MatrixXd>& vectors) {
+                return xmvb::linalg::GeneralizedEigenActionResult{h * vectors, {}};
+            },
+            h.diagonal(),
+            Eigen::VectorXd::Ones(dimension),
+            exact_seed,
+            options);
+        passed = passed && exact_result.iterations == 1;
+        std::cout << "energy/residual shift=" << shift << " iterations=" << result.iterations
+                  << (passed ? " PASS\n" : " FAIL\n");
+    }
+    return passed;
+}
+
+/** Selected residual includes directions outside the Ritz space; no CAS closure. */
+bool run_selected_metric_residual_case() {
+    bool passed = true;
+    Eigen::MatrixXd orbital = Eigen::MatrixXd::Identity(2, 2);
+    orbital(1, 1) = 1e-8;
+    const auto orbital_bounds = xmvb::linalg::exterior_metric_bounds(orbital, 1, 1);
+    passed = passed && orbital_bounds && orbital_bounds->lower > 0 &&
+             orbital_bounds->lower <= 1e-32 && orbital_bounds->upper >= 1;
+    orbital(1, 1) = 0;
+    passed = passed && !xmvb::linalg::exterior_metric_bounds(orbital, 1, 1);
+    Eigen::MatrixXd f(5, 3);
+    f << 1, .2, .1, 0, 1, .3, .1, 0, .7, .4, -.2, .1, 0, .3, .8;
+    Eigen::MatrixXd m = f.transpose() * f;
+    Eigen::VectorXd r(3);
+    r << .1, -.3, .7;
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> spectrum(m);
+    const double exact = std::sqrt(r.dot(m.llt().solve(r)));
+    for (double ratio : {0.1, 0.99, 1.01, 10.0}) {
+        const auto b = xmvb::linalg::metric_residual_bounds(
+            r,
+            ratio * exact,
+            spectrum.eigenvalues()[0] * .99,
+            spectrum.eigenvalues()[2] * 1.01,
+            [&](const Eigen::VectorXd& x) { return Eigen::VectorXd(m * x); },
+            [](const Eigen::VectorXd& x) { return x; });
+        passed = passed && b.lower <= exact + 1e-12 && b.upper >= exact - 1e-12 &&
+                 ((b.upper <= ratio * exact) == (ratio > 1));
+        if (ratio == .1 || ratio == 10)
+            passed = passed && b.actions == 0;
+    }
+    // The same selected physical problem in a nonorthogonal, unequally scaled
+    // structure basis. G is a reference Gram, not the physical overlap M.
+    Eigen::MatrixXd w = Eigen::MatrixXd::Identity(3, 3);
+    w(0, 0) = .01;
+    w(0, 1) = .3;
+    w(1, 1) = 2;
+    w(1, 2) = .2;
+    const Eigen::MatrixXd gram = w.transpose() * w;
+    const Eigen::MatrixXd mw = w.transpose() * m * w;
+    const Eigen::VectorXd rw = w.transpose() * r;
+    const Eigen::LLT<Eigen::MatrixXd> gram_factor(gram);
+    for (double ratio : {.99, 1.01}) {
+        const auto b = xmvb::linalg::metric_residual_bounds(
+            rw,
+            ratio * exact,
+            spectrum.eigenvalues()[0] * .99,
+            spectrum.eigenvalues()[2] * 1.01,
+            [&](const Eigen::VectorXd& x) { return Eigen::VectorXd(mw * x); },
+            [&](const Eigen::VectorXd& x) { return Eigen::VectorXd(gram_factor.solve(x)); });
+        passed = passed && b.lower <= exact + 1e-12 && b.upper >= exact - 1e-12 &&
+                 ((b.upper <= ratio * exact) == (ratio > 1));
+    }
+    const auto solver = xmvb::linalg::GeneralizedEigensolver{};
+    Eigen::VectorXd diagonal(5);
+    diagonal << -2, -.7, .1, .8, 2;
+    const Eigen::MatrixXd h = f.transpose() * diagonal.asDiagonal() * f;
+    const Eigen::GeneralizedSelfAdjointEigenSolver<Eigen::MatrixXd> oracle(h, m);
+    for (double scale : {1e-3, 1.0, 1e3}) {
+        auto options = xmvb::linalg::make_davidson_options(3, 1, 1e-8, 1e-8, 1e-4);
+        options.stopping = xmvb::linalg::DavidsonStoppingCriterion::EnergyAndResidual;
+        const Eigen::MatrixXd sm = scale * scale * m, sh = scale * scale * h;
+        const Eigen::LLT<Eigen::MatrixXd> factor(sm);
+        int residual_checks = 0;
+        options.metric_residual_bound = [&](const Eigen::VectorXd& residual, double) {
+            ++residual_checks;
+            return std::sqrt(std::max(0.0, residual.dot(factor.solve(residual))));
+        };
+        const auto result = solver.solve_davidson(
+            [&](const Eigen::Ref<const Eigen::MatrixXd>& x) {
+                return xmvb::linalg::GeneralizedEigenActionResult{sh * x, sm * x};
+            },
+            sh.diagonal(),
+            sm.diagonal(),
+            options);
+        passed = passed && residual_checks > 0 &&
+                 std::abs(result.eigenpairs.eigenvalues[0] - oracle.eigenvalues()[0]) < 1e-8;
+    }
+    std::cout << "selected physical residual bounds" << (passed ? " PASS\n" : " FAIL\n");
+    return passed;
+}
+
 } // namespace
 
 int main() {
     bool passed = true;
     passed = run_default_option_cases() && passed;
     passed = run_stationarity_case() && passed;
+    passed = run_energy_residual_case() && passed;
     for (const int dimension : {80, 120, 200, 400, 600}) {
         for (const int n_roots : {1, 3, 5, 8}) {
             passed = run_case("orthogonal n=" + std::to_string(dimension),
@@ -589,6 +730,7 @@ int main() {
     passed = run_projected_correction_scale_case() && passed;
     passed = run_outer_accuracy_case() && passed;
     passed = run_physical_residual_case() && passed;
+    passed = run_selected_metric_residual_case() && passed;
     passed = run_bounded_multiroot_restart_case() && passed;
     passed = run_bounded_multiroot_restart_case(true) && passed;
     std::cout << (passed ? "ALL PASSED\n" : "SOME FAILED\n");

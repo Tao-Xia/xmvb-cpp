@@ -8,12 +8,71 @@
 #include "mcscf/optimization/trace.hpp"
 #include "integrals/ao/exact.hpp"
 #include "integrals/ao/ri.hpp"
+#include "core/index.hpp"
 #include "core/pair_index.hpp"
+#include "core/workspace.hpp"
 
 namespace xmvb::vb {
 namespace {
 std::size_t tensor4_index(int p, int q, int r, int s, int dimension) noexcept {
     return (((static_cast<std::size_t>(p) * dimension + q) * dimension + r) * dimension + s);
+}
+
+/** @brief Project the borrowed (mu a|nu b) image against symmetric densities. */
+Eigen::MatrixXd project_cached_exchange(const Eigen::MatrixXd& mo,
+                                        const Eigen::MatrixXd& weights,
+                                        const integrals::ExactCtxPairMatrix& exchange,
+                                        const Eigen::MatrixXd* active_to_exchange) {
+    const Eigen::Index n_bf = mo.rows(), width = weights.cols();
+    const auto pairs = core::triangular_count(n_bf);
+    if (exchange.rows() != static_cast<Eigen::Index>(pairs) || exchange.cols() != weights.rows())
+        throw std::invalid_argument("invalid accepted exchange image for analytic diagonal");
+    const int threads = bounded_openmp_thread_count(effective_openmp_thread_count(), mo.cols());
+    const auto worker_bytes = sizeof(double) * threads * width;
+    const auto weight_bytes = active_to_exchange ? sizeof(double) * weights.size() : 0;
+    auto packed = workspace::make_matrix<integrals::ExactCtxPairMatrix>(
+        pairs, width, worker_bytes + weight_bytes);
+    if (!packed)
+        return {};
+    workspace::Temporary packed_temporary(sizeof(double) * pairs * width);
+    {
+        workspace::Reservation scratch;
+        if (!scratch.try_resize(weight_bytes))
+            return {};
+        if (active_to_exchange) {
+            workspace::Temporary weights_temporary(weight_bytes);
+            Eigen::MatrixXd transformed(weights.rows(), width);
+            const auto& r = *active_to_exchange;
+            for (Eigen::Index c = 0; c < width; ++c) {
+                const Eigen::Map<const Eigen::MatrixXd> w(weights.col(c).data(), r.cols(), r.cols());
+                Eigen::Map<Eigen::MatrixXd> target(transformed.col(c).data(), r.rows(), r.rows());
+                target.noalias() = (r * w) * r.transpose();
+            }
+            packed->noalias() = exchange * transformed;
+        } else {
+            packed->noalias() = exchange * weights;
+        }
+    }
+    workspace::Reservation workers;
+    if (!workers.try_resize(worker_bytes))
+        return {};
+    workspace::Temporary worker_temporary(worker_bytes);
+    Eigen::MatrixXd result(mo.cols(), width);
+#pragma omp parallel num_threads(threads)
+    {
+        Eigen::RowVectorXd diagonal(width);
+#pragma omp for schedule(static)
+        for (Eigen::Index p = 0; p < mo.cols(); ++p) {
+            diagonal.setZero();
+            Eigen::Index pair = 0;
+            for (Eigen::Index mu = 0; mu < n_bf; ++mu)
+                for (Eigen::Index nu = 0; nu <= mu; ++nu, ++pair)
+                    diagonal.noalias() +=
+                        (mo(mu, p) * mo(nu, p) * (mu == nu ? 1.0 : 2.0)) * packed->row(pair);
+            result.row(p) = diagonal;
+        }
+    }
+    return result;
 }
 
 /** @brief Shared density channels; active Coulomb images reuse accepted ERIs. */
@@ -22,12 +81,12 @@ DensityDiagonals density_diagonal_channels(const VbScfInput& input,
                                            int n_core,
                                            int na,
                                            const Eigen::MatrixXd& active_weights,
-                                           const std::vector<double>& active_coulomb) {
+                                           const std::vector<double>& active_coulomb,
+                                           const integrals::ExactCtxPairMatrix* exchange_image,
+                                           const Eigen::MatrixXd* active_to_exchange) {
     const int n_bf = mo.rows();
     if (na * na != active_weights.rows())
         throw std::invalid_argument("invalid active density channels");
-    const int channels = n_core + active_weights.cols();
-    Eigen::MatrixXd result(n_bf, channels);
     const auto active = mo.middleCols(n_core, na);
     if (input.standard_two_electron_mode == StandardTwoElectronMode::ResolutionOfIdentity) {
         if (!input.ri_factorization)
@@ -37,15 +96,69 @@ DensityDiagonals density_diagonal_channels(const VbScfInput& input,
         return integrals::contract_ri_density_diagonals(
             *input.ri_factorization, mo, n_core, na, active_weights, coulomb);
     }
+    const Eigen::Map<const integrals::OrbitalPairMatrix> j_active(
+        active_coulomb.data(), mo.cols(), na * na);
+    Eigen::MatrixXd cached_active;
+    if (exchange_image) {
+        cached_active = project_cached_exchange(mo, active_weights, *exchange_image, active_to_exchange);
+        if (cached_active.size())
+            cached_active = 2.0 * j_active * active_weights - cached_active;
+    }
+    const bool reuse = cached_active.size() != 0;
+    const int channels = n_core + (reuse ? 0 : active_weights.cols());
+    mcscf::diagnostics::ciah_trace("ciah_diagonal_exchange_reuse",
+                                   "exchange_channels=%d,reused_channels=%d",
+                                   channels,
+                                   reuse ? static_cast<int>(active_weights.cols()) : 0);
+    if (!channels)
+        return {Eigen::MatrixXd(n_bf, 0), std::move(cached_active), Eigen::MatrixXd(n_bf, 0)};
+    const auto& graph = input.ao_integral_input.pair_graph;
+    // A tiled half transform consumes only stored edges. Each visited edge
+    // contributes at most two updates and each panel row at most three more
+    // for the Coulomb reduction and the two exchange destinations.
+    const long double directed = graph.directed_count();
+    const long double panel_rows = static_cast<long double>(graph.pair_first.size()) * n_bf;
+    std::size_t diagonal_edges = 0;
+    if (graph.has_rows())
+        for (int mu = 0; mu < n_bf; ++mu) {
+            const auto pair = core::PairIndex::packed_pair_index(mu, mu);
+            graph.visit_row(pair, [&](std::size_t, double) { ++diagonal_edges; });
+        }
+    const long double ordered_rows = 2 * directed - diagonal_edges;
+    const bool half_cheaper = graph.tiles ? 2 * directed + 3 * panel_rows < 2 * ordered_rows
+                                          : panel_rows * n_bf < 4 * directed;
+    if (reuse && n_core >= Eigen::internal::packet_traits<double>::size &&
+        graph.has_rows() && half_cheaper) {
+        Eigen::MatrixXd exchange, coulomb;
+        if (integrals::apply_ao_core_diagonals(input.ao_integral_input,
+                                              mo,
+                                              n_core,
+                                              effective_openmp_thread_count(),
+                                              &exchange,
+                                              &coulomb)) {
+            mcscf::diagnostics::ciah_trace("ciah_diagonal_core_half", "used=1");
+            exchange *= -1.0;
+            exchange.noalias() += 2.0 * coulomb;
+            return {std::move(exchange), std::move(cached_active), std::move(coulomb)};
+        }
+    }
+    Eigen::MatrixXd result(n_bf, channels);
+    const auto active_result = [&]() -> Eigen::MatrixXd {
+        if (reuse)
+            return std::move(cached_active);
+        return result.rightCols(active_weights.cols());
+    };
     const std::size_t matrix_bytes = sizeof(double) * static_cast<std::size_t>(n_bf) * n_bf;
     const std::size_t pair_bytes = sizeof(double) * static_cast<std::size_t>(n_bf) * (n_bf + 1) / 2;
     const std::size_t active_temp = sizeof(double) * static_cast<std::size_t>(n_bf) * na;
-    const std::size_t stream_budget = std::max<std::size_t>(
-        64 * 1024 * 1024, 3 * matrix_bytes + pair_bytes + sizeof(double) + active_temp);
-    const int stream_workers =
-        std::min(effective_openmp_thread_count(),
-                 static_cast<int>((stream_budget - 3 * matrix_bytes - active_temp) /
-                                  (pair_bytes + sizeof(double))));
+    const std::size_t budget = workspace::available();
+    const std::size_t stream_minimum = 3 * matrix_bytes + pair_bytes + sizeof(double) + active_temp;
+    if (budget < stream_minimum)
+        throw std::runtime_error("diagonal density resource_limit: one channel exceeds workspace");
+    const int stream_workers = static_cast<int>(
+        std::min({static_cast<std::size_t>(effective_openmp_thread_count()),
+                  static_cast<std::size_t>(n_bf),
+                  (budget - 3 * matrix_bytes - active_temp) / (pair_bytes + sizeof(double))}));
     int lanes = 1;
 #if defined(__GNUC__) && defined(__x86_64__)
     lanes = __builtin_cpu_supports("avx512f") ? 8 : __builtin_cpu_supports("avx2") ? 4 : 2;
@@ -53,30 +166,23 @@ DensityDiagonals density_diagonal_channels(const VbScfInput& input,
     const std::size_t stream_channel =
         2 * matrix_bytes + stream_workers * (pair_bytes + sizeof(double));
     const int stream_width =
-        std::min({channels,
-                  lanes,
-                  static_cast<int>((stream_budget - matrix_bytes - active_temp) / stream_channel)});
-    const auto& graph = input.ao_integral_input.pair_graph;
-    if (graph.has_row_graph()) {
-        const std::size_t matrix_bytes = sizeof(double) * static_cast<std::size_t>(n_bf) * n_bf;
-        const std::size_t output_bytes =
-            sizeof(double) * static_cast<std::size_t>(n_bf) * (3 * channels + 2 * n_core);
-        const std::size_t active_temp = sizeof(double) * static_cast<std::size_t>(n_bf) * na;
-        const std::size_t n_pairs = static_cast<std::size_t>(na) * (na + 1) / 2;
-        const std::size_t span_bytes =
-            sizeof(double) * (4 * n_pairs * na + n_pairs * active_weights.cols() +
-                              2 * na * active_weights.cols() + active_weights.size());
-        // One shared source batch and one AO source-building scratch. Each worker
-        // keeps a K/J row, its MO projection and its partial diagonal. There are
-        // at most two row columns per source, never a worker AO response matrix.
-        const std::size_t worker_channel = 6 * sizeof(double) * static_cast<std::size_t>(n_bf);
-        const std::size_t base = matrix_bytes + output_bytes + active_temp + span_bytes;
-        const std::size_t budget =
-            std::max<std::size_t>(64 * 1024 * 1024, base + matrix_bytes + worker_channel);
+        static_cast<int>(std::min({static_cast<std::size_t>(channels),
+                                   static_cast<std::size_t>(lanes),
+                                   (budget - matrix_bytes - active_temp) / stream_channel}));
+    const std::size_t output_bytes =
+        sizeof(double) * static_cast<std::size_t>(n_bf) * (3 * channels + 2 * n_core);
+    const std::size_t n_pairs = static_cast<std::size_t>(na) * (na + 1) / 2;
+    const std::size_t span_bytes =
+        sizeof(double) * (4 * n_pairs * na + n_pairs * active_weights.cols() +
+                          2 * na * active_weights.cols() + active_weights.size());
+    // Row workers own one K/J row, its MO projection, and a partial diagonal.
+    const std::size_t worker_channel = 6 * sizeof(double) * static_cast<std::size_t>(n_bf);
+    const std::size_t base = matrix_bytes + output_bytes + active_temp + span_bytes;
+    if (graph.has_rows() && budget >= base + matrix_bytes + worker_channel) {
         const int workers =
-            std::min({effective_openmp_thread_count(),
-                      n_bf,
-                      static_cast<int>((budget - base - matrix_bytes) / worker_channel)});
+            static_cast<int>(std::min({static_cast<std::size_t>(effective_openmp_thread_count()),
+                                       static_cast<std::size_t>(n_bf),
+                                       (budget - base - matrix_bytes) / worker_channel}));
         const std::size_t per_channel = matrix_bytes + workers * worker_channel;
         int width = std::min<std::size_t>(channels, (budget - base) / per_channel);
         // A final SIMD tail does not justify another complete ERI traversal.
@@ -87,13 +193,7 @@ DensityDiagonals density_diagonal_channels(const VbScfInput& input,
         // canonical scatter reads unique ERIs. Do not use the saved core action
         // to justify extra main-contraction reads: its fused projection also has
         // work, and is deliberately not priced as a free benefit in admission.
-        std::size_t row_records = 2 * graph.values.size();
-        for (int mu = 0; mu < n_bf; ++mu) {
-            const int diagonal_pair = mu * (mu + 1) / 2 + mu;
-            row_records -= graph.row_offsets[diagonal_pair + 1] - graph.row_offsets[diagonal_pair];
-        }
-        const long double row_reads =
-            static_cast<long double>(row_records) * ((channels + width - 1) / width);
+        const long double row_reads = ordered_rows * ((channels + width - 1) / width);
         const long double stream_reads = static_cast<long double>(graph.integral_count()) *
                                          ((channels + stream_width - 1) / stream_width);
         // Both layouts are exact. The row consumer no longer pays for an AO
@@ -109,15 +209,17 @@ DensityDiagonals density_diagonal_channels(const VbScfInput& input,
                                        base + width * per_channel,
                                        static_cast<int>(row_selected));
         if (row_selected) {
+            workspace::Reservation action_scratch;
+            const std::size_t row_peak = base + width * per_channel;
+            if (!action_scratch.try_resize(row_peak))
+                throw std::runtime_error(
+                    "diagonal density resource_limit: row action reservation failed");
+            workspace::Temporary action_temporary(row_peak);
             xmvb::integrals::AoH1eBatchWorkspace::Channels sources;
             xmvb::integrals::AoDensityDiagonalWorkspace workspace;
             Eigen::MatrixXd scratch(n_bf, n_bf);
             Eigen::MatrixXd exchange, coulomb;
             Eigen::MatrixXd core_coulomb(n_bf, n_core);
-            // Only n_bf*n_active^2 accepted values enter the active Coulomb images.
-            const Eigen::Map<
-                const Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>>
-                j_active(active_coulomb.data(), n_bf, na * na);
             for (int begin = 0; begin < channels; begin += width) {
                 const int count = std::min(width, channels - begin);
                 const int core_count = std::max(0, std::min(count, n_core - begin));
@@ -163,7 +265,7 @@ DensityDiagonals density_diagonal_channels(const VbScfInput& input,
                                            base + width * per_channel,
                                            budget);
             return {result.leftCols(n_core),
-                    result.rightCols(active_weights.cols()),
+                    active_result(),
                     std::move(core_coulomb)};
         }
     }
@@ -171,8 +273,14 @@ DensityDiagonals density_diagonal_channels(const VbScfInput& input,
     // Budget all batch inputs, packed worker outputs, response and shared scratch.
     // For exceptionally large AO bases the unavoidable one-channel/one-worker
     // working set is the lower bound; the budget never enables further replicas.
-    const auto budget = stream_budget, channel_bytes = stream_channel;
+    const auto channel_bytes = stream_channel;
     const int workers = stream_workers, width = stream_width;
+    workspace::Reservation action_scratch;
+    const std::size_t stream_peak = matrix_bytes + active_temp + width * channel_bytes;
+    if (!action_scratch.try_resize(stream_peak))
+        throw std::runtime_error(
+            "diagonal density resource_limit: stream action reservation failed");
+    workspace::Temporary action_temporary(stream_peak);
     xmvb::integrals::AoH1eBatchWorkspace workspace;
     Eigen::MatrixXd response, scratch(n_bf, n_bf);
     for (int begin = 0; begin < channels; begin += width) {
@@ -206,7 +314,7 @@ DensityDiagonals density_diagonal_channels(const VbScfInput& input,
         workers,
         matrix_bytes + active_temp + width * channel_bytes,
         budget);
-    return {result.leftCols(n_core), result.rightCols(active_weights.cols()), {}};
+    return {result.leftCols(n_core), active_result(), {}};
 }
 
 } // namespace
@@ -223,7 +331,9 @@ DensityDiagonals contract_diagonal_densities(const VbScfInput& input,
                                              int n_core,
                                              const Eigen::MatrixXd& dm1,
                                              const std::vector<double>& dm2,
-                                             const std::vector<double>& active_coulomb) {
+                                             const std::vector<double>& active_coulomb,
+                                             const integrals::ExactCtxPairMatrix* exchange,
+                                             const Eigen::MatrixXd* active_to_exchange) {
     const int n = dm1.rows();
     const int n_pairs = n * (n + 1) / 2;
     const int n_sources = 2 * n;
@@ -255,7 +365,8 @@ DensityDiagonals contract_diagonal_densities(const VbScfInput& input,
                 matrix(w, z) = matrix(z, w) = basis(pair, j) * (w == z ? 1.0 : 0.5);
             }
     }
-    auto images = density_diagonal_channels(input, mo, n_core, n, weights, active_coulomb);
+    auto images = density_diagonal_channels(
+        input, mo, n_core, n, weights, active_coulomb, exchange, active_to_exchange);
     Eigen::MatrixXd active_images(mo.cols(), 2 * n + 1);
     active_images.rightCols(2 * n).noalias() = images.active * reconstruction;
     // The total one-RDM source is exactly the sum of its n orbital sources.

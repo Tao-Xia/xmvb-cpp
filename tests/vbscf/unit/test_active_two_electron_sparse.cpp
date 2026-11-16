@@ -27,22 +27,32 @@ void require(bool condition, const char* message) {
 /** @brief Linear reference ordering preserves values, duplicates and orientation. */
 void check_unique_integral_order() {
     using namespace xmvb::vb;
-    const std::vector<int> left{5, 0, 3, 2, 5, 0, 3};
-    const std::vector<int> right{0, 5, 3, 1, 0, 0, 2};
+    const std::vector<xmvb::integrals::PairAddress> left{5, 0, 3, 2, 5, 0, 3};
+    const std::vector<xmvb::integrals::PairAddress> right{0, 5, 3, 1, 0, 0, 2};
     const std::vector<double> values{0.7, -0.2, 0.4, 0.3, 0.8, 0.9, -0.1};
     const auto graph = xmvb::integrals::build_ao_pair_graph(left, right, values, 3);
     std::vector<std::tuple<int, int, double>> expected, actual;
     for (std::size_t i = 0; i < left.size(); ++i)
         expected.emplace_back(left[i], right[i], values[i]);
-    require(std::is_sorted(graph.integral_edges.begin(), graph.integral_edges.end()),
-            "linear ordering differs from sorted CSR references");
+    require(graph.integral_rows.empty() && graph.integral_offsets.size() == graph.row_offsets.size(),
+            "CSR retained an integral-sized row or edge-reference map");
     for (std::size_t i = 0; i < graph.integral_count(); ++i) {
         const auto eri = graph.integral(i);
         actual.emplace_back(eri.left_pair, eri.right_pair, eri.value);
-        const int edge = graph.integral_edges[i];
+        const auto edge = graph.row_offsets[eri.left_pair] + i - graph.integral_offsets[eri.left_pair];
         require(edge >= graph.row_offsets[eri.left_pair] &&
                     edge < graph.row_offsets[eri.left_pair + 1],
                 "linear ordering assigned the wrong CSR row");
+    }
+    for (std::size_t begin = 0; begin <= graph.integral_count(); ++begin) {
+        xmvb::integrals::AoPairGraph::Cursor cursor(graph, begin);
+        for (auto k = begin; k < graph.integral_count(); ++k, cursor.advance()) {
+            const auto reference = graph.integral(k);
+            const auto value = cursor.value();
+            require(value.left_pair == reference.left_pair && value.right_pair == reference.right_pair &&
+                        value.value == reference.value,
+                    "implicit CSR cursor lost a row crossing or primary orientation");
+        }
     }
     std::sort(expected.begin(), expected.end());
     std::sort(actual.begin(), actual.end());
@@ -57,7 +67,7 @@ void check_csr_edge_groups() {
     using namespace xmvb::vb;
     constexpr int n_bf = 5;
     constexpr int n_pairs = n_bf * (n_bf + 1) / 2;
-    std::vector<int> left, right;
+    std::vector<xmvb::integrals::PairAddress> left, right;
     std::vector<double> values;
     Eigen::MatrixXd reference = Eigen::MatrixXd::Zero(n_pairs, n_pairs);
     for (int a = 0; a < n_pairs - 1; ++a) {
@@ -134,8 +144,10 @@ void check_direction_block(const xmvb::integrals::AoIntegralInput& integrals) {
     }
     // Also exercise the resident pair-image contract independently of whether
     // the accepted exchange image fits this tiny problem's resource budget.
-    auto pair_cache = cache;
-    pair_cache.exchange_integrals.resize(0, 0);
+    auto pair_integrals = integrals;
+    pair_integrals.exact_exchange_memory_budget_bytes = 0;
+    auto pair_cache = xmvb::integrals::build_exact_packed_active_two_electron_adjoint_cache(
+        {0.2, -0.1, 0.3, 0.4, -0.2, 0.5}, orbitals, pair_integrals, 2, accepted);
     const auto pair_batch = xmvb::integrals::
         compute_exact_packed_active_two_electron_integral_directional_derivative_batch(
             pair_cache, directions, integrals, &products, &fixed);
@@ -208,9 +220,8 @@ int main() {
                     integral.right_pair == expected_right[index] &&
                     integral.value == expected_values[index],
                 "AO-pair storage traversal changed an integral or its orientation");
-        require(index == 0 ||
-                    ordered_graph.integral_edges[index - 1] < ordered_graph.integral_edges[index],
-                "unique-integral CSR references are not strictly ordered");
+        require(index == 0 || ordered_graph.integral(index - 1).left_pair <= integral.left_pair,
+                "implicit unique-integral CSR rows are not ordered");
     }
 
     // The large-AO representation keeps the canonical unique stream and omits

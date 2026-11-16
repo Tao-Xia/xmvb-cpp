@@ -17,6 +17,9 @@ namespace xmvb::vb {
 struct AcceptedPointContext;
 struct SelectedMetric;
 
+/** Optional variational CI update inside a keyframe; never a terminal solve. */
+enum class FixedStructureUpdate { None, Krylov };
+
 /**
  * @brief Move-only forward evaluation awaiting the active-space adjoint.
  *
@@ -38,6 +41,7 @@ class ActiveSpaceForwardEvaluation {
     double total_energy() const noexcept;
     double wall_time_seconds() const noexcept;
     bool valid() const noexcept;
+    Eigen::Map<const Eigen::MatrixXd> root_coefficients() const;
 
   private:
     struct State;
@@ -117,7 +121,8 @@ class ActiveSpaceGradientEvaluator {
                      double nuclear_repulsion_energy,
                      StructureEigensolver structure_eigensolver,
                      StructureSolveAccuracy structure_solve_accuracy,
-                     const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors) const;
+                     const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors,
+                     const AcceptedPointContext* accepted_point = nullptr) const;
 
     /** @brief Completes the exact gradient from a retained forward evaluation. */
     ActiveSpaceGradientResult
@@ -132,7 +137,11 @@ class ActiveSpaceGradientEvaluator {
                              double nuclear_repulsion_energy,
                              const Eigen::Ref<const Eigen::MatrixXd>& structure_coefficients,
                              const SelectedMetric* metric = nullptr,
-                             bool retain_context = false) const;
+                             bool retain_context = false,
+                             const AcceptedPointContext* accepted_point = nullptr,
+                             const PreparedActiveOrbitalView* prepared_orbitals = nullptr,
+                             bool coefficient_gradient = true,
+                             FixedStructureUpdate update = FixedStructureUpdate::None) const;
 
     /**
    * @brief Evaluates a state-averaged gradient reusing a prebuilt active-space context.

@@ -7,6 +7,7 @@
 #include <stdexcept>
 
 #include "core/timing.hpp"
+#include "core/workspace.hpp"
 #include "mcscf/ci/factors_internal.hpp"
 #include "parallel/openmp.hpp"
 
@@ -419,11 +420,12 @@ SpinSources::integral_tangent(const mcscf::DirectCiSigmaAction& sigma,
                               const mcscf::SpinFactorSource& physical_state,
                               const mcscf::SpinFactorSource& direction,
                               const mcscf::SpinFactorSource& physical_direction) const {
+    const auto workspace_bytes = workspace::available();
     if (parity_) {
-        const auto directional_bra = mcscf::detail::factor_integral_work(
-            sigma, physical_direction, state, mcscf::kFactorWorkspaceBytes);
-        const auto accepted_bra = mcscf::detail::factor_integral_work(
-            sigma, physical_state, direction, mcscf::kFactorWorkspaceBytes);
+        const auto directional_bra =
+            mcscf::detail::factor_integral_work(sigma, physical_direction, state, workspace_bytes);
+        const auto accepted_bra =
+            mcscf::detail::factor_integral_work(sigma, physical_state, direction, workspace_bytes);
         if (profiling::phase_totals().enabled)
             std::fprintf(stderr,
                          "XMVB_TANGENT_ORDER,directional_bra_work=%.0Lf,accepted_bra_work=%.0Lf,"
@@ -432,9 +434,10 @@ SpinSources::integral_tangent(const mcscf::DirectCiSigmaAction& sigma,
                          accepted_bra,
                          accepted_bra < directional_bra);
         if (accepted_bra < directional_bra)
-            return mcscf::factor_integral_adjoint(sigma, physical_state, direction);
+            return mcscf::factor_integral_adjoint(
+                sigma, physical_state, direction, workspace_bytes);
     }
-    return mcscf::factor_integral_adjoint(sigma, physical_direction, state);
+    return mcscf::factor_integral_adjoint(sigma, physical_direction, state, workspace_bytes);
 }
 
 } // namespace xmvb::vb

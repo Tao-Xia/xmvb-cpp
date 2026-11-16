@@ -3,6 +3,7 @@
 #include "core/index.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <limits>
@@ -31,7 +32,9 @@ solve_lowest_projected_eigenpairs(const Eigen::Ref<const Eigen::MatrixXd>& hamil
                                   int n_roots) {
     const lapack_int dimension = core::checked_index<lapack_int>(hamiltonian.rows());
     Eigen::MatrixXd matrix = hamiltonian;
-    ProjectedEigenpairs result{Eigen::VectorXd(n_roots), Eigen::MatrixXd(dimension, n_roots)};
+    // DSYEVR requires W(N), even when RANGE='I' returns only the first M roots.
+    // Tridiagonal eigensolvers may use its remaining entries during selection.
+    ProjectedEigenpairs result{Eigen::VectorXd(dimension), Eigen::MatrixXd(dimension, n_roots)};
     std::vector<lapack_int> support(2 * n_roots);
     lapack_int n_converged = 0;
     const lapack_int info = LAPACKE_dsyevr(LAPACK_COL_MAJOR,
@@ -55,6 +58,7 @@ solve_lowest_projected_eigenpairs(const Eigen::Ref<const Eigen::MatrixXd>& hamil
         throw std::runtime_error(
             "Davidson projected eigensolve failed (info=" + std::to_string(info) + ")");
     }
+    result.eigenvalues.conservativeResize(n_roots);
     return result;
 }
 
@@ -76,6 +80,9 @@ inline void validate_davidson_options(Eigen::Index dimension, const DavidsonOpti
     if (!std::isfinite(options.stationarity_tolerance) || options.stationarity_tolerance <= 0.0) {
         throw std::invalid_argument("Davidson stationarity tolerance must be positive");
     }
+    if (options.stopping == DavidsonStoppingCriterion::EnergyAndResidual &&
+        !options.identity_overlap && !options.metric_residual_bound)
+        throw std::invalid_argument("energy/residual stopping requires a physical residual norm");
 }
 
 inline void
@@ -119,7 +126,10 @@ int append_s_orthonormal_block(Backend& backend,
                                DavidsonRankInfo* rank_info = nullptr) {
     const double dependence_floor = 64.0 * std::numeric_limits<double>::epsilon();
     auto vector_storage = backend.make(candidates.rows, 1);
-    auto hamiltonian_storage = backend.make(candidates.rows, 1);
+    // When the overlap is exactly I, the caller can orthogonalize the
+    // candidates before computing any Hamiltonian images.
+    const bool has_images = !hamiltonian_candidates.empty();
+    auto hamiltonian_storage = backend.make(candidates.rows, has_images ? 1 : 0);
     auto overlap_storage = identity_overlap ? backend.make(0, 0) : backend.make(candidates.rows, 1);
     auto vector = backend.view(vector_storage);
     auto hamiltonian_image = backend.view(hamiltonian_storage);
@@ -128,7 +138,8 @@ int append_s_orthonormal_block(Backend& backend,
     for (int candidate = 0; candidate < candidates.cols && active_dimension < basis.cols;
          ++candidate) {
         backend.copy(vector, candidates.column(candidate));
-        backend.copy(hamiltonian_image, hamiltonian_candidates.column(candidate));
+        if (has_images)
+            backend.copy(hamiltonian_image, hamiltonian_candidates.column(candidate));
         if (!identity_overlap) {
             backend.copy(overlap_image, overlap_candidates.column(candidate));
         }
@@ -142,8 +153,10 @@ int append_s_orthonormal_block(Backend& backend,
             const Eigen::MatrixXd coefficients =
                 backend.project(basis.columns(0, active_dimension), overlap_image);
             backend.subtract_projection(vector, basis.columns(0, active_dimension), coefficients);
-            backend.subtract_projection(
-                hamiltonian_image, hamiltonian_basis.columns(0, active_dimension), coefficients);
+            if (has_images)
+                backend.subtract_projection(hamiltonian_image,
+                                            hamiltonian_basis.columns(0, active_dimension),
+                                            coefficients);
             if (!identity_overlap) {
                 backend.subtract_projection(
                     overlap_image, overlap_basis.columns(0, active_dimension), coefficients);
@@ -164,8 +177,10 @@ int append_s_orthonormal_block(Backend& backend,
         basis_norms[active_dimension] = vector_norm * inverse_metric_norm;
         backend.copy(basis.column(active_dimension), vector);
         backend.scal(basis.column(active_dimension), inverse_metric_norm);
-        backend.copy(hamiltonian_basis.column(active_dimension), hamiltonian_image);
-        backend.scal(hamiltonian_basis.column(active_dimension), inverse_metric_norm);
+        if (has_images) {
+            backend.copy(hamiltonian_basis.column(active_dimension), hamiltonian_image);
+            backend.scal(hamiltonian_basis.column(active_dimension), inverse_metric_norm);
+        }
         if (!identity_overlap) {
             backend.copy(overlap_basis.column(active_dimension), overlap_image);
             backend.scal(overlap_basis.column(active_dimension), inverse_metric_norm);
@@ -263,6 +278,16 @@ Result solve_davidson(Backend& backend,
                       const OverlapDiagonal& overlap_diagonal,
                       const InitialVectors& initial_vectors,
                       const DavidsonOptions& options) {
+    using Clock = std::chrono::steady_clock;
+    const bool observe_work = static_cast<bool>(options.observe_work);
+    const auto stamp = [&] { return observe_work ? Clock::now() : Clock::time_point{}; };
+    const auto solve_start = stamp();
+    Clock::duration action_time{}, projected_time{}, certification_time{};
+    const auto apply = [&](ConstMatrixView input, MatrixView h, MatrixView s) {
+        const auto start = stamp();
+        backend.apply(input, h, s);
+        action_time += stamp() - start;
+    };
     const Eigen::Index dimension = [&] {
         if constexpr (std::is_same_v<HamiltonianDiagonal, ConstMatrixView>) {
             backend.validate_diagonals(hamiltonian_diagonal, overlap_diagonal);
@@ -303,7 +328,8 @@ Result solve_davidson(Backend& backend,
         throw std::invalid_argument("invalid Davidson initial vector block");
     }
     if constexpr (!Backend::supports_host_callbacks) {
-        if (options.physical_residual_norm || options.residual_preconditioner) {
+        if (options.physical_residual_norm || options.metric_residual_bound ||
+            options.residual_preconditioner) {
             throw std::invalid_argument("CUDA Davidson does not support host residual callbacks");
         }
     }
@@ -320,7 +346,7 @@ Result solve_davidson(Backend& backend,
         auto hamiltonian_candidate = backend.make(dimension, initial_cols);
         auto overlap_candidate =
             backend.make(dimension, options.identity_overlap ? 0 : initial_cols);
-        backend.apply(backend.cview(candidate),
+        apply(backend.cview(candidate),
                       backend.view(hamiltonian_candidate),
                       backend.view(overlap_candidate));
         validate_images(backend,
@@ -362,8 +388,10 @@ Result solve_davidson(Backend& backend,
         const int n_projected_roots = active_dimension + options.n_roots > max_subspace
                                           ? active_dimension
                                           : std::min(active_dimension, options.n_roots + 1);
+        const auto projected_start = stamp();
         const auto projected =
             solve_lowest_projected_eigenpairs(active_projected_hamiltonian, n_projected_roots);
+        projected_time += stamp() - projected_start;
         const auto& projected_eigenvalues = projected.eigenvalues;
         const auto& projected_eigenvectors = projected.eigenvectors;
         const Eigen::MatrixXd root_coefficients = projected_eigenvectors.leftCols(options.n_roots);
@@ -423,14 +451,51 @@ Result solve_davidson(Backend& backend,
                 relative_residual <= first_iteration_residual_tolerance;
             const double required_residual =
                 std::min(options.residual_tolerance, spectral_energy_residual_tolerance);
-            bool root_converged = relative_residual <= required_residual &&
-                                  stationarity_residual <= options.stationarity_tolerance &&
-                                  (ritz_energy_stable || independently_certified);
+            bool root_converged;
+            if (options.stopping == DavidsonStoppingCriterion::EnergyAndResidual) {
+                double physical = stationarity_residual;
+                if constexpr (Backend::supports_host_callbacks) {
+                    if (options.metric_residual_bound &&
+                        (ritz_energy_stable || iteration == 1 || active_dimension == dimension)) {
+                        const double norm = std::sqrt(
+                            backend.dot(backend.cview(roots).column(root), s_roots.column(root)));
+                        if (!(norm > 0) || !std::isfinite(norm))
+                            throw std::runtime_error("invalid Davidson physical root norm");
+                        const double target = iteration == 1 && active_dimension != dimension
+                                                  ? options.energy_tolerance
+                                                  : options.stationarity_tolerance;
+                        const auto certification_start = stamp();
+                        physical = options.metric_residual_bound(
+                                       backend.download(backend.cview(residual)), target * norm) /
+                                   norm;
+                        certification_time += stamp() - certification_start;
+                        if (!(physical >= 0) || !std::isfinite(physical))
+                            throw std::runtime_error("invalid physical residual bound");
+                        result.stationarity_residual_norms[root] = physical;
+                    }
+                }
+                // A preconverged initial vector has no previous Ritz energy.
+                // Its absolute residual bounds the distance to the spectrum;
+                // do not force a spurious expansion of an exact eigenvector.
+                // A complete Ritz basis likewise has no further direction;
+                // as in Davidson's exhausted-space exit, check its residual.
+                const bool initial_energy_resolved =
+                    iteration == 1 && physical <= options.energy_tolerance;
+                root_converged = physical <= options.stationarity_tolerance &&
+                                 (ritz_energy_stable || initial_energy_resolved ||
+                                  active_dimension == dimension);
+            } else {
+                root_converged = relative_residual <= required_residual &&
+                                 stationarity_residual <= options.stationarity_tolerance &&
+                                 (ritz_energy_stable || independently_certified);
+            }
             if (root_converged && options.physical_residual_norm) {
                 if constexpr (Backend::supports_host_callbacks) {
                     const Eigen::VectorXd root_vector =
                         backend.download(backend.cview(roots).column(root));
+                    const auto certification_start = stamp();
                     const double physical = options.physical_residual_norm(root_vector, eigenvalue);
+                    certification_time += stamp() - certification_start;
                     if (!std::isfinite(physical) || physical < 0.0) {
                         throw std::runtime_error("Davidson physical residual norm is invalid");
                     }
@@ -444,15 +509,10 @@ Result solve_davidson(Backend& backend,
             auto correction = backend.view(corrections).column(n_corrections);
             if (options.residual_preconditioner) {
                 if constexpr (Backend::supports_host_callbacks) {
-                    const Eigen::VectorXd host_residual = backend.download(backend.cview(residual));
-                    Eigen::VectorXd host_correction =
-                        options.residual_preconditioner(host_residual, eigenvalue);
-                    if (host_correction.size() != dimension || !host_correction.allFinite()) {
-                        throw std::runtime_error(
-                            "Davidson residual preconditioner returned an invalid vector");
-                    }
-                    host_correction = -host_correction;
-                    backend.upload_into(correction, host_correction);
+                    backend.precondition(correction,
+                                         backend.cview(residual),
+                                         eigenvalue,
+                                         options.residual_preconditioner);
                 }
             } else {
                 backend.precondition(correction,
@@ -489,6 +549,13 @@ Result solve_davidson(Backend& backend,
                                              std::move(hamiltonian_roots),
                                              std::move(overlap_roots),
                                              options.identity_overlap);
+            }
+            if (observe_work) {
+                const auto vector_time =
+                    stamp() - solve_start - action_time - projected_time - certification_time;
+                options.observe_work(std::chrono::duration<double>(vector_time).count(),
+                                     std::chrono::duration<double>(projected_time).count(),
+                                     std::chrono::duration<double>(action_time).count());
             }
             return result;
         }
@@ -574,34 +641,56 @@ Result solve_davidson(Backend& backend,
             options.identity_overlap ? old_basis
                                      : backend.cview(overlap_basis).columns(0, active_dimension),
             basis_norms);
-        auto correction_images = backend.make(dimension, n_corrections);
-        auto overlap_correction_images =
-            backend.make(dimension, options.identity_overlap ? 0 : n_corrections);
-        backend.apply(backend.cview(corrections).columns(0, n_corrections),
-                      backend.view(correction_images),
-                      backend.view(overlap_correction_images));
-        validate_images(backend,
-                        backend.cview(correction_images),
-                        backend.cview(overlap_correction_images),
-                        dimension,
-                        n_corrections,
-                        options.identity_overlap);
-        ++result.block_actions;
-
         const int previous_dimension = active_dimension;
         DavidsonRankInfo rank_info;
-        active_dimension =
-            append_s_orthonormal_block(backend,
-                                       backend.cview(corrections).columns(0, n_corrections),
-                                       backend.cview(correction_images),
-                                       backend.cview(overlap_correction_images),
-                                       backend.view(basis),
-                                       backend.view(hamiltonian_basis),
-                                       backend.view(overlap_basis),
-                                       active_dimension,
-                                       options.identity_overlap,
-                                       basis_norms,
-                                       &rank_info);
+        const auto correction_vectors = backend.cview(corrections).columns(0, n_corrections);
+        if (Backend::supports_host_callbacks && options.identity_overlap) {
+            // A linear H can be applied to the final orthonormal directions
+            // directly, instead of updating H images with both Gram-Schmidt passes.
+            active_dimension = append_s_orthonormal_block(backend,
+                                                          correction_vectors,
+                                                          {},
+                                                          {},
+                                                          backend.view(basis),
+                                                          {},
+                                                          {},
+                                                          active_dimension,
+                                                          true,
+                                                          basis_norms,
+                                                          &rank_info);
+            if (active_dimension > previous_dimension) {
+                const int added = active_dimension - previous_dimension;
+                const auto h = backend.view(hamiltonian_basis).columns(previous_dimension, added);
+                apply(backend.cview(basis).columns(previous_dimension, added), h, {});
+                validate_images(backend, h, {}, dimension, added, true);
+                ++result.block_actions;
+            }
+        } else {
+            auto correction_images = backend.make(dimension, n_corrections);
+            auto overlap_correction_images =
+                backend.make(dimension, options.identity_overlap ? 0 : n_corrections);
+            apply(correction_vectors,
+                  backend.view(correction_images),
+                  backend.view(overlap_correction_images));
+            validate_images(backend,
+                            backend.cview(correction_images),
+                            backend.cview(overlap_correction_images),
+                            dimension,
+                            n_corrections,
+                            options.identity_overlap);
+            ++result.block_actions;
+            active_dimension = append_s_orthonormal_block(backend,
+                                                          correction_vectors,
+                                                          backend.cview(correction_images),
+                                                          backend.cview(overlap_correction_images),
+                                                          backend.view(basis),
+                                                          backend.view(hamiltonian_basis),
+                                                          backend.view(overlap_basis),
+                                                          active_dimension,
+                                                          options.identity_overlap,
+                                                          basis_norms,
+                                                          &rank_info);
+        }
         update_projected_hamiltonian(backend,
                                      backend.cview(basis),
                                      backend.cview(hamiltonian_basis),

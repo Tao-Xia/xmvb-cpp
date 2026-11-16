@@ -82,7 +82,7 @@ void check_casci() {
     large.active.pair_kernel = Eigen::MatrixXd::Zero(136, 136);
     rejected = false;
     try {
-        (void)xmvb::casscf::solve_casci(large, 16, 0);
+        (void)xmvb::casscf::solve_casci(large, 16, 0, options);
     } catch (const std::length_error&) {
         rejected = true;
     }

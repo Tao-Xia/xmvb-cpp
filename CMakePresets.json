@@ -1,0 +1,25 @@
+{
+  "version": 2,
+  "configurePresets": [
+    {
+      "name": "cpu-release",
+      "displayName": "CPU Release",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/cpu-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "BUILD_TESTING": "OFF",
+        "XMVB_BUILD_DEV_TARGETS": "OFF",
+        "XMVB_ENABLE_CUDA": "OFF",
+        "XMVB_ENABLE_EIGEN_BLAS_BACKEND": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "cpu-release",
+      "configurePreset": "cpu-release",
+      "targets": ["xmvb"]
+    }
+  ]
+}

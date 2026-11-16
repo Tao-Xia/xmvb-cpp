@@ -19,6 +19,14 @@ class Cholesky {
     /** Solve matrix * out = rhs. Exact in-place and overlapping views are valid. */
     void solve(linalg::ConstMatrixView rhs, linalg::MatrixView out) const;
 
+    /** Apply L or L^T, or its inverse, using the existing factor. Exact
+     * in-place views are supported; partially overlapping views are not.
+     */
+    void transform(linalg::ConstMatrixView rhs,
+                   linalg::MatrixView out,
+                   bool transpose,
+                   bool inverse) const;
+
     int dimension() const noexcept {
         return dimension_;
     }

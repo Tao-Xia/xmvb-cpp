@@ -33,6 +33,9 @@ class SparseParameterLayout {
 
     Eigen::VectorXd gather_from_full(const std::vector<double>& full_vector) const;
 
+    /** Expand packed directions to the padded coefficient table, with zero padding. */
+    Eigen::VectorXd scatter_to_full(const Eigen::VectorXd& packed_vector) const;
+
     void unpack(const Eigen::VectorXd& packed_parameters,
                 OrbitalPreparationInput* orbital_preparation_input) const;
 

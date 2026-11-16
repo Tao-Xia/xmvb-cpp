@@ -191,12 +191,28 @@ void fill_ri_factor_direction_tile(const RiActiveTwoElectronResponseCache& cache
                                    int first_aux,
                                    int count,
                                    Eigen::MatrixXd& result) {
-    const Eigen::MatrixXd mixed = accepted * direction;
-    for (Eigen::Index pair = 0; pair < result.cols(); ++pair) {
-        const int a = cache.active_pair_first_indices[pair];
-        const int b = cache.active_pair_second_indices[pair];
-        result.col(pair).segment(first_aux, count) =
-            mixed.col(b).segment(a * count, count) + mixed.col(a).segment(b * count, count);
+    const int workers = bounded_openmp_thread_count(effective_openmp_thread_count(), count);
+    Eigen::MatrixXd mixed(accepted.rows(), direction.cols());
+#pragma omp parallel num_threads(workers) if (workers > 1)
+    {
+        int worker = 0, team = 1;
+#ifdef _OPENMP
+        worker = omp_get_thread_num();
+        team = omp_get_num_threads();
+#endif
+        // Each worker owns a contiguous row slab of this tall GEMM. The input
+        // and mixed image are shared, and each packed pair has one writer.
+        const Eigen::Index first = worker * mixed.rows() / team;
+        const Eigen::Index rows = (worker + 1) * mixed.rows() / team - first;
+        mixed.middleRows(first, rows).noalias() = accepted.middleRows(first, rows) * direction;
+#pragma omp barrier
+#pragma omp for schedule(static)
+        for (Eigen::Index pair = 0; pair < result.cols(); ++pair) {
+            const Eigen::Index a = cache.active_pair_first_indices[pair];
+            const Eigen::Index b = cache.active_pair_second_indices[pair];
+            result.col(pair).segment(first_aux, count) =
+                mixed.col(b).segment(a * count, count) + mixed.col(a).segment(b * count, count);
+        }
     }
 }
 
@@ -315,7 +331,7 @@ RiActiveTwoElectronResponseCache build_ri_active_two_electron_response_cache(
     const int n_bf = ao_ri_factorization.n_basis_functions;
     const std::size_t n_ao_pairs = packed_pair_count(n_bf);
     const std::size_t n_active_pairs = packed_pair_count(n_active_orbitals);
-    if (ao_ri_factorization.n_packed_ao_pairs != static_cast<int>(n_ao_pairs) ||
+    if (ao_ri_factorization.n_packed_ao_pairs != static_cast<Eigen::Index>(n_ao_pairs) ||
         ao_ri_factorization.metric_whitened_ao_pair_factors.rows() !=
             ao_ri_factorization.n_auxiliary_functions ||
         ao_ri_factorization.metric_whitened_ao_pair_factors.cols() !=
@@ -489,7 +505,7 @@ std::vector<double> compute_ri_packed_active_two_electron_integral_directional_d
     for (Eigen::Index first = 0; first < n_active_pairs; ++first) {
         for (Eigen::Index second = 0; second <= first; ++second) {
             const auto packed_index = xmvb::core::PairIndex::packed_pair_of_pairs_index(
-                static_cast<int>(first), static_cast<int>(second));
+                first, second);
             packed_direction[packed_index] =
                 one_sided_contraction(first, second) + one_sided_contraction(second, first);
         }
@@ -528,7 +544,7 @@ Eigen::MatrixXd compute_ri_packed_active_two_electron_integral_directional_deriv
         for (Eigen::Index first = 0; first < n_active_pairs; ++first) {
             for (Eigen::Index second = 0; second <= first; ++second) {
                 const auto packed_index = xmvb::core::PairIndex::packed_pair_of_pairs_index(
-                    static_cast<int>(first), static_cast<int>(second));
+                    first, second);
                 packed_directions(packed_index, direction) =
                     one_sided(first, second) + one_sided(second, first);
             }
@@ -547,7 +563,7 @@ std::vector<Eigen::MatrixXd> backpropagate_ri_packed_active_two_electron_gradien
     const int n = accepted_cache.n_basis_functions;
     const int na = accepted_cache.n_active_orbitals;
     const int n_aux = accepted_cache.n_auxiliary_functions;
-    const int pairs = static_cast<int>(accepted_cache.active_pair_first_indices.size());
+    const Eigen::Index pairs = accepted_cache.active_pair_first_indices.size();
     const std::size_t packed_size = static_cast<std::size_t>(pairs) * (pairs + 1) / 2;
     for (const auto* gradient : packed_gradients)
         if (!gradient || gradient->size() != packed_size)
@@ -579,11 +595,11 @@ std::vector<Eigen::MatrixXd> backpropagate_ri_packed_active_two_electron_gradien
             Eigen::MatrixXd weights = Eigen::MatrixXd::Zero(na * pairs, na * width);
             for (int r = 0; r < width; ++r) {
                 const auto& gradient = *packed_gradients[begin + r];
-                for (int p = 0; p < pairs; ++p) {
+                for (Eigen::Index p = 0; p < pairs; ++p) {
                     const int a = accepted_cache.active_pair_first_indices[p];
                     const int b = accepted_cache.active_pair_second_indices[p];
-                    for (int q = 0; q < pairs; ++q) {
-                        const int hi = std::max(p, q), lo = std::min(p, q);
+                    for (Eigen::Index q = 0; q < pairs; ++q) {
+                        const auto hi = std::max(p, q), lo = std::min(p, q);
                         const double value =
                             (p == q ? 2.0 : 1.0) *
                             gradient[core::PairIndex::packed_pair_of_pairs_index(hi, lo)];
@@ -640,8 +656,8 @@ std::vector<Eigen::MatrixXd> backpropagate_ri_packed_active_two_electron_gradien
             Eigen::MatrixXd pair_adjoint(pairs, pairs * width);
             for (int r = 0; r < width; ++r) {
                 const auto& gradient = *packed_gradients[begin + r];
-                for (int p = 0; p < pairs; ++p)
-                    for (int q = 0; q < pairs; ++q) {
+                for (Eigen::Index p = 0; p < pairs; ++p)
+                    for (Eigen::Index q = 0; q < pairs; ++q) {
                         const int hi = std::max(p, q), lo = std::min(p, q);
                         pair_adjoint(q, r * pairs + p) =
                             (p == q ? 2.0 : 1.0) *

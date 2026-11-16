@@ -26,16 +26,85 @@
 #include "vbscf/optimization/objective/function.hpp"
 #include "vbscf/optimization/trust_region/retraction.hpp"
 #include "vbscf/orbitals/charts/chart.hpp"
+#include "vbscf/core/contracts/orbital_type.hpp"
+#include "vbscf/optimization/preconditioners/hessian_diagonal.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
 #include "vbscf/structures/assembly/action.hpp"
 #include "vbscf/structures/orthogonal_ci/metric.hpp"
+#include "vbscf/structures/overlap/metric.hpp"
 #include "linalg/metric_solve.hpp"
+#include "mcscf/ci/micro_response.hpp"
 
 namespace {
 
 void require(bool condition, const std::string& message) {
     if (!condition)
         throw std::runtime_error(message);
+}
+
+void check_ci_micro_response() {
+    Eigen::MatrixXd h = Eigen::MatrixXd::Zero(7, 7);
+    for (Eigen::Index i = 0; i < h.rows(); ++i) {
+        h(i, i) = 0.3 + i;
+        for (Eigen::Index j = 0; j < i; ++j)
+            h(i, j) = h(j, i) = 0.2 * std::cos(i + 2 * j);
+    }
+    const Eigen::VectorXd c = Eigen::VectorXd::LinSpaced(7, 0.2, 1.0).normalized();
+    const auto response = xmvb::mcscf::ci_micro_response(
+        c, [&](const Eigen::VectorXd& x) -> Eigen::VectorXd { return h * x; }, 1e-12);
+    require(response.actions <= 4 && response.energy <= c.dot(h * c) + 1e-12,
+            "CI microresponse exceeded its work bound or increased energy");
+    require(std::abs(response.coefficients.norm() - 1) < 1e-12,
+            "CI microresponse lost physical normalization");
+    require((response.hamiltonian - h * response.coefficients).norm() < 1e-12,
+            "CI microresponse retained Hamiltonian image has wrong phase or weights");
+    require(std::abs((h * response.coefficients - response.energy * response.coefficients).norm() -
+                     response.residual_norm) < 1e-12,
+            "CI microresponse residual does not match its retained image");
+    const auto shifted = xmvb::mcscf::ci_micro_response(
+        c, [&](const Eigen::VectorXd& x) -> Eigen::VectorXd { return h * x + 1000 * x; }, 1e-12);
+    require(std::abs(shifted.energy - 1000 - response.energy) < 1e-10 &&
+                (shifted.coefficients - response.coefficients).norm() < 1e-10,
+            "CI microresponse depends on an additive energy constant");
+    const Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eigen(h);
+    const auto exact = xmvb::mcscf::ci_micro_response(
+        eigen.eigenvectors().col(0),
+        [&](const Eigen::VectorXd& x) -> Eigen::VectorXd { return h * x; },
+        1e-12);
+    require(exact.actions == 1, "stationary CI seed incurred redundant response actions");
+
+    // Four distinct eigenvalues give an independent, exact four-dimensional
+    // Krylov oracle, with many row panels and a partial final panel.
+    const Eigen::Index size = 262145;
+    Eigen::VectorXd spectrum(size), seed(size);
+    for (Eigen::Index i = 0; i < size; ++i) {
+        spectrum[i] = -2.0 + static_cast<double>(i % 4);
+        seed[i] = 0.5 + 0.1 * static_cast<double>(i % 7);
+    }
+    seed.normalize();
+    const auto diagonal_action = [&](const Eigen::Ref<const Eigen::VectorXd>& x) {
+        return (spectrum.array() * x.array()).matrix().eval();
+    };
+    const auto panel_response = xmvb::mcscf::ci_micro_response(seed, diagonal_action, 1e-12);
+    Eigen::VectorXd expected = seed;
+    for (Eigen::Index i = 0; i < size; ++i)
+        if (i % 4 != 0)
+            expected[i] = 0.0;
+    expected.normalize();
+    require(panel_response.actions == 4 && std::abs(panel_response.energy + 2.0) < 1e-12 &&
+                (panel_response.coefficients - expected).norm() < 1e-11 &&
+                (panel_response.hamiltonian + 2.0 * expected).norm() < 1e-11 &&
+                panel_response.residual_norm < 1e-11,
+            "panel CI residual disagrees with the exact spectral projection");
+    const auto dependent = xmvb::mcscf::ci_micro_response(
+        seed, diagonal_action, 1e-12,
+        [](const Eigen::Ref<const Eigen::VectorXd>&, double, Eigen::Ref<Eigen::VectorXd> out) {
+            out.setZero();
+        });
+    require(dependent.actions == 1 && (dependent.coefficients - seed).norm() < 1e-12 &&
+                (dependent.hamiltonian - diagonal_action(seed)).norm() < 1e-12 &&
+                dependent.residual_norm > 0.1,
+            "dependent short-CI exit lost its last Ritz vector or Hamiltonian image");
 }
 
 /** @brief Repeated Riesz maps reuse inverse images, not an approximate norm. */
@@ -197,6 +266,7 @@ accepted_point(const StructureFixture& fixture, int n_states, std::vector<double
     }
     accepted->normalized_state_weights = std::move(weights);
     accepted->selected_state_eigenvectors = fixture.eigenvectors.leftCols(n_states);
+    accepted->selected_metric = std::make_shared<xmvb::vb::SelectedMetric>(fixture.overlap);
     accepted->selected_state_structure_images =
         xmvb::vb::StructureActionResult{fixture.hamiltonian * accepted->selected_state_eigenvectors,
                                         fixture.overlap * accepted->selected_state_eigenvectors};
@@ -619,16 +689,79 @@ xmvb::vb::VbScfInput coupling_input() {
     auto& data = input.structure_data;
     data.alpha_strings = {{0}, {1}};
     data.beta_strings = {{0}, {1}};
-    data.offsets = {0};
+    std::vector<std::size_t> offsets{0};
+    std::vector<xmvb::vb::StructureExpansionTerm> terms;
     for (int a = 0; a < 2; ++a) {
         for (int b = 0; b < 2; ++b) {
             data.pair_alpha.push_back(a);
             data.pair_beta.push_back(b);
-            data.terms.push_back({data.n_structures++, 1.0});
-            data.offsets.push_back(data.terms.size());
+            terms.push_back({data.n_structures++, 1.0});
+            offsets.push_back(terms.size());
         }
     }
+    data.incidence_data = xmvb::vb::StructureIncidenceData::make(
+        std::move(offsets), std::move(terms), data.n_structures);
     return input;
+}
+
+/** A nonorthogonal FULL keyframe uses the current metric, not Euclidean C. */
+void check_ci_keyframe_update() {
+    using namespace xmvb::vb;
+    auto input = coupling_input();
+    input.complete_active_space = true;
+    input.structure_data.n_structures = 3;
+    auto terms = input.structure_data.incidence_data->terms;
+    terms[2].structure_index = 1;
+    terms[3].structure_index = 2;
+    input.structure_data.incidence_data = xmvb::vb::StructureIncidenceData::make(
+        input.structure_data.incidence_data->offsets, std::move(terms), 3);
+    const OrbitalGradientEvaluator evaluator;
+    const Eigen::MatrixXd no_seed;
+    auto forward = evaluator.evaluate_forward(
+        input, {0}, {1.0}, 0.4, StructureEigensolver::Davidson, StructureSolveAccuracy{}, no_seed);
+    const auto accepted = evaluator.complete_gradient(input, std::move(forward));
+    require(accepted.second_order_context->structure_action->orthogonal_view().terms.data() ==
+                input.structure_data.incidence_data->terms.data(),
+            "structure action duplicated the immutable input incidence");
+    require(accepted.second_order_context->structure_metric_inverse != nullptr,
+            "CI keyframe fixture lacks a physical coordinate map");
+    {
+        const auto& metric = *accepted.second_order_context->structure_metric_inverse;
+        const auto& action = *accepted.second_order_context->structure_action;
+        const Eigen::VectorXd x = Eigen::VectorXd::LinSpaced(3, 0.1, 0.7).normalized();
+        const Eigen::VectorXd h = metric.apply_ci_hamiltonian(x).col(0);
+        const double energy = x.dot(h);
+        const auto reused = metric.ci_state_adjoint(x, h - energy * x);
+        const auto coefficients = metric.from_ci_coordinates(x);
+        const auto reference = action.active_integral_adjoint(
+            action.prepare_active_adjoint(coefficients, {1.0}, {energy}));
+        require((reused.overlap - reference.overlap).norm() < 1e-10 &&
+                    (reused.one_electron - reference.one_electron).norm() < 1e-10 &&
+                    (reused.pair_kernel - reference.pair_kernel).norm() < 1e-10,
+                "reused CI residual adjoint differs from independent finite-residual sweep");
+    }
+    input.orbital_preparation_input.orbital_value_table[1] += 0.08;
+    const auto fixed = evaluator.evaluate_fixed_structure(
+        input,
+        {0},
+        {1.0},
+        0.4,
+        accepted.second_order_context->selected_state_eigenvectors,
+        nullptr,
+        false,
+        accepted.second_order_context.get(),
+        nullptr,
+        false,
+        FixedStructureUpdate::Krylov);
+    const auto exact = evaluator.evaluate(input, {0}, {1.0}, 0.4);
+    require(std::abs(fixed.gradient.scf_result.total_energy - exact.scf_result.total_energy) <
+                1e-11,
+            "CI microresponse differs from independent CI in its complete small Krylov space");
+    const SparseParameterLayout layout(input.orbital_preparation_input);
+    require((layout.gather_from_full(fixed.gradient.sparse_orbital_energy_gradient) -
+             layout.gather_from_full(exact.sparse_orbital_energy_gradient))
+                    .norm() < 1e-10,
+            "updated-CI orbital gradient uses stale density or wrong normalization");
 }
 
 /** @brief Selected-space coupling symmetry in production and isolated cofactor builds. */
@@ -736,13 +869,24 @@ void check_joint_coupling_action() {
 }
 
 /** Production CIAH HVP against analytic keyframe-gradient differences, not FD-vs-FD. */
-void check_affine_keyframe_hvp(int n_states, bool selected, bool stationary) {
+void check_affine_keyframe_hvp(int n_states, bool selected, bool stationary, bool hao = false) {
     using namespace xmvb::vb;
     auto input = coupling_input();
+    input.orbital_preparation_input.orbital_type = hao ? kOrbitalTypeHao : kOrbitalTypeOeo;
+    if (hao) {
+        auto& o = input.orbital_preparation_input;
+        o.orbital_basis_counts = {2, 2};
+        o.orbital_basis_index_table = {1, 2, 0, 2, 3, 0};
+        o.orbital_value_table = {1.0, 0.13, 0.0, 0.94, 0.12, 0.0};
+    }
     if (selected) {
         // Three of four products: the selected subspace is not orbital-transform closed.
-        input.structure_data.terms.pop_back();
-        input.structure_data.offsets.back() = input.structure_data.terms.size();
+        auto terms = input.structure_data.incidence_data->terms;
+        auto offsets = input.structure_data.incidence_data->offsets;
+        terms.pop_back();
+        offsets.back() = terms.size();
+        input.structure_data.incidence_data = xmvb::vb::StructureIncidenceData::make(
+            std::move(offsets), std::move(terms), input.structure_data.n_structures);
         input.structure_data.n_structures = 3;
     }
     const auto& orbitals = input.orbital_preparation_input;
@@ -768,7 +912,7 @@ void check_affine_keyframe_hvp(int n_states, bool selected, bool stationary) {
     require(stationary ? residual < 1e-10 : residual > 1e-2,
             "finite-residual HVP fixture did not attain the requested CI residual");
     const auto& prepared = fixed.gradient.orbital_preparation_result;
-    const OrbitalChart chart(orbitals,
+    OrbitalChart chart(orbitals,
                              layout,
                              prepared.auxiliary_orbital_matrix.leftCols(orbitals.n_orbitals),
                              prepared.physical_orbital_frame.normalized_orbital_matrix,
@@ -807,6 +951,44 @@ void check_affine_keyframe_hvp(int n_states, bool selected, bool stationary) {
     };
     Eigen::VectorXd p = Eigen::VectorXd::LinSpaced(no, -0.23, 0.71).normalized();
     Eigen::VectorXd q = Eigen::VectorXd::LinSpaced(ns, 0.63, -0.29).normalized();
+    if (n_states == 1 && hessian.structure_action().supports_integral_direction()) {
+        const auto reference = hessian.apply_orbital_coupling(p).orbital_hessian;
+        const double error =
+            (hessian.apply_orbital(p) - reference).norm() / std::max(1.0, reference.norm());
+        std::cout << "orbital_normalization selected=" << selected << " stationary=" << stationary
+                  << " error=" << error << '\n';
+        require(error < 2e-11, "scalar normalization differs from the full projected orbital HVP");
+    }
+#ifndef XMVB_TEST_COFACTOR_REFERENCE
+    // Compare the actual same-point coupled action before/after changing only
+    // its preconditioner. The subsequent energy/gradient FD uses the new chart.
+    const auto* exchange = hessian.accepted_exchange_integrals();
+    require(exchange != nullptr, "auxiliary same-point test lacks accepted exchange");
+    const auto original_diagonal = build_analytic_orbital_diagonal(input, *context, exchange, false);
+    const auto auxiliary_diagonal = build_analytic_orbital_diagonal(input, *context, exchange);
+    require(auxiliary_diagonal.auxiliary_rotation.size() != 0,
+            "selected/HAO same-point test did not enable auxiliary frame");
+    chart.set_curvature(orbitals, nullptr, &original_diagonal, OrbitalChart::CurvatureUse::AugmentedHessian);
+    Eigen::VectorXd direction(no + ns);
+    direction << p, q;
+    const Eigen::VectorXd old_action = action(direction);
+    const Eigen::VectorXd packed_gradient = layout.gather_from_full(fixed.gradient.sparse_orbital_energy_gradient);
+    const Eigen::VectorXd old_gradient = chart.project_reduced_gradient(packed_gradient);
+    const Eigen::VectorXd old_direction = chart.apply_inverse_augmented_hessian_diagonal(old_gradient, -0.7);
+    const double old_cap = chart.maximum_rotation_component(p);
+    chart.set_curvature(orbitals, nullptr, &auxiliary_diagonal, OrbitalChart::CurvatureUse::AugmentedHessian);
+    const double hvp_error = (action(direction) - old_action).norm();
+    const double gradient_error = (chart.project_reduced_gradient(packed_gradient) - old_gradient).norm();
+    const Eigen::VectorXd new_direction = chart.apply_inverse_augmented_hessian_diagonal(old_gradient, -0.7);
+    require(hvp_error < 2e-11 && gradient_error < 2e-13 &&
+                std::abs(chart.maximum_rotation_component(p) - old_cap) < 2e-12,
+            "auxiliary frame changed physical HVP, gradient or step cap");
+    require(new_direction.allFinite(), "nonfinite auxiliary preconditioned direction");
+    std::cout << "auxiliary_same_point hao=" << hao << " states=" << n_states
+              << " selected=" << selected << " stationary=" << stationary
+              << " gradient_error=" << gradient_error << " hvp_error=" << hvp_error
+              << " direction_change=" << (new_direction - old_direction).norm() << '\n';
+#endif
     double worst = 0.0, old_error = 0.0, coarse_error = 0.0;
     for (int mode : {0, 1, 2}) {
         Eigen::VectorXd direction(no + ns);
@@ -866,6 +1048,7 @@ void check_affine_keyframe_hvp(int n_states, bool selected, bool stationary) {
 
 int main() {
     try {
+        check_ci_micro_response();
         check_selected_coupling_symmetry();
 #ifdef XMVB_TEST_COFACTOR_REFERENCE
         for (int n_states : {1, 2})
@@ -875,6 +1058,7 @@ int main() {
         return 0;
 #endif
         const StructureFixture fixture = make_fixture();
+        check_ci_keyframe_update();
         check_single_state(fixture);
         check_equal_weight_multistate(fixture);
         check_unequal_weights_rejected(fixture);
@@ -887,6 +1071,9 @@ int main() {
             for (bool selected : {false, true})
                 for (bool stationary : {false, true})
                     check_affine_keyframe_hvp(n_states, selected, stationary);
+        for (int n_states : {1, 2})
+            for (bool stationary : {false, true})
+                check_affine_keyframe_hvp(n_states, true, stationary, true);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

@@ -2,10 +2,12 @@
 #include "mcscf/ci/sigma.hpp"
 
 #include <algorithm>
+#include <array>
 #include <stdexcept>
 #include <utility>
 
 #include "parallel/openmp.hpp"
+#include "core/timing.hpp"
 #include "core/pair_index.hpp"
 
 namespace xmvb::mcscf {
@@ -41,31 +43,60 @@ Eigen::MatrixXd
 DirectCiSigmaAction::spin_generator_adjoint(bool beta,
                                             const Eigen::Ref<const Eigen::MatrixXd>& left,
                                             const Eigen::Ref<const Eigen::MatrixXd>& right) const {
+    const SpinGeneratorTerm terms[]{{left, right}};
+    return spin_generator_adjoint(beta, terms);
+}
+
+Eigen::MatrixXd
+DirectCiSigmaAction::spin_generator_adjoint(bool beta,
+                                            std::span<const SpinGeneratorTerm> terms) const {
+    profiling::ScopedPhase phase(profiling::Phase::CiGeneratorAdjoint);
     const auto& graph = beta ? beta_connections() : *alpha_;
-    const int rows = beta ? n_beta_ : n_alpha_;
-    if (left.rows() != rows || right.rows() != rows || left.cols() != right.cols())
-        throw std::invalid_argument("invalid single-spin generator-adjoint dimensions");
-    const int workers = coarse_openmp_thread_count(effective_openmp_thread_count(),
-                                                   static_cast<std::size_t>(rows) * left.cols());
+    const auto rows = graph.n_strings();
+    if (terms.empty())
+        throw std::invalid_argument("missing single-spin generator-adjoint terms");
+    const auto cols = terms.front().left.cols();
+    for (const auto& term : terms)
+        if (term.left.rows() != rows || term.right.rows() != rows || term.left.cols() != cols ||
+            term.right.cols() != cols)
+            throw std::invalid_argument("invalid single-spin generator-adjoint dimensions");
+    const int workers = bounded_openmp_thread_count(
+        coarse_openmp_thread_count(cooperative_openmp_thread_count(),
+                                   static_cast<std::size_t>(rows) * cols),
+        cols);
     std::vector<Eigen::MatrixXd> partials(workers, Eigen::MatrixXd::Zero(n_orbitals_, n_orbitals_));
-#pragma omp parallel if (workers > 1) num_threads(workers)
-    {
-        int worker = 0;
-#ifdef _OPENMP
-        worker = omp_get_thread_num();
-#endif
-        auto& density = partials[worker];
-#pragma omp for schedule(static)
-        for (std::int64_t target = 0; target < rows; ++target) {
-            const double value = left.row(target).dot(right.row(target));
-            for (int occupied : graph.occupied(target))
-                density(occupied, occupied) += value;
-            const auto& links = graph.singles(target);
-            for (std::size_t link = 0; link < links.size(); ++link)
-                density(links[link].created, links[link].annihilated) +=
-                    links[link].sign * left.row(target).dot(right.row(links[link].source));
-        }
-    }
+    // Each worker traverses contiguous coefficient columns. Share the link
+    // and its output address between the product-rule terms.
+    const auto contract = [&]<std::size_t N>(const SpinGeneratorTerm* pairs) {
+        cooperative_openmp_for(workers, workers, [&](std::ptrdiff_t worker) {
+            auto& density = partials[worker];
+            for (Eigen::Index col = cols * worker / workers; col < cols * (worker + 1) / workers;
+                 ++col) {
+                std::array<const double*, N> left, right;
+                for (std::size_t l = 0; l < N; ++l) {
+                    left[l] = pairs[l].left.col(col).data();
+                    right[l] = pairs[l].right.col(col).data();
+                }
+                for (Eigen::Index target = 0; target < rows; ++target) {
+                    const auto value = [&](Eigen::Index source) {
+                        double sum = 0;
+                        for (std::size_t l = 0; l < N; ++l)
+                            sum += left[l][target] * right[l][source];
+                        return sum;
+                    };
+                    const double diagonal = value(target);
+                    for (const int occupied : graph.occupied(target))
+                        density(occupied, occupied) += diagonal;
+                    for (const auto& link : graph.singles(target))
+                        density(link.created, link.annihilated) += link.sign * value(link.source);
+                }
+            }
+        });
+    };
+    for (std::size_t l = 0; l + 1 < terms.size(); l += 2)
+        contract.template operator()<2>(terms.data() + l);
+    if (terms.size() % 2)
+        contract.template operator()<1>(&terms.back());
     Eigen::MatrixXd result = Eigen::MatrixXd::Zero(n_orbitals_, n_orbitals_);
     for (const auto& partial : partials)
         result += partial;

@@ -14,10 +14,9 @@ class StructureTangentOperator;
 class NonredundantRetractionMetric;
 namespace optimizer_detail {
 
-/** @brief One CIAH macro step with a fully relaxed final structure solve. */
+/** @brief One accepted CIAH macro step. */
 struct CiahMacroStep {
     VbScfObjective::TrialEvaluation trial;
-    Eigen::VectorXd parameters;
     Eigen::VectorXd next_orbital_guess_packed;
     Eigen::MatrixXd next_structure_guess;
     /** @brief Retained only after both existing terminal conditions pass. */
@@ -49,8 +48,7 @@ bool build_ciah_macro_step(VbScfObjective* objective,
                            double* trust_radius,
                            CiahIterationRecord* record,
                            VbScfOptimizerResult* result,
-                           CiahMacroStep* accepted,
-                           bool seek_curvature);
+                           CiahMacroStep* accepted);
 
 } // namespace optimizer_detail
 } // namespace xmvb::vb

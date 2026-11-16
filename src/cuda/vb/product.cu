@@ -169,7 +169,7 @@ __global__ void generate_selected(const std::int64_t* starts,
                                   linalg::MatrixView output) {
     for (auto a = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x; a < output.rows;
          a += static_cast<std::size_t>(gridDim.x) * blockDim.x)
-        for (int g = starts[a]; g < starts[a + 1]; ++g) {
+        for (mcscf::ProductIndex g = starts[a]; g < starts[a + 1]; ++g) {
             double value = 0.0;
             for (auto t = incidence.offsets[g]; t < incidence.offsets[g + 1]; ++t)
                 value += incidence.weights[t] * coefficients.data[incidence.structures[t]];
@@ -196,7 +196,7 @@ __global__ void generate_selected_jet(const std::int64_t* starts,
                                       linalg::MatrixView output) {
     for (auto a = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x; a < output.rows;
          a += static_cast<std::size_t>(gridDim.x) * blockDim.x)
-        for (int g = starts[a]; g < starts[a + 1]; ++g) {
+        for (mcscf::ProductIndex g = starts[a]; g < starts[a + 1]; ++g) {
             double value = 0.0, direction = 0.0;
             for (auto t = incidence.offsets[g]; t < incidence.offsets[g + 1]; ++t) {
                 const auto index = incidence.structures[t];
@@ -221,7 +221,7 @@ __global__ void generate_selected_jet(const std::int64_t* starts,
 
 __global__ void project_groups(const std::int64_t* raw_alpha,
                                const std::int64_t* raw_beta,
-                               int count,
+                               std::int64_t count,
                                const std::int64_t* offsets,
                                const std::int64_t* columns,
                                const double* factors,
@@ -247,11 +247,14 @@ __global__ void project_groups(const std::int64_t* raw_alpha,
     }
 }
 
-__global__ void contract_groups(
-    ProductIncidence incidence, int begin, int count, const double* values, double* target) {
+__global__ void contract_groups(ProductIncidence incidence,
+                                std::int64_t begin,
+                                std::int64_t count,
+                                const double* values,
+                                double* target) {
     for (auto i = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x; i < count;
          i += static_cast<std::size_t>(gridDim.x) * blockDim.x) {
-        const int g = begin + i;
+        const std::int64_t g = begin + i;
         for (auto t = incidence.offsets[g]; t < incidence.offsets[g + 1]; ++t)
             atomicAdd(target + incidence.structures[t], incidence.weights[t] * values[i]);
     }
@@ -263,7 +266,7 @@ __global__ void contract_groups(
 __global__ void ordered_products_tiles(ProductIncidence incidence,
                                        const std::int64_t* aa,
                                        const std::int64_t* bb,
-                                       int groups,
+                                       std::int64_t groups,
                                        linalg::ConstMatrixView source,
                                        double* const* tiles,
                                        int alpha,
@@ -450,7 +453,9 @@ struct SupportMask {
 struct ProductSymbolic {
     Context& c;
     PinnedTransfer staging;
-    int alpha, beta, groups;
+    int alpha, beta;
+    mcscf::ProductIndex groups;
+    static_assert(sizeof(groups) >= sizeof(std::int64_t));
     const mcscf::ProductSupport* support;
     Buffer<std::int64_t> starts, raw_alpha, raw_beta;
     std::vector<std::int64_t> reachable;
@@ -465,8 +470,8 @@ struct ProductSymbolic {
                     int beta_dimension,
                     const mcscf::ProductSupport* exact_support)
         : c(ctx), staging(ctx), alpha(alpha_dimension), beta(beta_dimension),
-          groups(view.products.size()), support(exact_support),
-          patterns(std::max<std::int64_t>(beta, 0)) {
+          groups(core::checked_index<mcscf::ProductIndex>(view.products.size())),
+          support(exact_support), patterns(std::max<std::int64_t>(beta, 0)) {
         if (alpha <= 0 || beta <= 0)
             throw std::invalid_argument("product dimensions must be positive");
         if (support)
@@ -476,7 +481,7 @@ struct ProductSymbolic {
             std::iota(reachable.begin(), reachable.end(), 0);
         }
         std::vector<std::int64_t> offsets(alpha + 1, 0), aa(groups), bb(groups);
-        for (int g = 0; g < groups; ++g) {
+        for (mcscf::ProductIndex g = 0; g < groups; ++g) {
             aa[g] = view.products[g] / beta;
             bb[g] = view.products[g] % beta;
             ++offsets[aa[g] + 1];
@@ -553,7 +558,9 @@ struct ProductContraction::Impl {
     PinnedTransfer staging;
     const ExteriorTransform& alpha_transform;
     const ExteriorTransform& beta_transform;
-    int alpha, beta, groups, factor_extent = 0, mask_extent = 0;
+    int alpha, beta, factor_extent = 0, mask_extent = 0;
+    mcscf::ProductIndex groups;
+    static_assert(sizeof(groups) >= sizeof(std::int64_t));
     std::size_t beta_shears;
     const mcscf::ProductSupport* support;
     std::shared_ptr<ProductSymbolic> symbolic;
@@ -1465,7 +1472,7 @@ struct ProductContraction::Impl {
             result.overlap.view(),
             joint ? ci->hamiltonian.view() : linalg::MatrixView{},
             joint ? ci->overlap.view() : linalg::MatrixView{}};
-        const int group_extent = std::max<std::size_t>(
+        const mcscf::ProductIndex group_extent = std::max<std::size_t>(
             1, std::min<std::size_t>(groups, quarter / (4 * sizeof(double) * targets)));
         struct Projection {
             Matrix<double> values;

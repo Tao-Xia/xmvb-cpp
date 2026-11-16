@@ -204,6 +204,42 @@ void check_case(const std::vector<std::vector<int>>& alpha,
             "cross-Gram scalar differs from explicit occupied minors");
 
     const Eigen::MatrixXd metric_reference = reference_cross(right, right, w, alpha, beta);
+    if (full_ambient) {
+        const ExteriorOrbitalTransform a(alpha, right), b(beta, right);
+        const auto columns = action.prepare_overlap_beta(b);
+        require(columns.values.size() != 0, "small fixed-chart beta columns were not retained");
+        const auto cached = [&](const Eigen::MatrixXd& rhs, const OverlapRows& panels) {
+            return action.cross_overlap(rhs,
+                                        a,
+                                        b,
+                                        a,
+                                        b,
+                                        nullptr,
+                                        nullptr,
+                                        nullptr,
+                                        nullptr,
+                                        xmvb::workspace::available(),
+                                        &panels);
+        };
+        require(relative_error(cached(block, columns.values), metric_reference * block) < 2e-12,
+                "reused beta columns changed selected multi-RHS metric");
+        require(relative_error(cached(x, columns.values), metric_reference * x) < 2e-12,
+                "reused beta columns changed selected single-RHS metric");
+        const OverlapRows prefix = columns.values.leftCols(1);
+        const auto mixed = action.cross_overlap(x,
+                                                a,
+                                                b,
+                                                a,
+                                                b,
+                                                nullptr,
+                                                nullptr,
+                                                nullptr,
+                                                nullptr,
+                                                4 * sizeof(double) * (alpha.size() + beta.size()),
+                                                &prefix);
+        require(relative_error(mixed, metric_reference * x) < 2e-12,
+                "partial beta residency changed streamed metric");
+    }
     const auto prepared = overlap.prepare_metric(right);
     require(!full_ambient || static_cast<bool>(prepared.selected_metric()),
             "complete spin carrier lost its physical metric factor with a different H backend");
@@ -504,6 +540,47 @@ void check_broad_moment_budget(bool restricted) {
             "restricted broad transport moments differ from bounded source panels");
 }
 
+/** @brief Shared spin moments agree with separate alpha and beta contractions. */
+void check_exchange_transport() {
+    const std::vector<std::vector<int>> spin{{0, 1}, {0, 2}, {0, 3}, {1, 2}, {1, 3}, {2, 3}};
+    const auto count = static_cast<Eigen::Index>(spin.size());
+    const Eigen::MatrixXd w = selected_expansion(count, count);
+    const Eigen::MatrixXd current = upper(0.05, 0.16), origin = upper(0.08, 0.29);
+    const Eigen::MatrixXd direction = upper_direction(0.21);
+    const ExteriorOrbitalTransform ca(spin, current), cb(spin, current);
+    const ExteriorOrbitalTransform oa(spin, origin), ob(spin, origin);
+    const Eigen::Vector3d lambda(0.4, -0.7, 0.8), base(-0.2, 0.6, 0.3), reference(0.1, -0.3, 0.7),
+        transported(0.3, -0.5, 0.2);
+    for (int parity : {-1, 1}) {
+        Eigen::MatrixXd selected = w;
+        for (Eigen::Index a = 0; a < count; ++a)
+            for (Eigen::Index b = 0; b < count; ++b)
+                selected.row(a * count + b) = w.row(a * count + b) + parity * w.row(b * count + a);
+        const auto action = make_action(spin, spin, selected);
+        require(action.orthogonal_view().exchange_parity == parity,
+                "transport test did not select the intended spin-exchange parity");
+        const auto metric = reference_cross(current, current, selected, spin, spin);
+        const auto columns = action.prepare_overlap_beta(ca);
+        Eigen::MatrixXd rhs(3, 2);
+        rhs << lambda, base;
+        const auto triangle = action.cross_overlap(
+            rhs, ca, ca, ca, ca, nullptr, nullptr, nullptr, nullptr, 1024, &columns.values);
+        const auto general =
+            action.cross_overlap(rhs, ca, cb, ca, cb, nullptr, nullptr, nullptr, nullptr, 1024);
+        require(relative_error(triangle, metric * rhs) < 3e-12 &&
+                    relative_error(triangle, general) < 3e-12,
+                "exchange-reduced metric differs from explicit selected Gram");
+        const auto shared = action.cross_overlap_transport_gradient(
+            lambda, base, reference, transported, ca, ca, oa, oa, direction);
+        const auto separate = action.cross_overlap_transport_gradient(
+            lambda, base, reference, transported, ca, cb, oa, ob, direction);
+        require(relative_error(shared.charts.left, separate.charts.left) < 3e-12 &&
+                    relative_error(shared.charts.right, separate.charts.right) < 3e-12 &&
+                    relative_error(shared.image, separate.image) < 3e-12,
+                "shared spin exchange changed the transported gradient");
+    }
+}
+
 /** @brief Real parallel row scatters, with unequal complete spin carriers. */
 void check_parallel_transport() {
     constexpr int n = 8;
@@ -541,6 +618,12 @@ void check_parallel_transport() {
                         std::sin(0.37 * (bi + 1) * (s + 2));
         }
         const auto action = make_action(alpha, beta, w);
+        require(action.shared_overlap_sources() == sparse,
+                "shared overlap sources do not match the exact singleton support");
+        if (sparse)
+            require(relative_error(action.cross_overlap(Eigen::Matrix3d::Identity(), a, b, a, b),
+                                   reference_cross(r, r, w, alpha, beta)) < 3e-12,
+                    "shared-source metric block differs from independent compound minors");
         const auto reference_d = action.cross_overlap_adjoint(x, y, a, b, a, b, &zero, &dr);
         const auto reference_q = action.cross_overlap_adjoint(x, q, a, b, a, b);
         const auto da = a.direction(dr), db = b.direction(dr), za = a.direction(zero),
@@ -672,6 +755,7 @@ int main() {
         check_broad_moment_budget(false);
         check_broad_moment_budget(true);
         check_parallel_transport();
+        check_exchange_transport();
         const std::vector<std::vector<int>> full_alpha = {
             {0, 1}, {0, 2}, {0, 3}, {1, 2}, {1, 3}, {2, 3}};
         const std::vector<std::vector<int>> full_beta = {{0}, {1}, {2}, {3}};

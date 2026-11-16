@@ -141,6 +141,7 @@ void check_case(bool full_space) {
     xmvb::cuda::SpinMetric spin(context, initial, strings, strings, 4096);
     xmvb::cuda::StructureCi ci(context, action, spin, full_space);
     auto options = xmvb::linalg::make_davidson_options(count, 1, 1e-10, 1e-9, 1e-10);
+    options.stopping = xmvb::linalg::DavidsonStoppingCriterion::EnergyAndResidual;
 
     DeviceMatrix model_h(context, count, 1), model_m(context, count, 1);
     action.diagonal_model(model_h.view(), model_m.view());
@@ -220,6 +221,13 @@ void check_case(bool full_space) {
          "dynamic device CI Ritz energy differs from CPU exact H/M");
     near(h_root, h * root, 2e-9, "device CI retained H image differs");
     near(m_root, m * root, 2e-9, "device CI retained M image differs");
+    const Matrix residual = h_root - device.eigenpairs.eigenvalues.at(0) * m_root;
+    const double physical_squared =
+        (residual.transpose() * m.llt().solve(residual))(0, 0) / (root.transpose() * m_root)(0, 0);
+    near(device.stationarity_residual_norms.at(0),
+         std::sqrt(std::max(0.0, physical_squared)),
+         2e-9,
+         "device CI stopping residual is not the selected-space physical norm");
     near(
         (root.transpose() * m * root)(0, 0), 1.0, 2e-9, "device CI root lost metric normalization");
 

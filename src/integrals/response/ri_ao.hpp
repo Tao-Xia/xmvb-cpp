@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <span>
 #include <vector>
 #include <Eigen/Core>
@@ -36,10 +37,17 @@ struct RiAoResponseDirection {
 };
 
 /** @brief Shared auxiliary slabs and narrow tile projections.
- * AO projections and fixed jets have disjoint output writers. Accepted and
- * directional factor slabs are shared, with no per-thread integral copies.
+ * An AcceptedPoint workspace borrows the same immutable accepted orbitals and
+ * RI factors throughout its lifetime. Directions and their support may vary.
  */
 struct RiAoResponseWorkspace {
+    enum class Lifetime { Call, AcceptedPoint };
+
+    explicit RiAoResponseWorkspace(Lifetime scope = Lifetime::Call) : lifetime(scope) {}
+
+    const Lifetime lifetime;
+    std::optional<std::vector<int>> accepted_columns;
+    int accepted_tile_size = 0;
     workspace::Reservation residency;
     Eigen::MatrixXd direction, accepted;
     Eigen::MatrixXd direction_projection, accepted_projection, charges;
@@ -59,6 +67,26 @@ struct RiInactiveFactorView {
  */
 Eigen::MatrixXd apply_ri_active_density_response(const RiActiveTwoElectronResponseCache& active,
                                                  const Eigen::Ref<const Eigen::MatrixXd>& weights);
+
+/** @brief Accepted RI images for projecting an active-density response onto inactive duals. */
+struct RiInactiveResponseFactors {
+    const Eigen::MatrixXd* one_index = nullptr;
+    const Eigen::MatrixXd* active_projection = nullptr;
+    const Eigen::MatrixXd* density_action = nullptr;
+};
+
+/** @brief Build the accepted active-pair to AO-by-inactive action when it is
+ * smaller than the active half transform and fits the shared workspace. */
+std::shared_ptr<const Eigen::MatrixXd>
+build_ri_active_density_action(const RiActiveTwoElectronResponseCache& active,
+                               RiInactiveResponseFactors inactive);
+
+/** @brief Compute the AO response times the inactive duals without an AO-square intermediate. */
+Eigen::MatrixXd
+project_ri_active_density_response(const RiActiveTwoElectronResponseCache& active,
+                                   const Eigen::Ref<const Eigen::MatrixXd>& weights,
+                                   const Eigen::Ref<const Eigen::MatrixXd>& inactive_duals,
+                                   RiInactiveResponseFactors inactive);
 
 /** @brief Compute a block of AO-by-orbital projections consumed by the HVP.
  * `moving_inactive_duals` and every horizontal direction contain matching

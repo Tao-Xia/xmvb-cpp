@@ -7,16 +7,15 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <stdexcept>
 
+#include "core/workspace.hpp"
 #include "parallel/openmp.hpp"
 #include "vbscf/determinants/pairs/accepted_tile.hpp"
 #include "vbscf/determinants/pairs/same_spin_cache.hpp"
 #include "integrals/active/two_electron.hpp"
 
 namespace xmvb::vb::detail {
-
-/** Process-wide cap for one directional pair-tile sweep. */
-inline constexpr std::size_t kPairTileWorkspaceBytes = 256ULL * 1024ULL * 1024ULL;
 
 struct PairTileExtents {
     int alpha = 1;
@@ -82,13 +81,15 @@ inline int plan_pair_tile_extent(std::int64_t n_unique,
                                  int n_active_orbitals,
                                  int n_auxiliary,
                                  bool include_opposite_spin,
-                                 std::size_t workspace_bytes = kPairTileWorkspaceBytes,
+                                 std::size_t workspace_bytes = workspace::available(),
                                  std::size_t bytes_per_primary = 0,
                                  std::size_t reserved_bytes = 0,
-                                 std::size_t additional_bytes_per_pair = 0) {
-    if (n_unique <= 1) {
-        return std::max<Eigen::Index>(1, n_unique);
-    }
+                                 std::size_t additional_bytes_per_pair = 0,
+                                 int scratch_workers = 0) {
+    if (n_unique < 0)
+        throw std::invalid_argument("negative unique-spin pair extent");
+    if (n_unique == 0)
+        return 1;
     const std::size_t occupied_square =
         static_cast<std::size_t>(std::max<Eigen::Index>(0, n_electrons)) *
         static_cast<std::size_t>(std::max<Eigen::Index>(0, n_electrons));
@@ -128,14 +129,17 @@ inline int plan_pair_tile_extent(std::int64_t n_unique,
                               doubles_per_pair * sizeof(double) + integers_per_pair * sizeof(int) +
                                   object_bytes_per_pair + additional_bytes_per_pair);
 
-    const int workers = std::max<Eigen::Index>(1, xmvb::effective_openmp_thread_count());
+    const int workers = scratch_workers > 0
+                            ? scratch_workers
+                            : std::max<Eigen::Index>(1, xmvb::effective_openmp_thread_count());
     const std::size_t thread_scratch =
         static_cast<std::size_t>(workers) *
         std::max<std::size_t>(1, 6 * occupied_square + n_packed_pairs) * sizeof(double);
-    std::size_t fixed_bytes = std::min<Eigen::Index>(workspace_bytes, thread_scratch);
-    fixed_bytes += std::min<Eigen::Index>(reserved_bytes, workspace_bytes - fixed_bytes);
-    const std::size_t pair_budget =
-        workspace_bytes > fixed_bytes ? workspace_bytes - fixed_bytes : bytes_per_pair;
+    if (thread_scratch > workspace_bytes || reserved_bytes > workspace_bytes - thread_scratch)
+        throw std::length_error("pair-tile workspace cannot hold fixed scratch");
+    const std::size_t pair_budget = workspace_bytes - thread_scratch - reserved_bytes;
+    if (bytes_per_pair > pair_budget || bytes_per_primary > pair_budget - bytes_per_pair)
+        throw std::length_error("pair-tile workspace cannot hold one pair");
     const auto fits = [&](int extent) {
         const long double size = static_cast<long double>(extent);
         const long double bytes = static_cast<long double>(bytes_per_pair) * size * size +
@@ -158,9 +162,17 @@ inline int plan_pair_tile_extent(std::int64_t n_unique,
 /** Chooses an extent when independent tiles, rather than pairs, are parallel. */
 inline int
 plan_parallel_pair_tile_extent(std::int64_t n_unique, int n_electrons, int n_active_orbitals) {
-    const int memory_extent =
-        plan_pair_tile_extent(n_unique, n_electrons, n_active_orbitals, 0, false);
     const int workers = std::max<Eigen::Index>(1, xmvb::effective_openmp_thread_count());
+    const int memory_extent = plan_pair_tile_extent(n_unique,
+                                                    n_electrons,
+                                                    n_active_orbitals,
+                                                    0,
+                                                    false,
+                                                    workspace::available() / workers,
+                                                    0,
+                                                    0,
+                                                    0,
+                                                    1);
     const int tiles_per_axis = std::max<Eigen::Index>(
         1, static_cast<int>(std::ceil(std::sqrt(static_cast<long double>(workers)))));
     const int parallel_extent =
@@ -173,7 +185,7 @@ plan_pair_tile_extents(const SameSpinPairCacheContext& cache,
                        int n_active_orbitals,
                        const xmvb::integrals::ActiveSpaceTwoElectronResult& two_electron,
                        bool include_opposite_spin = true,
-                       std::size_t workspace_bytes = kPairTileWorkspaceBytes) {
+                       std::size_t workspace_bytes = workspace::available()) {
     const auto extent = [&](const xmvb::mcscf::StringTable& strings) {
         const int n_electrons = strings.empty() ? 0 : strings.electron_count();
         return plan_pair_tile_extent(static_cast<int>(strings.size()),
@@ -202,7 +214,7 @@ plan_local_response_tiles(const SameSpinPairCacheContext& cache,
                           const xmvb::integrals::ActiveSpaceTwoElectronResult& two_electron,
                           int n_states,
                           int action_vector_sets = 1,
-                          std::size_t workspace_bytes = kPairTileWorkspaceBytes) {
+                          std::size_t workspace_bytes = workspace::available()) {
     const int state_count = std::max<Eigen::Index>(1, n_states);
     const int vector_set_count = std::max<Eigen::Index>(1, action_vector_sets);
     const int n_alpha = static_cast<int>(cache.alpha_reuse_table.unique_determinants.size());
@@ -244,7 +256,7 @@ inline OppositeSpinTilePlan
 plan_opposite_spin_backward_tiles(const SameSpinPairCacheContext& cache,
                                   int n_active_orbitals,
                                   const xmvb::integrals::ActiveSpaceTwoElectronResult& two_electron,
-                                  std::size_t workspace_bytes = kPairTileWorkspaceBytes) {
+                                  std::size_t workspace_bytes = workspace::available()) {
     const std::size_t alpha_partner_bytes = std::min<Eigen::Index>(
         workspace_bytes, parallel_scalar_action_bytes(cache.beta_provider(), n_active_orbitals));
     const std::size_t beta_partner_bytes = std::min<Eigen::Index>(

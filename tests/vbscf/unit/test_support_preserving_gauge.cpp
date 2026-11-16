@@ -166,7 +166,9 @@ void check_active_sparse_gauge_balance() {
     input = make_active_gauge_input();
     input.orbital_type = xmvb::vb::kOrbitalTypeOeo;
     const std::vector<double> before = input.orbital_value_table;
-    require(!xmvb::vb::balance_active_gauge(&input) && input.orbital_value_table == before,
+    bool active_inactive_orthogonal = true;
+    require(!xmvb::vb::balance_active_gauge(&input, &active_inactive_orthogonal) &&
+                !active_inactive_orthogonal && input.orbital_value_table == before,
             "full-AO balancing was applied to a restricted OEO layout");
 }
 
@@ -176,13 +178,19 @@ void check_full_ao_active_gauge_balance() {
     input.orbital_basis_counts[2] = 4;
     input.orbital_basis_index_table[11] = 4;
     input.orbital_value_table[11] = 2.0e-3;
-    require(xmvb::vb::balance_active_gauge(&input), "full-AO active gauge was not balanced");
+    bool active_inactive_orthogonal = false;
+    require(xmvb::vb::balance_active_gauge(&input, &active_inactive_orthogonal) &&
+                active_inactive_orthogonal,
+            "full-AO active gauge did not establish core orthogonality");
     require(input.orbital_value_table[8] == 0.0 && input.orbital_value_table[9] == 0.0,
             "OEO inactive components were not removed");
     require(std::abs(input.orbital_value_table[10] - 1.0 / std::sqrt(5.0)) < 1.0e-12 &&
                 std::abs(input.orbital_value_table[11] - 2.0 / std::sqrt(5.0)) < 1.0e-12,
             "OEO projected ray changed under normalization");
-    require(!xmvb::vb::balance_active_gauge(&input), "OEO gauge is not idempotent");
+    active_inactive_orthogonal = false;
+    require(!xmvb::vb::balance_active_gauge(&input, &active_inactive_orthogonal) &&
+                active_inactive_orthogonal,
+            "idempotent OEO balance lost core orthogonality");
 }
 
 void check_nonorthogonal_active_ray() {
