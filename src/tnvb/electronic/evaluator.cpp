@@ -64,8 +64,8 @@ vb::ActiveSpaceGradientResult ElectronicEvaluator::evaluate(
        input.orbital_preparation_input.orbital_type!=vb::kOrbitalTypeOeo)) {
     throw std::invalid_argument("TNVB supports HAO/OEO and one singlet root");
   }
-  if (gradient && input.tnvb.total_bond < input.tnvb.structure_bond) {
-    throw std::invalid_argument("TNVB orbital gradients require TNSUMBOND >= TNBOND");
+  if (gradient && input.tnvb.total_bond <= 0) {
+    throw std::invalid_argument("TNVB orbital gradients require TNSUMBOND > 0");
   }
   // Reject invalid trial coordinates before entering parallel preparation,
   // where a thrown exception cannot cross an OpenMP region safely. This guard
@@ -149,8 +149,8 @@ vb::ActiveSpaceGradientResult ElectronicEvaluator::complete_gradient(
   }
   // Worker-side request/integral/settings validation precedes native RDM work.
   // Consuming this Forward releases its private bank on both success/failure.
-  if (input.tnvb.total_bond<input.tnvb.structure_bond) {
-    throw std::invalid_argument("TNVB orbital gradients require TNSUMBOND >= TNBOND");
+  if (input.tnvb.total_bond<=0) {
+    throw std::invalid_argument("TNVB orbital gradients require TNSUMBOND > 0");
   }
   const auto response=process_.complete_gradient(input,state->request,state->state);
   validate_response(response);

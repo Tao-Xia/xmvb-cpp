@@ -90,10 +90,10 @@ int main(int argc,char** argv) {
     }
     if (!tensor_input.tnvb.enabled || !tensor_input.structure_data.pair_alpha.empty() ||
         !tensor_input.structure_data.pair_beta.empty() ||
-        !tensor_input.structure_data.terms.empty() ||
+        !tensor_input.structure_data.incidence_data->terms.empty() ||
         !tensor_input.structure_data.alpha_strings.empty() ||
         !tensor_input.structure_data.beta_strings.empty() ||
-        !tensor_input.structure_data.offsets.empty() ||
+        tensor_input.structure_data.incidence().size()!=0 ||
         loaded.structure_expansion_seconds!=0.0 || tensor_input.complete_active_space) {
       throw std::runtime_error("TNVB load expanded determinants or incorrectly marked a complete CAS");
     }

@@ -83,7 +83,6 @@ def main():
             assert "XMVB ATOMIC POPULATION ANALYSIS" not in output, output
         for configuration, options, message in [
                 ("TNVB TNBOND=128", ("--max-iterations", "1"), "requires explicit TNSUMBOND"),
-                ("TNVB TNBOND=128 TNSUMBOND=64", ("--max-iterations", "1"), "requires explicit TNSUMBOND"),
                 ("TNVB TNBOND=128", ("--optimizer-backend", "ciah"), "ISCF=8"),
                 ("TNVB TNBOND=128", ("--optimizer-backend", "nonredundant_truncated_newton"), "ISCF=8"),
                 ("TNVB TNBOND=128", ("--max-iterations", "-1"), "ISCF=8")]:
@@ -98,6 +97,12 @@ def main():
         assert status in (0, 2) and "XMVB-CPP error:" not in output, output
         assert "[TNVB-WARNING] fit_dE=" in output and "continuing RDM/gradient" in output, output
         assert "[TNVB-RDM]" in output and "Total Energy:" in output, output
+        # Structure and total-state caps are independent in both CI solvers.
+        for solver in ("DENSE", "DAVIDSON"):
+            status, output = run(f"TNVB TNBOND=128 TNSUMBOND=64 EIGENSOLVER={solver}",
+                                 1, forbidden=False)
+            assert status in (0, 2) and "XMVB-CPP error:" not in output, output
+            assert "D=128/64" in output and "[TNVB-RDM]" in output, output
         # A completed full-gradient evaluation retains existing postprocessing
         # even when the accepted-step cap stops optimization before convergence.
         status, output = run("TNVB TNBOND=128 TNSUMBOND=256", 1,

@@ -42,7 +42,7 @@ def read_request(path):
             raise ValueError("unsupported C++ TNVB request")
         if min(nstr, norb, nelec, bond) <= 0 or nelec % 2 or total_elec < nelec:
             raise ValueError("invalid C++ TNVB dimensions")
-        if (total_elec - nelec) % 2 or (mode and sum_bond < bond):
+        if (total_elec - nelec) % 2 or (mode and sum_bond <= 0):
             raise ValueError("invalid inactive electron count or total-state bond")
         energy_tol, gradient_tol = struct.unpack("<2d", core.read_exact(stream, 16))
         if not all(np.isfinite(t) and t > 0 for t in (energy_tol, gradient_tol)):

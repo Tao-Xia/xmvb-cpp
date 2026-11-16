@@ -188,7 +188,7 @@ Only these new input keywords are registered:
 |---|---|
 | `TNVB` | Enable the independent electronic backend. |
 | `TNBOND` | Required positive integer; cap for each structure's SU(2) MPS. |
-| `TNSUMBOND` | Required for optimization, positive and at least `TNBOND`. |
+| `TNSUMBOND` | Required for optimization; any positive integer, independently of `TNBOND`. |
 
 For ENERGY, use `VBSCF ISCF=8 ITMAX=0 TNVB TNBOND=128`. No total MPS or
 1/2/3-RDM is constructed. For optimization, use

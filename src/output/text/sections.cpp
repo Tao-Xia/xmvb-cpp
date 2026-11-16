@@ -1026,7 +1026,13 @@ FinalStateReport print_final_state_sections(std::ostream& output,
     if (result.energy_only) {
         output
             << "\n ENERGY-only evaluation: no total-state RDM or orbital gradient was requested.\n";
-        return norms.mean_overlap;
+        output.flush();
+        return {norms.mean_overlap,
+                std::chrono::duration<double>(structure_analysis).count(),
+                std::chrono::duration<double>(structure_end - report_start - structure_analysis).count(),
+                std::chrono::duration<double>(ReportClock::now() - structure_end).count(),
+                std::chrono::duration<double>(normalization_end - analysis_start).count(),
+                std::chrono::duration<double>(determinant_output).count()};
     }
     const auto& orbitals = result.optimized_input.orbital_preparation_input;
     const NaturalOrbitalAnalysis natural_orbitals =

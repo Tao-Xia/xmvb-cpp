@@ -119,8 +119,8 @@ int run(Options command_line, std::chrono::steady_clock::time_point program_entr
                 "TNVB supports ISCF=8 (P-LBFGS), one singlet state and HAO/OEO");
         }
         if (options.max_iterations > 0 &&
-            load_result.input.tnvb.total_bond < load_result.input.tnvb.structure_bond) {
-            throw std::invalid_argument("TNVB optimization requires explicit TNSUMBOND >= TNBOND");
+            load_result.input.tnvb.total_bond <= 0) {
+            throw std::invalid_argument("TNVB optimization requires explicit TNSUMBOND > 0");
         }
         tnvb_backend = std::make_shared<xmvb::tnvb::ElectronicEvaluator>();
         electronic_backend = tnvb_backend;

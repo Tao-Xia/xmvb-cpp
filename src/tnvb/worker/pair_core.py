@@ -1771,8 +1771,8 @@ def build_hs(
     symmetry = "SU2"
     if retain_state is not None and root is not None:
         raise ValueError("TNVB can retain forward states only for ENERGY")
-    if root is not None and (sum_bond is None or sum_bond < tnbond):
-        raise RuntimeError("TNVB RDM sum bond must be at least TNBOND")
+    if root is not None and (sum_bond is None or sum_bond <= 0):
+        raise RuntimeError("TNVB RDM sum bond must be positive")
 
     # Pair construction persists every intermediate MPS.  Putting those files
     # beside the XMVB input can make a shared home filesystem dominate the

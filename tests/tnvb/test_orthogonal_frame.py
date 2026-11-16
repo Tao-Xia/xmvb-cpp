@@ -87,16 +87,20 @@ class OrthogonalFrameTests(unittest.TestCase):
     def test_protocol_carries_frame_and_rejects_old_protocol(self):
         with tempfile.TemporaryDirectory() as folder:
             path=Path(folder)/'request'
-            header=struct.pack('<10i',3,1,2,2,2,16,32,1,0,0)
+            header=struct.pack('<10i',3,1,2,2,2,16,8,1,0,0)
             payload=struct.pack('<2d',1e-7,1e-3)+struct.pack('<2i',1,2)
             for a in (self.s,self.r,self.h,self.g):
                 payload+=a.astype('<f8').tobytes(order='F')
             path.write_bytes(b'CPTNREQ3'+header+payload)
             request,cap,mode,options,frame=READER['read_request'](path)
-            self.assertEqual((cap,mode,options),(32,1,None))
+            self.assertEqual((cap,mode,options),(8,1,None))
             np.testing.assert_array_equal(frame,self.r)
             np.testing.assert_array_equal(request[-2],self.h)
             np.testing.assert_array_equal(request[-1],self.g)
+            for invalid in (0,-1):
+                invalid_header=struct.pack('<10i',3,1,2,2,2,16,invalid,1,0,0)
+                path.write_bytes(b'CPTNREQ3'+invalid_header+payload)
+                with self.assertRaises(ValueError):READER['read_request'](path)
             path.write_bytes(b'CPTNREQ2'+header+payload)
             with self.assertRaises(ValueError):READER['read_request'](path)
 

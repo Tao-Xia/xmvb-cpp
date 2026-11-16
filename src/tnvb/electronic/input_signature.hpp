@@ -52,7 +52,20 @@ inline std::array<std::uint64_t,2> input_signature(const vb::VbScfInput& input) 
   scalar(ao.n_basis_functions);matrix(ao.ao_core_hamiltonian_matrix);
   const auto& g=ao.pair_graph;
   vector(g.row_offsets);vector(g.columns);vector(g.values);vector(g.integral_rows);
-  vector(g.integral_edges);vector(g.integral_columns);vector(g.integral_values);
+  vector(g.integral_offsets);vector(g.integral_columns);vector(g.integral_values);
+  // Visit immutable tiled AO integrals without expanding or copying them.
+  scalar(bool(g.tiles));
+  if (g.tiles) {
+    const auto count=g.tiles->integral_count();
+    scalar(count);
+    if (count) {
+      integrals::AoPairTiles::Cursor cursor(*g.tiles,0);
+      for (std::size_t i=0;i<count;++i) {
+        scalar(cursor.left());scalar(cursor.right());scalar(cursor.value());
+        cursor.advance();
+      }
+    }
+  }
   // Upstream may retain the exact AO payload as producer-owned chunks.
   // Hash that representation without materializing a second integral array.
   scalar(g.chunks.size());vector(g.chunk_offsets);

@@ -98,9 +98,9 @@ VbScfOptimizerResult VbScfOptimizer::optimize(VbScfInput input,
     }
     if (input.tnvb.enabled &&
         (!electronic_backend_ || options_.backend != VbScfOptimizerBackend::Plbfgs ||
-         input.tnvb.total_bond < input.tnvb.structure_bond)) {
+         input.tnvb.total_bond <= 0)) {
         throw std::invalid_argument("TNVB optimization requires its electronic backend, ISCF=8 "
-                                    "(P-LBFGS) and TNSUMBOND >= TNBOND");
+                                    "(P-LBFGS) and TNSUMBOND > 0");
     }
     if (options_.gradient_tolerance <= 0.0 || options_.energy_tolerance <= 0.0 ||
         options_.initial_step_size <= 0.0 || options_.minimum_step_size <= 0.0) {
