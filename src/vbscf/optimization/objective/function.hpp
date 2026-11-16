@@ -14,6 +14,7 @@
 #include "vbscf/orbitals/charts/layout.hpp"
 #include "vbscf/derivatives/gradient/orbital/evaluator.hpp"
 #include "vbscf/derivatives/gradient/orbital/result.hpp"
+#include "vbscf/derivatives/gradient/active_space/backend.hpp"
 
 namespace xmvb::vb {
 
@@ -37,6 +38,7 @@ struct VbScfObjectiveTrialEvaluation {
     bool valid = false;
 
     std::optional<ActiveSpaceForwardEvaluation> forward_evaluation;
+    std::unique_ptr<ElectronicStateForwardEvaluation> electronic_forward;
 };
 
 /** @brief Exact coupled gradient at a prescribed orbital/structure keyframe. */
@@ -67,7 +69,8 @@ class VbScfObjective {
                    StructureEigensolver structure_eigensolver,
                    StructureSolveAccuracy structure_solve_accuracy,
                    const OrbitalGradientEvaluator* orbital_gradient_evaluator,
-                   bool active_inactive_orthogonal = false);
+                   bool active_inactive_orthogonal = false,
+                   std::shared_ptr<const ElectronicStateBackend> electronic_backend = {});
 
     VbScfObjective(const VbScfObjective&) = delete;
     VbScfObjective& operator=(const VbScfObjective&) = delete;
@@ -159,6 +162,7 @@ class VbScfObjective {
     StructureSolveAccuracy structure_solve_accuracy_;
     const OrbitalGradientEvaluator* gradient_evaluator_ = nullptr;
     bool active_inactive_orthogonal_ = false;
+    std::shared_ptr<const ElectronicStateBackend> electronic_backend_;
 
     OrbitalGradientResult gradient_result_;
     // One previous accepted root block supplies a CI secant trial space.
@@ -180,7 +184,8 @@ class VbScfObjective {
     TrialEvaluation evaluate_trial_energy_with_initial_eigenvectors(
         const Eigen::VectorXd& parameter_vector,
         bool canonicalize_sparse_gauge,
-        const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors) const;
+        const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors,
+        bool complete_external_gradient = false) const;
 };
 
 } // namespace xmvb::vb

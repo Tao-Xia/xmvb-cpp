@@ -113,6 +113,8 @@ struct OrbitalGradientResult {
    * @brief Active h in the same frame as packed G, specified by two_electron_frame.
    */
     Eigen::MatrixXd active_one_electron_integrals;
+    /** First-order active density/adjoint, without requiring a Hessian cache. */
+    Eigen::MatrixXd active_one_electron_gradient;
 
     /**
    * @brief Packed active integrals in the frame specified by two_electron_frame.
