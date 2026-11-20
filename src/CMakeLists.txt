@@ -142,9 +142,10 @@ set(XMVB_SCF_SOURCES
   scf/mixing/diis.cpp
   scf/hf/potential.cpp)
 
-set(XMVB_DFT_SOURCES
+set(XMVB_QUADRATURE_SOURCES
   dft/grid/atomic.cpp
-  dft/grid/partition.cpp
+  dft/grid/partition.cpp)
+set(XMVB_DFT_SOURCES
   dft/xc/functional.cpp
   dft/integration/cache.cpp
   dft/integration/density.cpp
@@ -191,6 +192,11 @@ file(
   "${CMAKE_CURRENT_SOURCE_DIR}/mcscf/*.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/casscf/*.cpp")
 set(_xmvb_declared_component_sources
+  integrals/nao/radial.cpp
+  integrals/nao/prepare.cpp
+  integrals/lri/fit.cpp
+  integrals/lri/exchange.cpp
+  ${XMVB_QUADRATURE_SOURCES}
   ${XMVB_INPUT_DECK_SOURCES}
   ${XMVB_LIBCINT_SOURCES}
   ${XMVB_GUESS_SOURCES}
@@ -274,6 +280,22 @@ xmvb_add_component(xmvb_integrals
   ${XMVB_INTEGRAL_SOURCES})
 target_link_libraries(xmvb_integrals PUBLIC xmvb_linalg ${CINT_LIB})
 
+xmvb_add_component(xmvb_quadrature ${XMVB_QUADRATURE_SOURCES})
+target_link_libraries(xmvb_quadrature PUBLIC xmvb_openmp)
+
+option(XMVB_ENABLE_LIBRI "Build the experimental local-RI exchange adapter." OFF)
+if (XMVB_ENABLE_LIBRI)
+  find_package(MPI REQUIRED COMPONENTS CXX)
+  add_subdirectory(integrals/lri)
+endif()
+option(XMVB_ENABLE_NAO "Build the experimental numerical AO integral preparation layer." OFF)
+if (XMVB_ENABLE_NAO)
+  if (NOT XMVB_ENABLE_LIBRI)
+    message(FATAL_ERROR "XMVB_ENABLE_NAO requires XMVB_ENABLE_LIBRI")
+  endif()
+  add_subdirectory(integrals/nao)
+endif()
+
 xmvb_add_component(xmvb_parallel ${XMVB_PARALLEL_SOURCES})
 target_link_libraries(xmvb_parallel PUBLIC xmvb_openmp ${LAPACK_LIB})
 
@@ -284,6 +306,7 @@ xmvb_add_component(xmvb_scf ${XMVB_SCF_SOURCES})
 target_link_libraries(xmvb_scf PUBLIC xmvb_integrals xmvb_optimization)
 
 xmvb_add_component(xmvb_dft ${XMVB_DFT_SOURCES})
+target_link_libraries(xmvb_dft PUBLIC xmvb_quadrature)
 target_include_directories(xmvb_dft PRIVATE ${LIBXC_INCLUDE_DIR})
 target_link_libraries(xmvb_dft PUBLIC xmvb_scf PRIVATE ${LIBXC_LIBRARY})
 

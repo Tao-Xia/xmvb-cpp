@@ -129,3 +129,56 @@ the staged program. A dependency change requires a new runtime filename and tag.
 The build writes separate runtime and program checksums and preserves configure,
 compile, staging and linkage logs. Qualify the program with its runtime before
 publishing, then download both from GHCR and compare SHA-256.
+
+### Optional local-RI contraction adapter
+
+`XMVB_ENABLE_LIBRI=ON` builds the experimental `xmvb_local_ri` library. It is
+separate from the molecular executable and is disabled by default. It currently
+contracts real, supplied local pair fits and auxiliary Coulomb blocks for
+finite/already folded Gamma data; it does not yet generate NAO integrals or
+enable periodic VBSCF.
+
+Provide external LibRI, LibComm and cereal headers, together with MPI and an
+LP64 BLAS. The dependency roots contain `include/`:
+
+```bash
+cmake -S . -B build-lri -DXMVB_ENABLE_LIBRI=ON -DXMVB_BUILD_DEV_TARGETS=ON \
+  -DLIBRI_ROOT=/path/to/LibRI -DLIBCOMM_ROOT=/path/to/LibComm \
+  -DCEREAL_ROOT=/path/to/cereal
+cmake --build build-lri --target test_local_ri_exchange
+ctest --test-dir build-lri -R '^local_ri_exchange$' --output-on-failure
+```
+
+The adapter uses MPI_COMM_SELF, with OpenMP inside LibRI. Its caller owns MPI
+initialization (`MPI_THREAD_FUNNELED`) and finalization. No MPI initialization
+or new dependency is introduced into the existing molecular execution path.
+The adapter accepts signed symmetric response densities without numerical
+screening. Local panel dimensions are checked against LibRI's LP64 BLAS limit.
+LibRI and LibComm remain external LGPL-3.0 dependencies; their sources and
+licenses are available from the ABACUS modeling repositories.
+
+### Optional numerical AO preparation
+
+Add `-DXMVB_ENABLE_NAO=ON -DABACUS_SOURCE_ROOT=/path/to/abacus-checkout`
+to the local-RI configuration above, then build `test_nao_prepare` and run
+`ctest --test-dir build-lri -R '^(nao_prepare|local_ri_exchange)$'`.
+Only the unmodified `source/source_base/cubic_spline.cpp` numerical kernel
+is compiled from ABACUS (tested revision
+`4e9f1636b7ca27d1dc634711915c18087654b911`, LGPL-3.0). No ABACUS executable,
+SCF driver or global input state is used. Retain upstream license notices
+when distributing this optional linked component.
+
+The reference generator accepts compact numerical radial functions through
+`integrals/nao/prepare.hpp`, reuses the molecular Becke/Lebedev grid, and
+produces overlap, Hartree-unit kinetic, auxiliary Coulomb blocks and
+pair-local fits for LibRI. It supports real s through g functions with the
+ABACUS real-harmonic phase convention. Radial functions and the auxiliary
+basis must be supplied explicitly; there is no `.orb` importer or automatic
+auxiliary-basis construction yet. The caller supplies quadrature resolution,
+panel width and the local metric rank cutoff. Panel width only partitions
+work; it does not screen integrals or switch algorithms.
+
+This is a finite-system integration reference, not a periodic calculation
+mode. It does not supply pseudopotentials, ionic energies, periodic Coulomb
+sums or a new `.xmi` keyword. Fast two-center tables and the periodic
+Hamiltonian remain separate follow-up work.

@@ -19,6 +19,9 @@ struct Grid {
 // Atom-centered grid at the origin, before molecular partitioning.
 Grid make_atomic_grid(const GridOptions& options = {});
 
+// Geometry-only entry point, shared by Gaussian and numerical AO backends.
+Grid make_grid(const Eigen::MatrixXd& centers, const GridOptions& options = {});
+
 // Becke-partitioned molecular grid. Coordinates in LibcintInput are in bohr.
 Grid make_grid(const integrals::LibcintInput& input, const GridOptions& options = {});
 

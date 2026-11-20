@@ -195,19 +195,27 @@ Grid make_grid(const integrals::LibcintInput& input, const GridOptions& options)
         for (int k = 0; k < 3; ++k)
             centers(atom, k) = input.env[coord + k];
     }
+    return make_grid(centers, options);
+}
+
+Grid make_grid(const Eigen::MatrixXd& centers, const GridOptions& options) {
+    if (centers.cols() != 3 || centers.rows() <= 0 || !centers.allFinite() ||
+        centers.rows() > std::numeric_limits<int>::max())
+        throw std::invalid_argument("invalid molecular grid centers");
+    const auto n_atoms = centers.rows();
     const BeckePartition partition(centers);
     const Grid atomic = make_atomic_grid(options);
     const Eigen::Index nlocal = atomic.weights.size();
-    if (input.n_atoms > std::numeric_limits<Eigen::Index>::max() / nlocal) {
+    if (n_atoms > std::numeric_limits<Eigen::Index>::max() / nlocal) {
         throw std::length_error("molecular grid point count overflows Eigen::Index");
     }
-    Grid grid{Eigen::MatrixXd(input.n_atoms * nlocal, 3), Eigen::VectorXd(input.n_atoms * nlocal)};
+    Grid grid{Eigen::MatrixXd(n_atoms * nlocal, 3), Eigen::VectorXd(n_atoms * nlocal)};
 #pragma omp parallel
     {
         std::vector<double> distances;
         std::vector<double> factors;
-        distances.reserve(input.n_atoms);
-        factors.reserve(input.n_atoms);
+        distances.reserve(n_atoms);
+        factors.reserve(n_atoms);
 #pragma omp for schedule(static)
         for (Eigen::Index row = 0; row < grid.weights.size(); ++row) {
             const int owner = static_cast<int>(row / nlocal);
