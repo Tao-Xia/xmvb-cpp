@@ -16,10 +16,12 @@ Hanhai25 native qualification: ten selected unit tests passed; O2/water-cation H
 
 The program archive is `xmvb-cpp-0.1.5-linux-x86_64-cpu.tar.gz` (Linux x86-64, CPU). Reuse `runtime-linux-x86_64-cpu-ubuntu24.04-r1.sif`; no runtime update is required. GPU executables and Arm binaries are not included in this archive.
 
-Download the program archive and its SHA-256 file from this release, or use the public GHCR program artifact:
+Download the program archive and its SHA-256 file from [GitHub Releases](https://github.com/Tao-Xia/xmvb-cpp/releases/tag/xmvb-cpp-0.1.5):
 
 ```sh
-oras pull ghcr.io/tao-xia/xmvb-cpp-release:xmvb-cpp-0.1.5-linux-x86_64-cpu
+release=https://github.com/Tao-Xia/xmvb-cpp/releases/download/xmvb-cpp-0.1.5
+curl -fLO "$release/xmvb-cpp-0.1.5-linux-x86_64-cpu.tar.gz"
+curl -fLO "$release/xmvb-cpp-0.1.5-linux-x86_64-cpu.tar.gz.sha256"
 sha256sum -c xmvb-cpp-0.1.5-linux-x86_64-cpu.tar.gz.sha256
 ```
 

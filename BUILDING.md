@@ -3,29 +3,32 @@
 ## Run the binary distribution
 
 Prebuilt artifacts currently target Linux x86-64 CPUs. Platform and backend are
-explicit in canonical filenames and GHCR tags. Install Apptainer on the host.
+explicit in canonical filenames and runtime tags. Install Apptainer on the host.
 A release consists of a reusable runtime SIF and a versioned program tarball.
 The SIF supplies the operating-system and numerical runtime libraries. The program supplies the executable, launcher,
 basis files, examples, licenses and build metadata.
 
-Download the runtime and program with their independent GHCR tags.
+Download the program and checksums from [GitHub Releases](https://github.com/Tao-Xia/xmvb-cpp/releases/latest). GHCR hosts only the reusable runtime image; a separate ORAS installation is not needed.
 
 ```bash
 apptainer pull runtime-linux-x86_64-cpu-ubuntu24.04-r1.sif \
   oras://ghcr.io/tao-xia/xmvb-cpp-release:runtime-linux-x86_64-cpu-ubuntu24.04-r1
-oras pull ghcr.io/tao-xia/xmvb-cpp-release:xmvb-cpp-0.1.4-linux-x86_64-cpu
+release=https://github.com/Tao-Xia/xmvb-cpp/releases/download/xmvb-cpp-0.1.5
+curl -fLO "$release/xmvb-cpp-0.1.5-linux-x86_64-cpu.tar.gz"
+curl -fLO "$release/xmvb-cpp-0.1.5-linux-x86_64-cpu.tar.gz.sha256"
+curl -fLO "$release/runtime-linux-x86_64-cpu-ubuntu24.04-r1.sif.sha256"
 sha256sum -c runtime-linux-x86_64-cpu-ubuntu24.04-r1.sif.sha256
-sha256sum -c xmvb-cpp-0.1.4-linux-x86_64-cpu.tar.gz.sha256
+sha256sum -c xmvb-cpp-0.1.5-linux-x86_64-cpu.tar.gz.sha256
 ```
 
 Extract the program into its own directory and select the matching runtime.
 
 ```bash
-mkdir -p programs/xmvb-cpp-0.1.4-linux-x86_64-cpu
-tar -xzf xmvb-cpp-0.1.4-linux-x86_64-cpu.tar.gz \
-  -C programs/xmvb-cpp-0.1.4-linux-x86_64-cpu
+mkdir -p programs/xmvb-cpp-0.1.5-linux-x86_64-cpu
+tar -xzf xmvb-cpp-0.1.5-linux-x86_64-cpu.tar.gz \
+  -C programs/xmvb-cpp-0.1.5-linux-x86_64-cpu
 export XMVB_RUNTIME_IMAGE=/absolute/path/runtime-linux-x86_64-cpu-ubuntu24.04-r1.sif
-export XMVB_PROGRAM_DIR=/absolute/path/programs/xmvb-cpp-0.1.4-linux-x86_64-cpu
+export XMVB_PROGRAM_DIR=/absolute/path/programs/xmvb-cpp-0.1.5-linux-x86_64-cpu
 OMP_NUM_THREADS=4 "$XMVB_PROGRAM_DIR/bin/xmvb" input.xmi
 ```
 
@@ -43,13 +46,9 @@ The program's `share/build-info.json` records its source revision, compiler,
 CMake options, dependency versions, binary hash, required runtime ID and SIF
 SHA-256. `SHA256SUMS` verifies the extracted program files. When an update uses
 the same runtime ID, download the new program and change `XMVB_PROGRAM_DIR`.
-The 0.1.4 program extends physical CI residual stopping to selected structure
-spaces and the auxiliary-frame orbital preconditioner to truncated OEO and HAO,
-while preserving the selected degrees of freedom and localization constraints.
-Repeated CI transport solves reuse bounded single-spin overlap panels and
-certified spin-exchange symmetry. The final SCF criteria and CIAH strategy are
-unchanged. The program reuses the existing runtime byte for byte; download only
-the new program archive if that runtime is already installed.
+Release-specific changes, validation and known limits are listed on each GitHub
+Release page and in [CHANGELOG.md](CHANGELOG.md). Reuse the existing runtime
+when its ID and checksum match the program metadata.
 Use the architecture-qualified download entries above.
 
 The supplied F₂ example uses CIAH (`ISCF=9`). This first packaged backend is CPU.
@@ -107,9 +106,9 @@ export XMVB_RELEASE_BASE_SIF=/persistent/ubuntu24.04.sif
 export XMVB_RELEASE_DEPENDENCY_PREFIX=/path/to/xmvb-cpp-dev
 export XMVB_RELEASE_CACHE_DIR=/persistent/xmvb-release-cache
 bash /release-work/source/packaging/apptainer/build.sh \
-  /release-work/source "$revision" 0.1.4 /release-work/build \
+  /release-work/source "$revision" 0.1.5 /release-work/build \
   /release-artifacts/runtime-linux-x86_64-cpu-ubuntu24.04-r1.sif \
-  /release-artifacts/xmvb-cpp-0.1.4-linux-x86_64-cpu.tar.gz
+  /release-artifacts/xmvb-cpp-0.1.5-linux-x86_64-cpu.tar.gz
 ```
 
 Acquire and hash the Ubuntu 24.04 base SIF before the first build. Builds require
@@ -128,7 +127,15 @@ An existing runtime is reused only when its identity and linked libraries match
 the staged program. A dependency change requires a new runtime filename and tag.
 The build writes separate runtime and program checksums and preserves configure,
 compile, staging and linkage logs. Qualify the program with its runtime before
-publishing, then download both from GHCR and compare SHA-256.
+publishing. Upload the program archive, its checksum, the required runtime checksum,
+`build-info.json`, `validation.json` and installation instructions to a GitHub
+Release tagged with the packaged source revision. Include changes, validation,
+platform support and known limits in the release notes. Keep historical program
+versions in GitHub Releases, not GHCR. Publish a runtime to GHCR only when its
+dependencies or ABI change. Download the published program from GitHub Releases,
+verify SHA-256 and smoke-test it with the matching runtime before finalizing the
+release. Documentation-only updates do not require rebuilding the program or
+moving its source tag.
 
 ### Optional local-RI contraction adapter
 

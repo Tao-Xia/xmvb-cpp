@@ -52,11 +52,13 @@ counts use `n_bf`; active orbital counts use `n_active`.
 
 ## Binary distribution
 
-The Linux x86-64 CPU distribution consists of a reusable Apptainer runtime SIF and the
-versioned `xmvb-cpp-0.1.4-linux-x86_64-cpu.tar.gz` program archive. Both are published in
-[GHCR](https://github.com/users/Tao-Xia/packages/container/package/xmvb-cpp-release). Select them with `XMVB_RUNTIME_IMAGE` and
-`XMVB_PROGRAM_DIR`, then run `"$XMVB_PROGRAM_DIR/bin/xmvb" input.xmi`.
-The program archive includes basis files and a CIAH example.
+Download the Linux x86-64 CPU program archive and checksums from
+[GitHub Releases](https://github.com/Tao-Xia/xmvb-cpp/releases/latest).
+The reusable Apptainer runtime SIF is hosted on
+[GHCR](https://github.com/users/Tao-Xia/packages/container/package/xmvb-cpp-release).
+Select them with `XMVB_RUNTIME_IMAGE` and `XMVB_PROGRAM_DIR`, then run
+`"$XMVB_PROGRAM_DIR/bin/xmvb" input.xmi`. The program includes basis files
+and a CIAH example. Ordinary updates require only a new program archive.
 
 See [BUILDING.md](BUILDING.md) for installation, source compilation, the CPU
 Release preset and the persistent release-build cache.
