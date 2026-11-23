@@ -76,7 +76,8 @@ struct PhysicalOrbitalFrame {
    * @brief Column-major inactive orthonormal frame `Q_inactive`.
    *
    * This stores the accepted-point inactive block after the gauge transform
-   * `Q_i = C_i (C_i^T S C_i)^{-1/2}`. The frame is explicitly
+   * `Q_i = C_i R_i`, with a small frame reorthogonalization after
+   * the initial symmetric inverse square root. The frame is explicitly
    * `S`-orthonormal and is the natural state variable for the orthonormal
    * inactive chart, while the original physical inactive block is kept above
    * for input reconstruction and diagnostics.
@@ -93,7 +94,7 @@ struct PhysicalOrbitalFrame {
     Eigen::MatrixXd active_physical_orbital_matrix;
 
     /**
-   * @brief Column-major gauge transform `R_i = (C_i^T S C_i)^{-1/2}`.
+   * @brief Column-major orthonormalizing right transform `Q_i = C_i R_i`.
    *
    * This is the small inactive-space matrix used to transform the physical
    * inactive block into the orthonormal frame.

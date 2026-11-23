@@ -87,7 +87,6 @@ bool build_ciah_macro_step(VbScfObjective* objective,
                            ExactHvpOperator& hessian,
                            const StructureTangentOperator& structure,
                            const Eigen::VectorXd& gradient,
-                           double gradient_norm,
                            const Eigen::VectorXd& orbital_guess_packed,
                            const Eigen::MatrixXd& structure_guess,
                            bool use_structure_response,
@@ -165,7 +164,6 @@ bool build_ciah_macro_step(VbScfObjective* objective,
     Eigen::VectorXd structure_image(orbital_image.size());
     record->model_dimension = static_cast<int>(dimension);
     record->source_gradient_norm = chart.coordinate_dual_norm(gradient);
-    record->source_physical_gradient_norm = gradient_norm;
 
     // Internal CIAH control is in the full coordinate vector, not a projected
     // estimate. Only the cheap local AO inverse is used for coordinate units;
@@ -881,11 +879,8 @@ bool build_ciah_macro_step(VbScfObjective* objective,
     macro_callbacks.terminal = [&](Trial& trial) {
         objective->complete_trial(&trial);
         accepted->trial = std::move(trial);
-        const bool converged =
-            accepted->check_convergence(layout,
-                                        options,
-                                        objective->input().complete_active_space,
-                                        energy);
+        const bool converged = accepted->check_convergence(
+            layout, options, objective->input().complete_active_space, energy);
         trial = std::move(accepted->trial);
         return converged;
     };

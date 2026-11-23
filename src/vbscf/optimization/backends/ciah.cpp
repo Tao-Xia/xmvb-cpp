@@ -110,8 +110,6 @@ bool build_accepted_ciah_keyframe(VbScfObjective* objective,
     const OrbitalPreparationInput accepted_orbitals = objective->input().orbital_preparation_input;
     NonredundantRetractionMetric orbital_metric(chart, parameter_view, accepted_orbitals);
     record->source_gradient_norm = chart.coordinate_dual_norm(reduced_gradient);
-    const double physical_gradient_norm = orbital_metric.dual_norm(reduced_gradient);
-    record->source_physical_gradient_norm = physical_gradient_norm;
     ExactHvpOperator orbital_hessian(
         objective->second_order_context(), &objective->input(), parameter_view, &chart);
     if (!orbital_hessian.supports_analytic_core_model()) {
@@ -137,7 +135,6 @@ bool build_accepted_ciah_keyframe(VbScfObjective* objective,
                                  orbital_hessian,
                                  structure_hessian,
                                  reduced_gradient,
-                                 physical_gradient_norm,
                                  orbital_guess_packed,
                                  structure_guess,
                                  use_structure_response,
@@ -236,14 +233,7 @@ BackendRunResult run_ciah_backend(VbScfObjective* objective,
                                                       OrbitalChart::Coordinates::Unwhitened);
         auto next_projected = next_geometry.project_gradient(gradient);
         final_gradient_l2 = next_geometry.coordinate_dual_norm(next_projected.reduced_gradient);
-        if (options.ciah_iteration_callback) {
-            const NonredundantRetractionMetric next_metric(
-                next_geometry, parameter_view, objective->input().orbital_preparation_input);
-            iteration_record.accepted_physical_gradient_norm =
-                next_metric.dual_norm(next_projected.reduced_gradient);
-        }
-        const double energy_change =
-            energy - previous_energy;
+        const double energy_change = energy - previous_energy;
         previous_energy = energy;
         if (std::abs(energy_change) < options.energy_tolerance &&
             (terminal_checked ||

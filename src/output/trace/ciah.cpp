@@ -32,9 +32,8 @@ CiahTraceWriter::CiahTraceWriter(const std::filesystem::path& output_path)
             << "\tgradient_dot_step\tstep_dot_hessian_step"
             << "\tpredicted_reduction\tactual_reduction\ttrust_ratio"
             << "\treached_boundary"
-            << "\tsource_gradient_norm\tsource_physical_gradient_norm"
-            << "\tphysical_orbital_kkt_norm\torbital_step_norm\tshift"
-            << "\taccepted_physical_gradient_norm\tapproximate_step\tresponse_model\n";
+            << "\tsource_gradient_norm\torbital_step_norm\tshift"
+            << "\tapproximate_step\tresponse_model\n";
     stream_ << std::setprecision(17);
     stream_.flush();
     if (!stream_) {
@@ -54,9 +53,7 @@ void CiahTraceWriter::write(const vb::CiahIterationRecord& step) {
             << step.gradient_dot_step << '\t' << step.step_dot_hessian_step << '\t'
             << step.predicted_reduction << '\t' << step.actual_reduction << '\t' << step.trust_ratio
             << '\t' << (step.reached_boundary ? 1 : 0) << '\t' << step.source_gradient_norm << '\t'
-            << step.source_physical_gradient_norm << '\t' << step.physical_orbital_kkt_norm << '\t'
-            << step.orbital_step_norm << '\t' << step.shift << '\t'
-            << step.accepted_physical_gradient_norm << '\t' << step.approximate_step << '\t'
+            << step.orbital_step_norm << '\t' << step.shift << '\t' << step.approximate_step << '\t'
             << vb::ciah_response_model_name(step.response_model) << '\n';
     stream_.flush();
     if (!stream_) {

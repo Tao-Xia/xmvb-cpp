@@ -135,34 +135,6 @@ Eigen::MatrixXd invert_self_adjoint_positive_definite(const Eigen::MatrixXd& mat
     return inverse;
 }
 
-Eigen::MatrixXd
-build_inactive_density_low_rank_factors(const Eigen::MatrixXd& inactive_orbitals,
-                                        const Eigen::MatrixXd& inactive_overlap_inverse,
-                                        const char* label) {
-    if (inactive_orbitals.cols() != inactive_overlap_inverse.rows() ||
-        inactive_overlap_inverse.rows() != inactive_overlap_inverse.cols()) {
-        throw std::invalid_argument(std::string(label) +
-                                    " dimensions do not match inactive orbitals");
-    }
-    if (inactive_orbitals.cols() == 0) {
-        return Eigen::MatrixXd::Zero(inactive_orbitals.rows(), 0);
-    }
-
-    // `P11 = C (C^T S C)^{-1} C^T` is symmetric positive semidefinite.  A Cholesky
-    // factor of the small occupied-space inverse therefore gives an explicit AO
-    // low-rank factor `F = C L` with `P11 = F F^T`.  The RI AO-H1E path can then
-    // apply its low-rank kernels directly instead of diagonalizing the full AO
-    // density matrix again on every objective call.
-    Eigen::LLT<Eigen::MatrixXd> inverse_llt(inactive_overlap_inverse);
-    if (inverse_llt.info() != Eigen::Success) {
-        throw std::runtime_error(std::string("failed LLT factorization for ") + label);
-    }
-
-    Eigen::MatrixXd inactive_density_factors = inactive_orbitals * inverse_llt.matrixL();
-    require_finite_matrix(inactive_density_factors, "inactive_density_low_rank_factors");
-    return inactive_density_factors;
-}
-
 Eigen::MatrixXd build_self_adjoint_inverse_square_root(const Eigen::MatrixXd& matrix,
                                                        const char* label) {
     if (matrix.rows() != matrix.cols()) {
@@ -200,7 +172,6 @@ Eigen::MatrixXd build_self_adjoint_inverse_square_root(const Eigen::MatrixXd& ma
 
 Eigen::MatrixXd build_s_orthonormal_virtual_auxiliary_orbitals(
     const Eigen::MatrixXd& occupied_auxiliary_orbitals,
-    const Eigen::MatrixXd& occupied_overlap_inverse,
     const Eigen::Map<const Eigen::MatrixXd>& basis_overlap_matrix,
     int n_virtual_orbitals) {
     const int n_basis_functions = static_cast<int>(basis_overlap_matrix.rows());
@@ -208,20 +179,27 @@ Eigen::MatrixXd build_s_orthonormal_virtual_auxiliary_orbitals(
         return Eigen::MatrixXd::Zero(n_basis_functions, 0);
     }
     if (occupied_auxiliary_orbitals.rows() != n_basis_functions ||
-        occupied_auxiliary_orbitals.cols() != occupied_overlap_inverse.rows() ||
-        occupied_overlap_inverse.rows() != occupied_overlap_inverse.cols()) {
+        occupied_auxiliary_orbitals.cols() + n_virtual_orbitals != n_basis_functions) {
         throw std::invalid_argument(
-            "occupied auxiliary dimensions do not match occupied-overlap inverse");
+            "occupied auxiliary dimensions do not match the virtual complement");
     }
 
     // Form the occupied-space projector in the AO metric, diagonalize the
     // projected metric `(I - P_occ S)^T S (I - P_occ S)`, and retain its
     // positive-eigenvalue directions as the S-orthonormal virtual complement.
-    const Eigen::MatrixXd occupied_metric_action =
-        occupied_overlap_inverse * occupied_auxiliary_orbitals.transpose() * basis_overlap_matrix;
+    // The caller supplies the well-scaled internal occupied frame. Solve its
+    // small, well-conditioned Gram instead of using the inverse Gram of the
+    // localized physical columns; the occupied span is exactly the same.
+    const auto& occupied_frame = occupied_auxiliary_orbitals;
+    const Eigen::MatrixXd frame_overlap_action = occupied_frame.transpose() * basis_overlap_matrix;
+    const Eigen::MatrixXd frame_metric = frame_overlap_action * occupied_frame;
+    Eigen::LLT<Eigen::MatrixXd> frame_factor(frame_metric);
+    if (frame_factor.info() != Eigen::Success)
+        throw std::runtime_error("occupied projector frame is not positive definite");
+    const Eigen::MatrixXd occupied_metric_action = frame_factor.solve(frame_overlap_action);
     Eigen::MatrixXd complementary_projector =
         Eigen::MatrixXd::Identity(n_basis_functions, n_basis_functions) -
-        occupied_auxiliary_orbitals * occupied_metric_action;
+        occupied_frame * occupied_metric_action;
     const Eigen::MatrixXd virtual_overlap =
         complementary_projector.transpose() * basis_overlap_matrix * complementary_projector;
     require_finite_matrix(virtual_overlap, "virtual_overlap_projector_metric");
@@ -266,7 +244,7 @@ Eigen::MatrixXd build_s_orthonormal_virtual_auxiliary_orbitals(
 
 Eigen::MatrixXd
 build_auxiliary_orbital_inverse(const Eigen::MatrixXd& auxiliary_orbital_matrix,
-                                const Eigen::MatrixXd& occupied_overlap_inverse,
+                                const Eigen::MatrixXd& occupied_dual_orbitals,
                                 const Eigen::Map<const Eigen::MatrixXd>& basis_overlap_matrix,
                                 int n_occupied_orbitals) {
     if (auxiliary_orbital_matrix.rows() != basis_overlap_matrix.rows() ||
@@ -276,9 +254,9 @@ build_auxiliary_orbital_inverse(const Eigen::MatrixXd& auxiliary_orbital_matrix,
     if (n_occupied_orbitals < 0 || n_occupied_orbitals > auxiliary_orbital_matrix.cols()) {
         throw std::invalid_argument("invalid occupied auxiliary block size");
     }
-    if (occupied_overlap_inverse.rows() != occupied_overlap_inverse.cols() ||
-        occupied_overlap_inverse.rows() != n_occupied_orbitals) {
-        throw std::invalid_argument("occupied auxiliary overlap inverse dimensions do not match");
+    if (occupied_dual_orbitals.rows() != auxiliary_orbital_matrix.rows() ||
+        occupied_dual_orbitals.cols() != n_occupied_orbitals) {
+        throw std::invalid_argument("occupied auxiliary dual dimensions do not match");
     }
 
     const int n_basis_functions = static_cast<int>(auxiliary_orbital_matrix.rows());
@@ -296,7 +274,7 @@ build_auxiliary_orbital_inverse(const Eigen::MatrixXd& auxiliary_orbital_matrix,
         // the inverse is available analytically as
         // `[S_occ^{-1} T_occ^T S; T_vir^T S]`.
         auxiliary_orbital_inverse.topRows(n_occupied_orbitals).noalias() =
-            occupied_overlap_inverse * s_times_auxiliary.leftCols(n_occupied_orbitals).transpose();
+            occupied_dual_orbitals.transpose() * basis_overlap_matrix;
     }
     if (n_virtual_orbitals > 0) {
         auxiliary_orbital_inverse.bottomRows(n_virtual_orbitals) =
@@ -347,8 +325,6 @@ ActiveSpaceOrbitalPreparer::prepare(const OrbitalPreparationInput& input) const 
         Eigen::MatrixXd::Zero(input.n_basis_functions, input.n_basis_functions);
     Eigen::MatrixXd inactive_density_low_rank_factors =
         Eigen::MatrixXd::Zero(input.n_basis_functions, n_inactive_doubly_occupied_orbitals);
-    Eigen::MatrixXd inactive_overlap_inverse = Eigen::MatrixXd::Zero(
-        n_inactive_doubly_occupied_orbitals, n_inactive_doubly_occupied_orbitals);
     Eigen::MatrixXd inactive_orthonormal_orbitals =
         Eigen::MatrixXd::Zero(input.n_basis_functions, n_inactive_doubly_occupied_orbitals);
     Eigen::MatrixXd inactive_orthonormal_gauge_transform = Eigen::MatrixXd::Zero(
@@ -359,23 +335,25 @@ ActiveSpaceOrbitalPreparer::prepare(const OrbitalPreparationInput& input) const 
         const Eigen::MatrixXd inactive_overlap =
             inactive_orbitals.transpose() * basis_overlap_matrix * inactive_orbitals;
         require_finite_matrix(inactive_overlap, "inactive_overlap");
-        inactive_overlap_inverse =
-            invert_self_adjoint_positive_definite(inactive_overlap, "inactive_overlap");
-        require_finite_matrix(inactive_overlap_inverse, "inactive_overlap_inverse");
-        const Eigen::MatrixXd auxiliary_inactive_orbitals =
-            inactive_orbitals * inactive_overlap_inverse;
-        inactive_auxiliary_transform.leftCols(n_inactive_doubly_occupied_orbitals) =
-            auxiliary_inactive_orbitals;
-        inactive_density_low_rank_factors = build_inactive_density_low_rank_factors(
-            inactive_orbitals, inactive_overlap_inverse, "inactive_overlap_inverse");
-        inactive_density_matrix = auxiliary_inactive_orbitals * inactive_orbitals.transpose();
-        require_finite_matrix(inactive_density_matrix, "inactive_density_matrix");
         inactive_orthonormal_gauge_transform =
             build_self_adjoint_inverse_square_root(inactive_overlap, "inactive_overlap");
         inactive_orthonormal_orbitals = inactive_orbitals * inactive_orthonormal_gauge_transform;
-        require_finite_matrix(inactive_orthonormal_orbitals, "inactive_orthonormal_orbitals");
+        // Reorthogonalize the already well-scaled frame, not the nearly
+        // dependent localized columns. This corrects roundoff in the first
+        // inverse-square-root construction without changing its occupied span.
+        const Eigen::MatrixXd frame_metric = inactive_orthonormal_orbitals.transpose() *
+                                             basis_overlap_matrix * inactive_orthonormal_orbitals;
+        const Eigen::MatrixXd correction =
+            build_self_adjoint_inverse_square_root(frame_metric, "inactive_frame_overlap");
+        inactive_orthonormal_orbitals = (inactive_orthonormal_orbitals * correction).eval();
+        inactive_orthonormal_gauge_transform =
+            (inactive_orthonormal_gauge_transform * correction).eval();
+        inactive_auxiliary_transform.leftCols(n_inactive_doubly_occupied_orbitals) =
+            inactive_orthonormal_orbitals * inactive_orthonormal_gauge_transform.transpose();
+        inactive_density_low_rank_factors = inactive_orthonormal_orbitals;
         inactive_orthonormal_projector_matrix =
             inactive_orthonormal_orbitals * inactive_orthonormal_orbitals.transpose();
+        inactive_density_matrix = inactive_orthonormal_projector_matrix;
         require_finite_matrix(inactive_orthonormal_projector_matrix,
                               "inactive_orthonormal_projector_matrix");
     }
@@ -422,23 +400,19 @@ ActiveSpaceOrbitalPreparer::prepare(const OrbitalPreparationInput& input) const 
         active_overlap_matrix, "active_orbital_overlap_matrix");
     require_finite_matrix(active_orbital_overlap_inverse, "active_orbital_overlap_inverse");
 
-    Eigen::MatrixXd occupied_overlap_inverse =
-        Eigen::MatrixXd::Zero(n_occupied_orbitals, n_occupied_orbitals);
-    if (n_inactive_doubly_occupied_orbitals > 0) {
-        occupied_overlap_inverse.topLeftCorner(n_inactive_doubly_occupied_orbitals,
-                                               n_inactive_doubly_occupied_orbitals) =
-            inactive_overlap_inverse;
-    }
-    occupied_overlap_inverse.bottomRightCorner(input.n_active_orbitals, input.n_active_orbitals) =
-        active_orbital_overlap_inverse;
+    Eigen::MatrixXd occupied_dual_orbitals(input.n_basis_functions, n_occupied_orbitals);
+    occupied_dual_orbitals.leftCols(n_inactive_doubly_occupied_orbitals) =
+        inactive_auxiliary_transform.leftCols(n_inactive_doubly_occupied_orbitals);
+    occupied_dual_orbitals.rightCols(input.n_active_orbitals) =
+        active_auxiliary_orbitals * active_orbital_overlap_inverse;
 
     if (n_virtual_orbitals > 0) {
+        Eigen::MatrixXd occupied_frame = auxiliary_orbital_matrix.leftCols(n_occupied_orbitals);
+        occupied_frame.leftCols(n_inactive_doubly_occupied_orbitals) =
+            inactive_orthonormal_orbitals;
         auxiliary_orbital_matrix.rightCols(n_virtual_orbitals) =
             build_s_orthonormal_virtual_auxiliary_orbitals(
-                auxiliary_orbital_matrix.leftCols(n_occupied_orbitals),
-                occupied_overlap_inverse,
-                basis_overlap_matrix,
-                n_virtual_orbitals);
+                occupied_frame, basis_overlap_matrix, n_virtual_orbitals);
     }
 
     const Eigen::MatrixXd active_overlap_source = basis_overlap_matrix * active_orbitals;
@@ -450,7 +424,7 @@ ActiveSpaceOrbitalPreparer::prepare(const OrbitalPreparationInput& input) const 
         occupied_space_projector.transpose() * active_overlap_source;
     const Eigen::MatrixXd auxiliary_orbital_inverse =
         build_auxiliary_orbital_inverse(auxiliary_orbital_matrix,
-                                        occupied_overlap_inverse,
+                                        occupied_dual_orbitals,
                                         basis_overlap_matrix,
                                         n_occupied_orbitals);
     require_finite_matrix(inactive_active_overlap_matrix, "inactive_active_overlap_matrix");

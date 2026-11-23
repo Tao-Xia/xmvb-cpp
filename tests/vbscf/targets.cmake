@@ -5,6 +5,7 @@
 # production build file from accumulating test-specific wiring.
 
 set(_xmvb_vbscf_unit_targets
+  test_orbital_preparation
   test_exterior_transform
   test_spinor_strings
   test_spinor_projection
@@ -53,6 +54,15 @@ foreach(target_name IN LISTS _xmvb_vbscf_unit_targets)
     ${CMAKE_SOURCE_DIR}/tests/vbscf/unit/${target_name}.cpp)
   target_link_libraries(${target_name} PRIVATE xmvb_vbscf)
 endforeach()
+
+add_test(NAME orbital_preparation COMMAND test_orbital_preparation)
+add_executable(test_optimizer_failure_reporting
+  ${CMAKE_SOURCE_DIR}/tests/vbscf/unit/test_optimizer_failure_reporting.cpp)
+target_link_libraries(test_optimizer_failure_reporting PRIVATE xmvb_input xmvb_vbscf)
+add_test(NAME optimizer_failure_reporting COMMAND test_optimizer_failure_reporting
+  ${CMAKE_SOURCE_DIR}/testdata/vbscf/F2.xmi)
+set_tests_properties(optimizer_failure_reporting PROPERTIES
+  ENVIRONMENT "OMP_NUM_THREADS=2;OPENBLAS_NUM_THREADS=1;MKL_NUM_THREADS=1")
 
 # Same-orbital molecular reference: direct-CI versus nonorthogonal cofactors.
 add_executable(test_action_parity EXCLUDE_FROM_ALL

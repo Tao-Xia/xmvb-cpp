@@ -8,6 +8,7 @@
 
 #include <Eigen/Core>
 
+#include "core/index.hpp"
 #include "vbscf/orbitals/gauge/localized.hpp"
 #include "vbscf/orbitals/charts/chart.hpp"
 #include "vbscf/orbitals/charts/canonicalization.hpp"
@@ -194,6 +195,10 @@ VbScfOptimizerResult VbScfOptimizer::optimize(VbScfInput input,
             }
         }
     } catch (const std::exception& error) {
+        // A failed backend has no return value, but committed iterates remain
+        // in the objective history, including its initial point.
+        n_iterations = core::checked_index<int>(objective.energy_history().size() -
+                                                !objective.energy_history().empty());
         result.termination_reason = error.what();
     }
 
