@@ -46,7 +46,7 @@ The program's `share/build-info.json` records its source revision, compiler,
 CMake options, dependency versions, binary hash, required runtime ID and SIF
 SHA-256. `SHA256SUMS` verifies the extracted program files. When an update uses
 the same runtime ID, download the new program and change `XMVB_PROGRAM_DIR`.
-Release-specific changes, validation and known limits are listed on each GitHub
+Release-specific changes and known limits are listed on each GitHub
 Release page and in [CHANGELOG.md](CHANGELOG.md). Reuse the existing runtime
 when its ID and checksum match the program metadata.
 Use the architecture-qualified download entries above.
@@ -114,8 +114,6 @@ bash /release-work/source/packaging/apptainer/build.sh \
 Acquire and hash the Ubuntu 24.04 base SIF before the first build. Builds require
 Apptainer, rsync, flock and Python 3 on the host. Images are assembled from
 the base and prepared dependency files through an unprivileged sandbox build.
-On Hanhai25, `APPTAINER_IGNORE_PROOT=1` avoids the site's ptrace restriction when
-assembling SIF files.
 
 Builder caches are keyed by host architecture, base SIF hash, dependency content
 and builder recipe. Ninja caches are keyed by builder hash, backend and build
@@ -128,9 +126,11 @@ the staged program. A dependency change requires a new runtime filename and tag.
 The build writes separate runtime and program checksums and preserves configure,
 compile, staging and linkage logs. Qualify the program with its runtime before
 publishing. Upload the program archive, its checksum, the required runtime checksum,
-`build-info.json`, `validation.json` and installation instructions to a GitHub
-Release tagged with the packaged source revision. Include changes, validation,
-platform support and known limits in the release notes. Keep historical program
+`build-info.json` and installation instructions to a GitHub
+Release tagged with the packaged source revision. Include user-facing changes, platform support and known limits in the release
+notes. Keep test reports, cluster names, scheduler job IDs, benchmark traces and
+other internal qualification records in the private research journal, not in
+release notes or downloadable attachments. Keep historical program
 versions in GitHub Releases, not GHCR. Publish a runtime to GHCR only when its
 dependencies or ABI change. Download the published program from GitHub Releases,
 verify SHA-256 and smoke-test it with the matching runtime before finalizing the
