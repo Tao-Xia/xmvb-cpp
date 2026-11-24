@@ -27,6 +27,18 @@ struct DavidsonDiagnostics {
     double maximum_stationarity_residual = 0.0;
 };
 
+/** First-order TNVB diagnostics; absent for the determinant backend. */
+struct TnVbDiagnostics {
+    int structure_bond = 0;
+    int total_bond = 0;
+    bool gradient_evaluated = false;
+    double fit_energy_error = 0.0;
+    double rdm_identity_error = 0.0;
+    /** Includes individual MPS construction; excludes Python startup. */
+    double state_and_hs_wall_seconds = 0.0;
+    double rdm_wall_seconds = 0.0;
+};
+
 /**
  * @brief Result of a single VBSCF matrix evaluation step.
  *
@@ -70,6 +82,8 @@ struct VbScfResult {
 
     /** Final-solve diagnostics, present only for the Davidson eigensolver. */
     std::optional<DavidsonDiagnostics> davidson_diagnostics;
+
+    std::optional<TnVbDiagnostics> tnvb_diagnostics;
 
     /**
    * @brief Available consecutive lowest generalized eigenvalues.

@@ -721,11 +721,13 @@ void print_iteration_row(
     output.flush();
 }
 
-void print_scf_status(std::ostream& output, bool converged, int iterations, double energy) {
+void print_scf_status(
+    std::ostream& output, bool converged, int iterations, double energy, bool energy_only) {
     std::ostringstream text;
     text << "\n"
-         << (converged ? "                        VBSCF converged in "
-                       : "                    VBSCF did not converge in ")
+         << (energy_only ? "                  Fixed-orbital ENERGY completed in "
+             : converged ? "                        VBSCF converged in "
+                         : "                    VBSCF did not converge in ")
          << std::setw(5) << iterations << " iterations\n\n"
          << "                  Total Energy:   " << std::fixed << std::setprecision(10) << energy
          << '\n';
@@ -867,7 +869,14 @@ void print_input_sections(std::ostream& output,
            << orbitals.spin_multiplicity << '\n'
            << " TOTAL NUMBER OF ATOMS                        = " << std::setw(4) << molecule.n_atoms
            << "\n\n";
-    print_ionic_class_summary(output, load_result.raw_structure_data, input.structure_data);
+    if (!input.tnvb.enabled) {
+        print_ionic_class_summary(output, load_result.raw_structure_data, input.structure_data);
+    } else {
+        output
+            << " TNVB SU(2) electronic backend: direct raw structures, no determinant expansion.\n"
+            << " Fixed structure / total bond: " << input.tnvb.structure_bond << " / "
+            << input.tnvb.total_bond << "\n\n";
+    }
     output << " Number of structures: " << std::setw(5)
            << load_result.raw_structure_data.n_structures << "\n\n"
            << " The following structures are used in calculation"
@@ -966,7 +975,9 @@ FinalStateReport print_final_state_sections(std::ostream& output,
     const auto& orbital_input = result.optimized_input.orbital_preparation_input;
     const int n_inactive =
         (orbital_input.n_total_electrons - orbital_input.n_active_electrons) / 2;
-    DeterminantReport determinant_report(result.optimized_input.structure_data, n_inactive);
+    std::optional<DeterminantReport> determinant_report;
+    if (!result.optimized_input.tnvb.enabled)
+        determinant_report.emplace(result.optimized_input.structure_data, n_inactive);
     auto structure_analysis = ReportClock::now() - analysis_start;
     ReportClock::duration determinant_output{};
     const bool has_full_structure_matrices = first_state.overlap.size() != 0;
@@ -994,9 +1005,11 @@ FinalStateReport print_final_state_sections(std::ostream& output,
         }
         print_structure_coefficients(
             output, normalized.coefficients, load_result.raw_structure_data);
-        const auto determinant_start = ReportClock::now();
-        determinant_report.write(output, normalized.raw_coefficients);
-        determinant_output += ReportClock::now() - determinant_start;
+        if (!result.optimized_input.tnvb.enabled) {
+            const auto determinant_start = ReportClock::now();
+            determinant_report->write(output, normalized.raw_coefficients);
+            determinant_output += ReportClock::now() - determinant_start;
+        }
         if (has_full_structure_matrices) {
             structure_analysis += print_structure_weights(
                 output, normalized.coefficients, normalized.overlap, load_result.raw_structure_data);
@@ -1010,6 +1023,17 @@ FinalStateReport print_final_state_sections(std::ostream& output,
     print_orbitals(output,
                    load_result.static_molecule_metadata,
                    result.optimized_input.orbital_preparation_input);
+    if (result.energy_only) {
+        output
+            << "\n ENERGY-only evaluation: no total-state RDM or orbital gradient was requested.\n";
+        output.flush();
+        return {norms.mean_overlap,
+                std::chrono::duration<double>(structure_analysis).count(),
+                std::chrono::duration<double>(structure_end - report_start - structure_analysis).count(),
+                std::chrono::duration<double>(ReportClock::now() - structure_end).count(),
+                std::chrono::duration<double>(normalization_end - analysis_start).count(),
+                std::chrono::duration<double>(determinant_output).count()};
+    }
     const auto& orbitals = result.optimized_input.orbital_preparation_input;
     const NaturalOrbitalAnalysis natural_orbitals =
         compute_natural_orbitals(result.one_particle_density_matrix,
